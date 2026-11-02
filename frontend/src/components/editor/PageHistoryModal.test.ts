@@ -17,7 +17,7 @@ const appMocks = vi.hoisted(() =>
     GetPageVersion: vi.fn(),
     RestorePageVersion: vi.fn(),
     RestoreDeletedPageVersion: vi.fn(),
-    FetchPageMarkdown: vi.fn()
+    FetchPageMarkdownProgrammatic: vi.fn()
   })
 )
 
@@ -87,7 +87,9 @@ beforeEach(() => {
   )
   appMocks.RestorePageVersion.mockReset().mockResolvedValue(undefined)
   appMocks.RestoreDeletedPageVersion.mockReset().mockResolvedValue(undefined)
-  appMocks.FetchPageMarkdown.mockReset().mockResolvedValue('# live body')
+  appMocks.FetchPageMarkdownProgrammatic.mockReset().mockResolvedValue(
+    '# live body'
+  )
   _resetEditorRegistryForTests()
   eventsMock.handlers.clear()
   eventsMock.On.mockClear()
@@ -391,7 +393,7 @@ describe('PageHistoryModal', () => {
   })
 
   it('treats a failed live-page fetch as a compare error', async () => {
-    appMocks.FetchPageMarkdown.mockRejectedValueOnce(
+    appMocks.FetchPageMarkdownProgrammatic.mockRejectedValueOnce(
       new Error('Could not read the current page.')
     )
     renderModal()
@@ -439,7 +441,7 @@ describe('PageHistoryModal', () => {
     )
     const versionCalls = appMocks.GetPageVersion.mock.calls.length
     await openCompare()
-    expect(appMocks.FetchPageMarkdown).toHaveBeenCalledWith(
+    expect(appMocks.FetchPageMarkdownProgrammatic).toHaveBeenCalledWith(
       'Work',
       'Journal',
       'Daily'
@@ -455,7 +457,7 @@ describe('PageHistoryModal', () => {
     expect(screen.getByTestId('page-history-compare')).toHaveTextContent(
       'live body'
     )
-    appMocks.FetchPageMarkdown.mockResolvedValue('# restored body')
+    appMocks.FetchPageMarkdownProgrammatic.mockResolvedValue('# restored body')
     eventsMock.handlers.get('page:external-reload')?.({
       data: { notebook: 'Work', section: 'Journal', page: 'Daily' }
     })
@@ -464,13 +466,13 @@ describe('PageHistoryModal', () => {
         'restored body'
       )
     })
-    expect(appMocks.FetchPageMarkdown).toHaveBeenCalledTimes(2)
+    expect(appMocks.FetchPageMarkdownProgrammatic).toHaveBeenCalledTimes(2)
   })
 
   it('refreshes compare after a case-variant page:external-reload', async () => {
     renderModal()
     await openCompare()
-    appMocks.FetchPageMarkdown.mockResolvedValue('# restored body')
+    appMocks.FetchPageMarkdownProgrammatic.mockResolvedValue('# restored body')
     eventsMock.handlers.get('page:external-reload')?.({
       data: { notebook: 'work', section: 'journal', page: 'daily' }
     })
@@ -483,7 +485,7 @@ describe('PageHistoryModal', () => {
 
   it('restarts compare fetch when page:external-reload arrives while loading', async () => {
     let resolveFirst!: (value: string) => void
-    appMocks.FetchPageMarkdown.mockImplementationOnce(
+    appMocks.FetchPageMarkdownProgrammatic.mockImplementationOnce(
       () =>
         new Promise<string>((resolve) => {
           resolveFirst = resolve
@@ -495,9 +497,11 @@ describe('PageHistoryModal', () => {
     })
     await fireEvent.click(screen.getByTestId('page-history-pane-compare'))
     await waitFor(() => {
-      expect(appMocks.FetchPageMarkdown).toHaveBeenCalledTimes(1)
+      expect(appMocks.FetchPageMarkdownProgrammatic).toHaveBeenCalledTimes(1)
     })
-    appMocks.FetchPageMarkdown.mockResolvedValue('# restored-during-load')
+    appMocks.FetchPageMarkdownProgrammatic.mockResolvedValue(
+      '# restored-during-load'
+    )
     eventsMock.handlers.get('page:external-reload')?.({
       data: { notebook: 'Work', section: 'Journal', page: 'Daily' }
     })
@@ -532,7 +536,7 @@ describe('PageHistoryModal', () => {
 
   it('shows an empty-diff status when the version matches the current page', async () => {
     appMocks.GetPageVersion.mockResolvedValue('# same body')
-    appMocks.FetchPageMarkdown.mockResolvedValue('# same body')
+    appMocks.FetchPageMarkdownProgrammatic.mockResolvedValue('# same body')
     renderModal()
     await openCompare()
     expect(screen.getByTestId('page-history-diff-summary')).toHaveTextContent(
@@ -544,7 +548,7 @@ describe('PageHistoryModal', () => {
   it('does not announce no-change when the compare is too large', async () => {
     const huge = 'x'.repeat(COMPARE_MAX_CHARS + 1)
     appMocks.GetPageVersion.mockResolvedValue(huge)
-    appMocks.FetchPageMarkdown.mockResolvedValue(`${huge}y`)
+    appMocks.FetchPageMarkdownProgrammatic.mockResolvedValue(`${huge}y`)
     renderModal()
     await openCompare()
     expect(screen.getByTestId('page-history-diff-summary')).toHaveTextContent(
@@ -605,10 +609,10 @@ describe('PageHistoryModal', () => {
       verifySelectionText: () => false
     })
     appMocks.GetPageVersion.mockResolvedValue('# Title')
-    appMocks.FetchPageMarkdown.mockResolvedValue('# Title')
+    appMocks.FetchPageMarkdownProgrammatic.mockResolvedValue('# Title')
     renderModal()
     await openCompare()
-    expect(appMocks.FetchPageMarkdown).toHaveBeenCalledWith(
+    expect(appMocks.FetchPageMarkdownProgrammatic).toHaveBeenCalledWith(
       'Work',
       'Journal',
       'Daily'
@@ -635,11 +639,11 @@ describe('PageHistoryModal', () => {
       verifySelectionText: () => false
     })
     appMocks.GetPageVersion.mockResolvedValue('# Title')
-    appMocks.FetchPageMarkdown.mockResolvedValue('# Title')
+    appMocks.FetchPageMarkdownProgrammatic.mockResolvedValue('# Title')
     renderModal()
     await openCompare()
     expect(flush).not.toHaveBeenCalled()
-    expect(appMocks.FetchPageMarkdown).toHaveBeenCalledWith(
+    expect(appMocks.FetchPageMarkdownProgrammatic).toHaveBeenCalledWith(
       'Work',
       'Journal',
       'Daily'
@@ -655,7 +659,7 @@ describe('PageHistoryModal', () => {
   })
 
   it('clears a compare error after a successful restore', async () => {
-    appMocks.FetchPageMarkdown.mockRejectedValueOnce(
+    appMocks.FetchPageMarkdownProgrammatic.mockRejectedValueOnce(
       new Error('Could not read the current page.')
     )
     renderModal()
@@ -1031,7 +1035,7 @@ describe('PageHistoryModal', () => {
       expect(screen.getByTestId('page-history-pane-compare')).toBeDisabled()
       await fireEvent.click(screen.getByTestId('page-history-pane-compare'))
       expect(screen.queryByTestId('page-history-compare')).toBeNull()
-      expect(appMocks.FetchPageMarkdown).not.toHaveBeenCalled()
+      expect(appMocks.FetchPageMarkdownProgrammatic).not.toHaveBeenCalled()
     })
   })
 })

@@ -2,8 +2,8 @@
   import { untrack } from 'svelte'
   import {
     SearchBlocksPaged,
-    FetchPageBlocks,
-    SaveFileBlocks
+    FetchPageBlocksProgrammatic,
+    SaveFileBlocksProgrammatic
   } from '../../../bindings/silt/app.js'
   import type * as parser from '../../../bindings/silt/backend/parser/models.js'
   import {
@@ -230,7 +230,11 @@
           continue
         }
         // Fetch the page's full block list (the search result is a subset).
-        const blocks = await FetchPageBlocks(
+        // Programmatic variant: a modal read must not re-baseline the
+        // editor's conflict gate — the capturing fetch would let this save
+        // (and the editor's next autosave) silently clobber an external
+        // edit the modal never adopted (#1005).
+        const blocks = await FetchPageBlocksProgrammatic(
           grp.notebook,
           grp.section,
           grp.page
@@ -269,7 +273,16 @@
           }
           failedPage = grp.page
           try {
-            await SaveFileBlocks(grp.notebook, grp.section, grp.page, blocks)
+            // Programmatic funnel: a batch refusal must never evict or
+            // replace a live editor stash — the modal's rendered page is
+            // re-derivable, the stashed editor buffer may be the user's
+            // only copy (#1005).
+            await SaveFileBlocksProgrammatic(
+              grp.notebook,
+              grp.section,
+              grp.page,
+              blocks
+            )
           } catch (e) {
             // The write never landed, so no block:changed will consume the
             // arm — drop it here or the next unrelated blocks change bypasses
@@ -350,7 +363,9 @@
       const lastBatch = revertLog[revertLog.length - 1]
       for (const entry of lastBatch) {
         failedPage = entry.page
-        await SaveFileBlocks(
+        // Same programmatic funnel as apply: an undo is a batch write too,
+        // and its refusal must not evict a live editor stash (#1005).
+        await SaveFileBlocksProgrammatic(
           entry.notebook,
           entry.section,
           entry.page,

@@ -19,15 +19,15 @@ import {
 
 const mocks = vi.hoisted(() => ({
   SearchBlocksPaged: vi.fn(),
-  FetchPageBlocks: vi.fn(),
-  SaveFileBlocks: vi.fn()
+  FetchPageBlocksProgrammatic: vi.fn(),
+  SaveFileBlocksProgrammatic: vi.fn()
 }))
 
 vi.mock('$silt-app', () =>
   createAppIpcMocks({
     SearchBlocksPaged: mocks.SearchBlocksPaged,
-    FetchPageBlocks: mocks.FetchPageBlocks,
-    SaveFileBlocks: mocks.SaveFileBlocks
+    FetchPageBlocksProgrammatic: mocks.FetchPageBlocksProgrammatic,
+    SaveFileBlocksProgrammatic: mocks.SaveFileBlocksProgrammatic
   })
 )
 vi.mock('@wailsio/runtime', () => ({
@@ -95,7 +95,7 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
     cleanup()
   })
 
-  it('Preview → Apply writes through SaveFileBlocks once per changed page', async () => {
+  it('Preview → Apply writes through SaveFileBlocksProgrammatic once per changed page', async () => {
     mocks.SearchBlocksPaged.mockResolvedValue({
       results: [
         {
@@ -118,23 +118,23 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       limit: 200,
       has_more: false
     })
-    mocks.FetchPageBlocks.mockResolvedValue([
+    mocks.FetchPageBlocksProgrammatic.mockResolvedValue([
       block('b1', 'foo bar'),
       block('b2', 'foo baz')
     ])
-    mocks.SaveFileBlocks.mockResolvedValue(undefined)
+    mocks.SaveFileBlocksProgrammatic.mockResolvedValue(undefined)
 
     await renderAndPreview('foo', 'qux')
     await fireEvent.click(screen.getByRole('button', { name: /^Replace/ }))
 
     await waitFor(
       () => {
-        expect(mocks.SaveFileBlocks).toHaveBeenCalledTimes(1)
+        expect(mocks.SaveFileBlocksProgrammatic).toHaveBeenCalledTimes(1)
       },
       { timeout: 2000 }
     )
 
-    const saved = mocks.SaveFileBlocks.mock.calls[0][3] as Array<{
+    const saved = mocks.SaveFileBlocksProgrammatic.mock.calls[0][3] as Array<{
       clean_text: string
     }>
     expect(saved).toHaveLength(2)
@@ -165,17 +165,17 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       limit: 200,
       has_more: false
     })
-    mocks.FetchPageBlocks.mockResolvedValue([
+    mocks.FetchPageBlocksProgrammatic.mockResolvedValue([
       block('b1', 'foo bar'),
       block('b2', 'foo baz')
     ])
-    mocks.SaveFileBlocks.mockResolvedValue(undefined)
+    mocks.SaveFileBlocksProgrammatic.mockResolvedValue(undefined)
 
     await renderAndPreview('foo', 'qux')
     await fireEvent.click(screen.getByRole('button', { name: /^Replace/ }))
     await waitFor(
       () => {
-        expect(mocks.SaveFileBlocks).toHaveBeenCalledTimes(1)
+        expect(mocks.SaveFileBlocksProgrammatic).toHaveBeenCalledTimes(1)
       },
       { timeout: 2000 }
     )
@@ -189,11 +189,12 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
     // Second SaveFileBlocks call restores the pre-replace originals.
     await waitFor(
       () => {
-        expect(mocks.SaveFileBlocks).toHaveBeenCalledTimes(2)
+        expect(mocks.SaveFileBlocksProgrammatic).toHaveBeenCalledTimes(2)
       },
       { timeout: 2000 }
     )
-    const restored = mocks.SaveFileBlocks.mock.calls[1][3] as Array<{
+    const restored = mocks.SaveFileBlocksProgrammatic.mock
+      .calls[1][3] as Array<{
       clean_text: string
     }>
     expect(restored[0].clean_text).toBe('foo bar')
@@ -223,11 +224,11 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       limit: 200,
       has_more: false
     })
-    mocks.FetchPageBlocks.mockResolvedValue([
+    mocks.FetchPageBlocksProgrammatic.mockResolvedValue([
       block('b1', 'foo bar'),
       block('b2', 'foo baz')
     ])
-    mocks.SaveFileBlocks.mockResolvedValue(undefined)
+    mocks.SaveFileBlocksProgrammatic.mockResolvedValue(undefined)
 
     await renderAndPreview('foo', 'qux')
 
@@ -245,7 +246,7 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       { timeout: 2000 }
     )
     expect(screen.getByText(/Preview is stale/)).toBeInTheDocument()
-    expect(mocks.SaveFileBlocks).not.toHaveBeenCalled()
+    expect(mocks.SaveFileBlocksProgrammatic).not.toHaveBeenCalled()
   })
 
   it('a mid-loop Apply failure leaves Undo available for already-persisted pages', async () => {
@@ -271,7 +272,7 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       limit: 200,
       has_more: false
     })
-    mocks.FetchPageBlocks.mockImplementation(
+    mocks.FetchPageBlocksProgrammatic.mockImplementation(
       (_nb: string, _sec: string, page: string) => {
         if (page === 'page1') return Promise.resolve([block('b1', 'foo bar')])
         if (page === 'page2') return Promise.resolve([block('b2', 'foo qux')])
@@ -280,7 +281,7 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
     )
     // page1 persists; page2 fails mid-batch. The finally-block must still
     // commit newLog (page1 only) so Undo is available for the written page.
-    mocks.SaveFileBlocks.mockImplementation(
+    mocks.SaveFileBlocksProgrammatic.mockImplementation(
       (_nb: string, _sec: string, page: string) => {
         if (page === 'page1') return Promise.resolve()
         return Promise.reject(new Error('disk full'))
@@ -307,14 +308,14 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
     // Undo restores page1's pre-replace originals.
     await waitFor(
       () => {
-        const undoCalls = mocks.SaveFileBlocks.mock.calls.filter(
+        const undoCalls = mocks.SaveFileBlocksProgrammatic.mock.calls.filter(
           (c) => c[2] === 'page1'
         )
         expect(undoCalls.length).toBeGreaterThanOrEqual(2)
       },
       { timeout: 2000 }
     )
-    const undoCall = [...mocks.SaveFileBlocks.mock.calls]
+    const undoCall = [...mocks.SaveFileBlocksProgrammatic.mock.calls]
       .reverse()
       .find((c) => c[2] === 'page1')!
     const restored = undoCall[3] as Array<{ clean_text: string }>
@@ -340,8 +341,10 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       limit: 200,
       has_more: false
     })
-    mocks.FetchPageBlocks.mockResolvedValue([block('b1', 'foo bar')])
-    mocks.SaveFileBlocks.mockResolvedValue(undefined)
+    mocks.FetchPageBlocksProgrammatic.mockResolvedValue([
+      block('b1', 'foo bar')
+    ])
+    mocks.SaveFileBlocksProgrammatic.mockResolvedValue(undefined)
 
     await renderAndPreview('foo', 'qux')
     await fireEvent.click(screen.getByRole('button', { name: /^Replace/ }))
@@ -349,7 +352,7 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
     // SaveFileBlocks must never be called for the linked page.
     await waitFor(
       () => {
-        expect(mocks.SaveFileBlocks).not.toHaveBeenCalled()
+        expect(mocks.SaveFileBlocksProgrammatic).not.toHaveBeenCalled()
       },
       { timeout: 2000 }
     )
@@ -376,8 +379,10 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       limit: 200,
       has_more: false
     })
-    mocks.FetchPageBlocks.mockResolvedValue([block('b1', 'foo bar')])
-    mocks.SaveFileBlocks.mockRejectedValue(
+    mocks.FetchPageBlocksProgrammatic.mockResolvedValue([
+      block('b1', 'foo bar')
+    ])
+    mocks.SaveFileBlocksProgrammatic.mockRejectedValue(
       new Error(
         '{"code":"external_edit_conflict","message":"this page changed on disk since it was opened"}'
       )
@@ -427,8 +432,10 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       limit: 200,
       has_more: false
     })
-    mocks.FetchPageBlocks.mockResolvedValue([block('b1', 'foo bar')])
-    mocks.SaveFileBlocks.mockResolvedValue(undefined)
+    mocks.FetchPageBlocksProgrammatic.mockResolvedValue([
+      block('b1', 'foo bar')
+    ])
+    mocks.SaveFileBlocksProgrammatic.mockResolvedValue(undefined)
 
     // Register a fake dirty editor for the target page. Record the call order
     // across flush / forceExternalReload / SaveFileBlocks to assert the
@@ -453,7 +460,7 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       acceptProposedEdit: () => false,
       verifySelectionText: () => false
     })
-    mocks.SaveFileBlocks.mockImplementation(async () => {
+    mocks.SaveFileBlocksProgrammatic.mockImplementation(async () => {
       order.push('SaveFileBlocks')
     })
 
@@ -491,8 +498,10 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       limit: 200,
       has_more: false
     })
-    mocks.FetchPageBlocks.mockResolvedValue([block('b1', 'foo bar')])
-    mocks.SaveFileBlocks.mockResolvedValue(undefined)
+    mocks.FetchPageBlocksProgrammatic.mockResolvedValue([
+      block('b1', 'foo bar')
+    ])
+    mocks.SaveFileBlocksProgrammatic.mockResolvedValue(undefined)
 
     // Register a dirty editor whose flush fails (stays dirty).
     registerEditor({
@@ -515,7 +524,7 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
     // silently discard the user's unsaved edits.
     await waitFor(
       () => {
-        expect(mocks.SaveFileBlocks).not.toHaveBeenCalled()
+        expect(mocks.SaveFileBlocksProgrammatic).not.toHaveBeenCalled()
       },
       { timeout: 2000 }
     )

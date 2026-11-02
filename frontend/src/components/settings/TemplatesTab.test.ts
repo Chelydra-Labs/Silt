@@ -22,7 +22,7 @@ vi.mock('$silt-app', () =>
     GetTemplate: mocks.getTemplate,
     SaveUserTemplate: mocks.saveUserTemplate,
     DeleteUserTemplate: mocks.deleteUserTemplate,
-    FetchPageMarkdown: mocks.fetchPageMarkdown,
+    FetchPageMarkdownProgrammatic: mocks.fetchPageMarkdown,
     RenderTemplate: vi.fn().mockResolvedValue('# Preview'),
     RenderTemplateBlocks: vi.fn().mockResolvedValue([]),
     CreatePageFromTemplate: vi.fn()
