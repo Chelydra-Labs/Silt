@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"silt/backend/core"
 	"silt/backend/parser"
@@ -372,6 +373,91 @@ func TestPluginCrossPageMove_BlockAbsentOnDiskFailsLoud(t *testing.T) {
 	dstGot, _ := os.ReadFile(filepath.Join(app.vaultPath, notebook, section, dstPage+".md"))
 	if strings.Contains(string(dstGot), "doomed block") {
 		t.Fatalf("stale DB row resurrected onto the target page, got %q", string(dstGot))
+	}
+}
+
+// TestPluginCrossPageMove_DriftBetweenPayloadAndRemovalFailsLoud pins the
+// drift gate in removeBlockFromSourcePage: the payload basis is read pre-lock
+// and the source removal re-reads the file inside LockFileWrite. An external
+// edit to the moved block landing in that window must fail the whole move
+// loudly — completing it would transplant the pre-edit body to the target
+// while the source rewrite deletes the post-edit one, leaving the edit on
+// NEITHER page (#1005). The window is reproduced deterministically: the test
+// holds the source file's write lock (blocking only the removal — the
+// pre-lock payload read and the target save take no source lock), lets the
+// target half commit, rewrites the moved block, then releases the lock so
+// the in-lock read observes the drift.
+func TestPluginCrossPageMove_DriftBetweenPayloadAndRemovalFailsLoud(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section := "XMoveNB5", ""
+	srcPage, dstPage := "XSrc5", "XDst5"
+	blockID := famID(32, 1)
+
+	srcBody := "- [ ] pre-edit body <!-- id: " + blockID + " -->\n"
+	seedWriterFamilyPage(t, app, notebook, section, srcPage, blockID, srcBody)
+	seedWriterFamilyPage(t, app, notebook, section, dstPage, famID(32, 2), "")
+
+	srcPath := filepath.Join(app.vaultPath, notebook, section, srcPage+".md")
+	dstPath := filepath.Join(app.vaultPath, notebook, section, dstPage+".md")
+
+	lockHeld := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		app.coordinator.LockFileWrite(srcPath, func() {
+			close(lockHeld)
+			<-release
+		})
+	}()
+	<-lockHeld
+
+	done := make(chan error, 1)
+	go func() {
+		done <- app.applyBlocksOps([]PluginCreateBlockOp{{
+			Kind: "move", BlockID: blockID,
+			Notebook: notebook, Section: section, Page: dstPage,
+		}}, historyReasonPlugin)
+	}()
+
+	// The target half committing proves the pre-lock payload read already
+	// happened (it strictly precedes the target save in applyBlocksOps).
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got, _ := os.ReadFile(dstPath)
+		if strings.Contains(string(got), "pre-edit body") {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("move returned before the target half committed: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("target half never committed")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	// The external edit lands inside the drift window.
+	external := "---\nnotebook: \"XMoveNB5\"\npage: \"XSrc5\"\ntags: []\n---\n- [ ] externally edited during the move <!-- id: " + blockID + " -->\n"
+	if err := os.WriteFile(srcPath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	close(release)
+
+	err := <-done
+	if err == nil {
+		t.Fatal("a moved block drifting between the payload read and the in-lock removal must fail loudly")
+	}
+	if !strings.Contains(err.Error(), "changed on disk") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The gate fires before the rewrite, so the external edit survives on
+	// the source page; the target keeps the pre-edit duplicate — a
+	// recoverable outcome, never a silent loss.
+	srcGot, _ := os.ReadFile(srcPath)
+	if !strings.Contains(string(srcGot), "externally edited during the move") {
+		t.Fatalf("failed move still dropped the external edit from the source, got %q", string(srcGot))
 	}
 }
 
