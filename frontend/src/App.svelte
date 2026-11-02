@@ -339,6 +339,10 @@
   let dashboardType = $state('')
   function openTypeDashboard(typeId: string): void {
     if (!typeId) return
+    // The dashboard branch unmounts the notes region — same busy gate as
+    // every other region exit (#1005); the always-visible pill made this the
+    // cheapest one-click surface destruction during a resolution.
+    if (notesSurfacesBusy('dashboard')) return
     dashboardType = typeId
     activeView = 'dashboard'
   }
@@ -585,7 +589,15 @@
     setActiveNotebook: (nb) => (activeNotebook = nb),
     setActiveSection: (sec) => (activeSection = sec),
     setActivePage: (pg) => (activePage = pg),
-    setActiveView: (view) => (activeView = view),
+    setActiveView: (view) => {
+      // Plugin-event view switches (navigate-to-tag → 'tags', switch-view →
+      // arbitrary) bypass selectView; funneled through the same busy gate so
+      // a plugin embed cannot unmount a resolving notes surface (#1005).
+      // Region-entering targets ('notes') never trip the predicate, so the
+      // vault-moved reset path is unaffected.
+      if (notesSurfacesBusy(view)) return
+      activeView = view
+    },
     getSettings: () => settings.config,
     setSettingsSection: (id) => (settingsSection = id),
     setShowSearch: (v) => (showSearch = v),

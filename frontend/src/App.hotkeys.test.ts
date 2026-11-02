@@ -45,6 +45,15 @@ const bindings = vi.hoisted(() => ({
   RecordRecentPage: vi.fn(async () => undefined)
 }))
 
+// Statically-typed page for the stubbed page-type controller (see the mock
+// below): drives the pill's "View all Book" caret without any fetch.
+const TYPED_PAGE_INFO = {
+  isSet: true,
+  typeId: 'book',
+  type: { id: 'book', name: 'Book', icon: '', properties: [] },
+  rawType: ''
+}
+
 // Spies for leaf modules the dispatch fans out to.
 const spies = vi.hoisted(() => ({
   openFind: vi.fn(),
@@ -94,9 +103,54 @@ vi.mock('$silt-app', () => {
     // these bindings and must not throw on a missing export.
     ListTypes: vi.fn(async () => []),
     SetNavigationSectionExpanded: vi.fn(noop),
-    GetNavigationTree: vi.fn(async () => ({ notebooks: [] }))
+    GetNavigationTree: vi.fn(async () => ({ notebooks: [] })),
+    // Green path of the View-all gate test: the dashboard branch mounts the
+    // real TypeDashboard when idle.
+    QueryPagesByType: vi.fn(async () => []),
+    ReloadTypes: vi.fn(async () => undefined),
+    GetTypesReprojectionStatus: vi.fn(async () => ({
+      active: false,
+      processed: 0,
+      total: 0
+    }))
   })
 })
+
+// Stub the page-type controller instead of mocking its IPC round-trip: the
+// real controller's refresh() writes state that App's locator $effect tracks
+// through refresh's synchronous prologue, so a completing fetch re-arms the
+// effect every cycle — a runaway refresh loop under instantly-resolving
+// mocks (and a latent production spin; flagged separately, out of scope
+// here). The stub statically reports a typed active page so the pill's
+// "View all" caret renders without any fetch.
+vi.mock('./properties/pageTypeState.svelte', () => ({
+  createPageTypeController: () => ({
+    info: TYPED_PAGE_INFO,
+    values: [],
+    mismatched: [],
+    error: '',
+    loading: false,
+    types: [],
+    typesLoading: false,
+    typeLoadErrors: [],
+    panelOpen: false,
+    modalOpen: false,
+    heroValue: '',
+    core: { notebook: '', section: '', page: '' },
+    typeMenuRequest: 0,
+    refresh: () => Promise.resolve(),
+    open: () => {},
+    close: () => {},
+    toggle: () => {},
+    openModal: () => {},
+    closeModal: () => {},
+    requestTypeMenu: () => {},
+    setMismatched: () => {},
+    setError: () => {},
+    commitCore: () => Promise.resolve(),
+    attach: () => () => {}
+  })
+}))
 
 vi.mock('@wailsio/runtime', () => ({
   Events: {
@@ -640,6 +694,74 @@ describe('global hotkey dispatch table (golden master)', () => {
     click('vsc-report-idle')
     document.querySelector<HTMLElement>('[aria-label="Close tab"]')!.click()
     await waitFor(() => expect(bindings.SetOpenTabs).toHaveBeenCalled())
+  })
+
+  // #1005: plugin-driven view switches (window 'switch-view' /
+  // 'navigate-to-tag' events) call the setActiveView dep directly, bypassing
+  // selectView's gate — both must respect the notes-region busy window.
+  it('gates plugin switch-view and navigate-to-tag while a tab is conflict-busy', async () => {
+    bindings.IsVaultInitialized.mockResolvedValue(true)
+    await mountWithTabs()
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="vsc-stub"]')).toBeTruthy()
+    )
+    const click = (id: string) =>
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.click()
+    const notesPressed = () =>
+      document
+        .querySelector('[aria-label="Notes"]')
+        ?.getAttribute('aria-pressed')
+
+    click('vsc-report-busy')
+    window.dispatchEvent(new CustomEvent('switch-view', { detail: 'tags' }))
+    await new Promise((r) => setTimeout(r, 100))
+    expect(notesPressed()).toBe('true')
+    window.dispatchEvent(
+      new CustomEvent('navigate-to-tag', { detail: 'Area/Tag' })
+    )
+    await new Promise((r) => setTimeout(r, 100))
+    expect(notesPressed()).toBe('true')
+
+    // Settled: the same plugin event may leave the notes region again.
+    click('vsc-report-idle')
+    window.dispatchEvent(new CustomEvent('switch-view', { detail: 'tags' }))
+    await new Promise((r) => setTimeout(r, 100))
+    expect(notesPressed()).toBe('false')
+  })
+
+  // #1005: the type pill's always-visible "View all" caret jumps to the
+  // dashboard branch, unmounting every editor surface — gated during the
+  // busy window like the rest of the region exits.
+  it("gates the type pill's View all while a tab is conflict-busy", async () => {
+    bindings.IsVaultInitialized.mockResolvedValue(true)
+    await mountWithTabs()
+    const viewAll = await waitFor(() => {
+      const btn = document.querySelector<HTMLElement>(
+        '[aria-label="View all Book"]'
+      )
+      expect(btn).toBeTruthy()
+      return btn!
+    })
+    const click = (id: string) =>
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.click()
+
+    // Busy: the notes region (and its surfaces) must survive the click.
+    click('vsc-report-busy')
+    viewAll.click()
+    await new Promise((r) => setTimeout(r, 100))
+    expect(document.querySelector('[data-testid="vsc-stub"]')).toBeTruthy()
+    expect(
+      document
+        .querySelector('[aria-label="Notes"]')
+        ?.getAttribute('aria-pressed')
+    ).toBe('true')
+
+    // Settled: the dashboard opens and unmounts the notes region.
+    click('vsc-report-idle')
+    viewAll.click()
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="vsc-stub"]')).toBeNull()
+    )
   })
 
   // --- format_bold (App-level applyFormatBold closure wiring) ---
