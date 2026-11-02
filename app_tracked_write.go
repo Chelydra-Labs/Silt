@@ -37,10 +37,14 @@ func (a *App) trackedPageWrite(filePath string, content []byte) error {
 // page later created at the old path inherits a foreign conflict (#1005).
 // The baseline is not migrated: it snapshots the bytes an editor buffer held
 // for the OLD path; the renamed page's next editor load recaptures fresh.
-// A stash or baseline keyed at the NEW path is dropped when the stash moves
-// in: rename refuses an existing target page, so any target-keyed stash
-// belongs to a page that no longer exists and replaying it would plant a
-// foreign document. The target baseline is deliberately left alone — an
+// A stash or baseline keyed at the NEW path is dropped: rename refuses an
+// existing target page, so a target-keyed stash can only be foreign — either
+// a leftover from a page that no longer exists at that path (replaying it
+// would plant a foreign document), or, in the round-trip case, the same
+// page's own stash, which the moved-in stash replaces anyway. This includes
+// the target-only case (no stash at the OLD path): an orphaned target stash
+// used to survive and phantom-refuse the renamed page with a foreign
+// conflict banner. The target baseline is deliberately left alone — an
 // editor still holding a deleted target document must refuse (via stat/hash
 // drift) rather than clobber the renamed page.
 func (a *App) migrateConflictStateAcrossRename(oldPath, newPath string) {
@@ -50,9 +54,9 @@ func (a *App) migrateConflictStateAcrossRename(oldPath, newPath string) {
 	oldKey := core.NormalizeFileLockPath(oldPath)
 	newKey := core.NormalizeFileLockPath(newPath)
 	a.refusedWritesMu.Lock()
+	delete(a.refusedWrites, newKey)
 	if rw, ok := a.refusedWrites[oldKey]; ok {
 		delete(a.refusedWrites, oldKey)
-		delete(a.refusedWrites, newKey)
 		if a.refusedWrites == nil {
 			a.refusedWrites = make(map[string]refusedPageWrite)
 		}

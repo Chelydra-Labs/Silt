@@ -62,6 +62,16 @@ func (a *App) FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBl
 	return a.fetchPageBlocks(notebook, section, page, captureEditorLoad)
 }
 
+// FetchPageBlocksProgrammatic is the non-capturing FetchPageBlocks for in-app
+// NON-editor readers (global replace's apply loop, template seeding): the
+// caller adopts no buffer it can later save, so the fetch must not move the
+// editor's external-edit baseline — re-baselining here would disarm the gate
+// behind the editor's back and let its next autosave silently clobber the
+// external bytes (#1005; see pageLoadCapture).
+func (a *App) FetchPageBlocksProgrammatic(notebook, section, page string) ([]parser.ParsedBlock, error) {
+	return a.fetchPageBlocks(notebook, section, page, captureNone)
+}
+
 func (a *App) fetchPageBlocks(notebook, section, page string, capture pageLoadCapture) ([]parser.ParsedBlock, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -86,7 +96,14 @@ func (a *App) fetchPageBlocks(notebook, section, page string, capture pageLoadCa
 	// clobber an external edit (#1005). Editor-facing loads only (see
 	// pageLoadCapture); best-effort by design (see
 	// capturePageLoadFingerprint); the DB read stays the load's source of
-	// truth.
+	// truth. Known window: the buffer adopts DB blocks while the baseline
+	// anchors CURRENT disk, so an external edit the watcher has not
+	// re-indexed yet leaves the editor holding pre-external blocks with a
+	// baseline equal to the external bytes — the first save then passes and
+	// reverts block-level external changes (body-only external edits still
+	// survive via writePageFileLocked's in-lock re-anchor). Closing the
+	// window needs a disk-read load path or hash-comparing capture; the
+	// watcher debounce keeps it to seconds.
 	if capture == captureEditorLoad {
 		a.capturePageFingerprintByLocator(source, notebook, section, page)
 	}
@@ -703,14 +720,13 @@ const (
 	// set_blocks) — refuse when disk drifted from the load baseline, and
 	// when a refused-write stash is pending.
 	gateLoadBaseline externalEditGateMode = iota
-	// gateStashOnly: read-modify-write saves whose block list was fetched
-	// from CURRENT disk immediately before the save (plugin block ops).
-	// The base is current disk, not a load-time snapshot, so the baseline
-	// half does not apply — the fetch adopted whatever an external writer
-	// left, and writePageFileLocked re-anchors on disk inside the lock.
-	// The pending-stash refusal still applies; its refusals do not stash
-	// (a plugin payload must not evict the user's refused editor buffer,
-	// the stash's possible only copy outside the backend).
+	// gateStashOnly: read-modify-write saves whose block base is
+	// reconstructed from CURRENT disk bytes inside the file lock (plugin
+	// block ops, via rebaseOnDisk). There is no load-time snapshot to
+	// compare against, so the baseline half does not apply — only the
+	// pending-stash refusal does. Refusals here never stash: a plugin
+	// payload must not evict the user's refused editor buffer (the stash's
+	// possible only copy outside the backend).
 	gateStashOnly
 )
 
@@ -719,19 +735,35 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 }
 
 func (a *App) saveFileBlocksWithSource(notebook, section, page string, blocks []parser.ParsedBlock, reason string) error {
-	return a.saveFileBlocksWithGate(notebook, section, page, blocks, reason, gateLoadBaseline, funnelEditorBlocks)
+	return a.saveFileBlocksWithGate(notebook, section, page, blocks, reason, gateLoadBaseline, funnelEditorBlocks, nil)
 }
 
 // saveFileBlocksProgrammatic is the whole-page blocks save for non-editor
-// callers (MCP update_blocks): the load-baseline gate still applies (the
-// payload renders a caller-held buffer over the loaded base), but a refusal
-// stashes with the programmatic funnel so it can never evict an editor-owned
-// stash (see refusedWriteFunnel).
+// callers (MCP update_blocks, in-app batch surfaces like global replace):
+// the load-baseline gate still applies (the payload renders a caller-held
+// buffer over the loaded base), but a refusal stashes with the programmatic
+// funnel so it can never evict an editor-owned stash (see refusedWriteFunnel).
 func (a *App) saveFileBlocksProgrammatic(notebook, section, page string, blocks []parser.ParsedBlock, reason string) error {
-	return a.saveFileBlocksWithGate(notebook, section, page, blocks, reason, gateLoadBaseline, funnelProgrammatic)
+	return a.saveFileBlocksWithGate(notebook, section, page, blocks, reason, gateLoadBaseline, funnelProgrammatic, nil)
 }
 
-func (a *App) saveFileBlocksWithGate(notebook, section, page string, blocks []parser.ParsedBlock, reason string, gate externalEditGateMode, funnel refusedWriteFunnel) error {
+// SaveFileBlocksProgrammatic is the whole-page blocks save for in-app batch
+// surfaces (global replace apply/undo). Gating matches SaveFileBlocks, but a
+// refusal is stashed under the programmatic funnel: the modal's rendered page
+// is re-derivable from its own state, while a live editor stash may be the
+// user's only surviving copy — a batch refusal must refuse without evicting
+// or replacing it (#1005).
+func (a *App) SaveFileBlocksProgrammatic(notebook, section, page string, blocks []parser.ParsedBlock) error {
+	return a.saveFileBlocksProgrammatic(notebook, section, page, blocks, historyReasonEditor)
+}
+
+// saveFileBlocksWithGate is the shared whole-page blocks save. rebaseOnDisk
+// (plugin block ops only) re-derives the rendered block list from CURRENT
+// disk bytes inside the file lock — the DB-derived `blocks` argument then
+// serves only lock/validation input, and pre-edit DB rows can never render
+// over an external edit the watcher has not re-indexed (#1005). It must not
+// touch the DB or take locks: it runs under LockFileWrite.
+func (a *App) saveFileBlocksWithGate(notebook, section, page string, blocks []parser.ParsedBlock, reason string, gate externalEditGateMode, funnel refusedWriteFunnel, rebaseOnDisk func([]parser.ParsedBlock) []parser.ParsedBlock) error {
 	if err := validateTaskBlockPriorities(blocks); err != nil {
 		return err
 	}
@@ -808,13 +840,17 @@ func (a *App) saveFileBlocksWithGate(notebook, section, page string, blocks []pa
 				return
 			}
 			// Whole-page save funnel: refuse to clobber an external edit
-			// (#1005). gateLoadBaseline (editor/MCP renders) also compares
-			// the load baseline; the stash half runs in both modes. Stash
-			// the refused payload so the resolution IPC can replay it after
-			// preserving the on-disk version — except in gateStashOnly,
+			// (#1005). gateLoadBaseline (editor/MCP/batch renders) also
+			// compares the load baseline; the stash half runs in both modes.
+			// Stash the refused payload so the resolution IPC can replay it
+			// after preserving the on-disk version — except in gateStashOnly,
 			// where a plugin payload must not evict the user's stashed
-			// editor buffer. The funnel tags the stash so a programmatic
-			// (MCP) refusal can never displace an editor-owned one.
+			// editor buffer, and except when the refusal fired because the
+			// file's state could not be verified (stat/read failure): an
+			// unverifiable conflict must not mint a stash that outlives a
+			// transient error and forces manual resolution. The funnel tags
+			// the stash so a programmatic (MCP/batch) refusal can never
+			// displace an editor-owned one.
 			var gateErr error
 			if gate == gateLoadBaseline {
 				gateErr = a.checkExternalEditConflict(filePath)
@@ -822,7 +858,9 @@ func (a *App) saveFileBlocksWithGate(notebook, section, page string, blocks []pa
 				gateErr = a.externalEditStashRefusalKey(core.NormalizeFileLockPath(filePath), filePath)
 			}
 			if gateErr != nil {
-				if isExternalEditConflict(gateErr) && gate == gateLoadBaseline {
+				if isExternalEditConflict(gateErr) &&
+					!errors.Is(gateErr, errExternalEditUnverified) &&
+					gate == gateLoadBaseline {
 					a.storeRefusedWrite(core.NormalizeFileLockPath(filePath), refusedPageWrite{
 						source:   source,
 						notebook: safeNotebook,
@@ -835,6 +873,28 @@ func (a *App) saveFileBlocksWithGate(notebook, section, page string, blocks []pa
 				}
 				writeErr = gateErr
 				return
+			}
+			// Plugin block-op saves anchor their base on CURRENT disk
+			// bytes: re-read + re-parse inside the lock, then re-apply the
+			// caller's ops so the rendered list reflects external edits the
+			// watcher has not re-indexed (mirroring
+			// removeBlockFromSourcePage).
+			if rebaseOnDisk != nil {
+				contentBytes, err := os.ReadFile(filePath)
+				if err != nil {
+					writeErr = fmt.Errorf("rebase on disk: read page: %w", err)
+					return
+				}
+				diskBlocks, _, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileOrDefaultDate(filePath), a.spacesPerTab)
+				if parseErr != nil {
+					writeErr = fmt.Errorf("rebase on disk: parse page: %w", parseErr)
+					return
+				}
+				blocks = rebaseOnDisk(diskBlocks)
+				if err := validateTaskBlockPriorities(blocks); err != nil {
+					writeErr = err
+					return
+				}
 			}
 			writeErr = a.writePageFileLocked(filePath, source, safeNotebook, safeSection, safePage, blocks, reason)
 		})
@@ -874,6 +934,13 @@ func (a *App) saveFileBlocksWithGate(notebook, section, page string, blocks []pa
 // captureNone.
 func (a *App) FetchPageMarkdown(notebook, section, page string) (string, error) {
 	return a.fetchPageMarkdown(notebook, section, page, captureEditorLoad)
+}
+
+// FetchPageMarkdownProgrammatic is the non-capturing FetchPageMarkdown for
+// in-app NON-editor readers (template seeding, history compare): same
+// non-re-baselining contract as FetchPageBlocksProgrammatic (#1005).
+func (a *App) FetchPageMarkdownProgrammatic(notebook, section, page string) (string, error) {
+	return a.fetchPageMarkdown(notebook, section, page, captureNone)
 }
 
 func (a *App) fetchPageMarkdown(notebook, section, page string, capture pageLoadCapture) (string, error) {

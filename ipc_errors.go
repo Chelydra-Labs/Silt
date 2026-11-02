@@ -43,12 +43,24 @@ func externalEditConflictError(filePath string) *IPCError {
 
 // errExternalEditConflictWrap refuses the save when the file's current state
 // cannot be established (stat/read failure). Fail closed: an unverifiable
-// baseline must not degrade into a blind overwrite.
+// baseline must not degrade into a blind overwrite. The extra
+// errExternalEditUnverified sentinel marks this refusal as unverified so the
+// stash policy can treat it differently from a verified hash mismatch: an
+// unverifiable conflict must not mint a stash (#1005).
 func errExternalEditConflictWrap(err error) error {
 	return wrapSentinelAsIPCError(CodeExternalEditConflict,
 		fmt.Sprintf("could not verify this page is unchanged since it was opened: %v", err),
-		errExternalEditConflict)
+		errors.Join(errExternalEditConflict, errExternalEditUnverified))
 }
+
+// errExternalEditUnverified is the marker sentinel wrapped by
+// errExternalEditConflictWrap (alongside errExternalEditConflict): the refusal
+// fired because the file's state could not be established, not because a
+// hash mismatch proved an external version exists. Stashing on such a
+// refusal would let a transient stat/read error (EACCES, EIO, a briefly
+// disconnected SMB/NFS mount) mint a sticky, manually-resolvable stash that
+// outlives the error — refusing alone lets the next save self-heal.
+var errExternalEditUnverified = fmt.Errorf("page state could not be verified")
 
 // IPCErrorCode is the stable, serialized error code crossing the Wails
 // boundary. Add new constants here as user-facing sentinels migrate (#478

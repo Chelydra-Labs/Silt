@@ -9,6 +9,7 @@ package main
 // editor-owned stash.
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -546,5 +547,203 @@ func TestMigrateConflictStateAcrossRename_TargetStashIsDropped(t *testing.T) {
 	got, ok := app.popRefusedWrite(newKey)
 	if !ok || got.page != "Old" {
 		t.Fatalf("new path must hold the MIGRATED stash, got %+v ok=%v", got, ok)
+	}
+}
+
+// TestProgrammaticFetchDoesNotRebaselineEditorGate pins the frontend capture
+// contract from the batch side (#1005): global replace / template seeding
+// fetch pages through the non-capturing variant, so a page drifted under a
+// clean editor keeps refusing the editor's saves. The editor-facing fetch is
+// asserted to re-baseline (documents exactly what the non-capturing variant
+// must never do — the silent disarm the modal used to perform).
+func TestProgrammaticFetchDoesNotRebaselineEditorGate(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section := "CapNB", ""
+	page := "CapPage"
+	blockID := famID(25, 1)
+	blocks := seedWriterFamilyPage(t, app, notebook, section, page, blockID,
+		"- [ ] original task <!-- id: "+blockID+" -->\n")
+
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks (editor load): %v", err)
+	}
+	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	external := "---\nnotebook: \"CapNB\"\npage: \"CapPage\"\ntags: []\n---\nexternal bytes\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+
+	// Contrast first: the editor-facing fetch DOES re-baseline (that is the
+	// disarm — asserted so a regression of the non-capturing routing shows
+	// up as this branch passing where the fix branch fails).
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks (editor re-load): %v", err)
+	}
+	if err := app.SaveFileBlocks(notebook, section, page,
+		editBlocks(blocks, blockID, "post-rebaseline clobber")); err != nil {
+		t.Fatalf("editor-facing re-baseline disarmed the gate — save should pass (contrast arm): %v", err)
+	}
+	// Restore the external bytes and re-arm the baseline honestly.
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks (post-contrast load): %v", err)
+	}
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external rewrite: %v", err)
+	}
+
+	// The fix arm: the programmatic fetch must NOT move the baseline, so
+	// the editor's next save still refuses.
+	if _, err := app.FetchPageBlocksProgrammatic(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocksProgrammatic: %v", err)
+	}
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page,
+		editBlocks(blocks, blockID, "editor edit after programmatic fetch")))
+	got, _ := os.ReadFile(filePath)
+	if string(got) != external {
+		t.Fatalf("refused editor save must leave the external bytes untouched:\n got: %q\nwant: %q", string(got), external)
+	}
+}
+
+// TestGlobalReplaceProgrammaticFunnel_NeverEvictsEditorStash pins the batch
+// save funnel (#1005): global replace's SaveFileBlocksProgrammatic refusal
+// while an editor-owned stash is live must refuse WITHOUT replacing the
+// stash — the editor buffer may be the user's only surviving copy, while the
+// modal's rendered page is re-derivable from its own state.
+func TestGlobalReplaceProgrammaticFunnel_NeverEvictsEditorStash(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section := "GrNB", ""
+	page := "GrPage"
+	blockID := famID(26, 1)
+	blocks := seedWriterFamilyPage(t, app, notebook, section, page, blockID,
+		"- [ ] original task <!-- id: "+blockID+" -->\n")
+
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	external := "---\nnotebook: \"GrNB\"\npage: \"GrPage\"\ntags: []\n---\nexternal bytes\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	// The editor's refused save — the stash holding the user's typed text.
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page,
+		editBlocks(blocks, blockID, "my only typed copy")))
+
+	// Global replace's batch save against the same page: refused, and the
+	// refusal must not have replaced the editor's stash.
+	requireConflict(t, app.SaveFileBlocksProgrammatic(notebook, section, page,
+		editBlocks(blocks, blockID, "replace-rendered buffer")))
+
+	// keep_mine must replay the EDITOR's buffer, not the modal's.
+	if _, err := app.ResolveExternalConflict(notebook, section, page, "keep_mine"); err != nil {
+		t.Fatalf("ResolveExternalConflict: %v", err)
+	}
+	got, _ := os.ReadFile(filePath)
+	if !strings.Contains(string(got), "my only typed copy") {
+		t.Fatalf("keep_mine must replay the editor's stashed buffer, got %q", string(got))
+	}
+	if strings.Contains(string(got), "replace-rendered buffer") {
+		t.Fatalf("the modal's payload displaced the editor stash, got %q", string(got))
+	}
+}
+
+// TestPluginBlockOp_TargetSaveAnchorsOnDiskBytes pins the target-page half of
+// a plugin block op (the source half is
+// TestPluginCrossPageMove_SourceRewriteAnchorsOnDiskBytes): an external edit
+// the watcher has not re-indexed must survive the op's whole-page render —
+// the block base is reconstructed from CURRENT disk bytes inside the file
+// lock, never from the DB snapshot.
+func TestPluginBlockOp_TargetSaveAnchorsOnDiskBytes(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section := "TgtAnchorNB", ""
+	page := "TgtAnchor"
+	blockID := famID(27, 1)
+
+	body := "- [ ] indexed task <!-- id: " + blockID + " -->\n"
+	seedWriterFamilyPage(t, app, notebook, section, page, blockID, body)
+
+	// External edit the DB has never indexed: a new managed task text plus
+	// an unmanaged prose line.
+	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	external := "---\nnotebook: \"TgtAnchorNB\"\npage: \"TgtAnchor\"\ntags: []\n---\nexternal prose line\n- [ ] externally edited task <!-- id: " + blockID + " -->\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+
+	if err := app.applyBlocksOps([]PluginCreateBlockOp{{
+		Kind:     "create",
+		Type:     "task",
+		Text:     "plugin-created task",
+		Notebook: notebook, Section: section, Page: page,
+	}}, historyReasonPlugin); err != nil {
+		t.Fatalf("applyBlocksOps: %v", err)
+	}
+
+	got, _ := os.ReadFile(filePath)
+	gotStr := string(got)
+	if !strings.Contains(gotStr, "externally edited task") {
+		t.Fatalf("plugin block-op target save reverted an externally edited managed block, got %q", gotStr)
+	}
+	if !strings.Contains(gotStr, "external prose line") {
+		t.Fatalf("plugin block-op target save reverted external unmanaged content, got %q", gotStr)
+	}
+	if !strings.Contains(gotStr, "plugin-created task") {
+		t.Fatalf("plugin-created block missing after op, got %q", gotStr)
+	}
+}
+
+// TestMigrateConflictStateAcrossRename_OrphanedTargetStashIsDropped: with NO
+// stash at the old path, a stash keyed at the rename TARGET still belongs to
+// a vanished page and must be dropped — it used to survive nested inside the
+// old-path branch and phantom-refuse the renamed page.
+func TestMigrateConflictStateAcrossRename_OrphanedTargetStashIsDropped(t *testing.T) {
+	app := newTestApp(t)
+	oldPath := filepath.Join(app.vaultPath, "TgtOnlyNB", "Old.md")
+	newPath := filepath.Join(app.vaultPath, "TgtOnlyNB", "New.md")
+	newKey := core.NormalizeFileLockPath(newPath)
+	app.storeRefusedWrite(newKey, refusedPageWrite{notebook: "TgtOnlyNB", page: "Vanished", funnel: funnelEditorBlocks})
+
+	app.migrateConflictStateAcrossRename(oldPath, newPath)
+
+	if _, ok := app.popRefusedWrite(newKey); ok {
+		t.Fatal("orphaned target-keyed stash must be dropped by the rename migration")
+	}
+}
+
+// TestUnverifiedConflictRefusal_DoesNotStash: a refusal that fired because
+// the file's state could not be verified (stat ok / read failure — here a
+// directory squatting on the page path) must not mint a refused-write stash:
+// a transient error would otherwise phantom-hold the page behind a manual
+// resolution that outlives the error (#1005).
+func TestUnverifiedConflictRefusal_DoesNotStash(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section := "UnverifiedNB", ""
+	page := "UnverifiedPage"
+	blockID := famID(28, 1)
+	blocks := seedWriterFamilyPage(t, app, notebook, section, page, blockID,
+		"- [ ] original task <!-- id: "+blockID+" -->\n")
+
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	// Replace the page file with a directory: os.Stat succeeds (so the save
+	// passes its page_moved guard) but the size drifts from the baseline
+	// and os.ReadFile fails with EISDIR — a deterministic stat-ok/read-fail.
+	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	if err := os.Remove(filePath); err != nil {
+		t.Fatalf("remove page file: %v", err)
+	}
+	if err := os.Mkdir(filePath, 0o755); err != nil {
+		t.Fatalf("mkdir over page path: %v", err)
+	}
+
+	err := app.SaveFileBlocks(notebook, section, page,
+		editBlocks(blocks, blockID, "edit under unreadable state"))
+	requireConflict(t, err)
+	if !errors.Is(err, errExternalEditUnverified) {
+		t.Fatalf("read-failure refusal must carry the unverified marker, got %v", err)
+	}
+	if app.refusedWritePending(core.NormalizeFileLockPath(filePath)) {
+		t.Fatal("an unverifiable conflict must not mint a refused-write stash")
 	}
 }

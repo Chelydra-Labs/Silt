@@ -145,8 +145,10 @@ func (a *App) PluginApplyBlocks(pluginID, sessionToken string, ops []PluginCreat
 }
 
 // applyBlocksOps is the shared engine for create/delete/move (single + bulk).
-// It groups ops by target page, fetches each page's blocks once, mutates the
-// slice, and writes each affected page exactly once through SaveFileBlocks.
+// It groups ops by target page and writes each affected page exactly once.
+// The rendered base is reconstructed from CURRENT disk bytes inside the file
+// lock (see saveFileBlocksWithGate's rebaseOnDisk) — the DB snapshot is only
+// the lock/validation input, never the rendered content.
 func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 	if reason == "" {
 		reason = historyReasonPlugin
@@ -289,57 +291,86 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 		if err != nil {
 			return fmt.Errorf("fetch page %s/%s/%s: %w", first.notebook, first.section, first.page, err)
 		}
-		mutated := blocks
-		var createdIDs []string
+		// Pre-resolve cross-page move payloads (the moved block's content
+		// from its source page) BEFORE the save takes coordinator locks: the
+		// ops re-apply inside LockFileWrite for the disk rebase, and a DB
+		// fetch under those locks would invert the vaultMu→coordinator lock
+		// order every other save path observes.
+		movePayloads := map[string]parser.ParsedBlock{}
 		for _, r := range pageOps {
-			switch r.op.Kind {
-			case "create":
-				nb := parser.ParsedBlock{
-					ID:        r.newID,
-					Type:      r.blockType,
-					CleanText: r.text,
-					FileDate:  time.Now().Format("2006-01-02"),
-				}
-				if r.blockType == parser.BlockTask {
-					// Default TODO so GFM checkbox renders; callers that need
-					// DOING/DONE use UpdateBlockState after mint.
-					nb.Status = "TODO"
-					nb.Priority = parser.DefaultTaskPriority
-				}
-				mutated = insertAfter(mutated, r.op.AfterID, nb)
-				createdIDs = append(createdIDs, r.newID)
-			case "delete":
-				mutated = removeByID(mutated, r.op.BlockID)
-			case "move":
-				// Same-page move: the block is already in `mutated`, just reorder.
-				// Cross-page move: the block lives in the SOURCE page, not in
-				// `mutated` (the target page). Fetch it from source and insert.
-				isCrossPage := r.origNotebook != "" &&
-					(r.origNotebook != r.notebook ||
-						r.origSection != r.section ||
-						r.origPage != r.page)
-				if isCrossPage {
-					srcBlocks, srcErr := a.fetchPageBlocks(r.origNotebook, r.origSection, r.origPage, captureNone)
-					if srcErr != nil {
-						return fmt.Errorf("cross-page move: fetch source page for block %s: %w", r.op.BlockID, srcErr)
-					}
-					found := false
-					for _, b := range srcBlocks {
-						if b.ID == r.op.BlockID {
-							mutated = insertAfter(mutated, r.op.AfterID, b)
-							found = true
-							break
-						}
-					}
-					if !found {
-						return fmt.Errorf("cross-page move: block %s not found in source page %s/%s/%s", r.op.BlockID, r.origNotebook, r.origSection, r.origPage)
-					}
-				} else if r.op.AfterID != "" || r.op.BlockID != "" {
-					mutated = moveWithin(mutated, r.op.BlockID, r.op.AfterID)
+			if r.op.Kind != "move" {
+				continue
+			}
+			isCrossPage := r.origNotebook != "" &&
+				(r.origNotebook != r.notebook ||
+					r.origSection != r.section ||
+					r.origPage != r.page)
+			if !isCrossPage {
+				continue
+			}
+			srcBlocks, srcErr := a.fetchPageBlocks(r.origNotebook, r.origSection, r.origPage, captureNone)
+			if srcErr != nil {
+				return fmt.Errorf("cross-page move: fetch source page for block %s: %w", r.op.BlockID, srcErr)
+			}
+			found := false
+			for _, b := range srcBlocks {
+				if b.ID == r.op.BlockID {
+					movePayloads[r.op.BlockID] = b
+					found = true
+					break
 				}
 			}
+			if !found {
+				return fmt.Errorf("cross-page move: block %s not found in source page %s/%s/%s", r.op.BlockID, r.origNotebook, r.origSection, r.origPage)
+			}
 		}
-		if err := a.saveFileBlocksWithGate(first.notebook, first.section, first.page, mutated, reason, gateStashOnly, funnelProgrammatic); err != nil {
+		var createdIDs []string
+		// applyPageOps re-applies the page's ops to a block base: once to
+		// the DB snapshot (lock/validation input for the save) and again,
+		// inside LockFileWrite, to the CURRENT disk bytes — the base that
+		// renders is always disk, so stale DB rows can never revert an
+		// external edit the watcher has not re-indexed (#1005).
+		applyPageOps := func(base []parser.ParsedBlock) []parser.ParsedBlock {
+			mutated := base
+			for _, r := range pageOps {
+				switch r.op.Kind {
+				case "create":
+					nb := parser.ParsedBlock{
+						ID:        r.newID,
+						Type:      r.blockType,
+						CleanText: r.text,
+						FileDate:  time.Now().Format("2006-01-02"),
+					}
+					if r.blockType == parser.BlockTask {
+						// Default TODO so GFM checkbox renders; callers that need
+						// DOING/DONE use UpdateBlockState after mint.
+						nb.Status = "TODO"
+						nb.Priority = parser.DefaultTaskPriority
+					}
+					mutated = insertAfter(mutated, r.op.AfterID, nb)
+					createdIDs = append(createdIDs, r.newID)
+				case "delete":
+					mutated = removeByID(mutated, r.op.BlockID)
+				case "move":
+					// Same-page move: the block is already in `mutated`, just reorder.
+					// Cross-page move: the block lives in the SOURCE page, not in
+					// `mutated` (the target page); insert the pre-fetched payload.
+					isCrossPage := r.origNotebook != "" &&
+						(r.origNotebook != r.notebook ||
+							r.origSection != r.section ||
+							r.origPage != r.page)
+					if isCrossPage {
+						if b, ok := movePayloads[r.op.BlockID]; ok {
+							mutated = insertAfter(mutated, r.op.AfterID, b)
+						}
+					} else if r.op.AfterID != "" || r.op.BlockID != "" {
+						mutated = moveWithin(mutated, r.op.BlockID, r.op.AfterID)
+					}
+				}
+			}
+			return mutated
+		}
+		if err := a.saveFileBlocksWithGate(first.notebook, first.section, first.page, applyPageOps(blocks), reason, gateStashOnly, funnelProgrammatic, applyPageOps); err != nil {
 			return fmt.Errorf("save page %s/%s/%s: %w", first.notebook, first.section, first.page, err)
 		}
 		// For cross-page moves, remove the block from its source page.

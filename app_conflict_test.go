@@ -1227,7 +1227,7 @@ func TestExternalEdit_PluginRMWSaveRefusesWhileStashPending(t *testing.T) {
 	// The plugin RMW funnel (gateStashOnly): refused while the stash is
 	// live, without replacing it.
 	requireConflict(t, app.saveFileBlocksWithGate(notebook, section, page,
-		editBlocks(blocks, blockID, "plugin mutation"), historyReasonPlugin, gateStashOnly, funnelProgrammatic))
+		editBlocks(blocks, blockID, "plugin mutation"), historyReasonPlugin, gateStashOnly, funnelProgrammatic, nil))
 
 	// keep_mine still replays the EDITOR's refused buffer — the plugin
 	// payload never evicted it.

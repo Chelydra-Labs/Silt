@@ -209,8 +209,16 @@
         "signature": "FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBlock, error)"
       },
       {
+        "name": "FetchPageBlocksProgrammatic",
+        "signature": "FetchPageBlocksProgrammatic(notebook, section, page string) ([]parser.ParsedBlock, error)"
+      },
+      {
         "name": "FetchPageMarkdown",
         "signature": "FetchPageMarkdown(notebook, section, page string) (string, error)"
+      },
+      {
+        "name": "FetchPageMarkdownProgrammatic",
+        "signature": "FetchPageMarkdownProgrammatic(notebook, section, page string) (string, error)"
       },
       {
         "name": "FetchSubtree",
@@ -927,6 +935,10 @@
       {
         "name": "SaveFileBlocks",
         "signature": "SaveFileBlocks(notebook, section, page string, blocks []parser.ParsedBlock) error"
+      },
+      {
+        "name": "SaveFileBlocksProgrammatic",
+        "signature": "SaveFileBlocksProgrammatic(notebook, section, page string, blocks []parser.ParsedBlock) error"
       },
       {
         "name": "SavePageMarkdown",
