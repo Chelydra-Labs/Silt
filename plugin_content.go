@@ -499,16 +499,20 @@ type crossPageMovePayload struct {
 
 // crossPageMoveBasisDrifted reports whether the same block parsed from two
 // reads of the source file differs in any content-bearing field. RawText,
-// LineNumber and FileDate are excluded: Silt's own rewrites re-normalize the
-// id comment (`<!-- id: … @ date -->`) and can shift line numbers (a
-// concurrent tracked rewrite removing ANOTHER block does both, and that edit
-// survives the disk-anchored rewrite), and the file-date day can roll between
-// the reads. Everything the transplant carries — body text and every metadata
-// token — is still compared, so an external edit to the moved block itself
-// cannot slip through.
+// LineNumber, FileDate and ParentID are excluded: Silt's own rewrites
+// re-normalize the id comment (`<!-- id: … @ date -->`) and can shift line
+// numbers (a concurrent tracked rewrite removing ANOTHER block does both, and
+// that edit survives the disk-anchored rewrite), the file-date day can roll
+// between the reads, and ParentID — like LineNumber — is position-derived at
+// parse time from the preceding-ID stack and never serialized: a same-batch
+// move of a parent rewrites the source BEFORE the nested child's removal
+// re-reads it, so the child deterministically re-parses with ParentID="" while
+// its transplanted content is identical. Everything the transplant carries —
+// body text and every metadata token — is still compared, so an external edit
+// to the moved block itself cannot slip through.
 func crossPageMoveBasisDrifted(basis, current parser.ParsedBlock) bool {
-	basis.RawText, basis.LineNumber, basis.FileDate = "", 0, ""
-	current.RawText, current.LineNumber, current.FileDate = "", 0, ""
+	basis.RawText, basis.LineNumber, basis.FileDate, basis.ParentID = "", 0, "", ""
+	current.RawText, current.LineNumber, current.FileDate, current.ParentID = "", 0, "", ""
 	return !reflect.DeepEqual(basis, current)
 }
 

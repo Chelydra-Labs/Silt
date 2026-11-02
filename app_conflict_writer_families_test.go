@@ -461,6 +461,52 @@ func TestPluginCrossPageMove_DriftBetweenPayloadAndRemovalFailsLoud(t *testing.T
 	}
 }
 
+// TestPluginCrossPageMove_NestedParentChildBatch pins the drift gate against
+// position-derived fields: one batch moving a parent AND its nested child
+// (depth ≥ 1) cross-page. The parent's in-lock source removal rewrites the
+// source file before the child's removal re-reads it, so the child re-parses
+// without its parent above — any comparison that includes the parse-derived
+// ParentID false-refuses a content-identical re-read AFTER the target half
+// committed. Both op orders are covered: same-kind ops keep caller order
+// (sort.SliceStable), so parent-first rewrites the source before the child's
+// gate, while child-first sees the parent still present.
+func TestPluginCrossPageMove_NestedParentChildBatch(t *testing.T) {
+	for _, order := range []string{"parent-first", "child-first"} {
+		t.Run(order, func(t *testing.T) {
+			app := newTestApp(t)
+			notebook, section := "XMoveNB6", ""
+			srcPage, dstPage := "XSrc6", "XDst6"
+			parentID := famID(34, 1)
+			childID := famID(34, 2)
+
+			srcBody := "- [ ] parent task <!-- id: " + parentID + " -->\n" +
+				"    - [ ] nested child <!-- id: " + childID + " -->\n"
+			seedWriterFamilyPage(t, app, notebook, section, srcPage, parentID, srcBody)
+			seedWriterFamilyPage(t, app, notebook, section, dstPage, famID(34, 3), "")
+
+			ops := []PluginCreateBlockOp{
+				{Kind: "move", BlockID: parentID, Notebook: notebook, Section: section, Page: dstPage},
+				{Kind: "move", BlockID: childID, Notebook: notebook, Section: section, Page: dstPage},
+			}
+			if order == "child-first" {
+				ops[0], ops[1] = ops[1], ops[0]
+			}
+			if err := app.applyBlocksOps(ops, historyReasonPlugin); err != nil {
+				t.Fatalf("%s: nested parent+child cross-page move must succeed on a content-identical re-read, got: %v", order, err)
+			}
+
+			srcGot, _ := os.ReadFile(filepath.Join(app.vaultPath, notebook, section, srcPage+".md"))
+			if strings.Contains(string(srcGot), "parent task") || strings.Contains(string(srcGot), "nested child") {
+				t.Fatalf("%s: moved pair still present on source, got %q", order, string(srcGot))
+			}
+			dstGot, _ := os.ReadFile(filepath.Join(app.vaultPath, notebook, section, dstPage+".md"))
+			if !strings.Contains(string(dstGot), "parent task") || !strings.Contains(string(dstGot), "nested child") {
+				t.Fatalf("%s: moved pair missing on target, got %q", order, string(dstGot))
+			}
+		})
+	}
+}
+
 // TestRenamePage_MigratesPendingStash: a refused-write stash must follow the
 // page across a rename — resolution stays reachable at the new name, the old
 // name inherits nothing.
