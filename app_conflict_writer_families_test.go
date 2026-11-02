@@ -451,13 +451,102 @@ func TestPluginCrossPageMove_DriftBetweenPayloadAndRemovalFailsLoud(t *testing.T
 	if !strings.Contains(err.Error(), "changed on disk") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if !strings.Contains(err.Error(), "rolled back") {
+		t.Fatalf("post-target-commit refusal must report the rolled-back target half: %v", err)
+	}
 
 	// The gate fires before the rewrite, so the external edit survives on
-	// the source page; the target keeps the pre-edit duplicate — a
-	// recoverable outcome, never a silent loss.
+	// the source page; the reconciliation rolled the target half back, so
+	// the transplanted pre-edit copy is gone — a retry starts clean (#1005).
 	srcGot, _ := os.ReadFile(srcPath)
 	if !strings.Contains(string(srcGot), "externally edited during the move") {
 		t.Fatalf("failed move still dropped the external edit from the source, got %q", string(srcGot))
+	}
+	dstGot, _ := os.ReadFile(dstPath)
+	if strings.Contains(string(dstGot), "pre-edit body") {
+		t.Fatalf("failed move must roll back the transplanted target copy, got %q", string(dstGot))
+	}
+}
+
+// TestPluginCrossPageMove_AbsenceAfterTargetCommit_KeepsTargetAndNamesIt pins
+// the absence branch of the in-lock gate plus its reconciliation: a block
+// taken off the source by a concurrent mover between the payload read and
+// the in-lock removal must NOT be reported as external drift, and since the
+// source copy is gone the reconciliation must keep the (already committed)
+// target copy and name it in the error — rolling back would leave the block
+// on no page at all.
+func TestPluginCrossPageMove_AbsenceAfterTargetCommit_KeepsTargetAndNamesIt(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section := "XMoveNB7", ""
+	srcPage, dstPage := "XSrc7", "XDst7"
+	blockID := famID(37, 1)
+
+	srcBody := "- [ ] contested block <!-- id: " + blockID + " -->\n"
+	seedWriterFamilyPage(t, app, notebook, section, srcPage, blockID, srcBody)
+	seedWriterFamilyPage(t, app, notebook, section, dstPage, famID(37, 2), "")
+
+	srcPath := filepath.Join(app.vaultPath, notebook, section, srcPage+".md")
+	dstPath := filepath.Join(app.vaultPath, notebook, section, dstPage+".md")
+
+	lockHeld := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		app.coordinator.LockFileWrite(srcPath, func() {
+			close(lockHeld)
+			<-release
+		})
+	}()
+	<-lockHeld
+
+	done := make(chan error, 1)
+	go func() {
+		done <- app.applyBlocksOps([]PluginCreateBlockOp{{
+			Kind: "move", BlockID: blockID,
+			Notebook: notebook, Section: section, Page: dstPage,
+		}}, historyReasonPlugin)
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got, _ := os.ReadFile(dstPath)
+		if strings.Contains(string(got), "contested block") {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("move returned before the target half committed: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("target half never committed")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	// A concurrent mover (or deleter) removed the block from the source file
+	// inside the drift window.
+	taken := "---\nnotebook: \"XMoveNB7\"\npage: \"XSrc7\"\ntags: []\n---\n- [ ] unrelated survivor <!-- id: " + famID(37, 3) + " -->\n"
+	if err := os.WriteFile(srcPath, []byte(taken), 0o644); err != nil {
+		t.Fatalf("concurrent-mover write: %v", err)
+	}
+	close(release)
+
+	err := <-done
+	if err == nil {
+		t.Fatal("an absent source block after the payload read must fail the move loudly")
+	}
+	if !strings.Contains(err.Error(), "no longer present on source page") {
+		t.Fatalf("absence must be reported as concurrent move/delete, not external drift: %v", err)
+	}
+	if !strings.Contains(err.Error(), "now lives on") || !strings.Contains(err.Error(), dstPage) {
+		t.Fatalf("post-commit absence must name the page the block now lives on: %v", err)
+	}
+
+	// The source copy is gone, so the reconciliation must NOT roll the
+	// target half back — that would leave the block nowhere.
+	dstGot, _ := os.ReadFile(dstPath)
+	if !strings.Contains(string(dstGot), "contested block") {
+		t.Fatalf("with the source copy gone the target copy must survive, got %q", string(dstGot))
 	}
 }
 

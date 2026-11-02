@@ -419,8 +419,12 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 		// external edit the watcher has not re-indexed yet survives it, and a
 		// pending refused-write stash refuses it outright. LockFileWrite
 		// serializes concurrent source-page writes so the file never has a
-		// torn write. Errors are NOT swallowed — a failed source-removal
-		// would leave the block duplicated.
+		// torn write. A failure here is NOT swallowed — the target half
+		// already committed, so reconcileFailedCrossPageRemoval either rolls
+		// that half back (retry-safe) or reports exactly where the block now
+		// lives; without that, a retry would resolve through locOf to the
+		// TARGET page and report success as a same-page no-op while the
+		// stale source copy survives.
 		for _, r := range pageOps {
 			if r.op.Kind == "move" && r.origNotebook != "" &&
 				(r.origNotebook != r.notebook ||
@@ -444,7 +448,7 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 					writeErr = a.removeBlockFromSourcePage(origPath, r.origSource, sn, ss, sp, blockID, reason, payload)
 				})
 				if writeErr != nil {
-					return fmt.Errorf("cross-page move: save source %s/%s/%s: %w", sn, ss, sp, writeErr)
+					return a.reconcileFailedCrossPageRemoval(first, blockID, payload, origPath, r.origSource, sn, ss, sp, writeErr)
 				}
 				// Whole-page signal for the rewritten source page (outside the
 				// file lock, like every emit here). The rewrite refreshed the
@@ -485,6 +489,71 @@ func (a *App) crossPageMoveSourcePath(r resolvedBlockOp) (origPath, sn, ss, sp s
 		return "", "", "", "", fmt.Errorf("cross-page move: source path escapes notebook root")
 	}
 	return origPath, sn, ss, sp, nil
+}
+
+// reconcileFailedCrossPageRemoval settles a source-removal failure that
+// struck AFTER the target half of the move committed (#1005). The raw
+// failure alone leaves an un-retryable wedge: the committed target write
+// re-homed the block's DB row, so a retry resolves the op via locOf to the
+// TARGET page and degrades to a same-page no-op reporting success while the
+// stale source copy survives. Two honest outcomes, decided by whether the
+// source copy provably survived:
+//
+//   - The block is still on the source file → the move never happened on
+//     either side semantically: roll the target half back (remove the
+//     transplanted copy + its re-homed row) so a retry starts clean.
+//   - The block is gone from the source file → the source half landed and
+//     only a durability/index error remains: the block now lives on the
+//     target; say so instead of inviting a lossy rollback.
+//
+// The probe runs under the source file's write lock so a concurrent writer
+// cannot flip the answer mid-decision.
+func (a *App) reconcileFailedCrossPageRemoval(first resolvedBlockOp, blockID string, payload crossPageMovePayload, origPath, origSource, sn, ss, sp string, cause error) error {
+	present := false
+	a.coordinator.LockFileWrite(origPath, func() {
+		contentBytes, err := os.ReadFile(origPath)
+		if err != nil {
+			return
+		}
+		blocks, _, _, _, perr := parser.ParseFileContent(string(contentBytes),
+			sn, ss, sp, fileOrDefaultDate(origPath), a.spacesPerTab)
+		if perr != nil {
+			return
+		}
+		for _, b := range blocks {
+			if b.ID == blockID {
+				present = true
+				break
+			}
+		}
+	})
+	if !present {
+		return fmt.Errorf("cross-page move: block %s now lives on %s/%s/%s, but removing it from source %s/%s/%s reported: %w",
+			blockID, first.notebook, first.section, first.page, sn, ss, sp, cause)
+	}
+	dir, err := a.resolveNotebookDir(first.notebook, first.source)
+	if err != nil {
+		return fmt.Errorf("cross-page move: block %s remains duplicated (source %s/%s/%s, target %s/%s/%s) after: %w; rollback could not resolve the target dir: %v",
+			blockID, sn, ss, sp, first.notebook, first.section, first.page, cause, err)
+	}
+	targetPath := filepath.Join(dir, first.section, first.page+".md")
+	// diskAnchored=false: the rollback's job is to undo the transplant this
+	// batch just made, not to gate the target's own bytes — and the source
+	// copy is proven present, so removing the duplicate can never lose the
+	// block's only copy.
+	var rmErr error
+	a.coordinator.LockFileWrite(targetPath, func() {
+		rmErr = a.removeBlockFromSourcePage(targetPath, first.source,
+			first.notebook, first.section, first.page, blockID,
+			historyReasonPlugin, crossPageMovePayload{block: payload.block})
+	})
+	if rmErr != nil {
+		return fmt.Errorf("cross-page move: block %s remains duplicated (source %s/%s/%s, target %s/%s/%s) after: %w; rollback failed: %v — remove the stale copy manually",
+			blockID, sn, ss, sp, first.notebook, first.section, first.page, cause, rmErr)
+	}
+	a.emitBlockChanged("", first.notebook, first.section, first.page, "")
+	return fmt.Errorf("cross-page move: block %s stayed on source %s/%s/%s; the target half on %s/%s/%s was rolled back and the move can be retried: %w",
+		blockID, sn, ss, sp, first.notebook, first.section, first.page, cause)
 }
 
 // crossPageMovePayload is the pre-lock basis for one cross-page move's
@@ -601,10 +670,12 @@ func (a *App) removeBlockFromSourcePage(filePath, source, notebook, section, pag
 	// in that window would otherwise be silently dropped from BOTH pages —
 	// the target receives the pre-edit body while this rewrite deletes the
 	// post-edit one. Fail the whole move loudly instead: the target half has
-	// already committed, so the failure leaves a recoverable duplicate, never
-	// a loss — the same loud standard the absent-block invariant upholds one
-	// check earlier in applyBlocksOps. DB-fallback bases carry no external
-	// bytes, so only disk-anchored payloads are gated.
+	// already committed, so the failure is reconciled (rolled back or
+	// reported as half-applied) by reconcileFailedCrossPageRemoval — never a
+	// silent loss. Absence and drift are distinct refusals: a concurrent
+	// mover taking the block first is a correct end state misreported as an
+	// external edit, so it gets its own message. DB-fallback bases carry no
+	// external bytes, so only disk-anchored payloads are gated.
 	if payload.diskAnchored {
 		var current *parser.ParsedBlock
 		for i := range srcBlocks {
@@ -613,8 +684,13 @@ func (a *App) removeBlockFromSourcePage(filePath, source, notebook, section, pag
 				break
 			}
 		}
-		if current == nil || crossPageMoveBasisDrifted(payload.block, *current) {
-			return fmt.Errorf("cross-page move: block %s changed on disk in %s/%s/%s while the move was in flight; refusing to drop the external edit", blockID, notebook, section, page)
+		if current == nil {
+			return fmt.Errorf("cross-page move: block %s no longer present on source page %s/%s/%s (moved or deleted concurrently); refusing to transplant the stale copy",
+				blockID, notebook, section, page)
+		}
+		if crossPageMoveBasisDrifted(payload.block, *current) {
+			return fmt.Errorf("cross-page move: block %s changed on disk in %s/%s/%s while the move was in flight; refusing to drop the external edit",
+				blockID, notebook, section, page)
 		}
 	}
 	filtered := removeByID(srcBlocks, blockID)
