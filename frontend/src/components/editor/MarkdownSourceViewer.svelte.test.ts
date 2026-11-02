@@ -603,6 +603,247 @@ describe('MarkdownSourceViewer', () => {
     }
   })
 
+  // #1005 resolution-IPC window: the backend pops this surface's stash inside
+  // the ResolveExternalConflict round-trip, so keystrokes landing between the
+  // banner click and the settle can never be re-stashed — completing the
+  // settle would drop them (keep_mine/keep_both reseed, keep_theirs reload).
+  // The surface freezes for the IPC window (the TipTap editor's equivalent
+  // hold) and snapshots the typed-past check at settle time.
+  describe('resolution IPC freeze (#1005)', () => {
+    const refuseSave = () => {
+      mocks.savePageMarkdown.mockImplementation(() =>
+        Promise.reject(
+          new Error(
+            '{"code":"external_edit_conflict","message":"this page changed on disk since it was opened"}'
+          )
+        )
+      )
+    }
+
+    it('keep_mine blocks mid-IPC typing and flushes the pre-IPC buffer at settle', async () => {
+      vi.useFakeTimers()
+      refuseSave()
+      let settleIpc!: (page: string) => void
+      mocks.resolveExternalConflict.mockImplementation(
+        () => new Promise<string>((res) => (settleIpc = res))
+      )
+      try {
+        render(MarkdownSourceViewer, {
+          props: {
+            blocks: BLOCKS,
+            filePath: 'Work/Page.md',
+            notebook: 'Work',
+            section: 'Sec',
+            page: 'Page'
+          }
+        })
+        await vi.advanceTimersByTimeAsync(0)
+        await waitFor(() => expect(mocks.fetchPageMarkdown).toHaveBeenCalled())
+        const ta = screen.getByRole('textbox', {
+          name: /markdown source/i
+        }) as HTMLTextAreaElement
+        // Cause the refusal, then keep typing under the own latch — that
+        // text diverges from the backend stash and must flush at settle.
+        await fireEvent.input(ta, { target: { value: '# My refused text' } })
+        await vi.advanceTimersByTimeAsync(500)
+        await vi.advanceTimersByTimeAsync(0)
+        await screen.findByText(/Save held — this file changed on disk/)
+        await fireEvent.input(ta, {
+          target: { value: '# Typed before the click' }
+        })
+        await vi.advanceTimersByTimeAsync(500)
+        await vi.advanceTimersByTimeAsync(0)
+        expect(mocks.savePageMarkdown).toHaveBeenCalledTimes(1)
+
+        const handle = getEditorForLocator('Work', 'Sec', 'Page')
+        const settling = handle!.resolveExternalConflict!('keep_mine')
+        await vi.advanceTimersByTimeAsync(0)
+        // The owner surface is frozen for the whole IPC window.
+        await waitFor(() => expect(ta.readOnly).toBe(true))
+        await screen.findByText(/Resolving the conflict…/)
+        await fireEvent.input(ta, {
+          target: { value: '# Typed during the IPC' }
+        })
+        settleIpc('Page.conflict-20260101-120000')
+        await settling
+        await vi.advanceTimersByTimeAsync(0)
+        await waitFor(() =>
+          expect(screen.queryByText(/Resolving the conflict…/)).toBeNull()
+        )
+        expect(ta.readOnly).toBe(false)
+
+        // The mid-IPC keystroke never landed; the pre-IPC divergence flushes
+        // on top of the replayed stash (the baseline was refreshed).
+        mocks.savePageMarkdown.mockResolvedValue([mkBlock('# Heading')])
+        await vi.advanceTimersByTimeAsync(500)
+        await vi.advanceTimersByTimeAsync(0)
+        await waitFor(() =>
+          expect(mocks.savePageMarkdown).toHaveBeenCalledWith(
+            'Work',
+            'Sec',
+            'Page',
+            '# Typed before the click'
+          )
+        )
+        const savedBodies = mocks.savePageMarkdown.mock.calls.map(
+          (c) => c[3] as string
+        )
+        expect(savedBodies).not.toContain('# Typed during the IPC')
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('keep_both holds typing for the IPC window and never adopts or drops mid-IPC text', async () => {
+      vi.useFakeTimers()
+      refuseSave()
+      let settleIpc!: (page: string) => void
+      mocks.resolveExternalConflict.mockImplementation(
+        () => new Promise<string>((res) => (settleIpc = res))
+      )
+      try {
+        render(MarkdownSourceViewer, {
+          props: {
+            blocks: BLOCKS,
+            filePath: 'Work/Page.md',
+            notebook: 'Work',
+            section: 'Sec',
+            page: 'Page'
+          }
+        })
+        await vi.advanceTimersByTimeAsync(0)
+        await waitFor(() => expect(mocks.fetchPageMarkdown).toHaveBeenCalled())
+        const ta = screen.getByRole('textbox', {
+          name: /markdown source/i
+        }) as HTMLTextAreaElement
+        await fireEvent.input(ta, { target: { value: '# My edit' } })
+        await vi.advanceTimersByTimeAsync(500)
+        await vi.advanceTimersByTimeAsync(0)
+        await screen.findByText(/Save held — this file changed on disk/)
+
+        const handle = getEditorForLocator('Work', 'Sec', 'Page')
+        const settling = handle!.resolveExternalConflict!('keep_both')
+        await vi.advanceTimersByTimeAsync(0)
+        await waitFor(() => expect(ta.readOnly).toBe(true))
+        await fireEvent.input(ta, {
+          target: { value: '# My edit + typed during the IPC' }
+        })
+        settleIpc('Page.conflict-20260101-120000')
+        await settling
+        await vi.advanceTimersByTimeAsync(500)
+        await vi.advanceTimersByTimeAsync(0)
+        // Buffer === refusedBuffer at settle: no divergence, no flush, and
+        // the mid-IPC text was refused — nothing is saved, nothing is lost.
+        expect(mocks.savePageMarkdown).toHaveBeenCalledTimes(1)
+        const savedBodies = mocks.savePageMarkdown.mock.calls.map(
+          (c) => c[3] as string
+        )
+        expect(savedBodies).not.toContain('# My edit + typed during the IPC')
+        expect(ta.readOnly).toBe(false)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('keep_theirs reloads the disk winner; mid-IPC typing never lands', async () => {
+      vi.useFakeTimers()
+      refuseSave()
+      mocks.fetchPageMarkdown
+        .mockResolvedValueOnce(FETCH_BODY)
+        .mockResolvedValueOnce('# Theirs from disk')
+      let settleIpc!: (page: string) => void
+      mocks.resolveExternalConflict.mockImplementation(
+        () => new Promise<string>((res) => (settleIpc = res))
+      )
+      try {
+        render(MarkdownSourceViewer, {
+          props: {
+            blocks: BLOCKS,
+            filePath: 'Work/Page.md',
+            notebook: 'Work',
+            section: 'Sec',
+            page: 'Page'
+          }
+        })
+        await vi.advanceTimersByTimeAsync(0)
+        await waitFor(() => expect(mocks.fetchPageMarkdown).toHaveBeenCalled())
+        const ta = screen.getByRole('textbox', {
+          name: /markdown source/i
+        }) as HTMLTextAreaElement
+        await fireEvent.input(ta, { target: { value: '# My doomed edit' } })
+        await vi.advanceTimersByTimeAsync(500)
+        await vi.advanceTimersByTimeAsync(0)
+        await screen.findByText(/Save held — this file changed on disk/)
+
+        const handle = getEditorForLocator('Work', 'Sec', 'Page')
+        const settling = handle!.resolveExternalConflict!('keep_theirs')
+        await vi.advanceTimersByTimeAsync(0)
+        await waitFor(() => expect(ta.readOnly).toBe(true))
+        await fireEvent.input(ta, {
+          target: { value: '# Typed during the IPC' }
+        })
+        settleIpc('Page.conflict-20260101-120000')
+        await settling
+        // The refused buffer is discarded by explicit choice; the reseed
+        // replaces it with the on-disk winner, and the mid-IPC keystroke
+        // was refused rather than silently destroyed mid-flight.
+        await waitFor(() => expect(ta).toHaveValue('# Theirs from disk'))
+        expect(ta.readOnly).toBe(false)
+        const savedBodies = mocks.savePageMarkdown.mock.calls.map(
+          (c) => c[3] as string
+        )
+        expect(savedBodies).not.toContain('# Typed during the IPC')
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('a failed resolution IPC releases the freeze and keeps the refusal actionable', async () => {
+      vi.useFakeTimers()
+      refuseSave()
+      let failIpc!: (reason: Error) => void
+      mocks.resolveExternalConflict.mockImplementation(
+        () => new Promise<string>((_, rej) => (failIpc = rej))
+      )
+      try {
+        render(MarkdownSourceViewer, {
+          props: {
+            blocks: BLOCKS,
+            filePath: 'Work/Page.md',
+            notebook: 'Work',
+            section: 'Sec',
+            page: 'Page'
+          }
+        })
+        await vi.advanceTimersByTimeAsync(0)
+        await waitFor(() => expect(mocks.fetchPageMarkdown).toHaveBeenCalled())
+        const ta = screen.getByRole('textbox', {
+          name: /markdown source/i
+        }) as HTMLTextAreaElement
+        await fireEvent.input(ta, { target: { value: '# My edit' } })
+        await vi.advanceTimersByTimeAsync(500)
+        await vi.advanceTimersByTimeAsync(0)
+        await screen.findByText(/Save held — this file changed on disk/)
+
+        const handle = getEditorForLocator('Work', 'Sec', 'Page')
+        const settling = handle!.resolveExternalConflict!('keep_mine')
+        await vi.advanceTimersByTimeAsync(0)
+        await waitFor(() => expect(ta.readOnly).toBe(true))
+        failIpc(new Error('ipc down'))
+        await expect(settling).rejects.toThrow('ipc down')
+        await vi.advanceTimersByTimeAsync(0)
+        // The freeze was momentary: the banner keeps offering the actions,
+        // and the owner surface is back to its own-latch contract (editable
+        // under saveRefused).
+        await waitFor(() => expect(ta.readOnly).toBe(false))
+        expect(screen.queryByText(/Resolving the conflict…/)).toBeNull()
+        await screen.findByText(/Save held — this file changed on disk/)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  })
+
   // #1005 rename/move: the parent supersedes the latch when the locator
   // changes (the backend stash stays keyed to the OLD path). An owner-raised
   // refusal must then release its hold and keep the dirty buffer — the

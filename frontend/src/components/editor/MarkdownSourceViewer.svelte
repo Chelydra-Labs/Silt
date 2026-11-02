@@ -562,15 +562,25 @@
   // reload landing or clearExternalReload({ conflict: true }) (the failed
   // resolution path); a plain clear must not void it.
   let conflictHoldArmed = $state(false)
+  // Resolution IPC in flight on THIS surface (#1005): the backend pops the
+  // stash inside that IPC, so text typed during the round-trip could never
+  // be re-stashed and would be dropped by the settle (keep_theirs reload /
+  // keep_mine reseed). The TipTap surface freezes its editor for the same
+  // window; this is the source-viewer's equivalent, released by the settle
+  // or the failed IPC (which keeps offering the banner actions).
+  let conflictResolving = $state(false)
 
   // Frozen-buffer predicate shared by EVERY buffer mutation entry — typing
   // (commitUserEdit), undo/redo, FindBar (#1005): while another surface owns
-  // the conflict latch or a conflict-grade armed reload holds this buffer, a
-  // mutation could never be saved and the diverged text is destroyed on
-  // reseed. The owner-side saveRefused state deliberately allows edits
-  // (typed-past text is re-stashed by the unmount handoff), so it is not part
-  // of this predicate.
-  const conflictFrozen = $derived(conflictLatchInherited || conflictHoldArmed)
+  // the conflict latch, a conflict-grade armed reload holds this buffer, or
+  // this surface's resolution IPC is in flight, a mutation could never be
+  // saved and the diverged text is destroyed on reseed. The owner-side
+  // saveRefused state deliberately allows edits (typed-past text is
+  // re-stashed by the unmount handoff), so it is not part of this
+  // predicate.
+  const conflictFrozen = $derived(
+    conflictLatchInherited || conflictHoldArmed || conflictResolving
+  )
 
   function releaseLatchHold(): void {
     saveRefused = false
@@ -705,37 +715,50 @@
   async function resolveSaveConflict(
     resolution: ExternalConflictResolution
   ): Promise<string> {
-    // The refused snapshot dies with the surface that raised it: a fresh
-    // mount inheriting the latch (refusedBuffer === null) that is dirty has
-    // typed past the refusal HERE — flush that text, never discard it
-    // (#1005 swap-back regression).
-    const typedPastRefusal =
-      refusedBuffer === null ? dirty : buffer !== refusedBuffer
-    const conflictPage = await resolveExternalConflict(
-      notebook,
-      section,
-      page,
-      resolution
-    )
-    saveRefused = false
-    refusedBuffer = null
-    if (resolution === 'keep_theirs') {
-      // Discards the refused buffer by explicit choice; reloadFromDisk
-      // clears dirty/saveError and reseeds from the on-disk winner.
-      reloadFromDisk()
+    // Freeze the owner for the IPC window (the TipTap surface holds its
+    // editor for the same span): the backend pops this stash inside the
+    // IPC, so keystrokes landing during the round-trip could never be
+    // re-stashed — the settle would drop them (keep_theirs reload,
+    // keep_mine/keep_both reseed). Editable again once the settle or a
+    // failed IPC (which keeps offering the banner actions) lands.
+    conflictResolving = true
+    try {
+      const conflictPage = await resolveExternalConflict(
+        notebook,
+        section,
+        page,
+        resolution
+      )
+      // Snapshot AFTER the IPC, not before the click: the settle below
+      // must flush (or, for keep_theirs, explicitly discard) exactly what
+      // the buffer holds at settle time — never discard it (#1005). The
+      // refused snapshot dies with the surface that raised it: a fresh
+      // mount inheriting the latch (refusedBuffer === null) that is dirty
+      // has typed past the refusal HERE — flush that text.
+      const typedPastRefusal =
+        refusedBuffer === null ? dirty : buffer !== refusedBuffer
+      saveRefused = false
+      refusedBuffer = null
+      if (resolution === 'keep_theirs') {
+        // Discards the refused buffer by explicit choice; reloadFromDisk
+        // clears dirty/saveError and reseeds from the on-disk winner.
+        reloadFromDisk()
+        return conflictPage
+      }
+      // keep_mine / keep_both: the backend wrote the stashed buffer. Typing
+      // that happened after the refusal is still unsaved — flush it now (the
+      // resolution refreshed the baseline, so the save passes).
+      saveError = null
+      if (typedPastRefusal) {
+        scheduleSave()
+      } else {
+        dirty = false
+        savePhase = 'idle'
+      }
       return conflictPage
+    } finally {
+      conflictResolving = false
     }
-    // keep_mine / keep_both: the backend wrote the stashed buffer. Typing
-    // that happened after the refusal is still unsaved — flush it now (the
-    // resolution refreshed the baseline, so the save passes).
-    saveError = null
-    if (typedPastRefusal) {
-      scheduleSave()
-    } else {
-      dirty = false
-      savePhase = 'idle'
-    }
-    return conflictPage
   }
 
   function announceHistory(msg: string): void {
@@ -1226,10 +1249,16 @@
     <!-- The non-owning surface under a live conflict: typing here cannot be
          saved (the owning surface's stash is kept cross-funnel), so the
          surface is read-only and says why, instead of accepting text it
-         would silently destroy (#1005). -->
+         would silently destroy (#1005). The resolving grade is this own
+         surface's resolution IPC: text typed mid-resolution could never be
+         re-stashed, so the freeze is momentary instead of banner-gated. -->
     <p class="conflict-hold-notice" role="status">
-      This page has an unresolved change conflict. Editing here is disabled
-      until it's resolved in the other view.
+      {#if conflictResolving}
+        Resolving the conflict… editing resumes in a moment.
+      {:else}
+        This page has an unresolved change conflict. Editing here is disabled
+        until it's resolved in the other view.
+      {/if}
     </p>
   {/if}
   <div
