@@ -85,12 +85,15 @@ export interface TabManagerController {
   get openTabs(): TabEntry[]
   get activeTabId(): string
   get displayedTabs(): TabEntry[]
-  // Handlers (bound to TabStrip props + navigation funnels).
+  // Handlers (bound to TabStrip props + navigation funnels). openPage
+  // returns false when the pure layer refused the open (at capacity with
+  // every eviction candidate conflict-busy, #1005) so callers can skip
+  // follow-through that would otherwise target the currently-active page.
   openPage: (
     ref: PageRef,
     mode: OpenPageMode,
     blockTarget?: { fileDate?: string; blockId?: string }
-  ) => void
+  ) => boolean
   handleSelectTab: (id: string) => void
   handleCloseTab: (id: string) => void
   handlePromoteTab: (id: string) => void
@@ -233,13 +236,13 @@ export function createTabManager(deps: TabManagerDeps): TabManagerController {
     ref: PageRef,
     mode: OpenPageMode,
     blockTarget: { fileDate?: string; blockId?: string } | undefined = undefined
-  ): void {
+  ): boolean {
     // Standalone-task routing (#374): a `.silt` locator delegates to the Tasks
     // view instead of opening a raw `.silt` tab.
     const target = routeJumpTarget({ ...ref, blockTarget })
     if (target.kind === 'tasks-view') {
       deps.openTasksView(target.blockTarget?.blockId)
-      return
+      return true
     }
     const cfg = deps.getSettings()
     const enablePreviewTabs = cfg.ui?.enable_preview_tabs !== false
@@ -257,18 +260,21 @@ export function createTabManager(deps: TabManagerDeps): TabManagerController {
     if (result === input) {
       // Refused: at capacity with only conflict-busy eviction candidates
       // (#1005). Loud on purpose — the resolving surfaces stay mounted and
-      // the user must close a settled tab first.
+      // the user must close a settled tab first. The boolean lets callers
+      // skip follow-through (menus, panels, view switches) that would
+      // otherwise act on the still-active page.
       console.warn(
         '[silt] refusing to open a tab: every eviction candidate is mid-conflict-resolution. ',
         'Close a settled tab first.'
       )
-      return
+      return false
     }
     openTabs = result.tabs
     activeTabId = result.activeId
     syncActiveFromTab()
     schedulePersistTabs()
     recordRecentActivation(ref)
+    return true
   }
 
   function handleToggleViewMode(tabId: string): void {

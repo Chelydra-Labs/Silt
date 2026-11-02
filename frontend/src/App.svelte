@@ -256,7 +256,16 @@
     item: NavigationCatalogItem,
     mode: OpenPageMode
   ): void {
-    tabManager.openPage(item, mode)
+    // A refused open (all tabs conflict-busy) must not proceed as-if-opened:
+    // the switcher's entry silently no-ops while the active page stays put.
+    if (!tabManager.openPage(item, mode)) {
+      pushNotification({
+        kind: 'info',
+        message:
+          "Couldn't open that page — every tab is busy resolving a save conflict. Try again once a tab settles."
+      })
+      return
+    }
     activeView = 'notes'
   }
 
@@ -427,7 +436,17 @@
       activeSection === ref.section &&
       activePage === ref.page
     if (!isActive) {
-      tabManager.openPage(ref, 'pin')
+      // A refused open (all tabs conflict-busy, #1005) must skip the
+      // follow-through: opening the properties panel + type menu against the
+      // still-active page would arm a wrong-page mutation path.
+      if (!tabManager.openPage(ref, 'pin')) {
+        pushNotification({
+          kind: 'info',
+          message:
+            "Couldn't open that page — every tab is busy resolving a save conflict. Try again once a tab settles."
+        })
+        return
+      }
       await tick()
     }
     pageType.open()

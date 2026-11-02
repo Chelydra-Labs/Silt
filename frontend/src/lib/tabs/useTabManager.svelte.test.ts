@@ -198,7 +198,11 @@ describe('useTabManager — conflict-busy open gating (#1005)', () => {
       busy.add(t.openTabs[0]!.id)
       busy.add(t.openTabs[1]!.id)
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      t.openPage({ notebook: 'Work', section: 'Inbox', page: 'Gamma' }, 'pin')
+      // The refusal is REPORTED to the caller: follow-through (type menus,
+      // view switches) must be able to skip acting on the still-active page.
+      expect(t.openPage({ notebook: 'Work', section: 'Inbox', page: 'Gamma' }, 'pin')).toBe(
+        false
+      )
       // Refused: the resolving surfaces stay mounted, nothing is evicted,
       // and the cap is not silently exceeded.
       expect(t.openTabs).toHaveLength(2)
@@ -206,9 +210,11 @@ describe('useTabManager — conflict-busy open gating (#1005)', () => {
       expect(warn).toHaveBeenCalledOnce()
       warn.mockRestore()
 
-      // Once a tab settles, the same open succeeds.
+      // Once a tab settles, the same open succeeds — and says so.
       busy.delete(t.openTabs[0]!.id)
-      t.openPage({ notebook: 'Work', section: 'Inbox', page: 'Gamma' }, 'pin')
+      expect(t.openPage({ notebook: 'Work', section: 'Inbox', page: 'Gamma' }, 'pin')).toBe(
+        true
+      )
       expect(t.openTabs).toHaveLength(2)
       expect(t.openTabs.some((x) => x.page === 'Gamma')).toBe(true)
     } finally {

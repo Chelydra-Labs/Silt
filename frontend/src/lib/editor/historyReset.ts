@@ -1,6 +1,11 @@
 import type { Editor } from '@tiptap/core'
+import type { Plugin } from '@tiptap/pm/state'
 import { EditorState } from '@tiptap/pm/state'
 import { history as historyPluginFactory } from '@tiptap/pm/history'
+
+// prosemirror-state's Plugin type does not declare the runtime `key` field
+// (every plugin instance carries one); narrow it locally for the lookup.
+type KeyedPlugin = Plugin & { key: string }
 
 // External content replacement is a history boundary (#1005, parity with the
 // source viewer's seedBuffer reset): TipTap's setContent is a plain undoable
@@ -20,8 +25,10 @@ import { history as historyPluginFactory } from '@tiptap/pm/history'
 export function resetUndoHistory(editor: Editor | null): void {
   if (!editor || editor.isDestroyed) return
   const historyPlugin = editor.state.plugins.find(
-    (p) => typeof p.key === 'string' && p.key.startsWith('history$')
-  )
+    (p) =>
+      typeof (p as KeyedPlugin).key === 'string' &&
+      (p as KeyedPlugin).key.startsWith('history$')
+  ) as KeyedPlugin | undefined
   if (!historyPlugin) return
   // A scratch plugin instance init()s the pristine empty state without
   // touching the live editor (the live doc only satisfies the state's
