@@ -38,12 +38,17 @@ func (b mcpBridge) FetchPageBlocks(ctx context.Context, notebook, section, page 
 	// captureNone: an MCP client reading a page must not re-baseline the
 	// external-edit fingerprint — the editor's baseline tracks the bytes the
 	// editor holds, and re-baselining here would let the editor's next save
-	// clobber an external edit the client just read (#1005).
+	// clobber an external edit the client just read (#1005). The client's
+	// OWN read is guarded separately: the read-basis below is re-checked by
+	// update_blocks (app_mcp_rmw.go), so an RMW still refuses on drift.
+	b.app.captureMCPReadBasisByLocator(notebook, section, page)
 	return b.app.fetchPageBlocks(notebook, section, page, captureNone)
 }
 
 func (b mcpBridge) FetchPageMarkdown(ctx context.Context, notebook, section, page string) (string, error) {
 	_ = ctx
+	// Same scoped read-basis as the blocks fetch (see above).
+	b.app.captureMCPReadBasisByLocator(notebook, section, page)
 	return b.app.fetchPageMarkdown(notebook, section, page, captureNone)
 }
 
@@ -59,7 +64,7 @@ func (b mcpBridge) CreatePage(ctx context.Context, notebook, section, page, date
 
 func (b mcpBridge) UpdateBlocks(ctx context.Context, notebook, section, page string, blocks []parser.ParsedBlock) error {
 	_ = ctx
-	return b.app.saveFileBlocksProgrammatic(notebook, section, page, blocks, historyReasonMCP)
+	return b.app.saveFileBlocksMCP(notebook, section, page, blocks, historyReasonMCP)
 }
 
 func (b mcpBridge) PageExists(ctx context.Context, notebook, section, page string) (bool, error) {

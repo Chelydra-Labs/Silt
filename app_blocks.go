@@ -717,6 +717,11 @@ const (
 	// set_blocks) — refuse when disk drifted from the load baseline, and
 	// when a refused-write stash is pending.
 	gateLoadBaseline externalEditGateMode = iota
+	// gateMCPReadBasis: the MCP update_blocks funnel — gateLoadBaseline plus
+	// the client's own read-basis (see app_mcp_rmw.go): an MCP
+	// read-modify-write must refuse when the file changed since the client
+	// read it, editor or not.
+	gateMCPReadBasis
 	// gateStashOnly: read-modify-write saves whose block base is
 	// reconstructed from CURRENT disk bytes inside the file lock (plugin
 	// block ops, via rebaseOnDisk). There is no load-time snapshot to
@@ -726,6 +731,37 @@ const (
 	// possible only copy outside the backend).
 	gateStashOnly
 )
+
+// saveFileBlocksMCP is the update_blocks save for MCP clients (#1005): the
+// programmatic stash policy of saveFileBlocksProgrammatic, plus the client's
+// read-basis gate (see app_mcp_rmw.go) so a read-modify-write refuses when
+// the file drifted since the fetch. On success the basis is recaptured under
+// the file lock, so a follow-up update_blocks without an intervening fetch
+// stays guarded against edits landing after this write.
+func (a *App) saveFileBlocksMCP(notebook, section, page string, blocks []parser.ParsedBlock, reason string) error {
+	if err := a.saveFileBlocksWithGate(notebook, section, page, blocks, reason, gateMCPReadBasis, funnelProgrammatic, nil); err != nil {
+		return err
+	}
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if filePath, ok := a.resolvePageFilePath(a.resolveSourceByName(sanitizePathSegment(notebook)), notebook, section, page); ok {
+		a.coordinator.LockFileWrite(filePath, func() {
+			a.captureMCPReadBasis(filePath)
+		})
+	}
+	return nil
+}
+
+// captureMCPReadBasisByLocator resolves a page locator to its file path the
+// same way the save funnels do and snapshots the read-basis. Called by the
+// MCP bridge on every page fetch.
+func (a *App) captureMCPReadBasisByLocator(notebook, section, page string) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if filePath, ok := a.resolvePageFilePath(a.resolveSourceByName(sanitizePathSegment(notebook)), notebook, section, page); ok {
+		a.captureMCPReadBasis(filePath)
+	}
+}
 
 func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.ParsedBlock) error {
 	return a.saveFileBlocksWithSource(notebook, section, page, blocks, historyReasonEditor)
@@ -837,8 +873,9 @@ func (a *App) saveFileBlocksWithGate(notebook, section, page string, blocks []pa
 				return
 			}
 			// Whole-page save funnel: refuse to clobber an external edit
-			// (#1005). gateLoadBaseline (editor/MCP/batch renders) also
-			// compares the load baseline; the stash half runs in both modes.
+			// (#1005). gateLoadBaseline (editor/batch renders) and
+			// gateMCPReadBasis (the MCP RMW funnel) also compare their
+			// baselines; the stash half runs in every mode.
 			// Stash the refused payload so the resolution IPC can replay it
 			// after preserving the on-disk version — except in gateStashOnly,
 			// where a plugin payload must not evict the user's stashed
@@ -851,13 +888,15 @@ func (a *App) saveFileBlocksWithGate(notebook, section, page string, blocks []pa
 			var gateErr error
 			if gate == gateLoadBaseline {
 				gateErr = a.checkExternalEditConflict(filePath)
+			} else if gate == gateMCPReadBasis {
+				gateErr = a.checkMCPReadBasis(filePath)
 			} else {
 				gateErr = a.externalEditStashRefusalKey(core.NormalizeFileLockPath(filePath), filePath)
 			}
 			if gateErr != nil {
 				if isExternalEditConflict(gateErr) &&
 					!errors.Is(gateErr, errExternalEditUnverified) &&
-					gate == gateLoadBaseline {
+					gate != gateStashOnly {
 					a.storeRefusedWrite(core.NormalizeFileLockPath(filePath), refusedPageWrite{
 						source:   source,
 						notebook: safeNotebook,

@@ -68,6 +68,13 @@ func (a *App) migrateConflictStateAcrossRename(oldPath, newPath string) {
 		delete(a.pageLoadFingerprints, oldKey)
 	}
 	a.pageLoadFingerprintsMu.Unlock()
+	// The MCP read-basis dies with the old path too: it snapshots bytes the
+	// client read at the OLD name; the renamed page's next fetch recaptures.
+	a.mcpReadBaselinesMu.Lock()
+	if a.mcpReadBaselines != nil {
+		delete(a.mcpReadBaselines, oldKey)
+	}
+	a.mcpReadBaselinesMu.Unlock()
 }
 
 // dropConflictStateForPath discards a path's pending refused-write stash and
@@ -91,6 +98,11 @@ func (a *App) dropConflictStateForPath(filePath string) {
 		delete(a.pageLoadFingerprints, key)
 	}
 	a.pageLoadFingerprintsMu.Unlock()
+	a.mcpReadBaselinesMu.Lock()
+	if a.mcpReadBaselines != nil {
+		delete(a.mcpReadBaselines, key)
+	}
+	a.mcpReadBaselinesMu.Unlock()
 }
 
 // clearConflictState drops every stash and baseline (vault teardown). Both
@@ -105,4 +117,7 @@ func (a *App) clearConflictState() {
 	a.pageLoadFingerprintsMu.Lock()
 	a.pageLoadFingerprints = nil
 	a.pageLoadFingerprintsMu.Unlock()
+	a.mcpReadBaselinesMu.Lock()
+	a.mcpReadBaselines = nil
+	a.mcpReadBaselinesMu.Unlock()
 }

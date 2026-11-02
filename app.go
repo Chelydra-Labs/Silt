@@ -83,6 +83,15 @@ type App struct {
 	// app_conflict_fingerprint.go.
 	pageLoadFingerprints   map[string]FileFingerprint
 	pageLoadFingerprintsMu sync.RWMutex
+	// mcpReadBaselines holds the read-basis each MCP page fetch captured
+	// (#1005): an MCP client's read-modify-write gets no editor load
+	// baseline (captureNone must not disarm the editor's gate), so its
+	// UpdateBlocks is gated against THIS map instead — the bytes the client
+	// read, re-checked inside LockFileWrite. Keyed by NormalizeFileLockPath;
+	// lifecycle (rename/delete/teardown) mirrors the fingerprints above in
+	// app_tracked_write.go. See app_mcp_rmw.go.
+	mcpReadBaselines   map[string]FileFingerprint
+	mcpReadBaselinesMu sync.RWMutex
 	// refusedWrites stashes the editor save each external-edit refusal
 	// rejected (#1005), for ResolveExternalConflict to replay. Keyed by
 	// NormalizeFileLockPath; funnel-tagged (see refusedWriteFunnel) so a
