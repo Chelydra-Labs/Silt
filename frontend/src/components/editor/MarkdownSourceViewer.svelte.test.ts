@@ -2242,4 +2242,51 @@ describe('MarkdownSourceViewer conflict-grade reload hold (#1005)', () => {
     await tick()
     expect(ta.readOnly).toBe(false)
   })
+
+  // #1005: history replay is a buffer mutation — during a conflict-grade hold
+  // the buffer is read-only (typing refused via commitUserEdit), so undo/redo
+  // must refuse through the same predicate instead of silently mutating the
+  // held buffer. Covers the toolbar buttons and the Ctrl+Z/Y chords the
+  // readonly textarea cannot block (keydown fires on a readonly textarea).
+  it('refuses undo/redo while the conflict hold has the buffer frozen', async () => {
+    mocks.fetchPageMarkdown.mockResolvedValue(FETCH_BODY)
+    render(MarkdownSourceViewer, {
+      props: {
+        blocks: BLOCKS,
+        filePath: 'Work/Page.md',
+        notebook: 'Work',
+        section: 'Sec',
+        page: 'Page'
+      }
+    })
+    const ta = (await waitFor(() =>
+      screen.getByRole('textbox', { name: /markdown source/i })
+    )) as HTMLTextAreaElement
+    await waitFor(() => expect(ta.value).toBe(FETCH_BODY))
+
+    // Populate history with a real edit, then arm the hold.
+    await fireEvent.input(ta, { target: { value: '# typed before hold' } })
+    const undoBtn = screen.getByRole('button', { name: 'Undo' })
+    expect(undoBtn).toBeEnabled()
+
+    const handle = getEditor(editorKey('Work', 'Sec', 'Page'))!
+    handle.forceExternalReload({ conflictHold: true })
+    await tick()
+    expect(ta.readOnly).toBe(true)
+
+    // Buttons disabled while frozen…
+    expect(undoBtn).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Redo' })).toBeDisabled()
+    // …and the keyboard chord (still deliverable to a readonly textarea)
+    // must not mutate the buffer.
+    await fireEvent.keyDown(ta, { key: 'z', ctrlKey: true })
+    expect(ta.value).toBe('# typed before hold')
+
+    // After the explicit release, undo works again.
+    handle.clearExternalReload({ conflict: true })
+    await tick()
+    expect(undoBtn).toBeEnabled()
+    await fireEvent.keyDown(ta, { key: 'z', ctrlKey: true })
+    expect(ta.value).toBe(FETCH_BODY)
+  })
 })

@@ -563,6 +563,15 @@
   // resolution path); a plain clear must not void it.
   let conflictHoldArmed = $state(false)
 
+  // Frozen-buffer predicate shared by EVERY buffer mutation entry — typing
+  // (commitUserEdit), undo/redo, FindBar (#1005): while another surface owns
+  // the conflict latch or a conflict-grade armed reload holds this buffer, a
+  // mutation could never be saved and the diverged text is destroyed on
+  // reseed. The owner-side saveRefused state deliberately allows edits
+  // (typed-past text is re-stashed by the unmount handoff), so it is not part
+  // of this predicate.
+  const conflictFrozen = $derived(conflictLatchInherited || conflictHoldArmed)
+
   function releaseLatchHold(): void {
     saveRefused = false
     refusedBuffer = null
@@ -783,7 +792,7 @@
     selection: SourceHistorySelection,
     opts: { coalesce?: boolean } = {}
   ): void {
-    if (conflictLatchInherited || conflictHoldArmed) {
+    if (conflictFrozen) {
       // Read-only while another surface owns the conflict latch, or while a
       // conflict-grade armed reload holds this buffer (#1005): a save from
       // here would be refused cross-funnel and the text destroyed on unmount.
@@ -973,6 +982,11 @@
   }
 
   function undo(): void {
+    // History replay is a buffer mutation like typing (#1005): the guard must
+    // fire BEFORE history.undo() pops the stack, or the history would desync
+    // from the still-frozen buffer. Covers the toolbar buttons, Ctrl+Z/Y, and
+    // the native beforeinput historyUndo/Redo reroute.
+    if (conflictFrozen) return
     const before = history.current()
     const entry = history.undo()
     if (!entry) return
@@ -982,6 +996,7 @@
   }
 
   function redo(): void {
+    if (conflictFrozen) return
     const before = history.current()
     const entry = history.redo()
     if (!entry) return
@@ -1152,14 +1167,16 @@
           >Unsaved…</span
         >
       {/if}
-      <!-- Undo/redo on the source surface only — read-only view has no edits. -->
+      <!-- Undo/redo on the source surface only — read-only view has no edits.
+           Disabled while conflict-frozen too: the buffer is read-only then
+           (#1005), so there is nothing undoable to replay into it. -->
       {#if editable}
         <div class="history-actions" role="group" aria-label="Undo / redo">
           <button
             type="button"
             class="icon-btn"
             onclick={undo}
-            disabled={!canUndo}
+            disabled={!canUndo || conflictFrozen}
             aria-label="Undo"
             title="Undo (Ctrl+Z / Cmd+Z)"
             aria-keyshortcuts="Control+Z Meta+Z"
@@ -1172,7 +1189,7 @@
             type="button"
             class="icon-btn"
             onclick={redo}
-            disabled={!canRedo}
+            disabled={!canRedo || conflictFrozen}
             aria-label="Redo"
             title="Redo (Ctrl+Y / Ctrl+Shift+Z / Cmd+Shift+Z)"
             aria-keyshortcuts="Control+Y Control+Shift+Z Meta+Shift+Z"
@@ -1205,7 +1222,7 @@
       {/if}
     </div>
   </div>
-  {#if editable && (conflictLatchInherited || conflictHoldArmed)}
+  {#if editable && conflictFrozen}
     <!-- The non-owning surface under a live conflict: typing here cannot be
          saved (the owning surface's stash is kept cross-funnel), so the
          surface is read-only and says why, instead of accepting text it
@@ -1231,7 +1248,7 @@
         class="source-code source-textarea"
         value={buffer}
         wrap="off"
-        readonly={conflictLatchInherited || conflictHoldArmed}
+        readonly={conflictFrozen}
         onbeforeinput={onBeforeInput}
         oninput={onInput}
         onkeydown={onKeyDown}
