@@ -24,9 +24,11 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"time"
 
 	"silt/backend/core"
@@ -162,24 +164,47 @@ func (fp FileFingerprint) fingerprintStatEqual(cur FileFingerprint) bool {
 // sanitization MUST mirror saveFileBlocksWithSource or the baseline would be
 // keyed against a different path than the save checks.
 func (a *App) capturePageFingerprintByLocator(source, notebook, section, page string) {
-	safeNotebook := sanitizePathSegment(notebook)
-	safeSection, secErr := historySection(section)
-	if secErr != nil {
-		return
-	}
-	safePage := sanitizePathSegment(page)
-	if safeNotebook == "" || safePage == "" {
-		return
-	}
-	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
-	if err != nil {
-		return
-	}
-	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
-	if !isPathWithinRoot(filePath, notebookDir) {
+	filePath, ok := a.resolvePageFilePath(source, notebook, section, page)
+	if !ok {
 		return
 	}
 	a.capturePageLoadFingerprint(filePath)
+}
+
+// capturePageFingerprintByLocatorForBlocks is the block-editor variant of
+// capturePageFingerprintByLocator (#1005): the block funnel hands the editor
+// DB rows, so the baseline must be anchored on those rows (see
+// capturePageLoadFingerprintForBlocks), not on the raw disk bytes.
+func (a *App) capturePageFingerprintByLocatorForBlocks(source, notebook, section, page string, rows []parser.ParsedBlock) {
+	filePath, ok := a.resolvePageFilePath(source, notebook, section, page)
+	if !ok {
+		return
+	}
+	a.capturePageLoadFingerprintForBlocks(filePath, notebook, section, page, rows)
+}
+
+// resolvePageFilePath resolves a page locator to its file path with the exact
+// sanitization saveFileBlocksWithSource applies, so a baseline is always keyed
+// against the path the save will check.
+func (a *App) resolvePageFilePath(source, notebook, section, page string) (string, bool) {
+	safeNotebook := sanitizePathSegment(notebook)
+	safeSection, secErr := historySection(section)
+	if secErr != nil {
+		return "", false
+	}
+	safePage := sanitizePathSegment(page)
+	if safeNotebook == "" || safePage == "" {
+		return "", false
+	}
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
+	if err != nil {
+		return "", false
+	}
+	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
+	if !isPathWithinRoot(filePath, notebookDir) {
+		return "", false
+	}
+	return filePath, true
 }
 
 // capturePageLoadFingerprint records the load baseline for filePath. Called
@@ -221,6 +246,101 @@ func (a *App) capturePageLoadFingerprintFromBytes(filePath string, content []byt
 	fp := fingerprintFromStat(info)
 	sum := sha256.Sum256(content)
 	fp.SHA256 = hex.EncodeToString(sum[:])
+	fp.stampCaptureTime(time.Now())
+	a.storePageLoadFingerprint(core.NormalizeFileLockPath(filePath), fp)
+}
+
+// rowBasisSentinelSize marks a baseline pinned to the DB rows rather than to
+// any file bytes. Any real stat has Size >= 0, so the fast path can never
+// match and every save falls to the hash arbiter (see
+// capturePageLoadFingerprintForBlocks). Distinct from absentFileSize so a
+// missing-file branch is never confused with a rows-pinned baseline.
+const rowBasisSentinelSize int64 = -2
+
+// hydratableBlockFields returns b reduced to the fields the block funnel's DB
+// projection (db.FetchPageBlocks) hydrates. The load-baseline comparison uses
+// it on both sides so a projection that cannot carry a field (author, extra
+// tokens, pinned, language…) never reads as drift — and, on the disk-parse
+// side, so parse-derived context (ParentID, LineNumber, FileDate) is ignored
+// for the same reason the cross-page drift gate ignores it.
+func hydratableBlockFields(b parser.ParsedBlock) parser.ParsedBlock {
+	b.ParentID = ""
+	b.LineNumber = 0
+	b.FileDate = ""
+	b.Author = ""
+	b.Timestamp = ""
+	b.ExtraTokens = nil
+	b.BlockedBy = nil
+	b.Pinned = nil
+	b.Language = ""
+	return b
+}
+
+// blocksContentMatchesRows reports whether a fresh parse of the disk bytes
+// carries the same managed content, in order, as the rows the block funnel is
+// about to hand the editor. (DeepEqual because ParsedBlock carries slice
+// fields; the reduction in hydratableBlockFields nils them all out.)
+func blocksContentMatchesRows(disk, rows []parser.ParsedBlock) bool {
+	if len(disk) != len(rows) {
+		return false
+	}
+	for i := range disk {
+		if !reflect.DeepEqual(hydratableBlockFields(disk[i]), hydratableBlockFields(rows[i])) {
+			return false
+		}
+	}
+	return true
+}
+
+// capturePageLoadFingerprintForBlocks anchors the BLOCK editor's load baseline
+// on the content its buffer actually holds (#1005). Unlike the markdown
+// funnel (which hands the editor the disk bytes), the block funnel returns DB
+// rows — during the watcher's re-index debounce those rows can still be the
+// PRE-external state while the file already holds an external edit, and a
+// plain disk capture would baseline bytes the editor does not hold: its first
+// save then passes both gates and reverts the external managed edit. The rows
+// are compared against a fresh parse of the disk bytes on the projected,
+// content-bearing fields. On a match the baseline anchors the disk bytes
+// exactly as before. On drift the baseline is pinned to the rows — the stat
+// half poisoned so the fast path can never pass, the hash pinned to a
+// canonical encoding of the rows so the arbiter refuses every save until a
+// reload re-captures on the re-indexed rows: the external edit surfaces as a
+// resolvable conflict instead of a silent revert.
+func (a *App) capturePageLoadFingerprintForBlocks(filePath, notebook, section, page string, rows []parser.ParsedBlock) {
+	if a == nil || filePath == "" {
+		return
+	}
+	contentBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		// Same swallow contract as capturePageLoadFingerprint: a missing or
+		// unreadable file keeps the plain capture's absent/stat semantics.
+		a.capturePageLoadFingerprint(filePath)
+		return
+	}
+	diskBlocks, _, _, _, perr := parser.ParseFileContent(string(contentBytes),
+		notebook, section, page, fileOrDefaultDate(filePath), a.spacesPerTab)
+	if perr != nil {
+		// Unparseable bytes: keep the byte-anchored baseline rather than
+		// guessing content equivalence from a failed parse.
+		a.capturePageLoadFingerprintFromBytes(filePath, contentBytes)
+		return
+	}
+	if blocksContentMatchesRows(diskBlocks, rows) {
+		a.capturePageLoadFingerprintFromBytes(filePath, contentBytes)
+		return
+	}
+	canonical, merr := json.Marshal(rows)
+	if merr != nil {
+		// ParsedBlock marshals unconditionally; keep the guard honest.
+		a.capturePageLoadFingerprintFromBytes(filePath, contentBytes)
+		return
+	}
+	sum := sha256.Sum256(canonical)
+	fp := FileFingerprint{
+		Size:     rowBasisSentinelSize,
+		MtimeSec: 0, MtimeNsec: 0, CtimeSec: 0, CtimeNsec: 0,
+		SHA256: hex.EncodeToString(sum[:]),
+	}
 	fp.stampCaptureTime(time.Now())
 	a.storePageLoadFingerprint(core.NormalizeFileLockPath(filePath), fp)
 }

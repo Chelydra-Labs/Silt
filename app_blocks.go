@@ -92,20 +92,17 @@ func (a *App) fetchPageBlocks(notebook, section, page string, capture pageLoadCa
 		return nil, err
 	}
 
-	// Snapshot the on-disk baseline so a later whole-page save can refuse to
-	// clobber an external edit (#1005). Editor-facing loads only (see
-	// pageLoadCapture); best-effort by design (see
-	// capturePageLoadFingerprint); the DB read stays the load's source of
-	// truth. Known window: the buffer adopts DB blocks while the baseline
-	// anchors CURRENT disk, so an external edit the watcher has not
-	// re-indexed yet leaves the editor holding pre-external blocks with a
-	// baseline equal to the external bytes — the first save then passes and
-	// reverts block-level external changes (body-only external edits still
-	// survive via writePageFileLocked's in-lock re-anchor). Closing the
-	// window needs a disk-read load path or hash-comparing capture; the
-	// watcher debounce keeps it to seconds.
+	// Anchor the load baseline on the content the editor actually holds
+	// (#1005). The block funnel hands the editor DB rows, so the capture
+	// compares those rows against a fresh parse of the disk bytes: while the
+	// watcher's re-index debounce still runs, rows are the pre-external
+	// state and the baseline is pinned to THEM, refusing the first save
+	// (resolvable conflict) instead of letting it revert the external
+	// managed edit. Best-effort by design (see
+	// capturePageLoadFingerprintForBlocks); the DB read stays the load's
+	// source of truth.
 	if capture == captureEditorLoad {
-		a.capturePageFingerprintByLocator(source, notebook, section, page)
+		a.capturePageFingerprintByLocatorForBlocks(source, notebook, section, page, res)
 	}
 
 	return res, nil

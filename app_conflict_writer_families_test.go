@@ -507,6 +507,74 @@ func TestPluginCrossPageMove_NestedParentChildBatch(t *testing.T) {
 	}
 }
 
+// TestFetchPageBlocks_BaselineAnchorsRowsNotDisk pins the block funnel's
+// load-baseline anchor (#1005): the editor adopts DB rows, so while the
+// watcher debounce still runs, an external managed-block edit is on disk but
+// not in the rows. The captured baseline must guard the ROWS the editor
+// holds — the first save from that buffer refuses (a resolvable conflict)
+// instead of passing and rendering the stale rows over the external edit.
+func TestFetchPageBlocks_BaselineAnchorsRowsNotDisk(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section := "RowAnchorNB", ""
+	page := "RowAnchor"
+	blockID := famID(36, 1)
+	seedWriterFamilyPage(t, app, notebook, section, page, blockID,
+		"- [ ] indexed body <!-- id: "+blockID+" -->\n")
+	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+
+	// Steady state: the rows match disk, so a plain load→save cycle must
+	// pass — the anchor never false-refuses an un-drifted page.
+	loaded, err := app.FetchPageBlocks(notebook, section, page)
+	if err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	if err := app.SaveFileBlocks(notebook, section, page, loaded); err != nil {
+		t.Fatalf("steady-state load→save must pass, got: %v", err)
+	}
+
+	// External edit lands; the watcher has not re-indexed (the DB still
+	// returns the pre-external rows).
+	external := "---\nnotebook: \"RowAnchorNB\"\npage: \"RowAnchor\"\ntags: []\n---\n- [ ] externally edited body <!-- id: " + blockID + " -->\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	staleRows, err := app.FetchPageBlocks(notebook, section, page)
+	if err != nil {
+		t.Fatalf("FetchPageBlocks (drifted): %v", err)
+	}
+
+	// The editor saves the buffer it was handed: it never held the external
+	// bytes, so the save must refuse rather than silently revert them.
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page, staleRows))
+	got, _ := os.ReadFile(filePath)
+	if string(got) != external {
+		t.Fatalf("refused save must leave the external bytes untouched:\n got: %q\nwant: %q", string(got), external)
+	}
+
+	// The refusal minted a stash (the conflict state); settle it like the
+	// banner flow would — keep_theirs keeps the on-disk external version.
+	if _, err := app.ResolveExternalConflict(notebook, section, page, "keep_theirs"); err != nil {
+		t.Fatalf("keep_theirs: %v", err)
+	}
+
+	// Once the watcher re-indexes (simulated by indexing the external
+	// bytes), a fresh load re-anchors on matching rows and the save passes.
+	extBlocks, meta, _, _, perr := parser.ParseFileContent(external, notebook, section, page, "2026-01-01", app.spacesPerTab)
+	if perr != nil {
+		t.Fatalf("parse external: %v", perr)
+	}
+	if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, extBlocks, meta.Tags); err != nil {
+		t.Fatalf("re-index: %v", err)
+	}
+	freshRows, err := app.FetchPageBlocks(notebook, section, page)
+	if err != nil {
+		t.Fatalf("FetchPageBlocks (re-indexed): %v", err)
+	}
+	if err := app.SaveFileBlocks(notebook, section, page, freshRows); err != nil {
+		t.Fatalf("save after re-index + reload must pass, got: %v", err)
+	}
+}
+
 // TestRenamePage_MigratesPendingStash: a refused-write stash must follow the
 // page across a rename — resolution stays reachable at the new name, the old
 // name inherits nothing.
@@ -810,14 +878,30 @@ func TestProgrammaticFetchDoesNotRebaselineEditorGate(t *testing.T) {
 		t.Fatalf("external write: %v", err)
 	}
 
-	// Contrast first: the editor-facing fetch DOES re-baseline (that is the
-	// disarm — asserted so a regression of the non-capturing routing shows
-	// up as this branch passing where the fix branch fails).
+	// Contrast first: the editor-facing fetch DOES re-baseline in the steady
+	// state (rows matching disk — asserted so a regression of the
+	// non-capturing routing shows up as this branch passing where the fix
+	// branch fails). A load over STALE rows with drifted disk no longer
+	// disarms — that is the row-anchored baseline
+	// (TestFetchPageBlocks_BaselineAnchorsRowsNotDisk), not this contract.
+	extBlocks, extMeta, extContent, _, perr := parser.ParseFileContent(external, notebook, section, page, "2026-01-01", app.spacesPerTab)
+	if perr != nil {
+		t.Fatalf("parse external: %v", perr)
+	}
+	// The watcher's re-index writes the normalized content (minted id
+	// comments) back before indexing — mirror it, or the capture parse mints
+	// fresh random ids that can never match the indexed rows.
+	if werr := os.WriteFile(filePath, []byte(extContent), 0o644); werr != nil {
+		t.Fatalf("normalize external write: %v", werr)
+	}
+	if err := app.db.IndexFileBlocks("vault", extMeta.Notebook, extMeta.Section, extMeta.Page, extBlocks, extMeta.Tags); err != nil {
+		t.Fatalf("re-index external: %v", err)
+	}
 	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
 		t.Fatalf("FetchPageBlocks (editor re-load): %v", err)
 	}
 	if err := app.SaveFileBlocks(notebook, section, page,
-		editBlocks(blocks, blockID, "post-rebaseline clobber")); err != nil {
+		editBlocks(extBlocks, blockID, "post-rebaseline clobber")); err != nil {
 		t.Fatalf("editor-facing re-baseline disarmed the gate — save should pass (contrast arm): %v", err)
 	}
 	// Restore the external bytes and re-arm the baseline honestly.
