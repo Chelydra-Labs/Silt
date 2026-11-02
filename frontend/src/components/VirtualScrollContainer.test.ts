@@ -132,10 +132,14 @@ describe('VirtualScrollContainer editor chrome', () => {
     // Reset the hotkey (one test remaps it) so test order can't bleed.
     mocks.settings.config.hotkeys = { toggle_view_mode: 'Ctrl+Shift+V' }
     _resetEditorRegistryForTests()
+    delete (globalThis as unknown as Record<string, unknown>)
+      .__tiptapStubHandleFactory
   })
   afterEach(() => {
     cleanup()
     _resetEditorRegistryForTests()
+    delete (globalThis as unknown as Record<string, unknown>)
+      .__tiptapStubHandleFactory
   })
 
   /**
@@ -588,7 +592,12 @@ describe('VirtualScrollContainer editor chrome', () => {
   // replace the stashed Source text (its only copy outside the backend).
   it('arms a conflict-grade hold on the edit surface for a source-origin latch', async () => {
     const forceExternalReload = vi.fn()
-    registerEditor({
+    // The arm targets THIS container's reported surface handle (#1005) —
+    // the stub reports it via the factory seam (not the registry, which a
+    // sibling tab on the same page could shadow).
+    ;(
+      globalThis as unknown as Record<string, unknown>
+    ).__tiptapStubHandleFactory = () => ({
       key: editorKey('NB', '', 'PG'),
       isDirty: () => false,
       flush: async () => true,
@@ -615,6 +624,56 @@ describe('VirtualScrollContainer editor chrome', () => {
         conflictHold: true
       })
     )
+  })
+
+  // #1005 two-tab ownership: with two containers on ONE page, the registry's
+  // locator lookup returns the LAST-registered tab's editor — resolution
+  // from the latching tab's banner must route through THAT tab's own surface
+  // handle instead, or the sibling settles nothing while the latching tab's
+  // stale buffer stays savable over the chosen version.
+  it('routes conflict resolution through the latching tab’s own surface, not the registry’s last-registered one', async () => {
+    const { ResolveExternalConflict } = await import('$silt-app')
+    vi.mocked(ResolveExternalConflict).mockClear()
+    const resolveA = vi.fn().mockResolvedValue('Copy')
+    const resolveB = vi.fn().mockResolvedValue('Copy')
+    const handleA = {
+      key: editorKey('NB', '', 'PG'),
+      isDirty: () => true,
+      flush: async () => true,
+      forceExternalReload: vi.fn(),
+      clearExternalReload: vi.fn(),
+      setProposedEdit: () => false,
+      clearProposedEdit: () => {},
+      hasProposal: () => false,
+      acceptProposedEdit: () => false,
+      verifySelectionText: () => false,
+      resolveExternalConflict: resolveA
+    }
+    const handleB = { ...handleA, resolveExternalConflict: resolveB }
+    // Registry holds B last: every locator lookup answers the SIBLING.
+    registerEditor(handleA)
+    registerEditor(handleB)
+    // Each container's stub reports its own handle in mount order.
+    const perInstance = [handleA, handleB]
+    ;(
+      globalThis as unknown as Record<string, unknown>
+    ).__tiptapStubHandleFactory = () => perInstance.shift() ?? null
+
+    render(VirtualScrollContainer, { props: baseProps() })
+    render(VirtualScrollContainer, { props: baseProps() })
+
+    // Tab A's editor refuses (first stub in the DOM).
+    await fireEvent.click(screen.getAllByTestId('tiptap-stub-emit-conflict')[0])
+    await screen.findByTestId('save-conflict-banner')
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Keep the other version' })
+    )
+
+    await waitFor(() => expect(resolveA).toHaveBeenCalledWith('keep_theirs'))
+    // The sibling tab's editor must not settle anything…
+    expect(resolveB).not.toHaveBeenCalled()
+    // …and no direct-IPC fallback fired either (the owning handle routed it).
+    expect(ResolveExternalConflict).not.toHaveBeenCalled()
   })
 
   // #1005: a rename/move repoints the container at a new locator while the
@@ -817,7 +876,10 @@ describe('VirtualScrollContainer editor chrome', () => {
     const { ResolveExternalConflict } = await import('$silt-app')
     const forceExternalReload = vi.fn()
     const clearExternalReload = vi.fn()
-    registerEditor({
+    // The arm targets the container's own reported surface handle (#1005).
+    ;(
+      globalThis as unknown as Record<string, unknown>
+    ).__tiptapStubHandleFactory = () => ({
       key: editorKey('NB', '', 'PG'),
       isDirty: () => false,
       flush: async () => true,
@@ -970,19 +1032,15 @@ describe('VirtualScrollContainer editor chrome', () => {
   // non-reactively; when the child's registration effect flushes after the
   // parent's arm effect (order not contractual), the missed arm must
   // re-attempt after tick instead of silently never arming.
-  it('arms the standing conflict hold when the editor registers after the arm effect ran', async () => {
+  it('arms the standing conflict hold when the surface reports after the arm effect ran', async () => {
     const forceExternalReload = vi.fn()
-    const { rerender } = render(VirtualScrollContainer, {
-      props: { ...baseProps(), viewMode: 'source' }
-    })
-    await fireEvent.click(screen.getByTestId('msv-stub-emit-refused'))
-    await screen.findByTestId('save-conflict-banner')
-
-    // rerender flushes synchronously: the arm effect has already run and
-    // missed. The handle appears within the same tick — the re-attempt
-    // must find it.
-    rerender({ ...baseProps(), viewMode: 'edit' })
-    registerEditor({
+    // The latch lands BEFORE any edit surface exists (source view); the
+    // handle is reported later, when the toggle mounts the editor — the
+    // arm effect's reactive dependency on ownSurfaceHandle must re-run and
+    // arm, never silently skip (#1005; replaces the old tick-retry seam).
+    ;(
+      globalThis as unknown as Record<string, unknown>
+    ).__tiptapStubHandleFactory = () => ({
       key: editorKey('NB', '', 'PG'),
       isDirty: () => false,
       flush: async () => true,
@@ -994,6 +1052,16 @@ describe('VirtualScrollContainer editor chrome', () => {
       acceptProposedEdit: () => false,
       verifySelectionText: () => false
     })
+    const { rerender } = render(VirtualScrollContainer, {
+      props: { ...baseProps(), viewMode: 'source' }
+    })
+    await fireEvent.click(screen.getByTestId('msv-stub-emit-refused'))
+    await screen.findByTestId('save-conflict-banner')
+
+    // rerender flushes synchronously: the arm effect has already run and
+    // found no surface. The toggle mounts the editor, which reports its
+    // handle within the same tick — the reactive re-run must find it.
+    rerender({ ...baseProps(), viewMode: 'edit' })
     await waitFor(() =>
       expect(forceExternalReload).toHaveBeenCalledWith({ conflictHold: true })
     )

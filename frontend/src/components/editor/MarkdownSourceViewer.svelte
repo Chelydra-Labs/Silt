@@ -23,7 +23,8 @@
   } from '../../../bindings/silt/app.js'
   import {
     registerEditor,
-    editorKey
+    editorKey,
+    type EditorHandle
   } from '../../lib/editor/editorRegistry.svelte'
   import { coerceIPCError } from '../../lib/ipcError'
   import { IPCErrorCode } from '../../generated/enums'
@@ -66,6 +67,11 @@
      *  can latch the page-level banner (it survives view toggles; a banner
      *  inside this component would not). */
     onSaveRefused?: () => void
+    /** Reports this surface's registry handle to its owning container
+     *  (#1005): conflict resolution must route through the handle of the
+     *  tab that latched, never a locator lookup that can hit a sibling
+     *  tab's editor on the same page. Called with null on unmount. */
+    onHandleRegistered?: (handle: EditorHandle | null) => void
   }
 
   let {
@@ -79,7 +85,8 @@
     // eslint-disable-next-line no-useless-assignment -- $bindable out-param for parent FindBar
     sourceSearchTarget = $bindable<SourceSearchTarget | null>(null),
     conflictActive = false,
-    onSaveRefused
+    onSaveRefused,
+    onHandleRegistered
   }: Props = $props()
 
   function reconstructMarkdown(source: ParsedBlock[]): string {
@@ -475,7 +482,7 @@
   $effect(() => {
     if (!editable || !notebook || !page) return
     const key = editorKey(notebook, section, page)
-    return registerEditor({
+    const handle: EditorHandle = {
       key,
       isDirty: () => dirty || conflictPending,
       flush: async () => {
@@ -512,7 +519,13 @@
       acceptProposedEdit: () => false,
       verifySelectionText: () => false,
       resolveExternalConflict: (resolution) => resolveSaveConflict(resolution)
-    })
+    }
+    const unregister = registerEditor(handle)
+    onHandleRegistered?.(handle)
+    return () => {
+      onHandleRegistered?.(null)
+      unregister()
+    }
   })
 
   // Page-level conflict latch (#1005): while the parent's latch is set this

@@ -95,12 +95,15 @@ export function editorKey(
 /** Register a mounted editor. Returns an unregister function.
  *
  *  Keyed by locator only (not tabId + locator, #345): with two tabs open on
- *  the same page the second registration replaces the first, so a
- *  conflict-resolution lookup (`resolveExternalConflict` /
- *  `forceExternalReload`) routes through the LAST-registered tab's editor —
- *  the other tab's dirty editor gets no write hold and re-refuses once
- *  (transient banner + stash churn; converges on the next reload). Known
- *  limitation; re-keying would touch every consumer of editorKey. */
+ *  the same page the second registration replaces the first, so LOCATOR
+ *  lookups address "the page" through the LAST-registered tab's editor.
+ *  That is fine for out-of-band writers that target the page itself (global
+ *  replace's flush/arm, the Go-side restore reload): the un-addressed tab
+ *  re-refuses once and converges on its next reload. Conflict RESOLUTION is
+ *  not routed through this registry's locator lookup anymore — the latching
+ *  container routes through its own surface's handle (reported via
+ *  onHandleRegistered), so a resolution can never settle the sibling tab's
+ *  editor while the latching tab's stale buffer stays savable (#1005). */
 export function registerEditor(handle: EditorHandle): () => void {
   editors.set(handle.key, handle)
   return () => {

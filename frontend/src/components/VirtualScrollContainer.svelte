@@ -7,7 +7,10 @@
   import TipTapEditor from './TipTapEditor.svelte'
   import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
   import SaveConflictBanner from './editor/SaveConflictBanner.svelte'
-  import { getEditorForLocator } from '../lib/editor/editorRegistry.svelte'
+  import {
+    getEditorForLocator,
+    type EditorHandle
+  } from '../lib/editor/editorRegistry.svelte'
   import {
     resolveExternalConflict,
     type ExternalConflictResolution
@@ -164,6 +167,14 @@
   let conflictError = $state<string | null>(null)
   /** Polite success announcement naming the created conflict copy (#1005). */
   let conflictAnnouncement = $state('')
+  // THIS container's mounted surface handle, reported by the surface on
+  // registration (#1005). Conflict routing (resolution + conflict-grade
+  // holds) must reach the tab that latched — with two tabs open on the same
+  // page, a registry locator lookup returns the LAST-registered tab's
+  // editor and would settle the wrong buffer while the latching tab's
+  // stale editor stays savable. Reactive so the cross-surface hold effect
+  // re-runs when the surface (re-)reports after a view toggle.
+  let ownSurfaceHandle = $state<EditorHandle | null>(null)
 
   function latchConflict(origin: 'edit' | 'source'): void {
     // First refusal wins: the backend keeps the FIRST cross-funnel stash,
@@ -198,23 +209,11 @@
     // disarmed the arm it made, and the standing hold must come back or the
     // edit surface's writes are unprotected while the banner offers retry.
     if (conflictBusy) return
-    const nb = notebook,
-      sec = section,
-      pg = page
-    const handle = getEditorForLocator(nb, sec, pg)
-    if (handle) {
-      handle.forceExternalReload({ conflictHold: true })
-      return
-    }
-    // The mounted TipTapEditor registers in its own $effect, and
-    // child-before-parent flush order is not contractual — when the lookup
-    // above missed, re-attempt after tick so the stash-protecting hold
-    // cannot silently never arm.
-    void tick().then(() => {
-      getEditorForLocator(nb, sec, pg)?.forceExternalReload({
-        conflictHold: true
-      })
-    })
+    // Arm THIS tab's edit surface only (ownSurfaceHandle) — a locator
+    // lookup could arm a sibling tab's editor on the same page and leave
+    // the latching tab unprotected (#1005). ownSurfaceHandle is reactive:
+    // if the surface has not reported yet, the arm runs when it does.
+    ownSurfaceHandle?.forceExternalReload({ conflictHold: true })
   })
 
   // Only the active container reports, and it re-reports on activation, so
@@ -234,14 +233,14 @@
     conflictBusy = true
     conflictError = null
     try {
-      // Route through the OWNING surface's handle when it is the mounted
-      // one: the stashed payload is that surface's buffer and only it can
-      // settle its own state (keep_mine flushes typed-past edits; keep_theirs
-      // reseeds). Cross-surface — the refusal happened in the other view
-      // before a toggle — resolves via direct IPC, then arms the mounted
-      // editor's conflict-grade reload so its stale buffer cannot save over
-      // the just-settled disk state before the reload replaces it.
-      const handle = getEditorForLocator(notebook, section, page)
+      // Route through THIS tab's surface handle (reported at registration,
+      // #1005): with two tabs on one page a registry locator lookup returns
+      // the LAST-registered tab's editor and would settle the sibling's
+      // buffer while the latching tab's stale editor stays savable. The
+      // locator lookup is a fallback for surfaces that never report (test
+      // stubs); a real surface always reports before its refusal can latch.
+      const handle =
+        ownSurfaceHandle ?? getEditorForLocator(notebook, section, page)
       const mountedOrigin = viewMode === 'source' ? 'source' : 'edit'
       let conflictPage: string | void
       if (handle?.resolveExternalConflict && conflictOrigin === mountedOrigin) {
@@ -291,7 +290,9 @@
       // falling back to the page title when the mounted surface has nothing
       // focusable, so keyboard users are not dropped to <body>.
       await tick()
-      if (!getEditorForLocator(notebook, section, page)?.focusEditor?.()) {
+      const focusTarget =
+        ownSurfaceHandle ?? getEditorForLocator(notebook, section, page)
+      if (!focusTarget?.focusEditor?.()) {
         titleEl?.focus()
       }
     } catch (e) {
@@ -886,6 +887,7 @@
                 bind:sourceSearchTarget
                 conflictActive={saveConflict}
                 onSaveRefused={() => latchConflict('source')}
+                onHandleRegistered={(h) => (ownSurfaceHandle = h)}
                 onBlocksSaved={(saved) => {
                   blocks = saved
                 }}
@@ -904,6 +906,7 @@
                 bind:editorInstance
                 bind:activeMarks
                 bind:wordCount
+                onHandleRegistered={(h) => (ownSurfaceHandle = h)}
                 onSaveStateChange={(s) => {
                   saveError = s.error
                   if (s.externalConflict === true) {

@@ -8,7 +8,10 @@
   import { CharacterCount, Focus, TrailingNode } from '@tiptap/extensions'
   import Typography from '@tiptap/extension-typography'
   import { AutosaveManager } from '../lib/editor/useAutosave'
-  import { registerEditor } from '../lib/editor/editorRegistry.svelte'
+  import {
+    registerEditor,
+    type EditorHandle
+  } from '../lib/editor/editorRegistry.svelte'
   import { FocusLockManager } from '../lib/editor/useFocusLock'
   import { BlockIndentOnDrop } from '../lib/editor/dragIndentDrop'
   import { gateBubbleCoords } from '../lib/editor/selectionBubbleGate'
@@ -122,6 +125,11 @@
      *  (onCreate). Lets the parent schedule post-readiness work such as
      *  restoring scroll across an Edit↔Source round-trip (#319). */
     onReady?: () => void
+    /** Reports this surface's registry handle to its owning container
+     *  (#1005): conflict resolution must route through the handle of the
+     *  tab that latched, never a locator lookup that can hit a sibling
+     *  tab's editor on the same page. Called with null on unmount. */
+    onHandleRegistered?: (handle: EditorHandle | null) => void
   }
 
   let {
@@ -138,7 +146,8 @@
     // eslint-disable-next-line no-useless-assignment -- $bindable out-param for parent word count
     wordCount = $bindable<number>(0),
     onSaveStateChange,
-    onReady
+    onReady,
+    onHandleRegistered
   }: Props = $props()
   let editorReady = $state(false)
   let isFocused = $state(false)
@@ -829,12 +838,15 @@
   // and force a reload after (#345). Re-registers when the page triple
   // changes (e.g. a rename) without re-subscribing on every dirty toggle
   // (isDirty reads state lazily inside the closure, not in the effect body).
+  // The handle is also reported to the owning container so conflict
+  // resolution routes through THIS tab's surface, never a locator lookup
+  // that a sibling tab on the same page would shadow (#1005).
   $effect(() => {
     const nb = notebook,
       sec = section,
       pg = page
     const key = `${nb}\x00${sec}\x00${pg}`
-    return registerEditor({
+    const handle: EditorHandle = {
       key,
       isDirty: () => unsavedChanges,
       flush: async () => {
@@ -911,7 +923,13 @@
           throw e
         }
       }
-    })
+    }
+    const unregister = registerEditor(handle)
+    onHandleRegistered?.(handle)
+    return () => {
+      onHandleRegistered?.(null)
+      unregister()
+    }
   })
 
   // --- Slash menu -----------------------------------------------------------
