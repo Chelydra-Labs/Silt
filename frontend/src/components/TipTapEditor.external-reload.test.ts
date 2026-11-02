@@ -2,7 +2,7 @@
 // must still setContent when forceExternalReload is armed.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, waitFor } from '@testing-library/svelte'
+import { render, waitFor, fireEvent } from '@testing-library/svelte'
 import TipTapEditor from './TipTapEditor.svelte'
 import { mkBlock } from '../lib/editor/nodeview-test-harness'
 import {
@@ -10,6 +10,7 @@ import {
   getEditor,
   _resetEditorRegistryForTests
 } from '../lib/editor/editorRegistry.svelte'
+import { getActiveEditor } from '../lib/editor/activeEditor.svelte'
 
 if (typeof document !== 'undefined' && !document.elementFromPoint) {
   document.elementFromPoint = () => document.body
@@ -394,6 +395,92 @@ describe('TipTapEditor same-ID external reload', () => {
     })
     expect(view.container.querySelector('.conflict-hold-notice')).toBeNull()
     expect(pmText(view.container)).toContain('their text')
+    view.unmount()
+  })
+
+  // #1005 typed-past flush: keep_mine/keep_both must flush the debounce tail
+  // through the stash BEFORE the resolve IPC — the settle's block:changed
+  // replaces the blurred buffer with the settled blocks, so an un-flushed
+  // tail would vanish from the doc. The flush re-refuses newest-wins and the
+  // resolve pops that newest stash, so the settled outcome is this buffer.
+  it('flushes typed-past edits before keep_mine resolves', async () => {
+    const calls: string[] = []
+    mocks.saveFileBlocks.mockImplementation(async () => {
+      calls.push('save')
+      return undefined
+    })
+    mocks.resolveExternalConflict.mockImplementation(async () => {
+      calls.push('resolve')
+      return 'Journal.conflict-20260622-090000'
+    })
+    const first = [mkBlock('NOTE', { id: STABLE_ID, clean_text: 'my text' })]
+    const view = render(TipTapEditor, {
+      props: {
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily',
+        blocks: first,
+        onUpdate: () => {}
+      }
+    })
+    await waitFor(() => {
+      expect(view.container.querySelector('.ProseMirror')).toBeTruthy()
+    })
+    // Type past the refusal: the editor is dirty when the banner is clicked.
+    // Focus routes the live instance through the active-editor tracker; the
+    // bindable prop is not readable from the test harness.
+    const pmEl = view.container.querySelector('.ProseMirror') as HTMLElement
+    await fireEvent.focus(pmEl)
+    const editor = getActiveEditor()
+    expect(editor).toBeTruthy()
+    editor!.commands.insertContent('typed tail')
+    // Click resolve immediately — well inside the 500ms debounce, so the
+    // only path that can save before the resolve IPC is the flush itself.
+    const handle = getEditor(editorKey('Work', 'Journal', 'Daily'))
+    await handle!.resolveExternalConflict!('keep_mine')
+    expect(calls).toEqual(['save', 'resolve'])
+    view.unmount()
+  })
+
+  // #1005 IPC freeze: the backend pops the stash inside the resolve IPC, so
+  // keystrokes landing during the round-trip could never be re-stashed — the
+  // surface must be read-only for the window (parity with the source viewer).
+  it('freezes the editor for the resolution IPC window', async () => {
+    let releaseResolve!: (v: string) => void
+    mocks.resolveExternalConflict.mockImplementation(
+      async () =>
+        new Promise<string>((res) => {
+          releaseResolve = res
+        })
+    )
+    const first = [mkBlock('NOTE', { id: STABLE_ID, clean_text: 'my text' })]
+    const view = render(TipTapEditor, {
+      props: {
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily',
+        blocks: first,
+        onUpdate: () => {}
+      }
+    })
+    await waitFor(() => {
+      expect(view.container.querySelector('.ProseMirror')).toBeTruthy()
+    })
+    const pm = () => view.container.querySelector('.ProseMirror')
+    expect(pm()!.getAttribute('contenteditable')).toBe('true')
+
+    const handle = getEditor(editorKey('Work', 'Journal', 'Daily'))
+    const settled = handle!.resolveExternalConflict!('keep_both') as Promise<
+      string | void
+    >
+    await waitFor(() => {
+      expect(pm()!.getAttribute('contenteditable')).toBe('false')
+    })
+    releaseResolve('Journal.conflict-20260622-090000')
+    await settled
+    await waitFor(() => {
+      expect(pm()!.getAttribute('contenteditable')).toBe('true')
+    })
     view.unmount()
   })
 })

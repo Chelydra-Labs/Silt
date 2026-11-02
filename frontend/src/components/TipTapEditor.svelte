@@ -802,10 +802,16 @@
   // until the reload lands and releases the hold.
   let conflictHold = $state(false)
 
+  // Frozen while a resolution IPC is in flight (all three resolutions): the
+  // backend pops the stash inside that IPC, so keystrokes landing during the
+  // round-trip could never be re-stashed and would be dropped by the settle
+  // (see resolveExternalConflict on the registry handle below).
+  let resolvingConflict = $state(false)
+
   $effect(() => {
     const editor = editorInstance
     if (!editor || editor.isDestroyed) return
-    const editable = !conflictHold
+    const editable = !conflictHold && !resolvingConflict
     if (editor.isEditable !== editable) editor.setEditable(editable)
   })
 
@@ -910,20 +916,38 @@
         }
       },
       resolveExternalConflict: async (resolution) => {
-        if (resolution === 'keep_theirs') {
-          // Arm BEFORE the IPC: the backend emits block:changed on
-          // resolution and the reload must land on an armed editor so the
-          // focused-edit guard lets the on-disk version replace my buffer
-          // (same ordering as the PageHistoryModal restore).
-          pendingExternalReload = true
-        }
+        // Freeze for the IPC window, mirroring the source viewer: the
+        // resolve pops the stash inside the IPC, so keystrokes landing
+        // during the round-trip could never be re-stashed — the settle's
+        // reload would silently drop them (#1005).
+        resolvingConflict = true
         try {
+          if (resolution === 'keep_theirs') {
+            // Arm BEFORE the IPC: the backend emits block:changed on
+            // resolution and the reload must land on an armed editor so the
+            // focused-edit guard lets the on-disk version replace my buffer
+            // (same ordering as the PageHistoryModal restore). The buffer
+            // is discardable — nothing to flush.
+            pendingExternalReload = true
+          } else if (unsavedChanges) {
+            // Flush the typed tail through the stash BEFORE the IPC: the
+            // settle emits block:changed before the resolve returns, and
+            // that reload replaces the (blurred) buffer with the settled
+            // blocks — anything typed since the last refused save (the
+            // debounce tail) would vanish from the doc. The flush's save
+            // re-refuses newest-wins, and the resolve pops that newest
+            // stash inside the lock, so the settled outcome IS this buffer
+            // and the reload lands identical content (#1005).
+            await autosave.flush()
+          }
           return await autosave.resolveExternalConflict(resolution)
         } catch (e) {
           if (resolution === 'keep_theirs') {
             pendingExternalReload = false
           }
           throw e
+        } finally {
+          resolvingConflict = false
         }
       }
     }
