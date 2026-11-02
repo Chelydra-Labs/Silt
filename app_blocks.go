@@ -978,7 +978,11 @@ func (a *App) fetchPageMarkdown(notebook, section, page string, capture pageLoad
 		return "", fmt.Errorf("read page markdown: %w", err)
 	}
 	if capture == captureEditorLoad {
-		a.capturePageLoadFingerprint(filePath)
+		// Anchor the baseline on the bytes actually returned: an external
+		// write landing between this read and a re-reading capture would
+		// baseline bytes the editor does not hold, disarming the gate for
+		// exactly that edit (#1005).
+		a.capturePageLoadFingerprintFromBytes(filePath, contentBytes)
 	}
 	_, body := parser.SplitFrontmatter(string(contentBytes))
 	return body, nil

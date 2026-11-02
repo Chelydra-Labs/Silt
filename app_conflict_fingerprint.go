@@ -202,6 +202,29 @@ func (a *App) capturePageLoadFingerprint(filePath string) {
 	a.storePageLoadFingerprint(core.NormalizeFileLockPath(filePath), fp)
 }
 
+// capturePageLoadFingerprintFromBytes is capturePageLoadFingerprint anchored
+// on bytes the caller already holds (the buffer it hands to the editor): the
+// baseline must describe exactly those bytes. Re-reading the file instead
+// would baseline whatever landed AFTER the editor's read — disarming the
+// gate for precisely that edit (fail-open). Hashing the held bytes fails
+// safe: any later disk difference mismatches and refuses.
+func (a *App) capturePageLoadFingerprintFromBytes(filePath string, content []byte) {
+	if a == nil || filePath == "" {
+		return
+	}
+	info, err := os.Stat(filePath)
+	if err != nil {
+		// Same swallow contract as capturePageLoadFingerprint: a failed
+		// capture only means no protection until the next successful one.
+		return
+	}
+	fp := fingerprintFromStat(info)
+	sum := sha256.Sum256(content)
+	fp.SHA256 = hex.EncodeToString(sum[:])
+	fp.stampCaptureTime(time.Now())
+	a.storePageLoadFingerprint(core.NormalizeFileLockPath(filePath), fp)
+}
+
 func (a *App) storePageLoadFingerprint(key string, fp FileFingerprint) {
 	a.pageLoadFingerprintsMu.Lock()
 	defer a.pageLoadFingerprintsMu.Unlock()
