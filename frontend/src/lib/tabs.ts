@@ -93,6 +93,12 @@ export interface OpenPageOptions {
    *  usually the per-vault `editor.default_view_mode`. Only applied to NEW
    *  tabs and preview-slot reuse — an existing tab's mode is preserved. */
   defaultViewMode?: ViewMode
+  /** Ids of tabs mid-conflict-resolution (#1005). A busy tab is never
+   *  evicted for capacity and a busy preview slot is never retargeted —
+   *  both destroy a resolving surface and fire its unmount handoff against
+   *  the settle in flight, the same hazard handleCloseTab gates. At
+   *  capacity with no other victim the open is refused (see openPage). */
+  busyTabIds?: ReadonlySet<string>
 }
 
 export interface TabsState {
@@ -136,6 +142,12 @@ export function mruOrder(tabs: TabEntry[]): TabEntry[] {
  *    `mode: 'pin'`.
  * 7. Enforce `opts.maxOpenTabs` via LRU eviction: least-recently-active
  *    PREVIEW first, then oldest PINNED.
+ * 8. `opts.busyTabIds` (#1005): conflict-busy tabs are never evicted (7) and
+ *    a busy preview slot is never retargeted (4). When capacity forces an
+ *    eviction and every candidate is busy, the open is REFUSED — the input
+ *    state object is returned unchanged so the caller can detect it by
+ *    reference and skip applying it (destroying a resolving surface is the
+ *    one outcome worse than a refused open).
  */
 export function openPage(
   state: TabsState,
@@ -147,7 +159,8 @@ export function openPage(
     enablePreviewTabs = true,
     maxOpenTabs = 8,
     blockTarget,
-    defaultViewMode = 'edit'
+    defaultViewMode = 'edit',
+    busyTabIds
   } = opts
 
   // activate-only: no tab change at all (navigate-to-block on current page).
@@ -202,8 +215,13 @@ export function openPage(
 
   if (mode === 'preview') {
     // Rule 4: reuse the existing preview slot if one exists (showing a
-    // different page). Replace its content.
-    const existingPreview = state.tabs.find((t) => t.preview)
+    // different page). Replace its content. A conflict-busy preview slot is
+    // skipped (#1005): retargeting it mid-resolution unmounts/supersedes a
+    // resolving surface — open a fresh tab instead (transiently two preview
+    // slots; the busy one is exempt from eviction until it settles).
+    const existingPreview = state.tabs.find(
+      (t) => t.preview && !busyTabIds?.has(t.id)
+    )
     if (existingPreview) {
       const tabs = state.tabs.map((t) =>
         t.id === existingPreview.id
@@ -226,15 +244,19 @@ export function openPage(
       )
       return { tabs, activeId: existingPreview.id }
     }
-    // No preview slot yet — create one (after eviction if needed).
-    return createTab(
-      state,
-      ref,
-      true,
-      now,
-      blockTarget,
-      maxOpenTabs,
-      defaultViewMode
+    // No reusable preview slot — create one (after eviction if needed).
+    // undefined = refused: at capacity with only conflict-busy victims.
+    return (
+      createTab(
+        state,
+        ref,
+        true,
+        now,
+        blockTarget,
+        maxOpenTabs,
+        defaultViewMode,
+        busyTabIds
+      ) ?? state
     )
   }
 
@@ -244,14 +266,17 @@ export function openPage(
   // so if we reach here with a preview match it was skipped. But since we
   // checked `previewSamePage` above and didn't return, there's no same-page
   // preview. So we create a new pinned tab.)
-  return createTab(
-    state,
-    ref,
-    false,
-    now,
-    blockTarget,
-    maxOpenTabs,
-    defaultViewMode
+  return (
+    createTab(
+      state,
+      ref,
+      false,
+      now,
+      blockTarget,
+      maxOpenTabs,
+      defaultViewMode,
+      busyTabIds
+    ) ?? state
   )
 }
 
@@ -279,7 +304,9 @@ function activateTab(
 
 /**
  * Internal: create a new tab (preview or pinned), evicting via LRU if the tab
- * count would exceed the cap.
+ * count would exceed the cap. Conflict-busy tabs are never eviction victims
+ * (#1005). Returns undefined when the open must be refused: at capacity with
+ * no non-busy victim to evict.
  */
 function createTab(
   state: TabsState,
@@ -288,16 +315,18 @@ function createTab(
   now: number,
   blockTarget: OpenPageOptions['blockTarget'],
   maxOpenTabs: number,
-  defaultViewMode: ViewMode
-): TabsState {
+  defaultViewMode: ViewMode,
+  busyTabIds?: ReadonlySet<string>
+): TabsState | undefined {
   let tabs = [...state.tabs]
 
   // Evict if at capacity. LRU: least-recently-active PREVIEW first, then
   // oldest PINNED. Never evict the tab we're about to activate (it doesn't
-  // exist yet, so this is always safe).
+  // exist yet, so this is always safe) and never a conflict-busy tab: the
+  // eviction destroys a resolving surface (#1005).
   while (tabs.length >= maxOpenTabs && tabs.length > 0) {
-    const victim = pickEvictionVictim(tabs)
-    if (!victim) break
+    const victim = pickEvictionVictim(tabs, busyTabIds)
+    if (!victim) return undefined
     tabs = tabs.filter((t) => t.id !== victim.id)
   }
 
@@ -320,12 +349,19 @@ function createTab(
 /**
  * Pick the tab to evict under the LRU policy: the least-recently-active
  * PREVIEW tab. If no preview tabs exist, the oldest (lowest lastActivatedAt)
- * PINNED tab. Returns undefined only if the list is empty.
+ * PINNED tab. Conflict-busy tabs (#1005) are excluded from both pools —
+ * evicting one destroys a resolving surface mid-IPC. Returns undefined when
+ * there is no eligible victim (empty list, or every candidate is busy).
  */
-export function pickEvictionVictim(tabs: TabEntry[]): TabEntry | undefined {
+export function pickEvictionVictim(
+  tabs: TabEntry[],
+  busyTabIds?: ReadonlySet<string>
+): TabEntry | undefined {
   if (tabs.length === 0) return undefined
-  const previews = tabs.filter((t) => t.preview)
-  const pool = previews.length > 0 ? previews : tabs
+  const eligible = tabs.filter((t) => !busyTabIds?.has(t.id))
+  if (eligible.length === 0) return undefined
+  const previews = eligible.filter((t) => t.preview)
+  const pool = previews.length > 0 ? previews : eligible
   // Lowest lastActivatedAt = least recently used.
   return pool.reduce((min, t) =>
     t.lastActivatedAt < min.lastActivatedAt ? t : min

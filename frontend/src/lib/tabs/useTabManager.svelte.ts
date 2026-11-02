@@ -66,6 +66,11 @@ export interface TabManagerDeps {
   confirmTemplateTransition: () => boolean
   /** Route a `.silt` standalone-task locator to the Tasks view. */
   openTasksView: (blockId: string | undefined) => void
+  /** Live read of the tab ids mid-conflict-resolution (#1005). Busy tabs are
+   *  never evicted for capacity and never retargeted as the preview slot —
+   *  both destroy a resolving surface. Optional (empty when omitted) so
+   *  embedders without the conflict machinery keep today's behavior. */
+  getConflictBusyTabIds?: () => ReadonlySet<string>
 }
 
 export interface PageRenamedDetail {
@@ -241,12 +246,24 @@ export function createTabManager(deps: TabManagerDeps): TabManagerController {
     const maxOpenTabs = cfg.ui?.max_open_tabs ?? 8
     const defaultViewMode: ViewMode =
       cfg.editor?.default_view_mode === 'source' ? 'source' : 'edit'
-    const result = openPageState(
-      { tabs: openTabs, activeId: activeTabId },
-      ref,
-      mode,
-      { enablePreviewTabs, maxOpenTabs, blockTarget, defaultViewMode }
-    )
+    const input = { tabs: openTabs, activeId: activeTabId }
+    const result = openPageState(input, ref, mode, {
+      enablePreviewTabs,
+      maxOpenTabs,
+      blockTarget,
+      defaultViewMode,
+      busyTabIds: deps.getConflictBusyTabIds?.()
+    })
+    if (result === input) {
+      // Refused: at capacity with only conflict-busy eviction candidates
+      // (#1005). Loud on purpose — the resolving surfaces stay mounted and
+      // the user must close a settled tab first.
+      console.warn(
+        '[silt] refusing to open a tab: every eviction candidate is mid-conflict-resolution. ',
+        'Close a settled tab first.'
+      )
+      return
+    }
     openTabs = result.tabs
     activeTabId = result.activeId
     syncActiveFromTab()

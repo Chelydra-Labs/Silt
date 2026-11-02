@@ -174,6 +174,49 @@ describe('useTabManager — pageMoved / renameTab / setTabSaveState (#768)', () 
   })
 })
 
+describe('useTabManager — conflict-busy open gating (#1005)', () => {
+  it('refuses an open at capacity when every eviction candidate is busy, warning loudly', () => {
+    const busy = new Set<string>()
+    let tabs: TabManagerController | undefined
+    const destroy = $effect.root(() => {
+      tabs = createTabManager({
+        ...makeDeps(),
+        getSettings: () => ({
+          ui: { enable_preview_tabs: false, max_open_tabs: 2 },
+          editor: {}
+        }),
+        getConflictBusyTabIds: () => busy
+      })
+      tabs.openPage(
+        { notebook: 'Work', section: 'Inbox', page: 'Alpha' },
+        'pin'
+      )
+      tabs.openPage({ notebook: 'Work', section: 'Inbox', page: 'Beta' }, 'pin')
+    })
+    const t = tabs!
+    try {
+      busy.add(t.openTabs[0]!.id)
+      busy.add(t.openTabs[1]!.id)
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      t.openPage({ notebook: 'Work', section: 'Inbox', page: 'Gamma' }, 'pin')
+      // Refused: the resolving surfaces stay mounted, nothing is evicted,
+      // and the cap is not silently exceeded.
+      expect(t.openTabs).toHaveLength(2)
+      expect(t.openTabs.every((x) => x.page !== 'Gamma')).toBe(true)
+      expect(warn).toHaveBeenCalledOnce()
+      warn.mockRestore()
+
+      // Once a tab settles, the same open succeeds.
+      busy.delete(t.openTabs[0]!.id)
+      t.openPage({ notebook: 'Work', section: 'Inbox', page: 'Gamma' }, 'pin')
+      expect(t.openTabs).toHaveLength(2)
+      expect(t.openTabs.some((x) => x.page === 'Gamma')).toBe(true)
+    } finally {
+      destroy?.()
+    }
+  })
+})
+
 describe('useTabManager — pageRenamed + displayedTabs scoping', () => {
   let destroy: (() => void) | undefined
   let tabs: TabManagerController

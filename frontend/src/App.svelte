@@ -131,7 +131,10 @@
     setActivePage: (pg) => (activePage = pg),
     getSettings: () => settings.config ?? {},
     confirmTemplateTransition,
-    openTasksView
+    openTasksView,
+    // Conflict-busy tabs survive capacity eviction and preview-slot reuse
+    // (#1005) — declared below, read lazily on every openPage.
+    getConflictBusyTabIds: () => conflictBusyTabs
   })
 
   // Navigation state (3-level: notebook > section > page). Kept in sync with

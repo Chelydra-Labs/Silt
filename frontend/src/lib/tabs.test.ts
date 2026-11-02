@@ -241,6 +241,84 @@ describe('openPage — preview/pin state machine', () => {
     })
   })
 
+  describe('Rule 8: conflict-busy tabs survive eviction and slot reuse (#1005)', () => {
+    it('capacity eviction skips a busy preview and takes the oldest pinned instead', () => {
+      const busyPreview = mkTab(PAGE_A, {
+        preview: true,
+        lastActivatedAt: 10,
+        id: 'busy-preview'
+      })
+      const p1 = mkTab(PAGE_B, { preview: false, lastActivatedAt: 100 })
+      const p2 = mkTab(PAGE_C, { preview: false, lastActivatedAt: 200 })
+      const st = state([busyPreview, p1, p2], p2.id)
+      const result = openPage(
+        st,
+        { notebook: 'Y', section: '', page: 'New' },
+        'pin',
+        {
+          maxOpenTabs: 3,
+          busyTabIds: new Set(['busy-preview'])
+        }
+      )
+      expect(result.tabs).toHaveLength(3) // evicted 1, added 1
+      // The busy preview was never the victim; the oldest pinned was.
+      expect(findTab(result.tabs, PAGE_A)).toBeTruthy()
+      expect(busyPreview.preview).toBe(true)
+      expect(findTab(result.tabs, PAGE_B)).toBeUndefined()
+      expect(result.tabs.find((t) => t.page === 'New')).toBeTruthy()
+    })
+
+    it('refuses the open (unchanged state) when every eviction candidate is busy', () => {
+      const b1 = mkTab(PAGE_A, { lastActivatedAt: 100, id: 'busy-1' })
+      const b2 = mkTab(PAGE_B, { lastActivatedAt: 200, id: 'busy-2' })
+      const st = state([b1, b2], b2.id)
+      const result = openPage(st, PAGE_C, 'pin', {
+        maxOpenTabs: 2,
+        busyTabIds: new Set(['busy-1', 'busy-2'])
+      })
+      // Same reference = the documented refusal contract; no surface was
+      // destroyed and the cap was not silently exceeded.
+      expect(result).toBe(st)
+      expect(result.tabs).toHaveLength(2)
+    })
+
+    it('preview-slot reuse skips a busy slot and opens beside it instead of retargeting it', () => {
+      const busyPreview = mkTab(PAGE_A, {
+        preview: true,
+        id: 'busy-preview'
+      })
+      const st = state([busyPreview], busyPreview.id)
+      const result = openPage(st, PAGE_B, 'preview', {
+        busyTabIds: new Set(['busy-preview'])
+      })
+      // The resolving surface keeps its slot AND its page; the open lands
+      // in a fresh tab (transiently two preview slots, by design).
+      expect(findTab(result.tabs, PAGE_A)?.id).toBe('busy-preview')
+      expect(findTab(result.tabs, PAGE_A)?.preview).toBe(true)
+      const opened = findTab(result.tabs, PAGE_B)!
+      expect(opened).toBeTruthy()
+      expect(opened.preview).toBe(true)
+      expect(result.activeId).toBe(opened.id)
+    })
+
+    it('pickEvictionVictim never returns a busy tab from either pool', () => {
+      const busyPreview = mkTab(PAGE_A, { preview: true, lastActivatedAt: 1 })
+      const pinned = mkTab(PAGE_B, { preview: false, lastActivatedAt: 500 })
+      const busy = new Set([busyPreview.id])
+      // Busy preview excluded → falls through to the pinned pool.
+      expect(pickEvictionVictim([busyPreview, pinned], busy)?.id).toBe(
+        pinned.id
+      )
+      // Every candidate busy → no victim (the caller refuses the open).
+      expect(
+        pickEvictionVictim(
+          [busyPreview, pinned],
+          new Set([busyPreview.id, pinned.id])
+        )
+      ).toBeUndefined()
+    })
+  })
+
   it('opening into an empty state creates the first tab and activates it', () => {
     const st = state([], '')
     const result = openPage(st, PAGE_A, 'preview')
