@@ -1371,3 +1371,60 @@ func TestUniqueConflictSibling_BoundedCollisionLoop(t *testing.T) {
 		t.Fatalf("cap failure must stay conflict-typed, got %v", err)
 	}
 }
+
+// TestExternalEdit_RecurProgressEstimateTokens_DontFalseDrift pins the
+// like-with-like contract of the rows-anchored block-editor baseline (#1005):
+// FetchPageBlocks' projection historically dropped [recur::]/[progress::] and
+// reformatted [estimate::] lossily ("90m" → "1.5h") while the disk parse
+// carried them verbatim — every load of a steady-state recurring/progress
+// page classified itself as drifted, pinned the baseline to the rows, and
+// refused every subsequent save (keep_theirs looped forever; keep_mine
+// stripped the tokens). With the projection hydrating the fields, a
+// steady-state load+save passes clean and round-trips the tokens
+// byte-for-byte, while an external edit to those tokens still refuses.
+func TestExternalEdit_RecurProgressEstimateTokens_DontFalseDrift(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "ConfNB", "", "TokenPage"
+	blockID := "ababab7a-7aba-4aba-8aba-abababababab"
+	tokens := "[recur:: every week] [progress:: 50] [estimate:: 90m]"
+	seedConflictPage(t, app, notebook, section, page, blockID, "- [ ] ship it "+tokens)
+
+	// Steady-state load: rows == disk, so the baseline anchors on the disk
+	// bytes (not a rows-pinned sentinel).
+	rows, err := app.FetchPageBlocks(notebook, section, page)
+	if err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Recurrence != "every week" || rows[0].Progress != 50 || rows[0].Estimate != "90m" {
+		t.Fatalf("served rows lost file-resident tokens: %+v", rows)
+	}
+
+	// The save the editor makes on an untouched buffer must pass clean and
+	// re-render the tokens byte-for-byte.
+	if err := app.SaveFileBlocks(notebook, section, page, rows); err != nil {
+		t.Fatalf("steady-state save of a recur/progress/estimate page must pass, got: %v", err)
+	}
+	got, _ := os.ReadFile(conflictPagePath(app, notebook, section, page))
+	for _, want := range []string{"[recur:: every week]", "[progress:: 50]", "[estimate:: 90m]"} {
+		if !strings.Contains(string(got), want) {
+			t.Fatalf("save must round-trip tokens byte-for-byte: %q missing from\n%s", want, got)
+		}
+	}
+
+	// An external edit to exactly those tokens is real drift: the reload-less
+	// save must refuse and leave the external bytes untouched.
+	filePath := conflictPagePath(app, notebook, section, page)
+	external := strings.Replace(string(got), tokens,
+		"[recur:: every week] [progress:: 80] [estimate:: 90m]", 1)
+	if external == string(got) {
+		t.Fatal("seed did not contain the token run; test setup broken")
+	}
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page, rows))
+	after, _ := os.ReadFile(filePath)
+	if string(after) != external {
+		t.Fatalf("refused save must leave the external bytes untouched:\n got: %q\nwant: %q", after, external)
+	}
+}

@@ -155,7 +155,8 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 		SELECT b.id, b.parent_id, b.depth, b.type, b.raw_content, b.clean_content, b.line_number,
 		       b.file_date,
 		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0),
-		       t.created_at, t.completed_at, t.manual_order, t.modified_at, t.estimate_minutes
+		       t.created_at, t.completed_at, t.manual_order, t.modified_at,
+		       COALESCE(t.progress, 0), t.recur
 		FROM blocks b
 		LEFT JOIN tasks t ON b.id = t.block_id
 		WHERE b.source = ? AND b.notebook = ? AND b.section = ? AND b.page = ?
@@ -174,9 +175,10 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 		var status, owner, start, due string
 		var priority int
 		var createdAt, completedAt, modifiedAt sql.NullString
-		var manualOrder, estimateMinutes sql.NullInt64
+		var manualOrder sql.NullInt64
+		var recur sql.NullString
 
-		if err := rows.Scan(&b.ID, &parentID, &b.Depth, &bType, &b.RawText, &b.CleanText, &b.LineNumber, &fileDate, &status, &owner, &start, &due, &priority, &createdAt, &completedAt, &manualOrder, &modifiedAt, &estimateMinutes); err != nil {
+		if err := rows.Scan(&b.ID, &parentID, &b.Depth, &bType, &b.RawText, &b.CleanText, &b.LineNumber, &fileDate, &status, &owner, &start, &due, &priority, &createdAt, &completedAt, &manualOrder, &modifiedAt, &b.Progress, &recur); err != nil {
 			return nil, err
 		}
 		if parentID.Valid {
@@ -202,13 +204,27 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 		if manualOrder.Valid {
 			b.ManualOrder = int(manualOrder.Int64)
 		}
-		// [modified::] / [estimate::] (#439/#440): minutes are the cache;
-		// FormatEstimateMinutes is best-effort for re-render from DB.
 		if modifiedAt.Valid {
 			b.ModifiedAt = modifiedAt.String
 		}
-		if estimateMinutes.Valid {
-			b.Estimate = parser.FormatEstimateMinutes(int(estimateMinutes.Int64))
+		// [recur::]/[progress::] (#296): file-resident user intent cached on
+		// the task row (schema calls them the same values the parser
+		// round-trips). They MUST hydrate here: the block editor re-renders
+		// served rows through RenderFileContent on save, and a row without
+		// them strips the tokens from the file (#1005).
+		if recur.Valid && recur.String != "" {
+			b.Recurrence = recur.String
+		}
+		// [estimate::] (#439): the raw token string is the source of truth
+		// (models.go) — estimate_minutes cannot reproduce it (90 → "1.5h"
+		// loses "90m"), so re-derive it from the raw line this query already
+		// loaded, through the canonical parser. A lossy estimate here would
+		// reformat the token on every editor save and false-drift the
+		// rows-anchored load baseline (#1005).
+		if b.Type == parser.BlockTask {
+			if pb, _, _ := parser.ParseLine(b.RawText, 0, 0); pb.Type == parser.BlockTask {
+				b.Estimate = pb.Estimate
+			}
 		}
 		blocks = append(blocks, b)
 	}
