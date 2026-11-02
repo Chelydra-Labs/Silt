@@ -167,14 +167,38 @@ func conflictPageName(page string, now time.Time) string {
 	return page + ".conflict-" + now.Format("20060102-150405")
 }
 
+// maxConflictSiblingProbes bounds uniqueConflictSibling's collision loop: the
+// suffixed-name race is decided by existing files, but a pathological vault
+// (or a malicious pre-seeded directory) must not hold the page's file write
+// lock hostage across unbounded stat rounds.
+const maxConflictSiblingProbes = 64
+
 // uniqueConflictSibling returns the sibling path for a conflict copy, adding a
 // numeric suffix when a previous copy already occupies the timestamped name.
-func uniqueConflictSibling(dir, page string, now time.Time) string {
+// A stat outcome other than exists / not-exists (EACCES, EIO, a name past the
+// fs limit) fails loudly instead of looping: the loop runs inside
+// LockFileWrite, and treating every such error as "occupied" would wedge the
+// page's write lock forever (#1005). The caller restores the stashed buffer
+// on failure, so nothing is lost by refusing.
+func uniqueConflictSibling(dir, page string, now time.Time) (string, error) {
 	name := conflictPageName(page, now)
 	sibling := filepath.Join(dir, name+".md")
 	for i := 2; ; i++ {
-		if _, err := os.Stat(sibling); os.IsNotExist(err) {
-			return sibling
+		_, err := os.Stat(sibling)
+		switch {
+		case err == nil:
+			// Occupied — try the next suffix.
+		case os.IsNotExist(err):
+			return sibling, nil
+		default:
+			return "", wrapSentinelAsIPCError(CodeExternalEditConflict,
+				fmt.Sprintf("cannot place conflict copy %s: %v", filepath.Base(sibling), err),
+				errExternalEditConflict)
+		}
+		if i > maxConflictSiblingProbes {
+			return "", wrapSentinelAsIPCError(CodeExternalEditConflict,
+				fmt.Sprintf("cannot place conflict copy %s: more than %d sibling collisions", filepath.Base(sibling), maxConflictSiblingProbes-1),
+				errExternalEditConflict)
 		}
 		sibling = filepath.Join(dir, fmt.Sprintf("%s-%d.md", name, i))
 	}
@@ -206,7 +230,10 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 	}
 	dir := filepath.Dir(filePath)
 	now := time.Now()
-	sibling := uniqueConflictSibling(dir, rw.page, now)
+	sibling, err := uniqueConflictSibling(dir, rw.page, now)
+	if err != nil {
+		return "", err
+	}
 	conflictPage := strings.TrimSuffix(filepath.Base(sibling), ".md")
 
 	if resolution == conflictResolutionKeepTheirs {

@@ -9,12 +9,14 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"silt/backend/core"
 	"silt/backend/parser"
 )
 
@@ -1237,5 +1239,85 @@ func TestExternalEdit_PluginRMWSaveRefusesWhileStashPending(t *testing.T) {
 	got, _ := os.ReadFile(filePath)
 	if !strings.Contains(string(got), "my unsaved text") {
 		t.Fatalf("keep_mine must replay the editor's stashed buffer, got %q", string(got))
+	}
+}
+
+// uniqueConflictSibling's loop used to exit only on IsNotExist: any other
+// stat outcome (EACCES, EIO, ENAMETOOLONG) counted as "occupied" and minted
+// -2, -3, … forever while holding the page's LockFileWrite — wedging the IPC
+// call and every later save to that page (#1005). Both tests pin the loud
+// failure instead: the typed conflict error surfaces, the stash is restored
+// (retryable), and nothing is written.
+func TestResolveExternalConflict_SiblingStatErrorFailsLoud(t *testing.T) {
+	app := newTestApp(t)
+	// The page file itself fits NAME_MAX (page + ".md"), but the conflict
+	// sibling name (page + ".conflict-" + timestamp + ".md") does not — a
+	// deterministic ENAMETOOLONG on the first probe.
+	page := strings.Repeat("n", 232)
+	notebook, section := "SibErrNB", ""
+	blockID := "bbbbbb5b-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "stable")
+
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	filePath := conflictPagePath(app, notebook, section, page)
+	if err := os.WriteFile(filePath, []byte("---\npage: \"external\"\n---\nexternal body\n"), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page, editBlocks(blocks, blockID, "mine")))
+
+	_, err := app.ResolveExternalConflict(notebook, section, page, "keep_mine")
+	if err == nil {
+		t.Fatal("an unplaceable conflict sibling must fail the resolution loudly")
+	}
+	if !errors.Is(err, errExternalEditConflict) {
+		t.Fatalf("sibling placement failure must stay conflict-typed, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "cannot place conflict copy") {
+		t.Fatalf("unexpected error text: %v", err)
+	}
+	// The stash was restored — the user can retry after fixing the FS state.
+	if !app.refusedWritePending(core.NormalizeFileLockPath(filePath)) {
+		t.Fatal("failed resolution must restore the stashed buffer for retry")
+	}
+}
+
+func TestUniqueConflictSibling_BoundedCollisionLoop(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	name := conflictPageName("Page", now)
+
+	// Free first probe → the timestamped name itself.
+	got, err := uniqueConflictSibling(dir, "Page", now)
+	if err != nil || filepath.Base(got) != name+".md" {
+		t.Fatalf("free name must be returned, got %q, %v", got, err)
+	}
+
+	// Occupied then free → the -2 suffix.
+	if err := os.WriteFile(filepath.Join(dir, name+".md"), nil, 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	got, err = uniqueConflictSibling(dir, "Page", now)
+	if err != nil || filepath.Base(got) != name+"-2.md" {
+		t.Fatalf("first collision must take the -2 suffix, got %q, %v", got, err)
+	}
+
+	// Every probe occupied up to the cap → loud failure, not an endless loop.
+	if err := os.WriteFile(filepath.Join(dir, name+"-2.md"), nil, 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	for i := 3; i <= maxConflictSiblingProbes; i++ {
+		p := filepath.Join(dir, fmt.Sprintf("%s-%d.md", name, i))
+		if err := os.WriteFile(p, nil, 0o644); err != nil {
+			t.Fatalf("seed %d: %v", i, err)
+		}
+	}
+	got, err = uniqueConflictSibling(dir, "Page", now)
+	if err == nil {
+		t.Fatalf("collision storm must fail loudly, got %q", got)
+	}
+	if !errors.Is(err, errExternalEditConflict) {
+		t.Fatalf("cap failure must stay conflict-typed, got %v", err)
 	}
 }
