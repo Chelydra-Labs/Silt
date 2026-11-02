@@ -297,6 +297,10 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 		_ = dbMgr.Close()
 		return fmt.Errorf("failed to start watcher: %w", err)
 	}
+	// The watcher's normalization writes must re-baseline live editor
+	// fingerprints like any tracked page write, or its own minted-id rewrite
+	// reads as an external edit and mints a phantom conflict (#1005).
+	watcher.OnPageNormalized = a.refreshFingerprintAfterWrite
 	if err := watcher.Start(); err != nil {
 		_ = watcher.Close()
 		_ = dbMgr.Close()

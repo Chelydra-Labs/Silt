@@ -33,6 +33,14 @@ type DirectoryWatcher struct {
 	spacesPerTab int
 	closeChan    chan struct{}
 
+	// OnPageNormalized is invoked after the watcher's own normalization
+	// write (minted id comments) with the bytes it wrote (#1005). The
+	// watcher layer has no *App, so the app wires its fingerprint refresh
+	// here: without it, a live editor baseline drifts once per normalized
+	// file and the next save refuses + stashes a conflict Silt itself
+	// created. Optional so tests and non-app embeds run without it.
+	OnPageNormalized func(path string, content []byte)
+
 	// wg tracks the goroutines Start spawns (listenLoop + lease sweeper).
 	// Close drains it so an in-flight reindex finishes before the caller
 	// closes the DB — otherwise the reindex goroutine races/null-derefs
@@ -807,10 +815,16 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 		if modified {
 			dw.tracker.RegisterWrite(path)
 			// Direct write: watcher-layer normalization (minted id comments)
-			// has no *App, so the fingerprint refresh cannot run here — a
-			// live editor baseline drifts once per normalized file and
-			// self-heals on the next editor reload (accepted, #1005).
-			_ = parser.WriteFileAtomic(path, []byte(newContent))
+			// has no *App, so the fingerprint refresh runs through the
+			// OnPageNormalized hook the app wires (refreshFingerprintAfterWrite
+			// — the same re-baseline trackedPageWrite performs). Without it a
+			// live editor baseline drifts on Silt's own normalization bytes
+			// and the next save refuses + stashes a phantom conflict (#1005).
+			if werr := parser.WriteFileAtomic(path, []byte(newContent)); werr != nil {
+				log.Printf("reindexFile: normalization write failed for %s: %v", path, werr)
+			} else if dw.OnPageNormalized != nil {
+				dw.OnPageNormalized(path, []byte(newContent))
+			}
 		}
 
 		// Mass-re-mint heuristic (#443): a previously-indexed file (priorCount
