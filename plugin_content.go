@@ -295,39 +295,6 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 		if err != nil {
 			return fmt.Errorf("fetch page %s/%s/%s: %w", first.notebook, first.section, first.page, err)
 		}
-		// Pre-resolve cross-page move payloads (the moved block's content
-		// from its source page) BEFORE the save takes coordinator locks: the
-		// ops re-apply inside LockFileWrite for the disk rebase, and a DB
-		// fetch under those locks would invert the vaultMu→coordinator lock
-		// order every other save path observes.
-		movePayloads := map[string]parser.ParsedBlock{}
-		for _, r := range pageOps {
-			if r.op.Kind != "move" {
-				continue
-			}
-			isCrossPage := r.origNotebook != "" &&
-				(r.origNotebook != r.notebook ||
-					r.origSection != r.section ||
-					r.origPage != r.page)
-			if !isCrossPage {
-				continue
-			}
-			srcBlocks, srcErr := a.fetchPageBlocks(r.origNotebook, r.origSection, r.origPage, captureNone)
-			if srcErr != nil {
-				return fmt.Errorf("cross-page move: fetch source page for block %s: %w", r.op.BlockID, srcErr)
-			}
-			found := false
-			for _, b := range srcBlocks {
-				if b.ID == r.op.BlockID {
-					movePayloads[r.op.BlockID] = b
-					found = true
-					break
-				}
-			}
-			if !found {
-				return fmt.Errorf("cross-page move: block %s not found in source page %s/%s/%s", r.op.BlockID, r.origNotebook, r.origSection, r.origPage)
-			}
-		}
 		var createdIDs []string
 		// Pre-flight the cross-page moves' SOURCE stash gate before the
 		// target half commits (#1005): a pending refused-write stash on a
@@ -337,6 +304,9 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 		// degrading to a same-page no-op that reports success while the
 		// stale copy survives. Refusing up front fails the whole op
 		// atomically; the in-lock check remains as the TOCTOU backstop.
+		// This runs BEFORE the payload resolution below so a pending
+		// conflict surfaces as the conflict refusal, not as a side effect
+		// of reading a stash-holder's rewritten source file.
 		for _, r := range pageOps {
 			if r.op.Kind != "move" || r.origNotebook == "" {
 				continue
@@ -352,6 +322,43 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 			}
 			if err := a.externalEditStashRefusalKey(core.NormalizeFileLockPath(origPath), origPath); err != nil {
 				return fmt.Errorf("cross-page move: save source %s/%s/%s: %w", sn, ss, sp, err)
+			}
+		}
+		// Pre-resolve cross-page move payloads (the moved block's content
+		// from its source page) BEFORE the save takes coordinator locks: the
+		// ops re-apply inside LockFileWrite for the disk rebase, and a DB
+		// fetch under those locks would invert the vaultMu→coordinator lock
+		// order every other save path observes. The payload itself is read
+		// from the source file's CURRENT disk bytes (see
+		// crossPageMoveSourceBlocks) so an external edit to the moved block
+		// survives the move; a block absent from disk fails loudly instead
+		// of resurrecting a stale DB row an external delete removed.
+		movePayloads := map[string]parser.ParsedBlock{}
+		for _, r := range pageOps {
+			if r.op.Kind != "move" {
+				continue
+			}
+			isCrossPage := r.origNotebook != "" &&
+				(r.origNotebook != r.notebook ||
+					r.origSection != r.section ||
+					r.origPage != r.page)
+			if !isCrossPage {
+				continue
+			}
+			srcBlocks, srcErr := a.crossPageMoveSourceBlocks(r)
+			if srcErr != nil {
+				return fmt.Errorf("cross-page move: fetch source page for block %s: %w", r.op.BlockID, srcErr)
+			}
+			found := false
+			for _, b := range srcBlocks {
+				if b.ID == r.op.BlockID {
+					movePayloads[r.op.BlockID] = b
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("cross-page move: block %s not found in source page %s/%s/%s", r.op.BlockID, r.origNotebook, r.origSection, r.origPage)
 			}
 		}
 		// applyPageOps re-applies the page's ops to a block base: once to
@@ -474,6 +481,41 @@ func (a *App) crossPageMoveSourcePath(r resolvedBlockOp) (origPath, sn, ss, sp s
 		return "", "", "", "", fmt.Errorf("cross-page move: source path escapes notebook root")
 	}
 	return origPath, sn, ss, sp, nil
+}
+
+// crossPageMoveSourceBlocks returns a cross-page move's source-page blocks
+// anchored on CURRENT disk bytes: the transplanted payload must carry an
+// external edit to the moved block the watcher has not re-indexed, or the
+// disk-anchored source rewrite (removeBlockFromSourcePage) removes that edit
+// from the source while the target receives the stale DB row — the edit is
+// then on neither page. This is the same anchoring invariant
+// removeBlockFromSourcePage documents. Only a source file that no longer
+// exists on disk falls back to DB rows (no external bytes can be lost from a
+// missing file; the rows are the only record of the block being moved).
+//
+// Runs in the pre-lock pass, so no coordinator locks are held: the raw file
+// read does not touch the vaultMu→coordinator ordering the lock-order comment
+// at the payload build guards, and Silt's atomic-rename writers make torn
+// reads impossible.
+func (a *App) crossPageMoveSourceBlocks(r resolvedBlockOp) ([]parser.ParsedBlock, error) {
+	origPath, sn, ss, sp, err := a.crossPageMoveSourcePath(r)
+	if err != nil {
+		return nil, err
+	}
+	contentBytes, err := os.ReadFile(origPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("read source file: %w", err)
+		}
+		return a.fetchPageBlocks(r.origNotebook, r.origSection, r.origPage, captureNone)
+	}
+	fileDate := fileOrDefaultDate(origPath)
+	srcBlocks, _, _, _, parseErr := parser.ParseFileContent(string(contentBytes),
+		sn, ss, sp, fileDate, a.spacesPerTab)
+	if parseErr != nil {
+		return nil, fmt.Errorf("parse source %s/%s/%s: %w", sn, ss, sp, parseErr)
+	}
+	return srcBlocks, nil
 }
 
 // removeBlockFromSourcePage removes a single block from the source page FILE

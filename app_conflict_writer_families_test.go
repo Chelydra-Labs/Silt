@@ -253,9 +253,14 @@ func TestPluginCrossPageMove_SourceRewriteAnchorsOnDiskBytes(t *testing.T) {
 	seedWriterFamilyPage(t, app, notebook, section, dstPage, famID(22, 2), "")
 
 	// External edit: replaces the file wholesale with content the DB has
-	// never indexed (an unmanaged line + a different managed task).
+	// never indexed (an unmanaged line + a different managed task). The
+	// moved block itself must survive the rewrite — under disk-anchored
+	// payloads (crossPageMoveSourceBlocks) a block absent from the source
+	// file fails the move loudly instead of resurrecting a stale DB row;
+	// the moved-block-edited case is pinned separately by
+	// TestPluginCrossPageMove_MovedBlockBodyCarriesDiskBytes.
 	srcPath := filepath.Join(app.vaultPath, notebook, section, srcPage+".md")
-	external := "---\nnotebook: \"XMoveNB2\"\npage: \"XSrc2\"\ntags: []\n---\nexternal prose line\n- [ ] external task <!-- id: " + famID(22, 3) + " -->\n"
+	external := "---\nnotebook: \"XMoveNB2\"\npage: \"XSrc2\"\ntags: []\n---\nexternal prose line\n- [ ] moved block <!-- id: " + blockID + " -->\n- [ ] external task <!-- id: " + famID(22, 3) + " -->\n"
 	if err := os.WriteFile(srcPath, []byte(external), 0o644); err != nil {
 		t.Fatalf("external write: %v", err)
 	}
@@ -277,6 +282,96 @@ func TestPluginCrossPageMove_SourceRewriteAnchorsOnDiskBytes(t *testing.T) {
 	}
 	if strings.Contains(gotStr, "moved block") {
 		t.Fatalf("moved block still present on source after move, got %q", gotStr)
+	}
+}
+
+// TestPluginCrossPageMove_MovedBlockBodyCarriesDiskBytes pins the payload half
+// of the disk-anchoring invariant: an external edit to the MOVED block's body
+// within the watcher-debounce window (DB not re-indexed) must travel with the
+// move. The payload used to come from the DB snapshot, so the disk-anchored
+// source rewrite removed the edited body from the source while the target
+// received the stale row — the edit existed on neither page (#1005).
+func TestPluginCrossPageMove_MovedBlockBodyCarriesDiskBytes(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section := "XMoveNB3", ""
+	srcPage, dstPage := "XSrc3", "XDst3"
+	blockID := famID(30, 1)
+
+	srcBody := "- [ ] original body <!-- id: " + blockID + " -->\n"
+	seedWriterFamilyPage(t, app, notebook, section, srcPage, blockID, srcBody)
+	seedWriterFamilyPage(t, app, notebook, section, dstPage, famID(30, 2), "")
+
+	// External edit rewrites the MOVED block's body on disk; the DB still
+	// holds the original row (the watcher has not re-indexed).
+	srcPath := filepath.Join(app.vaultPath, notebook, section, srcPage+".md")
+	external := "---\nnotebook: \"XMoveNB3\"\npage: \"XSrc3\"\ntags: []\n---\n- [ ] externally edited body <!-- id: " + blockID + " -->\n"
+	if err := os.WriteFile(srcPath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+
+	if err := app.applyBlocksOps([]PluginCreateBlockOp{{
+		Kind: "move", BlockID: blockID,
+		Notebook: notebook, Section: section, Page: dstPage,
+	}}, historyReasonPlugin); err != nil {
+		t.Fatalf("cross-page move: %v", err)
+	}
+
+	dstPath := filepath.Join(app.vaultPath, notebook, section, dstPage+".md")
+	dstGot, _ := os.ReadFile(dstPath)
+	if !strings.Contains(string(dstGot), "externally edited body") {
+		t.Fatalf("target received the stale DB body instead of the disk bytes, got %q", string(dstGot))
+	}
+	if strings.Contains(string(dstGot), "original body") {
+		t.Fatalf("target received both bodies, got %q", string(dstGot))
+	}
+
+	srcGot, _ := os.ReadFile(srcPath)
+	if strings.Contains(string(srcGot), "externally edited body") {
+		t.Fatalf("moved block still present on source after move, got %q", string(srcGot))
+	}
+}
+
+// TestPluginCrossPageMove_BlockAbsentOnDiskFailsLoud pins the other edge of
+// the disk-anchored payload: an external rewrite that DELETED the moved block
+// must fail the move loudly instead of transplanting the stale DB row (which
+// would resurrect externally-deleted content — the same revert class #1005
+// exists to prevent). Both pages stay untouched.
+func TestPluginCrossPageMove_BlockAbsentOnDiskFailsLoud(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section := "XMoveNB4", ""
+	srcPage, dstPage := "XSrc4", "XDst4"
+	blockID := famID(31, 1)
+
+	srcBody := "- [ ] doomed block <!-- id: " + blockID + " -->\n"
+	seedWriterFamilyPage(t, app, notebook, section, srcPage, blockID, srcBody)
+	seedWriterFamilyPage(t, app, notebook, section, dstPage, famID(31, 2), "")
+
+	// External rewrite removes the block from disk; the stale DB still lists
+	// it, so only the disk-anchored payload read can notice.
+	srcPath := filepath.Join(app.vaultPath, notebook, section, srcPage+".md")
+	external := "---\nnotebook: \"XMoveNB4\"\npage: \"XSrc4\"\ntags: []\n---\nexternal replacement prose\n"
+	if err := os.WriteFile(srcPath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+
+	err := app.applyBlocksOps([]PluginCreateBlockOp{{
+		Kind: "move", BlockID: blockID,
+		Notebook: notebook, Section: section, Page: dstPage,
+	}}, historyReasonPlugin)
+	if err == nil {
+		t.Fatal("moving a block absent from the source disk bytes must fail loudly")
+	}
+	if !strings.Contains(err.Error(), "not found in source page") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, _ := os.ReadFile(srcPath)
+	if string(got) != external {
+		t.Fatalf("failed move still rewrote the source file:\n got: %q\nwant: %q", string(got), external)
+	}
+	dstGot, _ := os.ReadFile(filepath.Join(app.vaultPath, notebook, section, dstPage+".md"))
+	if strings.Contains(string(dstGot), "doomed block") {
+		t.Fatalf("stale DB row resurrected onto the target page, got %q", string(dstGot))
 	}
 }
 
