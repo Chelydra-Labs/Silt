@@ -310,9 +310,11 @@ func (a *App) RestorePageVersion(notebook, section, page, versionID string) erro
 			// Deliberate exemption from the external-edit gate (#1005): an
 			// explicit restore is a user-endorsed overwrite — the whole
 			// point is to replace whatever is on disk, external edit
-			// included. The post-restore epoch bump makes the editor's
-			// next save re-capture instead of refusing against the
-			// restored bytes.
+			// included. A save STARTING after the restore is not refused
+			// because trackedPageWrite refreshes the baseline to the restored
+			// bytes and the EventPageExternalReload emit below makes the
+			// editor recapture; the epoch bump only converts IN-FLIGHT saves
+			// (already past their fingerprint check) into reload-and-retry.
 			result, writeErr = a.writePageMarkdownLocked(filePath, source, safeNotebook, safeSection, safePage, notebook, section, page, contentBytes, restoreBody, historyReasonRestore, false)
 			if writeErr == nil {
 				a.bumpPageWriteEpoch(safeNotebook, safeSection, safePage)
