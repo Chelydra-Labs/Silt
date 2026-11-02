@@ -216,6 +216,10 @@ func (a *App) writePageFrontmatterEdit(filePath, source, notebook, section, page
 			return
 		}
 		a.maybeCapturePageVersion(historyLoc(source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), reason)
+		// Direct write (not trackedPageWrite): the frontmatterWriteAtomic
+		// fault-injection seam must intercept exactly this write in the
+		// rollback tests; the register+refresh contract trackedPageWrite
+		// owns is honored inline below.
 		a.tracker.RegisterWrite(filePath)
 		writeFn := parser.WriteFileAtomic
 		if a.frontmatterWriteAtomic != nil {
@@ -225,6 +229,10 @@ func (a *App) writePageFrontmatterEdit(filePath, source, notebook, section, page
 			writeErr = err
 			return
 		}
+		// Silt's own write is never an external edit — re-baseline in the
+		// same lock (#1005) so an autosave in the write→reload window does
+		// not false-conflict against this rewrite.
+		a.refreshFingerprintAfterWrite(filePath, []byte(newContent))
 		// Past this point the on-disk write has committed. The remaining steps
 		// (re-parse, atomic block+projection publish) refresh in-memory state
 		// only — a failure there means the dashboard is stale until the next

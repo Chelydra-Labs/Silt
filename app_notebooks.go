@@ -250,8 +250,10 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 			writeErr = fmt.Errorf("failed to check page target: %w", statErr)
 			return
 		}
-		a.tracker.RegisterWrite(filePath)
-		if err := parser.WriteFileAtomic(filePath, []byte(scaffoldFrontmatter)); err != nil {
+		// trackedPageWrite keeps an absent-file baseline honest when the
+		// editor visited the not-yet-existing name: the creation write is
+		// Silt's own, so the next save must not phantom-refuse (#1005).
+		if err := a.trackedPageWrite(filePath, []byte(scaffoldFrontmatter)); err != nil {
 			writeErr = err
 			return
 		}

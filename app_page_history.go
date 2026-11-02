@@ -366,8 +366,7 @@ func (a *App) writePageMarkdownLocked(filePath, source, notebook, section, page,
 	}
 	newContent += body
 
-	a.tracker.RegisterWrite(filePath)
-	if err := atomicPageWrite(filePath, []byte(newContent)); err != nil {
+	if err := a.trackedPageWrite(filePath, []byte(newContent)); err != nil {
 		log.Printf("page write: atomic write failed for %s/%s/%s: %v", notebook, section, page, err)
 		return nil, historyWriteError(err)
 	}

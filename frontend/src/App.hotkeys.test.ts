@@ -15,6 +15,7 @@ import { tick } from 'svelte'
 import { waitFor } from '@testing-library/dom'
 import EmptyStub from './components/EmptyStub.stub.svelte'
 import OverlayMarkerStub from './components/OverlayMarkerStub.stub.svelte'
+import VscConflictBusyStub from './components/VirtualScrollContainer.stub.svelte'
 import {
   notificationsState,
   _resetForTests as resetNotifications
@@ -87,7 +88,13 @@ vi.mock('$silt-app', () => {
     MarkFrontendReady: vi.fn(noop),
     GetStartupEvents: bindings.GetStartupEvents,
     RecordRecentPage: bindings.RecordRecentPage,
-    UpdateAIFeatures: vi.fn(noop)
+    UpdateAIFeatures: vi.fn(noop),
+    // The initialized-shell region the toggle-busy gate test mounts also
+    // renders the notes sidebar / type pill — their best-effort loads hit
+    // these bindings and must not throw on a missing export.
+    ListTypes: vi.fn(async () => []),
+    SetNavigationSectionExpanded: vi.fn(noop),
+    GetNavigationTree: vi.fn(async () => ({ notebooks: [] }))
   })
 })
 
@@ -215,6 +222,12 @@ vi.mock('./plugins/first-party/silt-tasks/components/QuickAddTask.svelte', () =>
   marker('quick-add')
 )
 vi.mock('./components/DateGlance.svelte', () => ({ default: EmptyStub }))
+// #1005 toggle-busy gate harness: the stub exposes the conflict-busy
+// reporting + view-mode props as DOM so the App-level guards are testable
+// without a full editor mount (see the toggle_view_mode gate test below).
+vi.mock('./components/VirtualScrollContainer.svelte', () => ({
+  default: VscConflictBusyStub
+}))
 vi.mock('./components/settings/SettingsPanel.svelte', () => ({
   default: EmptyStub
 }))
@@ -494,6 +507,48 @@ describe('global hotkey dispatch table (golden master)', () => {
     expect(tabs[0].view_mode).toBe('source')
   })
 
+  // #1005: a view toggle mid-resolution unmounts a surface and fires its
+  // unmount handoff against the settle in flight — both App-level guards
+  // (the hotkey dispatch and the per-tab onToggleViewMode callback) must be
+  // inert while the active tab reports conflict-busy, and live again once
+  // it settles. The VSC stub surfaces the busy callbacks + view mode as DOM.
+  it('gates toggle_view_mode on both App paths while the active tab is conflict-busy', async () => {
+    // The editor region (and with it the VSC stub) only mounts in the
+    // initialized shell.
+    bindings.IsVaultInitialized.mockResolvedValue(true)
+    await mountWithTabs()
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="vsc-stub"]')).toBeTruthy()
+    )
+    const stub = () =>
+      document.querySelector<HTMLElement>('[data-testid="vsc-stub"]')!
+    const click = (id: string) =>
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.click()
+    bindings.SetOpenTabs.mockClear()
+
+    // Busy: the hotkey path is gated…
+    click('vsc-report-busy')
+    press(C.toggle_view_mode)
+    await new Promise((r) => setTimeout(r, 400))
+    expect(stub().dataset.viewmode).toBe('edit')
+    expect(bindings.SetOpenTabs).not.toHaveBeenCalled()
+    // …and so is the per-tab callback path (the tab strip / VSC button).
+    click('vsc-toggle')
+    await new Promise((r) => setTimeout(r, 400))
+    expect(stub().dataset.viewmode).toBe('edit')
+    expect(bindings.SetOpenTabs).not.toHaveBeenCalled()
+
+    // Settled: both paths toggle again.
+    click('vsc-report-idle')
+    press(C.toggle_view_mode)
+    await waitFor(() => expect(stub().dataset.viewmode).toBe('source'))
+
+    click('vsc-report-busy')
+    press(C.toggle_view_mode)
+    await new Promise((r) => setTimeout(r, 400))
+    expect(stub().dataset.viewmode).toBe('source')
+  })
+
   // --- format_bold (App-level applyFormatBold closure wiring) ---
   // The pure shouldApplyFormatBold predicate is covered by globalHotkeys.test
   // (#768). This pins the App-level closure that the resolver hands off to:
@@ -531,6 +586,8 @@ describe('global hotkey dispatch table (golden master)', () => {
     spies.boldRun.mockReset()
     const editor = {
       isDestroyed: false,
+      // Editable (no conflict hold) so the format chain is allowed (#1005).
+      isEditable: true,
       view: { dom },
       chain: spies.boldChain
     }

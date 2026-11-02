@@ -5,7 +5,10 @@ import type { AutosaveDeps } from './useAutosave'
 // Mock the Wails IPC binding.
 vi.mock('$silt-app', () =>
   createAppIpcMocks({
-    SaveFileBlocks: vi.fn().mockResolvedValue(undefined)
+    SaveFileBlocks: vi.fn().mockResolvedValue(undefined),
+    ResolveExternalConflict: vi
+      .fn()
+      .mockResolvedValue('Journal-2026-06-22.conflict-20260622-090000')
   })
 )
 
@@ -126,6 +129,219 @@ describe('AutosaveManager', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     expect(deps.onStateChange).toHaveBeenCalledWith(true, 'disk full')
+  })
+
+  // #1005: the external-edit refusal is a distinct error state — the surface
+  // must offer resolution actions, not a retry.
+  const conflictError = () =>
+    new Error(
+      '{"code":"external_edit_conflict","message":"this page changed on disk since it was opened: 2026-06-22.md"}'
+    )
+
+  it('marks external_edit_conflict with the conflict flag and no retry toast', async () => {
+    const { SaveFileBlocks } = await import('$silt-app')
+    const { pushNotification } =
+      await import('../../notifications/store.svelte')
+    vi.mocked(SaveFileBlocks).mockRejectedValueOnce(conflictError())
+    const deps = makeDeps()
+    const autosave = new AutosaveManager(deps)
+
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    await vi.advanceTimersByTimeAsync(0)
+
+    const last = (
+      deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
+    ).mock.calls.at(-1)![0] as {
+      phase: string
+      dirty: boolean
+      error: string | null
+      externalConflict?: boolean
+    }
+    expect(last).toEqual({
+      phase: 'error',
+      dirty: true,
+      error: 'this page changed on disk since it was opened: 2026-06-22.md',
+      externalConflict: true
+    })
+    // A Retry toast would just re-refuse; the banner owns the actions.
+    expect(pushNotification).not.toHaveBeenCalled()
+  })
+
+  it('stays in error phase until resolveExternalConflict succeeds', async () => {
+    const { SaveFileBlocks, ResolveExternalConflict } =
+      await import('$silt-app')
+    // The backend keeps refusing while the conflict is unresolved — model
+    // that with per-attempt rejections (one-shot impls don't leak into the
+    // next test the way mockImplementation survives vi.clearAllMocks).
+    const refuse = () =>
+      vi.mocked(SaveFileBlocks).mockRejectedValueOnce(conflictError())
+    refuse()
+    const deps = makeDeps()
+    const autosave = new AutosaveManager(deps)
+
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    await vi.advanceTimersByTimeAsync(0)
+
+    // A second trigger re-attempts and re-refuses — the state cannot leave
+    // the error phase until the resolution IPC succeeds.
+    refuse()
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    await vi.advanceTimersByTimeAsync(0)
+    const still = (
+      deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
+    ).mock.calls.at(-1)![0] as {
+      phase: string
+      dirty: boolean
+      error: string | null
+      externalConflict?: boolean
+    }
+    expect(still.phase).toBe('error')
+    expect(still.externalConflict).toBe(true)
+
+    const copyPage = await autosave.resolveExternalConflict('keep_mine')
+    expect(ResolveExternalConflict).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      '2026-06-22',
+      'keep_mine'
+    )
+    // The copy name flows back so the surface can announce where the
+    // kept-apart version landed.
+    expect(copyPage).toBe('Journal-2026-06-22.conflict-20260622-090000')
+    const after = (
+      deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
+    ).mock.calls.at(-1)![0] as {
+      phase: string
+      dirty: boolean
+      error: string | null
+      externalConflict?: boolean
+    }
+    expect(after).toEqual({ phase: 'idle', dirty: false, error: null })
+  })
+
+  it('holds writes for keep_theirs until the reload releases them', async () => {
+    const { SaveFileBlocks, ResolveExternalConflict } =
+      await import('$silt-app')
+    vi.mocked(SaveFileBlocks).mockRejectedValueOnce(conflictError())
+    const deps = makeDeps()
+    const autosave = new AutosaveManager(deps)
+
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    await vi.advanceTimersByTimeAsync(0)
+
+    await autosave.resolveExternalConflict('keep_theirs')
+    expect(ResolveExternalConflict).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      '2026-06-22',
+      'keep_theirs'
+    )
+    // The refused buffer must not be writable while the armed reload lands.
+    expect(autosave.areWritesHeld()).toBe(true)
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    expect(SaveFileBlocks).toHaveBeenCalledTimes(1) // only the refused call
+
+    // The editor's post-reload effect releases writes (simulated here). The
+    // conflict hold only lifts via the explicit reload path.
+    autosave.forceReleaseWrites()
+    expect(autosave.areWritesHeld()).toBe(false)
+  })
+
+  // #1005: the keep_theirs hold is conflict-grade — a keystroke (which calls
+  // releaseWrites to make the buffer authoritative per #345) must NOT void
+  // it, and neither must the 8s safety valve, or the stale buffer would save
+  // over the version the user just chose to keep.
+  it('a keep_theirs hold survives keystroke releases and the safety valve', async () => {
+    const { SaveFileBlocks } = await import('$silt-app')
+    vi.mocked(SaveFileBlocks).mockRejectedValueOnce(conflictError())
+    const deps = makeDeps()
+    const autosave = new AutosaveManager(deps)
+
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    await vi.advanceTimersByTimeAsync(0)
+    await autosave.resolveExternalConflict('keep_theirs')
+
+    expect(autosave.holdsForConflict()).toBe(true)
+    // Keystroke-shaped release: no-op while the conflict hold is active.
+    autosave.releaseWrites()
+    expect(autosave.areWritesHeld()).toBe(true)
+    // Far past the plain-hold valve horizon: still held.
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(autosave.areWritesHeld()).toBe(true)
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    expect(SaveFileBlocks).toHaveBeenCalledTimes(1) // only the refused call
+
+    // The armed reload landing is the one legitimate release.
+    autosave.forceReleaseWrites()
+    expect(autosave.areWritesHeld()).toBe(false)
+    expect(autosave.holdsForConflict()).toBe(false)
+  })
+
+  it('propagates a failed resolution so the banner keeps its actions', async () => {
+    const { SaveFileBlocks, ResolveExternalConflict } =
+      await import('$silt-app')
+    vi.mocked(SaveFileBlocks).mockRejectedValueOnce(conflictError())
+    vi.mocked(ResolveExternalConflict).mockRejectedValueOnce(
+      new Error('vault closed')
+    )
+    const deps = makeDeps()
+    const autosave = new AutosaveManager(deps)
+
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    await vi.advanceTimersByTimeAsync(0)
+
+    await expect(autosave.resolveExternalConflict('keep_both')).rejects.toThrow(
+      'vault closed'
+    )
+    const last = (
+      deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
+    ).mock.calls.at(-1)![0] as {
+      phase: string
+      dirty: boolean
+      error: string | null
+      externalConflict?: boolean
+    }
+    expect(last.phase).toBe('error')
+    expect(last.externalConflict).toBe(true)
+  })
+
+  // #1005/#345: a conflict-grade hold must survive a LATER plain hold — an
+  // unrelated registry actor (history restore, global replace) calling
+  // forceExternalReload() during the resolve→reload window must not swap the
+  // hold for an 8s-valved plain one; that downgrade let the stale buffer save
+  // over the kept version.
+  it('holdWrites() does not downgrade an active conflict hold', async () => {
+    const { SaveFileBlocks } = await import('$silt-app')
+    vi.mocked(SaveFileBlocks).mockRejectedValueOnce(conflictError())
+    const deps = makeDeps()
+    const autosave = new AutosaveManager(deps)
+
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    await vi.advanceTimersByTimeAsync(0)
+    await autosave.resolveExternalConflict('keep_theirs')
+
+    autosave.holdWrites()
+    expect(autosave.areWritesHeld()).toBe(true)
+    expect(autosave.holdsForConflict()).toBe(true)
+    // The plain hold's safety valve must not fire for the conflict hold.
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(autosave.areWritesHeld()).toBe(true)
+    expect(autosave.holdsForConflict()).toBe(true)
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    expect(SaveFileBlocks).toHaveBeenCalledTimes(1) // only the refused call
+
+    autosave.forceReleaseWrites()
+    expect(autosave.areWritesHeld()).toBe(false)
   })
 
   it('holdWrites() no-ops trigger until releaseWrites', async () => {

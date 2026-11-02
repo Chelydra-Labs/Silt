@@ -40,6 +40,9 @@ if (
 
 const mocks = vi.hoisted(() => ({
   saveFileBlocks: vi.fn().mockResolvedValue(undefined),
+  resolveExternalConflict: vi
+    .fn()
+    .mockResolvedValue('Journal-2026-06-22.conflict-20260622-090000'),
   acquireFocusLock: vi.fn().mockResolvedValue(undefined),
   refreshFocusLock: vi.fn().mockResolvedValue(undefined),
   releaseFocusLock: vi.fn().mockResolvedValue(undefined),
@@ -53,6 +56,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('$silt-app', () =>
   createAppIpcMocks({
     SaveFileBlocks: mocks.saveFileBlocks,
+    ResolveExternalConflict: mocks.resolveExternalConflict,
     AcquireFocusLock: mocks.acquireFocusLock,
     RefreshFocusLock: mocks.refreshFocusLock,
     ReleaseFocusLock: mocks.releaseFocusLock,
@@ -232,6 +236,164 @@ describe('TipTapEditor same-ID external reload', () => {
     await waitFor(() => {
       expect(pmText(view.container)).toContain('after restore')
     })
+    view.unmount()
+  })
+
+  // #1005: the registry handle routes conflict resolution through the
+  // autosave manager — keep_mine settles clean, keep_theirs arms the
+  // external-reload hold until the post-resolution blocks land.
+  it('resolves an external-edit conflict via the registry handle', async () => {
+    const first = [mkBlock('NOTE', { id: STABLE_ID, clean_text: 'my text' })]
+    const view = render(TipTapEditor, {
+      props: {
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily',
+        blocks: first,
+        onUpdate: () => {}
+      }
+    })
+    await waitFor(() => {
+      expect(view.container.querySelector('.ProseMirror')).toBeTruthy()
+    })
+    const handle = getEditor(editorKey('Work', 'Journal', 'Daily'))
+    expect(handle).toBeTruthy()
+
+    // keep_mine: no write hold — the backend replayed the refused save.
+    await handle!.resolveExternalConflict!('keep_mine')
+    expect(mocks.resolveExternalConflict).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      'Daily',
+      'keep_mine'
+    )
+    await expect(handle!.flush()).resolves.toBe(true)
+
+    // keep_theirs: writes are held until the armed reload applies fresh
+    // blocks (the same-key armed branch releases).
+    await handle!.resolveExternalConflict!('keep_theirs')
+    expect(mocks.resolveExternalConflict).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      'Daily',
+      'keep_theirs'
+    )
+    await expect(handle!.flush()).resolves.toBe(false)
+
+    await view.rerender({
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      blocks: [mkBlock('NOTE', { id: STABLE_ID, clean_text: 'their text' })],
+      onUpdate: () => {}
+    })
+    await waitFor(async () => {
+      await expect(handle!.flush()).resolves.toBe(true)
+    })
+    expect(pmText(view.container)).toContain('their text')
+    view.unmount()
+  })
+
+  // #1005: an unrelated registry actor's clearExternalReload (history
+  // restore failure, MCP reload handler) must not void a conflict-grade arm
+  // — dropping pendingExternalReload would leave the held buffer savable on
+  // the next keystroke, over the version the user chose to keep.
+  it('clearExternalReload is a no-op while a conflict hold is armed', async () => {
+    const first = [mkBlock('NOTE', { id: STABLE_ID, clean_text: 'my text' })]
+    const view = render(TipTapEditor, {
+      props: {
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily',
+        blocks: first,
+        onUpdate: () => {}
+      }
+    })
+    await waitFor(() => {
+      expect(view.container.querySelector('.ProseMirror')).toBeTruthy()
+    })
+    const handle = getEditor(editorKey('Work', 'Journal', 'Daily'))
+    expect(handle).toBeTruthy()
+
+    await handle!.resolveExternalConflict!('keep_theirs')
+    await expect(handle!.flush()).resolves.toBe(false)
+
+    // The unrelated clear must not release the armed reload…
+    handle!.clearExternalReload()
+    await expect(handle!.flush()).resolves.toBe(false)
+
+    // …so the post-resolution blocks still land and release the hold.
+    await view.rerender({
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      blocks: [mkBlock('NOTE', { id: STABLE_ID, clean_text: 'their text' })],
+      onUpdate: () => {}
+    })
+    await waitFor(async () => {
+      await expect(handle!.flush()).resolves.toBe(true)
+    })
+    expect(pmText(view.container)).toContain('their text')
+    view.unmount()
+  })
+
+  // #1005 non-owning surface: while a conflict-grade hold is armed, the
+  // buffer was declared discardable and the armed reload will replace
+  // whatever is typed — so the editor must be read-only with an inline
+  // notice instead of accepting-and-then-destroying keystrokes, and must
+  // become editable again when the armed reload lands.
+  it('is read-only while a conflict hold is armed, editable when the reload lands', async () => {
+    const first = [mkBlock('NOTE', { id: STABLE_ID, clean_text: 'my text' })]
+    const view = render(TipTapEditor, {
+      props: {
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily',
+        blocks: first,
+        onUpdate: () => {}
+      }
+    })
+    await waitFor(() => {
+      expect(view.container.querySelector('.ProseMirror')).toBeTruthy()
+    })
+    expect(
+      view.container
+        .querySelector('.ProseMirror')
+        ?.getAttribute('contenteditable')
+    ).toBe('true')
+    const handle = getEditor(editorKey('Work', 'Journal', 'Daily'))
+    expect(handle).toBeTruthy()
+
+    // Cross-surface resolution arms the conflict-grade reload.
+    handle!.forceExternalReload({ conflictHold: true })
+    await waitFor(() => {
+      expect(
+        view.container
+          .querySelector('.ProseMirror')
+          ?.getAttribute('contenteditable')
+      ).toBe('false')
+    })
+    expect(view.container.querySelector('.conflict-hold-notice')).toBeTruthy()
+    await expect(handle!.flush()).resolves.toBe(false)
+
+    // The armed reload lands: content replaces, the hold releases, and the
+    // surface is editable again with the notice gone.
+    await view.rerender({
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      blocks: [mkBlock('NOTE', { id: STABLE_ID, clean_text: 'their text' })],
+      onUpdate: () => {}
+    })
+    await waitFor(() => {
+      expect(
+        view.container
+          .querySelector('.ProseMirror')
+          ?.getAttribute('contenteditable')
+      ).toBe('true')
+    })
+    expect(view.container.querySelector('.conflict-hold-notice')).toBeNull()
+    expect(pmText(view.container)).toContain('their text')
     view.unmount()
   })
 })

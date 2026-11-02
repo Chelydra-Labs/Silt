@@ -21,8 +21,46 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"path/filepath"
 	"silt/backend/plugins"
 )
+
+// errExternalEditConflict is the sentinel for a refused whole-page save whose
+// file changed on disk since the page was loaded (#1005). Kept as the
+// errors.Is target (mirroring errBlockBeingEdited) so test assertions and the
+// IPC code contract both work; return sites hand back an
+// externalEditConflictError() carrying CodeExternalEditConflict.
+var errExternalEditConflict = fmt.Errorf("this page changed on disk since it was opened")
+
+// externalEditConflictError refuses the save, naming the file so the frontend
+// banner can point the user at the right page.
+func externalEditConflictError(filePath string) *IPCError {
+	return wrapSentinelAsIPCError(CodeExternalEditConflict,
+		fmt.Sprintf("%s: %s", errExternalEditConflict.Error(), filepath.Base(filePath)),
+		errExternalEditConflict)
+}
+
+// errExternalEditConflictWrap refuses the save when the file's current state
+// cannot be established (stat/read failure). Fail closed: an unverifiable
+// baseline must not degrade into a blind overwrite. The extra
+// errExternalEditUnverified sentinel marks this refusal as unverified so the
+// stash policy can treat it differently from a verified hash mismatch: an
+// unverifiable conflict must not mint a stash (#1005).
+func errExternalEditConflictWrap(err error) error {
+	return wrapSentinelAsIPCError(CodeExternalEditConflict,
+		fmt.Sprintf("could not verify this page is unchanged since it was opened: %v", err),
+		errors.Join(errExternalEditConflict, errExternalEditUnverified))
+}
+
+// errExternalEditUnverified is the marker sentinel wrapped by
+// errExternalEditConflictWrap (alongside errExternalEditConflict): the refusal
+// fired because the file's state could not be established, not because a
+// hash mismatch proved an external version exists. Stashing on such a
+// refusal would let a transient stat/read error (EACCES, EIO, a briefly
+// disconnected SMB/NFS mount) mint a sticky, manually-resolvable stash that
+// outlives the error — refusing alone lets the next save self-heal.
+var errExternalEditUnverified = fmt.Errorf("page state could not be verified")
 
 // IPCErrorCode is the stable, serialized error code crossing the Wails
 // boundary. Add new constants here as user-facing sentinels migrate (#478
@@ -69,6 +107,11 @@ const (
 	// candidate chips for one-click disambiguation; this is the server-side
 	// safety net when no unique path is supplied.
 	CodeAmbiguousTarget IPCErrorCode = "ambiguous_target"
+	// CodeExternalEditConflict: a whole-page editor save was refused because
+	// the file changed on disk since it was loaded (external writer: Obsidian,
+	// sync client, second Silt window). Distinct from CodePageWriteStale —
+	// the resolution UX is keep-mine/theirs/both, not reload-and-retry (#1005).
+	CodeExternalEditConflict IPCErrorCode = "external_edit_conflict"
 )
 
 // IPCError carries a machine-readable Code across the Wails boundary so the

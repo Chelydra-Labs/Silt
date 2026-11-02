@@ -55,6 +55,10 @@ export function createEditorEvents(deps: EditorEventsDeps) {
     const detail = (e as CustomEvent).detail
     const editorInstance = getEditor()
     if (!editorInstance) return
+    // A conflict-held surface is non-editable (#1005): commands still
+    // dispatch (TipTap does not gate them on isEditable) and the armed
+    // reload would destroy the visible mutation. Refuse instead.
+    if (!editorInstance.isEditable) return
     if (detail?.type === 'headerBlock') {
       convertToBlock(editorInstance, 'headerBlock', detail.depth || 1)
     } else if (detail?.type === 'noteBlock') {
@@ -66,7 +70,9 @@ export function createEditorEvents(deps: EditorEventsDeps) {
   function onSetBlockAlign(e: Event): void {
     const align = (e as CustomEvent).detail as string
     const editorInstance = getEditor()
-    if (align && editorInstance) setBlockAlign(editorInstance, align)
+    // Same non-editable refusal as onChangeBlockType (#1005).
+    if (align && editorInstance?.isEditable)
+      setBlockAlign(editorInstance, align)
   }
   function onOpenColorPicker(e: Event): void {
     const markType = (e as CustomEvent).detail as 'textColor' | 'highlight'

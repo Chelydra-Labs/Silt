@@ -1,10 +1,14 @@
 import type { Editor } from 'svelte-tiptap'
-import { SaveFileBlocks } from '../../../bindings/silt/app.js'
+import {
+  ResolveExternalConflict,
+  SaveFileBlocks
+} from '../../../bindings/silt/app.js'
 import type { ParsedBlock as BindingParsedBlock } from '../../../bindings/silt/backend/parser/models.js'
 import { IPCErrorCode } from '../../generated/enums'
 import { coerceIPCError } from '../ipcError'
 import { measureFrameBudget } from '../perf/frame-budget'
 import { docToBlocks } from './converters'
+import type { ExternalConflictResolution } from './externalConflict'
 import { pushNotification } from '../../notifications/store.svelte'
 import { dispatch as dispatchPluginEvent } from '../../plugins/events'
 
@@ -26,6 +30,9 @@ export interface SaveState {
   phase: SavePhase
   dirty: boolean
   error: string | null
+  /** Set when `error` is the external-edit refusal (#1005): the save-error
+   *  surface should offer keep-mine/theirs/both actions, not a retry. */
+  externalConflict?: boolean
 }
 
 export interface AutosaveDeps {
@@ -37,6 +44,11 @@ export interface AutosaveDeps {
   onUpdate: (blocks: import('./types').ParsedBlock[]) => void
   onStateChange: (dirty: boolean, error: string | null) => void
   onSaveStateChange?: (state: SaveState) => void
+  /** Fired on conflict-grade hold TRANSITIONS only (arm/release). The editor
+   *  surface uses it to toggle read-only + a notice: keystrokes during the
+   *  hold are held-then-clobbered by the armed reload, so they must not be
+   *  accepted in the first place (#1005). */
+  onConflictHoldChange?: (held: boolean) => void
 }
 
 /** How long the transient "Saved" confirmation stays visible before idle. */
@@ -63,16 +75,25 @@ export class AutosaveManager {
   private timeout: ReturnType<typeof setTimeout> | null = null
   private savedHoldTimeout: ReturnType<typeof setTimeout> | null = null
   private savingFloorTimeout: ReturnType<typeof setTimeout> | null = null
-  private lastEmitted: SaveState = { phase: 'idle', dirty: false, error: null }
+  private lastEmitted: SaveState = {
+    phase: 'idle',
+    dirty: false,
+    error: null
+  }
   private pendingSave: Promise<void> | null = null
   private saveQueued = false
   private savingStartedAt = 0
   /** Bumps on each in-flight save so a deferred "saved" emit is ignored if a
    *  newer save has started (min-display floor must not race). */
   private saveGeneration = 0
-  /** When set, trigger/flush/save no-op so a post-restore keystroke cannot
-   *  write the pre-reload buffer. Cleared after setContent + markClean. */
-  private writesHeld = false
+  /** Active write-hold grade. A conflict-grade hold outranks a plain one:
+   * only the armed reload landing, an explicit force-release, or a failed
+   * resolution may release it — never a timer, a keystroke, or a later
+   * plain hold. Plain holds (#345 armed reloads) expire on their safety
+   * valve; conflict holds (#1005 keep_theirs / cross-surface resolution)
+   * have no timer because the buffer they guard was explicitly declared
+   * discardable and only the resolution's reload may replace it. */
+  private hold: 'none' | 'plain' | 'conflict' = 'none'
   private deps: AutosaveDeps
 
   constructor(deps: AutosaveDeps) {
@@ -81,7 +102,7 @@ export class AutosaveManager {
 
   /** Schedule a debounced save. Call on every editor transaction. */
   trigger(): void {
-    if (this.writesHeld) return
+    if (this.hold !== 'none') return
     this.markDirty()
     if (this.timeout) {
       clearTimeout(this.timeout)
@@ -102,7 +123,7 @@ export class AutosaveManager {
 
   /** Flush any pending save immediately. Call on unmount or page change. */
   async flush(): Promise<void> {
-    if (this.writesHeld) return
+    if (this.hold !== 'none') return
     if (this.timeout) {
       clearTimeout(this.timeout)
       this.timeout = null
@@ -147,9 +168,13 @@ export class AutosaveManager {
 
   private holdTimer: ReturnType<typeof setTimeout> | null = null
 
-  /** Suppress new saves until releaseWrites (armed external reload). */
+  /** Arm a plain (#345-style) hold: suppress saves until releaseWrites or the
+   *  safety valve. Never downgrades an active conflict hold — a conflict
+   *  hold has no valve, and re-arming one here would let the discardable
+   *  buffer save over the version the user chose to keep (#1005). */
   holdWrites(timeoutMs = 8000): void {
-    this.writesHeld = true
+    if (this.hold === 'conflict') return
+    this.hold = 'plain'
     this.cancelPending()
     this.clearHoldTimer()
     this.holdTimer = setTimeout(() => {
@@ -158,13 +183,46 @@ export class AutosaveManager {
     }, timeoutMs)
   }
 
-  releaseWrites(): void {
+  /** Conflict-grade hold (#1005): writes stay suppressed until the armed
+   *  reload lands, an explicit force-release, or a failed resolution —
+   *  never a user keystroke and never a timer. The buffer was just declared
+   *  discardable (keep_theirs / cross-surface), so releasing early would let
+   *  a stale-buffer save clobber the version the user chose to keep; if the
+   *  reload event is dropped the hold simply persists until teardown, which
+   *  is safe. */
+  holdWritesForConflict(): void {
+    const wasConflict = this.hold === 'conflict'
+    this.hold = 'conflict'
+    this.cancelPending()
     this.clearHoldTimer()
-    this.writesHeld = false
+    if (!wasConflict) this.deps.onConflictHoldChange?.(true)
+  }
+
+  /** Release a plain (#345-style) hold. A conflict hold is deliberately
+   *  kept: see holdWritesForConflict. */
+  releaseWrites(): void {
+    if (this.hold !== 'plain') return
+    this.forceReleaseWrites()
+  }
+
+  /** Release any hold, including a conflict hold. Callers must be the armed
+   *  reload landing, the explicit clear, or the resolution failure path. */
+  forceReleaseWrites(): void {
+    const wasConflict = this.hold === 'conflict'
+    this.clearHoldTimer()
+    this.hold = 'none'
+    if (wasConflict) this.deps.onConflictHoldChange?.(false)
   }
 
   areWritesHeld(): boolean {
-    return this.writesHeld
+    return this.hold !== 'none'
+  }
+
+  /** True while a conflict-grade hold is active — the editor's onUpdate
+   *  uses this to keep the armed reload (and the hold) alive across
+   *  keystrokes instead of voiding it (#1005). */
+  holdsForConflict(): boolean {
+    return this.hold === 'conflict'
   }
 
   private clearHoldTimer(): void {
@@ -175,7 +233,7 @@ export class AutosaveManager {
   }
 
   private async save(): Promise<void> {
-    if (this.writesHeld) return
+    if (this.hold !== 'none') return
     if (this.pendingSave) {
       this.saveQueued = true
       return
@@ -214,9 +272,20 @@ export class AutosaveManager {
         })
       } catch (e) {
         if (this.saveGeneration !== saveGen) return
-        if (coerceIPCError(e).code === IPCErrorCode.CodePageWriteStale) {
+        const coerced = coerceIPCError(e)
+        if (coerced.code === IPCErrorCode.CodePageWriteStale) {
           this.deps.onStateChange(false, null)
           this.emit('idle', false, null)
+          return
+        }
+        if (coerced.code === IPCErrorCode.CodeExternalEditConflict) {
+          // Refused, not failed: the on-disk version must survive until the
+          // user picks a resolution. Stay in the error phase (the surface
+          // shows the three actions) and skip the Retry toast — a retry would
+          // just re-refuse (#1005).
+          console.warn('AutosaveManager: external edit conflict:', e)
+          this.deps.onStateChange(true, coerced.message)
+          this.emit('error', true, coerced.message, true)
           return
         }
         const msg = e instanceof Error ? e.message : String(e)
@@ -295,17 +364,65 @@ export class AutosaveManager {
     }
   }
 
-  private emit(phase: SavePhase, dirty: boolean, error: string | null): void {
+  private emit(
+    phase: SavePhase,
+    dirty: boolean,
+    error: string | null,
+    externalConflict = false
+  ): void {
     // A new non-saved phase supersedes any pending saved→idle revert.
     if (phase !== 'saved') this.clearSavedHold()
+    // externalConflict is omitted when false so non-conflict states keep
+    // their exact historical shape (tests + tab-state consumers).
     const next: SaveState = { phase, dirty, error }
+    if (externalConflict) next.externalConflict = true
     if (
       next.phase !== this.lastEmitted.phase ||
       next.dirty !== this.lastEmitted.dirty ||
-      next.error !== this.lastEmitted.error
+      next.error !== this.lastEmitted.error ||
+      next.externalConflict !== this.lastEmitted.externalConflict
     ) {
       this.lastEmitted = next
       this.deps.onSaveStateChange?.(next)
     }
+  }
+
+  /**
+   * Resolve an external-edit refusal (#1005). The backend preserves the
+   * losing version as a `.conflict-*` sibling and settles the winner.
+   *
+   * keep_mine / keep_both: the backend replays the refused save, so the
+   * buffer matches disk again → markClean. keep_theirs: the buffer is
+   * discarded in favor of the on-disk version — writes are held and the
+   * caller's armed reload (fresh FetchPageBlocks) replaces the content;
+   * markClean clears the refusal surface in the meantime.
+   *
+   * Resolves to the created conflict copy's page name ('' when unavailable)
+   * so the caller can announce where the kept-apart version landed.
+   */
+  async resolveExternalConflict(
+    resolution: ExternalConflictResolution
+  ): Promise<string> {
+    if (resolution === 'keep_theirs') {
+      // Conflict-grade hold BEFORE the IPC: the backend's block:changed
+      // triggers a reload that must not race a stale debounce firing
+      // mid-resolution, and a keystroke in the reload window must not void
+      // the arm (#1005) — the buffer is now explicitly discardable.
+      this.holdWritesForConflict()
+    }
+    let conflictPage: string
+    try {
+      conflictPage = await ResolveExternalConflict(
+        this.deps.getNotebook(),
+        this.deps.getSection(),
+        this.deps.getPage(),
+        resolution
+      )
+    } catch (e) {
+      if (resolution === 'keep_theirs') this.forceReleaseWrites()
+      throw e
+    }
+    this.markClean()
+    return conflictPage
   }
 }

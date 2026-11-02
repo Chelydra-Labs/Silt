@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte'
+  import { onDestroy, onMount, untrack } from 'svelte'
   import type { ParsedBlock } from '../../lib/editor/types'
   import { themeState } from '../../theme/store.svelte'
   import {
@@ -23,11 +23,17 @@
   } from '../../../bindings/silt/app.js'
   import {
     registerEditor,
-    editorKey
+    editorKey,
+    type EditorHandle
   } from '../../lib/editor/editorRegistry.svelte'
   import { coerceIPCError } from '../../lib/ipcError'
   import { IPCErrorCode } from '../../generated/enums'
   import type { SourceSearchTarget } from '../../lib/editor/search/sourceSearch'
+  import {
+    resolveExternalConflict,
+    type ExternalConflictResolution
+  } from '../../lib/editor/externalConflict'
+  import { pushNotification } from '../../notifications/store.svelte'
 
   // MarkdownSourceViewer — editable Source mode (#660) with optional read-only
   // Shiki highlight (#171/#194). Seeds from on-disk body via FetchPageMarkdown;
@@ -53,6 +59,19 @@
     editable?: boolean
     /** FindBar bind target for Source-mode in-page find (#884). */
     sourceSearchTarget?: SourceSearchTarget | null
+    /** True while the page-level conflict latch is set (#1005): the parent
+     *  renders the single resolution banner and this viewer's saves are
+     *  held — the pending resolution decides what disk holds. */
+    conflictActive?: boolean
+    /** Fired when this viewer's own save is refused (#1005) so the parent
+     *  can latch the page-level banner (it survives view toggles; a banner
+     *  inside this component would not). */
+    onSaveRefused?: () => void
+    /** Reports this surface's registry handle to its owning container
+     *  (#1005): conflict resolution must route through the handle of the
+     *  tab that latched, never a locator lookup that can hit a sibling
+     *  tab's editor on the same page. Called with null on unmount. */
+    onHandleRegistered?: (handle: EditorHandle | null) => void
   }
 
   let {
@@ -64,7 +83,10 @@
     onBlocksSaved,
     editable = true,
     // eslint-disable-next-line no-useless-assignment -- $bindable out-param for parent FindBar
-    sourceSearchTarget = $bindable<SourceSearchTarget | null>(null)
+    sourceSearchTarget = $bindable<SourceSearchTarget | null>(null),
+    conflictActive = false,
+    onSaveRefused,
+    onHandleRegistered
   }: Props = $props()
 
   function reconstructMarkdown(source: ParsedBlock[]): string {
@@ -81,6 +103,14 @@
   let dirty = $state(false)
   let saveError = $state<string | null>(null)
   let conflictPending = $state(false)
+  // External-edit save refusal (#1005): the backend stashed this buffer and
+  // refuses to overwrite the on-disk version until the user resolves. The
+  // resolution banner lives on the parent (page-level, view-toggle-proof);
+  // this flag only holds this viewer's own saves.
+  let saveRefused = $state(false)
+  /** Buffer snapshot at the moment of the refusal — the version the backend
+   * stashed; typed-past edits are flushed after keep_mine/keep_both. */
+  let refusedBuffer: string | null = null
   let savePhase = $state<'idle' | 'saving' | 'saved' | 'error'>('idle')
   let saveTimer: ReturnType<typeof setTimeout> | null = null
   let savedClearTimer: ReturnType<typeof setTimeout> | null = null
@@ -363,7 +393,15 @@
   }
 
   function scheduleSave(): void {
-    if (!editable || !notebook || !page || conflictPending || forcedSeed) return
+    if (
+      !editable ||
+      !notebook ||
+      !page ||
+      conflictPending ||
+      forcedSeed ||
+      saveRefused
+    )
+      return
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
       saveTimer = null
@@ -380,6 +418,9 @@
       return !dirty
     }
     if (conflictPending || forcedSeed) return false
+    // A refused save stays refused until the user resolves it (#1005); a
+    // retried flush would only re-refuse.
+    if (saveRefused) return false
     if (!dirty) return true
     const md = buffer
     const gen = saveGeneration
@@ -410,8 +451,21 @@
       return false
     } catch (e) {
       if (gen !== saveGeneration) return false
-      if (coerceIPCError(e).code === IPCErrorCode.CodePageWriteStale) {
+      const coerced = coerceIPCError(e)
+      if (coerced.code === IPCErrorCode.CodePageWriteStale) {
         savePhase = 'idle'
+        return false
+      }
+      if (coerced.code === IPCErrorCode.CodeExternalEditConflict) {
+        // Refused, not failed: remember the buffer the backend stashed so a
+        // later keep-mine knows whether the user typed past the refusal.
+        saveRefused = true
+        refusedBuffer = md
+        saveError = coerced.message
+        savePhase = 'error'
+        // The parent owns the page-level banner (#1005) — its latch survives
+        // the view toggle that unmounts this component.
+        onSaveRefused?.()
         return false
       }
       saveError = e instanceof Error ? e.message : String(e)
@@ -422,11 +476,13 @@
 
   // Menu Save / Ctrl+S and global replace coordinate through the same registry
   // TipTap uses (#884). TipTap is unmounted in Source, so without this handle
-  // those paths are silent no-ops on dirty Source buffers.
+  // those paths are silent no-ops on dirty Source buffers. The
+  // resolveExternalConflict member lets the page-level conflict banner route
+  // source-mode resolutions through this surface's own stash/reseed logic.
   $effect(() => {
     if (!editable || !notebook || !page) return
     const key = editorKey(notebook, section, page)
-    return registerEditor({
+    const handle: EditorHandle = {
       key,
       isDirty: () => dirty || conflictPending,
       flush: async () => {
@@ -452,12 +508,82 @@
         forcedSeed = false
         seedSeq++
       },
+      focusEditor: () => {
+        if (!textareaEl) return false
+        textareaEl.focus()
+        return true
+      },
       setProposedEdit: () => false,
       clearProposedEdit: () => {},
       hasProposal: () => false,
       acceptProposedEdit: () => false,
-      verifySelectionText: () => false
-    })
+      verifySelectionText: () => false,
+      resolveExternalConflict: (resolution) => resolveSaveConflict(resolution)
+    }
+    const unregister = registerEditor(handle)
+    onHandleRegistered?.(handle)
+    return () => {
+      onHandleRegistered?.(null)
+      unregister()
+    }
+  })
+
+  // Page-level conflict latch (#1005): while the parent's latch is set this
+  // viewer must not save — the pending resolution decides what disk holds,
+  // and a fresh-mount re-fetch would otherwise re-baseline straight over the
+  // external version. `inherited` marks a latch this viewer did not raise
+  // itself; while inherited the surface is READ-ONLY with an inline notice —
+  // text typed here cannot reach the stash (a cross-funnel refusal keeps the
+  // owning surface's first stash) and would be silently destroyed by the
+  // unmount handoff, so the surface must not accept it (#1005). When the
+  // latch clears, the save-hold clears and the buffer re-seeds, keeping dirty
+  // edits for the honest "external change detected" offer. The latch key
+  // distinguishes HOW it cleared: same locator means a resolution (the owning
+  // surface settles its own state); a different locator means the parent
+  // superseded it after a rename/move — the backend stash stays keyed to the
+  // OLD path, so nothing can resolve it and the hold must release without
+  // discarding the user's dirty buffer.
+  let conflictLatchInherited = $state(false)
+  let conflictLatchWasActive = false
+  let conflictLatchKey = ''
+
+  function releaseLatchHold(): void {
+    saveRefused = false
+    refusedBuffer = null
+    saveError = null
+    savePhase = 'idle'
+    if (saveTimer) {
+      clearTimeout(saveTimer)
+      saveTimer = null
+    }
+  }
+
+  $effect(() => {
+    if (conflictActive) {
+      if (!conflictLatchWasActive) {
+        conflictLatchWasActive = true
+        conflictLatchInherited = !untrack(() => saveRefused)
+        conflictLatchKey = editorKey(notebook, section, page)
+        saveRefused = true
+      }
+      return
+    }
+    if (!conflictLatchWasActive) return
+    conflictLatchWasActive = false
+    const superseded = conflictLatchKey !== editorKey(notebook, section, page)
+    const inherited = conflictLatchInherited
+    conflictLatchInherited = false
+    if (superseded) {
+      // Rename/move repointed the tab: the offer the next blocks change
+      // raises ("External change detected") has reachable actions — unlike
+      // a kept saveRefused, whose only actions live behind the latch that
+      // just vanished (#1005 dead-lock).
+      releaseLatchHold()
+      return
+    }
+    if (!inherited) return
+    releaseLatchHold()
+    void seedFromDiskOrBlocks(blocks)
   })
 
   // Expose textarea buffer ops to FindBar while editable Source is mounted.
@@ -527,6 +653,8 @@
 
   function reloadFromDisk(): void {
     conflictPending = false
+    saveRefused = false
+    refusedBuffer = null
     saveError = null
     savePhase = 'idle'
     // Reload discards local edits by explicit user choice. Clear dirty
@@ -541,6 +669,48 @@
     // Reload is an explicit history boundary: the user is discarding their
     // edits entirely, so the redo branch must not resurrect discarded text.
     void seedFromDiskOrBlocks(blocks)
+  }
+
+  /** Settle an external-edit save refusal (#1005). The losing version always
+   *  survives as a `.conflict-*` sibling written by the backend. Exposed on
+   *  the editor-registry handle so the page-level banner (rendered by the
+   *  container) routes resolutions through this surface — the stashed payload
+   *  is this buffer, and only this surface can reseed it safely. Throws when
+   *  the resolution IPC fails so the banner keeps offering the actions. */
+  async function resolveSaveConflict(
+    resolution: ExternalConflictResolution
+  ): Promise<string> {
+    // The refused snapshot dies with the surface that raised it: a fresh
+    // mount inheriting the latch (refusedBuffer === null) that is dirty has
+    // typed past the refusal HERE — flush that text, never discard it
+    // (#1005 swap-back regression).
+    const typedPastRefusal =
+      refusedBuffer === null ? dirty : buffer !== refusedBuffer
+    const conflictPage = await resolveExternalConflict(
+      notebook,
+      section,
+      page,
+      resolution
+    )
+    saveRefused = false
+    refusedBuffer = null
+    if (resolution === 'keep_theirs') {
+      // Discards the refused buffer by explicit choice; reloadFromDisk
+      // clears dirty/saveError and reseeds from the on-disk winner.
+      reloadFromDisk()
+      return conflictPage
+    }
+    // keep_mine / keep_both: the backend wrote the stashed buffer. Typing
+    // that happened after the refusal is still unsaved — flush it now (the
+    // resolution refreshed the baseline, so the save passes).
+    saveError = null
+    if (typedPastRefusal) {
+      scheduleSave()
+    } else {
+      dirty = false
+      savePhase = 'idle'
+    }
+    return conflictPage
   }
 
   function announceHistory(msg: string): void {
@@ -597,6 +767,13 @@
     selection: SourceHistorySelection,
     opts: { coalesce?: boolean } = {}
   ): void {
+    if (conflictLatchInherited) {
+      // Read-only while another surface owns the conflict latch: a save from
+      // here would be refused cross-funnel and the text destroyed on unmount
+      // (#1005). The textarea is readonly for typing; FindBar edits route
+      // through here and must honor the same contract.
+      return
+    }
     buffer = nextValue
     markDirtyAndSchedule()
     history.push({ value: nextValue, selection }, opts)
@@ -884,14 +1061,41 @@
     if (savedClearTimer) clearTimeout(savedClearTimer)
     if (saveTimer) {
       clearTimeout(saveTimer)
-      // Best-effort flush on unmount when dirty (not during conflict).
-      if (dirty && notebook && page && !conflictPending) {
+      // Best-effort flush on unmount when dirty (not during conflict; a
+      // refused save would only re-refuse #1005).
+      if (dirty && notebook && page && !conflictPending && !saveRefused) {
         void savePageMarkdown(notebook, section, page, buffer)
           .then((saved) => onBlocksSaved?.(saved))
           .catch((e) => {
             console.error('MarkdownSourceViewer: unmount flush failed:', e)
           })
       }
+    }
+    // #1005: text typed under the refusal latch exists only in this buffer,
+    // and the view toggle that unmounts here destroys it. Re-flush through
+    // the save funnel: the pending stash IS the conflict state, so the
+    // backend re-refuses even after a remount seed re-baselined the
+    // fingerprint, and REPLACES this funnel's stash with the typed buffer
+    // (same-funnel newest-wins), so any later resolution — from either
+    // surface — replays or archives the typed text instead of losing it.
+    // This only fires on the OWNING surface's latch (this viewer refused its
+    // own save); an inherited latch keeps the surface read-only, so its
+    // buffer never diverges and there is nothing to hand off — the catch
+    // below then treats any refusal as the expected outcome.
+    if (saveRefused && dirty && notebook && page && buffer !== refusedBuffer) {
+      void savePageMarkdown(notebook, section, page, buffer).catch((e) => {
+        // The refusal itself is the expected handoff outcome; anything
+        // else is a real flush failure and the typed-past text exists
+        // nowhere else — fail loud instead of a console-only drop.
+        const coerced = coerceIPCError(e)
+        if (coerced.code !== IPCErrorCode.CodeExternalEditConflict) {
+          const msg = e instanceof Error ? e.message : String(e)
+          pushNotification({
+            kind: 'error',
+            message: `Couldn't hand off your unsaved source edits for ${page}.md — keep this tab open and retry saving. (${msg})`
+          })
+        }
+      })
     }
     void releaseLock()
   })
@@ -901,15 +1105,22 @@
   <div class="source-header">
     <span class="file-path" title={filePath}>{filePath}</span>
     <div class="header-actions">
-      {#if conflictPending}
+      {#if saveRefused}
+        <!-- Visual echo only: the banner below carries role="alert", so this
+             header span must not announce too (double-speaking the
+             refusal). -->
+        <span class="save-status save-status--err"
+          >Save held — this file changed on disk</span
+        >
+      {:else if conflictPending}
         <span class="save-status" role="status" aria-live="polite"
           >External change detected</span
         >
         <button type="button" class="conflict-btn" onclick={keepMine}>
-          Keep mine
+          Use my text
         </button>
         <button type="button" class="conflict-btn" onclick={reloadFromDisk}>
-          Reload
+          Reload file
         </button>
       {:else if saveError}
         <span
@@ -977,6 +1188,16 @@
       {/if}
     </div>
   </div>
+  {#if editable && conflictLatchInherited}
+    <!-- The non-owning surface under a live conflict: typing here cannot be
+         saved (the owning surface's stash is kept cross-funnel), so the
+         surface is read-only and says why, instead of accepting text it
+         would silently destroy (#1005). -->
+    <p class="conflict-hold-notice" role="status">
+      This page has an unresolved change conflict. Editing here is disabled
+      until it's resolved in the other view.
+    </p>
+  {/if}
   <div
     class="source-body"
     role={editable ? undefined : 'document'}
@@ -993,6 +1214,7 @@
         class="source-code source-textarea"
         value={buffer}
         wrap="off"
+        readonly={conflictLatchInherited}
         onbeforeinput={onBeforeInput}
         oninput={onInput}
         onkeydown={onKeyDown}
@@ -1109,6 +1331,14 @@
   .copy-status--err,
   .save-status--err {
     color: var(--color-status-danger);
+  }
+
+  .conflict-hold-notice {
+    margin: 0;
+    padding: 4px 12px;
+    font-size: 0.72rem;
+    color: var(--color-status-warning, #b8860b);
+    border-bottom: 1px solid var(--color-surface-panel-border);
   }
 
   /* Single scroll owner: source-body scrolls vertically so line-numbers and

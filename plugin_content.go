@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"silt/backend/core"
 	"silt/backend/parser"
 	"silt/backend/plugins"
 	"sort"
@@ -144,8 +145,10 @@ func (a *App) PluginApplyBlocks(pluginID, sessionToken string, ops []PluginCreat
 }
 
 // applyBlocksOps is the shared engine for create/delete/move (single + bulk).
-// It groups ops by target page, fetches each page's blocks once, mutates the
-// slice, and writes each affected page exactly once through SaveFileBlocks.
+// It groups ops by target page and writes each affected page exactly once.
+// The rendered base is reconstructed from CURRENT disk bytes inside the file
+// lock (see saveFileBlocksWithGate's rebaseOnDisk) — the DB snapshot is only
+// the lock/validation input, never the rendered content.
 func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 	if reason == "" {
 		reason = historyReasonPlugin
@@ -284,76 +287,101 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 			return opOrder[pageOps[i].op.Kind] < opOrder[pageOps[j].op.Kind]
 		})
 		first := pageOps[0]
-		blocks, err := a.FetchPageBlocks(first.notebook, first.section, first.page)
+		blocks, err := a.fetchPageBlocks(first.notebook, first.section, first.page, captureNone)
 		if err != nil {
 			return fmt.Errorf("fetch page %s/%s/%s: %w", first.notebook, first.section, first.page, err)
 		}
-		mutated := blocks
-		var createdIDs []string
+		// Pre-resolve cross-page move payloads (the moved block's content
+		// from its source page) BEFORE the save takes coordinator locks: the
+		// ops re-apply inside LockFileWrite for the disk rebase, and a DB
+		// fetch under those locks would invert the vaultMu→coordinator lock
+		// order every other save path observes.
+		movePayloads := map[string]parser.ParsedBlock{}
 		for _, r := range pageOps {
-			switch r.op.Kind {
-			case "create":
-				nb := parser.ParsedBlock{
-					ID:        r.newID,
-					Type:      r.blockType,
-					CleanText: r.text,
-					FileDate:  time.Now().Format("2006-01-02"),
-				}
-				if r.blockType == parser.BlockTask {
-					// Default TODO so GFM checkbox renders; callers that need
-					// DOING/DONE use UpdateBlockState after mint.
-					nb.Status = "TODO"
-					nb.Priority = parser.DefaultTaskPriority
-				}
-				mutated = insertAfter(mutated, r.op.AfterID, nb)
-				createdIDs = append(createdIDs, r.newID)
-			case "delete":
-				mutated = removeByID(mutated, r.op.BlockID)
-			case "move":
-				// Same-page move: the block is already in `mutated`, just reorder.
-				// Cross-page move: the block lives in the SOURCE page, not in
-				// `mutated` (the target page). Fetch it from source and insert.
-				isCrossPage := r.origNotebook != "" &&
-					(r.origNotebook != r.notebook ||
-						r.origSection != r.section ||
-						r.origPage != r.page)
-				if isCrossPage {
-					srcBlocks, srcErr := a.FetchPageBlocks(r.origNotebook, r.origSection, r.origPage)
-					if srcErr != nil {
-						return fmt.Errorf("cross-page move: fetch source page for block %s: %w", r.op.BlockID, srcErr)
-					}
-					found := false
-					for _, b := range srcBlocks {
-						if b.ID == r.op.BlockID {
-							mutated = insertAfter(mutated, r.op.AfterID, b)
-							found = true
-							break
-						}
-					}
-					if !found {
-						return fmt.Errorf("cross-page move: block %s not found in source page %s/%s/%s", r.op.BlockID, r.origNotebook, r.origSection, r.origPage)
-					}
-				} else if r.op.AfterID != "" || r.op.BlockID != "" {
-					mutated = moveWithin(mutated, r.op.BlockID, r.op.AfterID)
+			if r.op.Kind != "move" {
+				continue
+			}
+			isCrossPage := r.origNotebook != "" &&
+				(r.origNotebook != r.notebook ||
+					r.origSection != r.section ||
+					r.origPage != r.page)
+			if !isCrossPage {
+				continue
+			}
+			srcBlocks, srcErr := a.fetchPageBlocks(r.origNotebook, r.origSection, r.origPage, captureNone)
+			if srcErr != nil {
+				return fmt.Errorf("cross-page move: fetch source page for block %s: %w", r.op.BlockID, srcErr)
+			}
+			found := false
+			for _, b := range srcBlocks {
+				if b.ID == r.op.BlockID {
+					movePayloads[r.op.BlockID] = b
+					found = true
+					break
 				}
 			}
+			if !found {
+				return fmt.Errorf("cross-page move: block %s not found in source page %s/%s/%s", r.op.BlockID, r.origNotebook, r.origSection, r.origPage)
+			}
 		}
-		if err := a.saveFileBlocksWithSource(first.notebook, first.section, first.page, mutated, reason); err != nil {
+		var createdIDs []string
+		// applyPageOps re-applies the page's ops to a block base: once to
+		// the DB snapshot (lock/validation input for the save) and again,
+		// inside LockFileWrite, to the CURRENT disk bytes — the base that
+		// renders is always disk, so stale DB rows can never revert an
+		// external edit the watcher has not re-indexed (#1005).
+		applyPageOps := func(base []parser.ParsedBlock) []parser.ParsedBlock {
+			mutated := base
+			for _, r := range pageOps {
+				switch r.op.Kind {
+				case "create":
+					nb := parser.ParsedBlock{
+						ID:        r.newID,
+						Type:      r.blockType,
+						CleanText: r.text,
+						FileDate:  time.Now().Format("2006-01-02"),
+					}
+					if r.blockType == parser.BlockTask {
+						// Default TODO so GFM checkbox renders; callers that need
+						// DOING/DONE use UpdateBlockState after mint.
+						nb.Status = "TODO"
+						nb.Priority = parser.DefaultTaskPriority
+					}
+					mutated = insertAfter(mutated, r.op.AfterID, nb)
+					createdIDs = append(createdIDs, r.newID)
+				case "delete":
+					mutated = removeByID(mutated, r.op.BlockID)
+				case "move":
+					// Same-page move: the block is already in `mutated`, just reorder.
+					// Cross-page move: the block lives in the SOURCE page, not in
+					// `mutated` (the target page); insert the pre-fetched payload.
+					isCrossPage := r.origNotebook != "" &&
+						(r.origNotebook != r.notebook ||
+							r.origSection != r.section ||
+							r.origPage != r.page)
+					if isCrossPage {
+						if b, ok := movePayloads[r.op.BlockID]; ok {
+							mutated = insertAfter(mutated, r.op.AfterID, b)
+						}
+					} else if r.op.AfterID != "" || r.op.BlockID != "" {
+						mutated = moveWithin(mutated, r.op.BlockID, r.op.AfterID)
+					}
+				}
+			}
+			return mutated
+		}
+		if err := a.saveFileBlocksWithGate(first.notebook, first.section, first.page, applyPageOps(blocks), reason, gateStashOnly, funnelProgrammatic, applyPageOps); err != nil {
 			return fmt.Errorf("save page %s/%s/%s: %w", first.notebook, first.section, first.page, err)
 		}
 		// For cross-page moves, remove the block from its source page.
 		//
-		// The source-page block list is read from the DB (FetchPageBlocks), NOT
-		// from the file. The first-pass SaveFileBlocks already re-indexed the
-		// moved block into the TARGET page, so the DB no longer lists it under
-		// the source page. Reading the file instead would see stale content
-		// (the file hasn't been rewritten yet) and IndexFileBlocks would
-		// re-insert the block under the source page, stealing it back from the
-		// target — silent data loss under concurrency.
-		//
-		// LockFileWrite serializes concurrent source-page writes so the file
-		// never has a torn write. Errors are NOT swallowed — a failed
-		// source-removal would leave the block duplicated.
+		// The source rewrite is a read-modify-write anchored on CURRENT disk
+		// bytes inside LockFileWrite (see removeBlockFromSourcePage): an
+		// external edit the watcher has not re-indexed yet survives it, and a
+		// pending refused-write stash refuses it outright. LockFileWrite
+		// serializes concurrent source-page writes so the file never has a
+		// torn write. Errors are NOT swallowed — a failed source-removal
+		// would leave the block duplicated.
 		for _, r := range pageOps {
 			if r.op.Kind == "move" && r.origNotebook != "" &&
 				(r.origNotebook != r.notebook ||
@@ -388,6 +416,14 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 				if writeErr != nil {
 					return fmt.Errorf("cross-page move: save source %s/%s/%s: %w", sn, ss, sp, writeErr)
 				}
+				// Whole-page signal for the rewritten source page (outside the
+				// file lock, like every emit here). The rewrite refreshed the
+				// fingerprint, so an editor still open on the source page must
+				// recapture buffer + baseline via its block:changed reload —
+				// otherwise its stale buffer's next autosave passes the gate
+				// and silently re-inserts the moved block (#1005; same
+				// contract as the rename link fanout).
+				a.emitBlockChanged("", sn, ss, sp, "")
 			}
 		}
 		for _, id := range createdIDs {
@@ -407,27 +443,39 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 // being moved, so concurrent cross-page moves from the same source page are
 // safe.
 //
-// The file is rewritten with the remaining blocks (filtered from the DB
-// snapshot). The DB gets a single-row delete for the moved block only.
+// The caller MUST hold LockFileWrite for filePath. The file rewrite is
+// anchored on the CURRENT disk bytes read inside that lock (the same anchor
+// MutateBlock uses): rendering from the DB snapshot would revert an external
+// edit the watcher has not re-indexed yet — the exact loss class #1005
+// exists to prevent — and the pending-stash gate below refuses the rewrite
+// outright while a refused save awaits resolution.
 func (a *App) removeBlockFromSourcePage(filePath, source, notebook, section, page, blockID, reason string) error {
+	// A pending refused-write stash IS the conflict state: rewriting under it
+	// would revert external bytes, and a later keep_mine would replay the
+	// stashed pre-move buffer, resurrecting the moved block on both pages
+	// (#1005). Same refusal every gated funnel applies.
+	if err := a.externalEditStashRefusalKey(core.NormalizeFileLockPath(filePath), filePath); err != nil {
+		return err
+	}
 	// NOTE: the file write and DB delete are not atomic together — the file is
 	// rewritten first, then the DB row is deleted. If the process crashes
 	// between, the file won't have the block but the DB will still list it.
 	// This is acceptable: the DB is a re-derivable cache (§0 rule 4), so the
 	// next index rebuild (or the next SaveFileBlocks for this page) reconciles
 	// the file↔DB state automatically.
-	// Read current blocks from the DB (fresh snapshot).
-	srcBlocks, err := a.FetchPageBlocks(notebook, section, page)
-	if err != nil {
-		return fmt.Errorf("fetch source %s/%s/%s: %w", notebook, section, page, err)
-	}
-	filtered := removeByID(srcBlocks, blockID)
-
-	// Rewrite the file with the remaining blocks (no re-index).
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read source file: %w", err)
 	}
+	fileDate := fileOrDefaultDate(filePath)
+	srcBlocks, _, _, _, parseErr := parser.ParseFileContent(string(contentBytes),
+		notebook, section, page, fileDate, a.spacesPerTab)
+	if parseErr != nil {
+		return fmt.Errorf("parse source %s/%s/%s: %w", notebook, section, page, parseErr)
+	}
+	filtered := removeByID(srcBlocks, blockID)
+
+	// Rewrite the file with the remaining blocks (no re-index).
 	frontmatter, body := parser.SplitFrontmatter(string(contentBytes))
 	if frontmatter == "" {
 		frontmatter = fmt.Sprintf("---\nnotebook: %q\nsection: %q\npage: %q\ndate: %q\ntags: []\n---\n",
@@ -439,8 +487,7 @@ func (a *App) removeBlockFromSourcePage(filePath, source, notebook, section, pag
 		reason = historyReasonPlugin
 	}
 	a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), reason)
-	a.tracker.RegisterWrite(filePath)
-	if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+	if err := a.trackedPageWrite(filePath, []byte(newContent)); err != nil {
 		return fmt.Errorf("write source file: %w", err)
 	}
 

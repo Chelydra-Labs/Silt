@@ -338,8 +338,9 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 			)
 			return
 		}
-		a.tracker.RegisterWrite(filePath)
-		if err := parser.WriteFileAtomic(filePath, []byte(content)); err != nil {
+		// trackedPageWrite: creation keeps an absent-file baseline honest
+		// (#1005), same as CreatePage's scaffold.
+		if err := a.trackedPageWrite(filePath, []byte(content)); err != nil {
 			writeErr = err
 			return
 		}

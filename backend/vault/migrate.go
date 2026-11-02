@@ -142,6 +142,8 @@ func MigratePerDayFiles(vaultPath string, spacesPerTab int) []string {
 		}
 
 		// Render the merged content and write the new page file.
+		// Direct write: legacy-format migration runs at vault import,
+		// before any editor load can capture a baseline (#1005).
 		mergedContent := parser.RenderFileContent(allBlocks, "", frontmatter, spacesPerTab)
 		if err := parser.WriteFileAtomic(targetPath, []byte(mergedContent)); err != nil {
 			warnings = append(warnings, fmt.Sprintf("migration: cannot write %q: %v", targetPath, err))

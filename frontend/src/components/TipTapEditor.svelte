@@ -8,7 +8,10 @@
   import { CharacterCount, Focus, TrailingNode } from '@tiptap/extensions'
   import Typography from '@tiptap/extension-typography'
   import { AutosaveManager } from '../lib/editor/useAutosave'
-  import { registerEditor } from '../lib/editor/editorRegistry.svelte'
+  import {
+    registerEditor,
+    type EditorHandle
+  } from '../lib/editor/editorRegistry.svelte'
   import { FocusLockManager } from '../lib/editor/useFocusLock'
   import { BlockIndentOnDrop } from '../lib/editor/dragIndentDrop'
   import { gateBubbleCoords } from '../lib/editor/selectionBubbleGate'
@@ -114,11 +117,19 @@
       phase: 'idle' | 'pending' | 'saving' | 'saved' | 'error'
       dirty: boolean
       error: string | null
+      /** Error is the external-edit refusal (#1005) — surface the
+       *  keep-mine/theirs/both actions instead of a retry. */
+      externalConflict?: boolean
     }) => void
     /** Fired once when the ProseMirror editor finishes its initial mount
      *  (onCreate). Lets the parent schedule post-readiness work such as
      *  restoring scroll across an Edit↔Source round-trip (#319). */
     onReady?: () => void
+    /** Reports this surface's registry handle to its owning container
+     *  (#1005): conflict resolution must route through the handle of the
+     *  tab that latched, never a locator lookup that can hit a sibling
+     *  tab's editor on the same page. Called with null on unmount. */
+    onHandleRegistered?: (handle: EditorHandle | null) => void
   }
 
   let {
@@ -135,7 +146,8 @@
     // eslint-disable-next-line no-useless-assignment -- $bindable out-param for parent word count
     wordCount = $bindable<number>(0),
     onSaveStateChange,
-    onReady
+    onReady,
+    onHandleRegistered
   }: Props = $props()
   let editorReady = $state(false)
   let isFocused = $state(false)
@@ -437,11 +449,21 @@
     content: initialDoc,
     onUpdate: () => {
       if (suppressUpdate) return
-      // The user typed: any stale "force reload on next external change" flag
-      // is voided — a user edit makes the buffer authoritative again and must
-      // never be clobbered by a leaked pendingExternalReload (#345).
-      pendingExternalReload = false
-      autosave.releaseWrites()
+      if (autosave.holdsForConflict()) {
+        // A keep_theirs/cross-surface resolution armed a reload of this
+        // buffer-as-discardable. The #345 "user edit makes the buffer
+        // authoritative" rule must NOT apply while that hold is active —
+        // voiding the arm here would let the stale buffer save over the
+        // version the user just chose to keep (#1005). The armed reload will
+        // replace this keystroke when it lands; until then writes stay held.
+      } else {
+        // The user typed: any stale "force reload on next external change"
+        // flag is voided — a user edit makes the buffer authoritative again
+        // and must never be clobbered by a leaked pendingExternalReload
+        // (#345).
+        pendingExternalReload = false
+        autosave.releaseWrites()
+      }
       slash.detectSlashCommand()
       isLastBlock = editorInstance
         ? editorInstance.state.doc.childCount <= 1
@@ -744,7 +766,7 @@
     if (key === lastSyncedBlocksKey) {
       if (pendingExternalReload) {
         pendingExternalReload = false
-        autosave.releaseWrites()
+        autosave.forceReleaseWrites()
       }
       return
     }
@@ -765,13 +787,27 @@
     autosave.markClean()
     if (reloading) {
       pendingExternalReload = false
-      autosave.releaseWrites()
+      autosave.forceReleaseWrites()
     }
   })
 
   // --- Auto-save (debounced, config-driven, same contract as legacy) --------
 
   let unsavedChanges = $state(false)
+
+  // Read-only while a conflict-grade hold is armed (#1005): the buffer was
+  // declared discardable (keep_theirs / cross-surface resolution) and the
+  // armed reload will replace whatever is typed here — accepting keystrokes
+  // would silently destroy them, so the surface refuses input and says why
+  // until the reload lands and releases the hold.
+  let conflictHold = $state(false)
+
+  $effect(() => {
+    const editor = editorInstance
+    if (!editor || editor.isDestroyed) return
+    const editable = !conflictHold
+    if (editor.isEditable !== editable) editor.setEditable(editable)
+  })
 
   const autosave = new AutosaveManager({
     getEditor: () => editorInstance,
@@ -784,7 +820,10 @@
     onStateChange: (dirty) => {
       unsavedChanges = dirty
     },
-    onSaveStateChange: (state) => onSaveStateChange?.(state)
+    onSaveStateChange: (state) => onSaveStateChange?.(state),
+    onConflictHoldChange: (held) => {
+      conflictHold = held
+    }
   })
 
   function triggerAutoSave(): void {
@@ -799,12 +838,15 @@
   // and force a reload after (#345). Re-registers when the page triple
   // changes (e.g. a rename) without re-subscribing on every dirty toggle
   // (isDirty reads state lazily inside the closure, not in the effect body).
+  // The handle is also reported to the owning container so conflict
+  // resolution routes through THIS tab's surface, never a locator lookup
+  // that a sibling tab on the same page would shadow (#1005).
   $effect(() => {
     const nb = notebook,
       sec = section,
       pg = page
     const key = `${nb}\x00${sec}\x00${pg}`
-    return registerEditor({
+    const handle: EditorHandle = {
       key,
       isDirty: () => unsavedChanges,
       flush: async () => {
@@ -812,13 +854,32 @@
         await autosave.flush()
         return !unsavedChanges
       },
-      forceExternalReload: () => {
+      forceExternalReload: (opts?: { conflictHold?: boolean }) => {
         pendingExternalReload = true
-        autosave.holdWrites()
+        if (opts?.conflictHold) {
+          // Cross-surface conflict resolution (#1005): the mounted editor's
+          // buffer is stale against the resolution outcome and must not be
+          // savable until the armed reload replaces it — conflict-grade, so
+          // a keystroke cannot void the arm.
+          autosave.holdWritesForConflict()
+        } else {
+          autosave.holdWrites()
+        }
       },
-      clearExternalReload: () => {
+      clearExternalReload: (opts?: { conflict?: boolean }) => {
+        // A conflict-grade arm outlives a plain clear: only the armed
+        // reload landing or a failed resolution may release it — clearing
+        // the arm here would hand the next keystroke a savable stale
+        // buffer over the version the user chose to keep (#1005). The
+        // `conflict` opt-in is that failed-resolution path itself.
+        if (autosave.holdsForConflict() && !opts?.conflict) return
         pendingExternalReload = false
-        autosave.releaseWrites()
+        autosave.forceReleaseWrites()
+      },
+      focusEditor: () => {
+        if (!editorInstance || editorInstance.isDestroyed) return false
+        editorInstance.commands.focus()
+        return true
       },
       setProposedEdit: (opts) => {
         if (!editorInstance || editorInstance.isDestroyed) return false
@@ -844,8 +905,31 @@
         } catch {
           return false
         }
+      },
+      resolveExternalConflict: async (resolution) => {
+        if (resolution === 'keep_theirs') {
+          // Arm BEFORE the IPC: the backend emits block:changed on
+          // resolution and the reload must land on an armed editor so the
+          // focused-edit guard lets the on-disk version replace my buffer
+          // (same ordering as the PageHistoryModal restore).
+          pendingExternalReload = true
+        }
+        try {
+          return await autosave.resolveExternalConflict(resolution)
+        } catch (e) {
+          if (resolution === 'keep_theirs') {
+            pendingExternalReload = false
+          }
+          throw e
+        }
       }
-    })
+    }
+    const unregister = registerEditor(handle)
+    onHandleRegistered?.(handle)
+    return () => {
+      onHandleRegistered?.(null)
+      unregister()
+    }
   })
 
   // --- Slash menu -----------------------------------------------------------
@@ -970,6 +1054,12 @@
       <TableContextToolbar editor={editorInstance} />
     {/if}
     {#if $editorStore}
+      {#if conflictHold}
+        <p class="conflict-hold-notice" role="status">
+          This page has an unresolved change conflict. Editing here is disabled
+          until it's resolved.
+        </p>
+      {/if}
       <EditorContent editor={$editorStore} />
     {/if}
   {/if}
@@ -1486,6 +1576,12 @@
     width: 100%;
     max-width: var(--editor-measure, 70ch);
     margin-inline: auto;
+  }
+
+  .tiptap-editor-host .conflict-hold-notice {
+    margin: 0 0 8px;
+    font-size: 0.78rem;
+    color: var(--color-status-warning, #b8860b);
   }
 
   .tiptap-editor-host :global(.ProseMirror) {

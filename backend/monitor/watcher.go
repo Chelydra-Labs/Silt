@@ -806,6 +806,10 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 
 		if modified {
 			dw.tracker.RegisterWrite(path)
+			// Direct write: watcher-layer normalization (minted id comments)
+			// has no *App, so the fingerprint refresh cannot run here — a
+			// live editor baseline drifts once per normalized file and
+			// self-heals on the next editor reload (accepted, #1005).
 			_ = parser.WriteFileAtomic(path, []byte(newContent))
 		}
 

@@ -12,7 +12,8 @@
     editorInstance = $bindable(null),
     activeMarks: _activeMarks,
     onSaveStateChange,
-    onReady
+    onReady,
+    onHandleRegistered
   } = $props()
 
   // Minimal editor surface for #319/#331 restore tests.
@@ -82,9 +83,17 @@
 
   // Mirror the real editor's onCreate readiness signal so the parent's
   // post-mount work (scroll/caret restore across Edit↔Source) runs in tests.
+  // #1005: when globalThis.__tiptapStubHandleFactory is set, also report a
+  // per-instance registry handle via onHandleRegistered — tests use it to
+  // pin the container's own-surface conflict routing (two tabs, one page).
   $effect(() => {
     editorInstance = buildStub() as never
+    const factory = (globalThis as unknown as Record<string, unknown>)
+      .__tiptapStubHandleFactory as
+      (() => Record<string, unknown> | null) | undefined
+    onHandleRegistered?.((factory?.() ?? null) as never)
     onReady?.()
+    return () => onHandleRegistered?.(null)
   })
 </script>
 
@@ -121,6 +130,19 @@
       onSaveStateChange?.({ phase: 'error', dirty: false, error: 'disk full' })}
   >
     emit error
+  </button>
+  <button
+    type="button"
+    data-testid="tiptap-stub-emit-conflict"
+    onclick={() =>
+      onSaveStateChange?.({
+        phase: 'error',
+        dirty: true,
+        error: 'this page changed on disk since it was opened',
+        externalConflict: true
+      })}
+  >
+    emit conflict
   </button>
   <button
     type="button"

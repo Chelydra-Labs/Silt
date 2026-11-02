@@ -266,7 +266,9 @@ func parseSingleFile(path string, vaultPath string, spacesPerTab int) ScanResult
 	}
 	res.Warnings = meta.Warnings
 
-	// 3. Write back atomically if modified (i.e. UUIDs injected)
+	// 3. Write back atomically if modified (i.e. UUIDs injected).
+	// Direct write: parser-layer id minting has no *App and runs at
+	// scan/index time, before any editor load captures a baseline (#1005).
 	if modified {
 		if err := WriteFileAtomic(path, []byte(newContent)); err != nil {
 			res.Err = fmt.Errorf("failed to write file atomically: %w", err)

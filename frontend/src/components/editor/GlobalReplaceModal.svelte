@@ -2,8 +2,8 @@
   import { untrack } from 'svelte'
   import {
     SearchBlocksPaged,
-    FetchPageBlocks,
-    SaveFileBlocks
+    FetchPageBlocksProgrammatic,
+    SaveFileBlocksProgrammatic
   } from '../../../bindings/silt/app.js'
   import type * as parser from '../../../bindings/silt/backend/parser/models.js'
   import {
@@ -15,6 +15,8 @@
     getEditor
   } from '../../lib/editor/editorRegistry.svelte'
   import { pushNotification } from '../../notifications/store.svelte'
+  import { coerceIPCError } from '../../lib/ipcError'
+  import { IPCErrorCode } from '../../generated/enums'
 
   interface Props {
     onClose: () => void
@@ -144,6 +146,17 @@
 
   /** Apply approved replacements: per affected page, FetchPageBlocks → replace in
    *  clean_text → SaveFileBlocks. Records originals for the Undo action. */
+  /** Human copy for a SaveFileBlocks refusal inside apply/undo (#1005): the
+   *  external-edit refusal arrives as raw JSON otherwise, and the resolution
+   *  surface is the page's own conflict banner — which only appears when the
+   *  page was already open, so lead with the actionable part. */
+  function replaceSaveFailureText(e: unknown): string {
+    if (coerceIPCError(e).code === IPCErrorCode.CodeExternalEditConflict) {
+      return 'that page changed on disk since Silt opened it, so the write was held — try again, and use the page’s save-conflict banner if it shows one'
+    }
+    return String(e)
+  }
+
   async function apply(): Promise<void> {
     applying = true
     statusMessage = ''
@@ -195,6 +208,9 @@
     const skippedUnflushable: string[] = []
     const skippedLinked: string[] = []
     const newLog: BatchEntry[] = []
+    // Names the page a mid-batch failure stopped on, so the failure copy can
+    // point the user at the right page's conflict surface (#1005).
+    let failedPage = ''
     try {
       for (const grp of groups) {
         const acceptedMatches = grp.matches.filter((m) => m.accepted)
@@ -214,7 +230,11 @@
           continue
         }
         // Fetch the page's full block list (the search result is a subset).
-        const blocks = await FetchPageBlocks(
+        // Programmatic variant: a modal read must not re-baseline the
+        // editor's conflict gate — the capturing fetch would let this save
+        // (and the editor's next autosave) silently clobber an external
+        // edit the modal never adopted (#1005).
+        const blocks = await FetchPageBlocksProgrammatic(
           grp.notebook,
           grp.section,
           grp.page
@@ -251,7 +271,26 @@
             editor.forceExternalReload()
             openPagesTouched++
           }
-          await SaveFileBlocks(grp.notebook, grp.section, grp.page, blocks)
+          failedPage = grp.page
+          try {
+            // Programmatic funnel: a batch refusal must never evict or
+            // replace a live editor stash — the modal's rendered page is
+            // re-derivable, the stashed editor buffer may be the user's
+            // only copy (#1005).
+            await SaveFileBlocksProgrammatic(
+              grp.notebook,
+              grp.section,
+              grp.page,
+              blocks
+            )
+          } catch (e) {
+            // The write never landed, so no block:changed will consume the
+            // arm — drop it here or the next unrelated blocks change bypasses
+            // the focused-edit guard and setContents over unsaved edits (the
+            // exact leak the arming comment above warns about, #345).
+            editor?.clearExternalReload()
+            throw e
+          }
           // Record the page only after it has persisted, so a mid-batch
           // failure leaves newLog holding exactly the written pages.
           newLog.push({
@@ -304,7 +343,7 @@
         })
       }
     } catch (e) {
-      statusMessage = `Apply failed: ${String(e)}`
+      statusMessage = `Apply failed${failedPage ? ` on "${failedPage}"` : ''}: ${replaceSaveFailureText(e)}`
     } finally {
       // Commit the batch (full or partial) before clearing applying. If
       // SaveFileBlocks threw mid-loop, newLog already holds the pages that
@@ -319,10 +358,14 @@
   async function undo(): Promise<void> {
     if (revertLog.length === 0) return
     applying = true
+    let failedPage = ''
     try {
       const lastBatch = revertLog[revertLog.length - 1]
       for (const entry of lastBatch) {
-        await SaveFileBlocks(
+        failedPage = entry.page
+        // Same programmatic funnel as apply: an undo is a batch write too,
+        // and its refusal must not evict a live editor stash (#1005).
+        await SaveFileBlocksProgrammatic(
           entry.notebook,
           entry.section,
           entry.page,
@@ -334,7 +377,7 @@
         lastBatch.length === 1 ? '' : 's'
       }).`
     } catch (e) {
-      statusMessage = `Undo failed: ${String(e)}`
+      statusMessage = `Undo failed${failedPage ? ` on "${failedPage}"` : ''}: ${replaceSaveFailureText(e)}`
     } finally {
       applying = false
     }
