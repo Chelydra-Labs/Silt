@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
+  import { SvelteSet } from 'svelte/reactivity'
   import type { SearchModalResult } from './components/SearchModal.svelte'
   import {
     resolveBreadcrumbSectionSelection,
@@ -139,10 +140,40 @@
   let activeNotebook = $state('')
   let activeSection = $state('')
   let activePage = $state('')
-  // Conflict-resolution in flight on the ACTIVE tab (#1005), reported by its
-  // VirtualScrollContainer. View-mode toggles are gated on it: unmounting a
-  // surface mid-resolution fires its unmount handoff against the settle.
-  let activeTabConflictBusy = $state(false)
+  // Tabs with a conflict resolution IPC in flight (#1005), reported by each
+  // tab's VirtualScrollContainer keyed by tab id. Per-tab (not one boolean):
+  // a single flag is last-writer-wins across siblings, so switching back to a
+  // still-resolving tab would disarm the shell's guards mid-resolution. The
+  // set drives every surface-destroying navigation gate — a tab close, a view
+  // switch, or a notebook switch unmounts a resolving surface and fires its
+  // unmount handoff against the settle in flight.
+  const conflictBusyTabs = new SvelteSet<string>()
+  const anyTabConflictBusy = $derived(conflictBusyTabs.size > 0)
+
+  function setTabConflictBusy(tabId: string, busy: boolean): void {
+    if (busy) conflictBusyTabs.add(tabId)
+    else conflictBusyTabs.delete(tabId)
+  }
+
+  // Leaving the notes/backlinks region unmounts EVERY mounted editor surface
+  // — gated while any tab resolves so the unmount flush cannot race the
+  // settle (#1005). Transitions that stay inside the region (notes ↔
+  // backlinks) keep every surface mounted.
+  function notesSurfacesBusy(view: string): boolean {
+    return (
+      anyTabConflictBusy &&
+      (activeView === 'notes' || activeView === 'backlinks') &&
+      view !== 'notes' &&
+      view !== 'backlinks'
+    )
+  }
+
+  function handleCloseTab(tabId: string): void {
+    // Closing a resolving tab destroys its surface mid-resolution (#1005);
+    // every other tab close is unaffected.
+    if (conflictBusyTabs.has(tabId)) return
+    tabManager.handleCloseTab(tabId)
+  }
   let activeView = $state('notes')
   const views = [
     { id: 'notes', label: 'Notes', icon: 'description' },
@@ -197,6 +228,7 @@
   }
 
   function selectView(view: string): void {
+    if (notesSurfacesBusy(view)) return
     if (view !== activeView && !confirmTemplateTransition()) return
     activeView = view
   }
@@ -430,6 +462,8 @@
   // ever created — the Tasks view is a single-mount surface (the
   // activity-bar entry is the single source of view identity for it).
   function openTasksView(blockId: string | undefined): void {
+    // Leaving the notes region unmounts resolving surfaces (#1005).
+    if (notesSurfacesBusy('tasks')) return
     activeView = 'tasks'
     tasksFocusBlockId = blockId ?? ''
     // Monotonic key so the Tasks view's focus effect re-fires on each
@@ -486,8 +520,8 @@
     toggleViewMode: (tabId) => {
       // A view toggle unmounts a surface mid-resolution, firing its unmount
       // handoff against the settle in flight (#1005) — gated while the
-      // active tab's resolution IPC is pending.
-      if (activeTabConflictBusy) return
+      // target tab's resolution IPC is pending.
+      if (conflictBusyTabs.has(tabId)) return
       tabManager.handleToggleViewMode(tabId)
     },
     togglePropertiesPanel: () => pageType.toggle(),
@@ -495,7 +529,7 @@
     // see useGlobalHotkeyDispatch — toggling anywhere else is a silent no-op.
     isPropertiesPanelAvailable: () =>
       activeView === 'notes' || activeView === 'backlinks',
-    closeTab: (tabId) => tabManager.handleCloseTab(tabId),
+    closeTab: (tabId) => handleCloseTab(tabId),
     cycleTab: (dir) => tabManager.handleCycleTab(dir),
     // Ctrl+B is bold everywhere an editor is the relevant surface. The resolver
     // suppressed this when the editor was focused (ProseMirror owns the in-editor
@@ -833,6 +867,9 @@
   // their page when they leave Settings. The section persists across opens so
   // re-entering Settings returns the user to the panel they last visited.
   function openSettings(section: string = 'general') {
+    // Settings replaces the notes region and unmounts resolving surfaces
+    // (#1005) — gated exactly like every other view exit.
+    if (notesSurfacesBusy('settings')) return
     if (
       activeView === 'settings' &&
       settingsSection === 'templates' &&
@@ -888,7 +925,11 @@
   // If the current view is not in the list (e.g. a plugin view), jump to
   // 'notes' as the anchor.
   function cycleView() {
-    activeView = nextView(activeView)
+    const next = nextView(activeView)
+    // Cycling out of the notes region unmounts every editor surface —
+    // gated while any tab's resolution IPC is in flight (#1005).
+    if (notesSurfacesBusy(next)) return
+    activeView = next
   }
 </script>
 
@@ -916,7 +957,7 @@
           tabs={tabManager.displayedTabs}
           activeTabId={tabManager.activeTabId}
           onSelectTab={tabManager.handleSelectTab}
-          onCloseTab={tabManager.handleCloseTab}
+          onCloseTab={handleCloseTab}
           onPromoteTab={tabManager.handlePromoteTab}
           onReorderTab={tabManager.handleReorderTab}
           showDirtyIndicators={settings.config?.ui
@@ -1029,7 +1070,13 @@
           bind:collapsed={sidebarCollapsed}
           {sidebarWidth}
           {sidebarDragging}
-          onSelectNotebook={tabManager.selectNotebookContext}
+          onSelectNotebook={(nb) => {
+            // Switching notebooks unmounts the previous notebook's tab
+            // surfaces (displayedTabs filters by notebook) — gated while any
+            // resolution is in flight (#1005).
+            if (anyTabConflictBusy) return
+            tabManager.selectNotebookContext(nb)
+          }}
           onSelectSection={(sec) => (activeSection = sec)}
           onSelectPage={(nb, sec, pg) => {
             // Single-click opens in preview mode (industry-standard parity, #142).
@@ -1102,7 +1149,13 @@
               {activeView}
               linked={activeNotebookMetadata?.linked ?? false}
               disconnected={activeNotebookMetadata?.disconnected ?? false}
-              onSelectNotebook={tabManager.selectNotebookContext}
+              onSelectNotebook={(nb) => {
+                // Notebook switch unmounts the previous notebook's tab
+                // surfaces — gated while any resolution is in flight
+                // (#1005), same as the sidebar path.
+                if (anyTabConflictBusy) return
+                tabManager.selectNotebookContext(nb)
+              }}
               onSelectSection={openSectionContext}
               onOpenPage={() =>
                 tabManager.openPage(
@@ -1148,12 +1201,12 @@
                       viewMode={tab.viewMode}
                       onToggleViewMode={() => {
                         // Same gate as the hotkey path above (#1005).
-                        if (activeTabConflictBusy) return
+                        if (conflictBusyTabs.has(tab.id)) return
                         tabManager.handleToggleViewMode(tab.id)
                       }}
                       isActive={tab.id === tabManager.activeTabId}
                       onConflictBusyChange={(busy) => {
-                        activeTabConflictBusy = busy
+                        setTabConflictBusy(tab.id, busy)
                       }}
                       targetBlockId={tab.id === tabManager.activeTabId
                         ? searchTargetBlockId

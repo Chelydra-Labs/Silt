@@ -578,6 +578,70 @@ describe('global hotkey dispatch table (golden master)', () => {
     expect(stub().dataset.viewmode).toBe('source')
   })
 
+  // #1005: navigation that destroys editor surfaces mid-resolution — the
+  // close_tab hotkey, the cycle_view_layout hotkey, and the tab-strip close
+  // click — must be inert while any tab reports conflict-busy (the busy set
+  // is keyed per tab, so a background tab's resolution gates shell-wide
+  // surface destruction too), and live again once it settles.
+  it('gates close_tab and cycle_view_layout while a tab is conflict-busy', async () => {
+    bindings.IsVaultInitialized.mockResolvedValue(true)
+    await mountWithTabs()
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="vsc-stub"]')).toBeTruthy()
+    )
+    const click = (id: string) =>
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.click()
+    bindings.SetOpenTabs.mockClear()
+
+    // Busy: closing the resolving tab is refused…
+    click('vsc-report-busy')
+    press(C.close_tab)
+    await new Promise((r) => setTimeout(r, 400))
+    expect(bindings.SetOpenTabs).not.toHaveBeenCalled()
+    // …and so is cycling out of the notes view (it unmounts every surface).
+    const notesPressed = () =>
+      document
+        .querySelector('[aria-label="Notes"]')
+        ?.getAttribute('aria-pressed')
+    press(C.cycle_view_layout)
+    await new Promise((r) => setTimeout(r, 100))
+    expect(notesPressed()).toBe('true')
+    // The tab-strip close affordance routes through the same gate.
+    document.querySelector<HTMLElement>('[aria-label="Close tab"]')!.click()
+    await new Promise((r) => setTimeout(r, 400))
+    expect(bindings.SetOpenTabs).not.toHaveBeenCalled()
+
+    // Settled: both navigation paths work again.
+    click('vsc-report-idle')
+    press(C.close_tab)
+    await waitFor(() => expect(bindings.SetOpenTabs).toHaveBeenCalled())
+    const [tabs] = bindings.SetOpenTabs.mock.calls.at(-1)!
+    expect(tabs).toHaveLength(1)
+  })
+
+  // #1005: the tab-bar's own close click (not just the hotkey) must not
+  // destroy a resolving tab — pin it separately so the funnel wrapper cannot
+  // regress independently of the dispatch table.
+  it('gates the tab-strip close click on a conflict-busy tab', async () => {
+    bindings.IsVaultInitialized.mockResolvedValue(true)
+    await mountWithTabs()
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="vsc-stub"]')).toBeTruthy()
+    )
+    const click = (id: string) =>
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.click()
+    bindings.SetOpenTabs.mockClear()
+
+    click('vsc-report-busy')
+    document.querySelector<HTMLElement>('[aria-label="Close tab"]')!.click()
+    await new Promise((r) => setTimeout(r, 400))
+    expect(bindings.SetOpenTabs).not.toHaveBeenCalled()
+
+    click('vsc-report-idle')
+    document.querySelector<HTMLElement>('[aria-label="Close tab"]')!.click()
+    await waitFor(() => expect(bindings.SetOpenTabs).toHaveBeenCalled())
+  })
+
   // --- format_bold (App-level applyFormatBold closure wiring) ---
   // The pure shouldApplyFormatBold predicate is covered by globalHotkeys.test
   // (#768). This pins the App-level closure that the resolver hands off to:

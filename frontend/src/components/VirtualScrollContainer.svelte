@@ -216,12 +216,12 @@
     ownSurfaceHandle?.forceExternalReload({ conflictHold: true })
   })
 
-  // Only the active container reports, and it re-reports on activation, so
-  // the shell's guard always reflects the tab a toggle would act on. The
-  // cleanup releases the flag if a busy container is destroyed (tab closed
-  // mid-resolution).
+  // Every container reports its own busy state, keyed by its tab id in the
+  // shell (#1005): a single active-tab boolean is last-writer-wins across
+  // siblings, and switching back to a still-resolving tab must not disarm
+  // the shell's navigation gates mid-resolution. The cleanup releases the
+  // flag if a busy container is destroyed (tab closed mid-resolution).
   $effect(() => {
-    if (!_isActive) return
     const busy = conflictBusy
     onConflictBusyChange?.(busy)
     return () => onConflictBusyChange?.(false)
