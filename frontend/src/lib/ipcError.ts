@@ -112,12 +112,11 @@ function isIPCEnvelope(value: unknown): value is {
   )
 }
 
-/**
- * Variant that takes a pre-extracted message string (used by helpers that
- * already pulled `.message` off the caught value). Same parse-or-fallback
- * behavior as coerceIPCError.
- */
-export function coerceIPCErrorMessage(raw: string): IPCErrorShape {
+// coerceIPCErrorMessage is the internal string-parse half of coerceIPCError:
+// it parses a Wails v2-era JSON envelope off a raw message string, falling
+// back to plain prose. Kept unexported so callers cannot bypass the v3 cause
+// check that coerceIPCError always runs first.
+function coerceIPCErrorMessage(raw: string): IPCErrorShape {
   // A backend IPCError serializes as a JSON object string. Cheap probe: only
   // attempt a parse when the string starts with '{' (the formatter never
   // emits leading whitespace). Avoids throwing on every plain-prose error.

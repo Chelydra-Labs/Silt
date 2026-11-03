@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { coerceIPCError, coerceIPCErrorMessage } from './ipcError'
+import { coerceIPCError } from './ipcError'
 import { wailsIPCError, wailsIPCErrorJoin } from './testing/wailsIpcError'
 
 describe('coerceIPCError — Wails v3 cause shape (production)', () => {
@@ -107,22 +107,18 @@ describe('coerceIPCError — Wails v2 JSON-string shape (legacy compat)', () => 
     expect(coerceIPCError(e)).toEqual({ message: '{"not":"an ipc error"}' })
   })
 
+  it('does not attempt a parse when prose contains a brace mid-message', () => {
+    // The cheap '{'-probe: prose with a brace mid-message passes through.
+    const e = new Error('not json {but has a brace}')
+    expect(coerceIPCError(e)).toEqual({ message: 'not json {but has a brace}' })
+  })
+
+  it('returns the raw message for an empty error message', () => {
+    expect(coerceIPCError(new Error(''))).toEqual({ message: '' })
+  })
+
   it('coerces non-Error values via String()', () => {
     expect(coerceIPCError(42)).toEqual({ message: '42' })
     expect(coerceIPCError(null)).toEqual({ message: 'null' })
-  })
-})
-
-describe('coerceIPCErrorMessage', () => {
-  it('only attempts JSON.parse when the string opens with "{" (cheap probe)', () => {
-    // A prose string that happens to contain a brace mid-message must not
-    // trigger a parse attempt that throws.
-    expect(coerceIPCErrorMessage('not json {but has a brace}')).toEqual({
-      message: 'not json {but has a brace}'
-    })
-  })
-
-  it('returns the raw message for an empty string', () => {
-    expect(coerceIPCErrorMessage('')).toEqual({ message: '' })
   })
 })
