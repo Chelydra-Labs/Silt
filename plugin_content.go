@@ -501,33 +501,65 @@ func (a *App) crossPageMoveSourcePath(r resolvedBlockOp) (origPath, sn, ss, sp s
 //
 //   - The block is still on the source file → the move never happened on
 //     either side semantically: roll the target half back (remove the
-//     transplanted copy + its re-homed row) so a retry starts clean.
+//     transplanted copy + its re-homed row) AND re-index the source page
+//     from the probe's parse so the block's row lives where the file copy
+//     lives — "the move can be retried" is then index-true too, not just
+//     file-true (the target's index did a global delete-by-id, so without
+//     this the block is invisible to every DB-backed query until an
+//     unrelated re-index heals it).
 //   - The block is gone from the source file → the source half landed and
 //     only a durability/index error remains: the block now lives on the
 //     target; say so instead of inviting a lossy rollback.
+//   - The source file cannot be read or parsed → the probe could not
+//     decide; say THAT instead of guessing "gone" (the block may exist on
+//     both pages — both page names are in the message for manual cleanup).
 //
-// The probe runs under the source file's write lock so a concurrent writer
-// cannot flip the answer mid-decision.
+// The probe and the source re-index run under the source file's write lock
+// so a concurrent writer cannot flip the answer mid-decision or invalidate
+// the parse between probe and index.
 func (a *App) reconcileFailedCrossPageRemoval(first resolvedBlockOp, blockID string, payload crossPageMovePayload, origPath, origSource, sn, ss, sp string, cause error) error {
-	present := false
+	const (
+		probePresent = iota
+		probeGone
+		probeUnreadable
+	)
+	probe := probeUnreadable
+	var probeIndexErr error
 	a.coordinator.LockFileWrite(origPath, func() {
 		contentBytes, err := os.ReadFile(origPath)
 		if err != nil {
 			return
 		}
-		blocks, _, _, _, perr := parser.ParseFileContent(string(contentBytes),
+		blocks, meta, _, _, perr := parser.ParseFileContent(string(contentBytes),
 			sn, ss, sp, fileOrDefaultDate(origPath), a.spacesPerTab)
 		if perr != nil {
 			return
 		}
 		for _, b := range blocks {
 			if b.ID == blockID {
-				present = true
+				probe = probePresent
 				break
 			}
 		}
+		if probe != probePresent {
+			probe = probeGone
+			return
+		}
+		// Restore the source row while still holding this lock, from the
+		// parse that proved the copy present (see the doc comment): the
+		// retry path resolves the block via the index, and the target
+		// half's global delete-by-id left it with no row anywhere.
+		if ierr := a.indexFile(origSource, sn, ss, sp, blocks, meta, meta.Warnings...); ierr != nil {
+			// Keep the rollback going — the file copy is safe; only the
+			// index restore failed. Surfaced in the final error below.
+			probeIndexErr = ierr
+		}
 	})
-	if !present {
+	if probe == probeUnreadable {
+		return fmt.Errorf("cross-page move: source %s/%s/%s could not be read or parsed while deciding the rollback, so block %s may exist on BOTH it and %s/%s/%s — check both pages: %w",
+			sn, ss, sp, blockID, first.notebook, first.section, first.page, cause)
+	}
+	if probe == probeGone {
 		return fmt.Errorf("cross-page move: block %s now lives on %s/%s/%s, but removing it from source %s/%s/%s reported: %w",
 			blockID, first.notebook, first.section, first.page, sn, ss, sp, cause)
 	}
@@ -552,6 +584,10 @@ func (a *App) reconcileFailedCrossPageRemoval(first resolvedBlockOp, blockID str
 			blockID, sn, ss, sp, first.notebook, first.section, first.page, cause, rmErr)
 	}
 	a.emitBlockChanged("", first.notebook, first.section, first.page, "")
+	if probeIndexErr != nil {
+		return fmt.Errorf("cross-page move: block %s stayed on source %s/%s/%s and the target half on %s/%s/%s was rolled back, but restoring the source's index row failed: %v — the block is on disk but missing from search until re-indexed: %w",
+			blockID, sn, ss, sp, first.notebook, first.section, first.page, probeIndexErr, cause)
+	}
 	return fmt.Errorf("cross-page move: block %s stayed on source %s/%s/%s; the target half on %s/%s/%s was rolled back and the move can be retried: %w",
 		blockID, sn, ss, sp, first.notebook, first.section, first.page, cause)
 }

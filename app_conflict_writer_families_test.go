@@ -550,6 +550,183 @@ func TestPluginCrossPageMove_AbsenceAfterTargetCommit_KeepsTargetAndNamesIt(t *t
 	}
 }
 
+// TestPluginCrossPageMove_RollbackRestoresSourceRowForRetry pins the
+// reconciliation's present-branch (#1005): after the target half commits and
+// the source removal refuses with the source copy intact, the rollback must
+// not stop at the files — the target half's index did a GLOBAL delete-by-id
+// and re-inserted the row at the target, so without restoring the source
+// row the block is invisible to every DB-backed query and an immediate
+// retry (plugins are automation; they retry now) fails "block not found"
+// despite the copy lying intact on disk.
+func TestPluginCrossPageMove_RollbackRestoresSourceRowForRetry(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section := "XMoveNB8", ""
+	srcPage, dstPage := "XSrc8", "XDst8"
+	blockID := famID(38, 1)
+
+	srcBody := "- [ ] retry me <!-- id: " + blockID + " -->\n"
+	seedWriterFamilyPage(t, app, notebook, section, srcPage, blockID, srcBody)
+	seedWriterFamilyPage(t, app, notebook, section, dstPage, famID(38, 2), "")
+
+	srcPath := filepath.Join(app.vaultPath, notebook, section, srcPage+".md")
+	dstPath := filepath.Join(app.vaultPath, notebook, section, dstPage+".md")
+
+	lockHeld := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		app.coordinator.LockFileWrite(srcPath, func() {
+			close(lockHeld)
+			<-release
+		})
+	}()
+	<-lockHeld
+
+	done := make(chan error, 1)
+	go func() {
+		done <- app.applyBlocksOps([]PluginCreateBlockOp{{
+			Kind: "move", BlockID: blockID,
+			Notebook: notebook, Section: section, Page: dstPage,
+		}}, historyReasonPlugin)
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got, _ := os.ReadFile(dstPath)
+		if strings.Contains(string(got), "retry me") {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("move returned before the target half committed: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("target half never committed")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	// An external edit inside the drift window refuses the source removal
+	// while the source copy survives — the present-branch rollback path.
+	external := "---\nnotebook: \"XMoveNB8\"\npage: \"XSrc8\"\ntags: []\n---\n- [ ] retry me externally edited <!-- id: " + blockID + " -->\n"
+	if err := os.WriteFile(srcPath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	close(release)
+
+	if err := <-done; err == nil {
+		t.Fatal("drift between payload and removal must fail the move loudly")
+	}
+
+	// The rollback must have restored the SOURCE row (page-scoped re-index
+	// of the probe's parse): the block resolves back to its source page, so
+	// the advertised retry actually works against the index.
+	ref, rerr := app.ResolveBlockReference(blockID)
+	if rerr != nil {
+		t.Fatalf("ResolveBlockReference after rollback: %v", rerr)
+	}
+	if !ref.Exists || ref.Page != srcPage {
+		t.Fatalf("after a rolled-back move the source row must be queryable again, got %+v", ref)
+	}
+
+	// The immediate retry succeeds end-to-end (index + files).
+	if err := app.applyBlocksOps([]PluginCreateBlockOp{{
+		Kind: "move", BlockID: blockID,
+		Notebook: notebook, Section: section, Page: dstPage,
+	}}, historyReasonPlugin); err != nil {
+		t.Fatalf("retry after rollback must work, got: %v", err)
+	}
+	dstGot, _ := os.ReadFile(dstPath)
+	if !strings.Contains(string(dstGot), "retry me externally edited") {
+		t.Fatalf("retried move must carry the external body to the target, got %q", string(dstGot))
+	}
+	srcGot, _ := os.ReadFile(srcPath)
+	if strings.Contains(string(srcGot), "retry me") {
+		t.Fatalf("retried move must remove the source copy, got %q", string(srcGot))
+	}
+}
+
+// TestPluginCrossPageMove_UnreadableSourceProbeNamesIt pins the probe's
+// third outcome (#1005): when the source file cannot be read or parsed
+// during the reconciliation, the error must SAY so instead of collapsing
+// the failure into "the block now lives on the target" — the block may
+// exist on both pages, and the message is the operator's only cleanup map.
+func TestPluginCrossPageMove_UnreadableSourceProbeNamesIt(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section := "XMoveNB9", ""
+	srcPage, dstPage := "XSrc9", "XDst9"
+	blockID := famID(39, 1)
+
+	srcBody := "- [ ] unreadable probe <!-- id: " + blockID + " -->\n"
+	seedWriterFamilyPage(t, app, notebook, section, srcPage, blockID, srcBody)
+	seedWriterFamilyPage(t, app, notebook, section, dstPage, famID(39, 2), "")
+
+	srcPath := filepath.Join(app.vaultPath, notebook, section, srcPage+".md")
+	dstPath := filepath.Join(app.vaultPath, notebook, section, dstPage+".md")
+
+	lockHeld := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		app.coordinator.LockFileWrite(srcPath, func() {
+			close(lockHeld)
+			<-release
+		})
+	}()
+	<-lockHeld
+
+	done := make(chan error, 1)
+	go func() {
+		done <- app.applyBlocksOps([]PluginCreateBlockOp{{
+			Kind: "move", BlockID: blockID,
+			Notebook: notebook, Section: section, Page: dstPage,
+		}}, historyReasonPlugin)
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got, _ := os.ReadFile(dstPath)
+		if strings.Contains(string(got), "unreadable probe") {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("move returned before the target half committed: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("target half never committed")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	// The probe's read must fail: strip read permission from the source
+	// file before releasing the lock (best-effort on platforms/root users
+	// that ignore the mode — the assertion below then degrades to the
+	// generic loud-failure check).
+	if chmodErr := os.Chmod(srcPath, 0o000); chmodErr != nil {
+		t.Fatalf("chmod source unreadable: %v", chmodErr)
+	}
+	t.Cleanup(func() { _ = os.Chmod(srcPath, 0o644) })
+	close(release)
+
+	err := <-done
+	if err == nil {
+		t.Fatal("the move must still fail loudly while the source is unreadable")
+	}
+	if !strings.Contains(err.Error(), "could not be read or parsed") {
+		t.Fatalf("probe failure must be named as unreadable/unparseable, not collapsed into absence: %v", err)
+	}
+	if !strings.Contains(err.Error(), "BOTH") {
+		t.Fatalf("probe failure must warn the block may exist on both pages: %v", err)
+	}
+	// Nothing was proven absent, so the target half must NOT be rolled
+	// back on a guess — the committed copy survives.
+	dstGot, _ := os.ReadFile(dstPath)
+	if !strings.Contains(string(dstGot), "unreadable probe") {
+		t.Fatalf("target copy must survive an undecided probe, got %q", string(dstGot))
+	}
+}
+
 // TestPluginCrossPageMove_NestedParentChildBatch pins the drift gate against
 // position-derived fields: one batch moving a parent AND its nested child
 // (depth ≥ 1) cross-page. The parent's in-lock source removal rewrites the
