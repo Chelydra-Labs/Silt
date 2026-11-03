@@ -52,7 +52,8 @@
     // conflict resolution blocks it, and the caller must not move the nav
     // selection to a page that never opened.
     onSelectPage: (notebook: string, section: string, page: string) => boolean
-    onPinPage: (notebook: string, section: string, page: string) => void
+    // Same refused-open contract for the pin path.
+    onPinPage: (notebook: string, section: string, page: string) => boolean
     /** Host-owned hybrid handler (writes active props + expansion); also a
      *  CRUD dep, so it stays in the host and is threaded back in. */
     handleSelectNotebook: (notebook: string) => void
@@ -332,9 +333,13 @@
   }
 
   function handlePinPage(section: string, page: string) {
-    activeSection = section
-    activePage = page
-    onPinPage(activeNotebook, section, page)
+    // Same refused-open contract as handleSelectPage: pinning opens (or
+    // promotes) the page and can be refused at capacity with every eviction
+    // candidate busy — the triple must not move to a page that never opened.
+    if (onPinPage(activeNotebook, section, page)) {
+      activeSection = section
+      activePage = page
+    }
   }
 
   // DnD handlers delegate to the manager. Start/Leave/Drop/DragEnd are bound

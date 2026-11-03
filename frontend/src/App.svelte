@@ -1161,10 +1161,10 @@
               { notebook: nb, section: sec, page: pg },
               'preview'
             )}
-          onPinPage={(nb, sec, pg) => {
-            // Double-click / middle-click opens a pinned tab (#142).
-            openPageOrNotify({ notebook: nb, section: sec, page: pg }, 'pin')
-          }}
+          onPinPage={(nb, sec, pg) =>
+            // Double-click / middle-click opens a pinned tab (#142); returns
+            // whether it landed for the sidebar's refused-open contract.
+            openPageOrNotify({ notebook: nb, section: sec, page: pg }, 'pin')}
           onTypePageTarget={handleTypePageTarget}
           onSelectView={selectView}
           onNavigationLoaded={(tree) => {

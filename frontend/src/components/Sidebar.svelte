@@ -43,7 +43,9 @@
     // Returns whether the open landed (#1005 refused-open contract): false =
     // every tab conflict-busy; follow-through must not touch the active page.
     onSelectPage: (notebook: string, section: string, page: string) => boolean
-    onPinPage: (notebook: string, section: string, page: string) => void
+    // Same refused-open contract for the pin path (double/middle click):
+    // pinning opens the page and can be refused the same way.
+    onPinPage: (notebook: string, section: string, page: string) => boolean
     /** Right-click "Page properties" target. Opens the properties panel +
      *  arms its type menu on the chosen page (mirrors the /type slash and
      *  the header pill's untyped affordance). Vault pages proceed; linked
