@@ -147,9 +147,9 @@ export class DragDropManager {
           this.dragItem.name
         )
       } catch (err) {
-        // Typed IPC errors arrive as a JSON envelope on the raw message;
-        // coerced.message carries the recovery prose (a verified-write
-        // failure names the retained copies).
+        // Typed IPC errors ride the v3 cause envelope; coerced.message
+        // carries the recovery prose (a verified-write failure names the
+        // retained copies).
         this.deps.onError(coerceIPCError(err).message || 'Failed to move page')
       }
     } else if (isPageToSection && section !== undefined) {

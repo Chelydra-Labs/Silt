@@ -288,9 +288,9 @@ export class AutosaveManager {
           this.emit('error', true, coerced.message, true)
           return
         }
-        // Typed IPC errors cross the bridge as a JSON envelope on e.message;
-        // the recovery prose (e.g. a verified-write failure naming the
-        // retained copies) lives in coerced.message.
+        // Typed IPC errors ride the v3 cause envelope; the recovery prose
+        // (e.g. a verified-write failure naming the retained copies) lives
+        // in coerced.message.
         const msg = coerced.message
         console.error('AutosaveManager: SaveFileBlocks failed:', e)
         // Errors skip the min-display floor — fail-loud immediately.

@@ -625,7 +625,7 @@
 
   function flashOrderError(e: unknown) {
     // Friendly coercion: typed failures (e.g. verified_write_failed naming
-    // retained copies) arrive as a JSON envelope on e.message.
+    // retained copies) ride the v3 cause envelope.
     orderError = friendlyCaughtError(e)
     if (orderErrorTimer) clearTimeout(orderErrorTimer)
     orderErrorTimer = setTimeout(() => {

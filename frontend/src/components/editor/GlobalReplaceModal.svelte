@@ -154,8 +154,8 @@
     if (coerceIPCError(e).code === IPCErrorCode.CodeExternalEditConflict) {
       return 'that page changed on disk since Silt opened it, so the write was held — try again, and use the page’s save-conflict banner if it shows one'
     }
-    // Typed errors (e.g. verified_write_failed) arrive as a JSON envelope on
-    // the raw message; coerced.message carries the recovery prose.
+    // Typed errors (e.g. verified_write_failed) ride the v3 cause envelope;
+    // coerced.message carries the recovery prose.
     return coerceIPCError(e).message || String(e)
   }
 

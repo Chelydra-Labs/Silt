@@ -315,9 +315,9 @@
         titleEl?.focus()
       }
     } catch (e) {
-      // Typed IPC errors cross the bridge as a JSON envelope on e.message;
-      // the recovery prose (a verified-write failure names the retained
-      // copies) lives in coerced.message.
+      // Typed IPC errors ride the v3 cause envelope; the recovery prose
+      // (a verified-write failure names the retained copies) lives in
+      // coerced.message.
       conflictError = coerceIPCError(e).message
       // The failed resolution must not dump keyboard focus (#1005 a11y):
       // `busy` disabled the clicked button (the browser moves focus to

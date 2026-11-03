@@ -471,9 +471,9 @@
         onSaveRefused?.()
         return false
       }
-      // Typed IPC errors arrive as a JSON envelope on e.message; the
-      // recovery prose (verified-write failures name the retained copies)
-      // lives in coerced.message.
+      // Typed IPC errors ride the v3 cause envelope; the recovery prose
+      // (verified-write failures name the retained copies) lives in
+      // coerced.message.
       saveError = coerced.message
       savePhase = 'error'
       return false

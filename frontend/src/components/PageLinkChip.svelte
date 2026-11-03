@@ -232,8 +232,8 @@
       showHover = false
       navigateTo(notebook, section, page)
     } catch (e) {
-      // Typed IPC errors cross the bridge as a JSON envelope on e.message
-      // (a verified-write failure names the retained recovery copies).
+      // Typed IPC errors ride the v3 cause envelope (a verified-write
+      // failure names the retained recovery copies).
       fail(coerceIPCError(e).message)
     } finally {
       creating = false

@@ -334,9 +334,9 @@ export function useNavCrud(deps: UseNavCrudDeps) {
       renameCtx = null
       createError = ''
     } catch (e) {
-      // Typed IPC errors cross the bridge as a JSON envelope on e.message;
-      // the recovery prose (a verified-write failure during rename names the
-      // retained copies) lives in coerced.message.
+      // Typed IPC errors ride the v3 cause envelope; the recovery prose
+      // (a verified-write failure during rename names the retained copies)
+      // lives in coerced.message.
       createError =
         coerceIPCError(e).message || 'The action could not be completed.'
     } finally {
