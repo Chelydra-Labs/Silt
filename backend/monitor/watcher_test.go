@@ -1138,8 +1138,8 @@ func TestDirectoryWatcher_NormalizationWriteFiresHook(t *testing.T) {
 	}
 
 	var hookPath string
-	var hookContent []byte
-	dw.OnPageNormalized = func(p string, c []byte) { hookPath, hookContent = p, c }
+	var hookPrior, hookContent []byte
+	dw.OnPageNormalized = func(p string, prior, c []byte) { hookPath, hookPrior, hookContent = p, prior, c }
 
 	// Id-less content forces the normalization rewrite (the parse mints id
 	// comments and writes them back).
@@ -1165,5 +1165,11 @@ func TestDirectoryWatcher_NormalizationWriteFiresHook(t *testing.T) {
 	}
 	if !strings.Contains(string(onDisk), "<!-- id:") {
 		t.Fatalf("expected the normalization to mint id comments, got %q", onDisk)
+	}
+	// The PRE-write bytes are what the app-side refresh compares the stored
+	// baseline against (#1005): they must be exactly what the file held
+	// before the normalization write.
+	if string(hookPrior) != "# Title\n\n- [ ] no id yet\n" {
+		t.Fatalf("hook must observe the pre-write bytes, got %q", hookPrior)
 	}
 }

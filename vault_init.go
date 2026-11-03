@@ -299,8 +299,11 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	}
 	// The watcher's normalization writes must re-baseline live editor
 	// fingerprints like any tracked page write, or its own minted-id rewrite
-	// reads as an external edit and mints a phantom conflict (#1005).
-	watcher.OnPageNormalized = a.refreshFingerprintAfterWrite
+	// reads as an external edit and mints a phantom conflict (#1005). The
+	// guarded variant declines the refresh when the pre-write bytes no
+	// longer match the stored baseline (an external edit landed since the
+	// editor's load — the normalization merely derives from it).
+	watcher.OnPageNormalized = a.refreshFingerprintAfterNormalization
 	if err := watcher.Start(); err != nil {
 		_ = watcher.Close()
 		_ = dbMgr.Close()

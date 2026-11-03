@@ -34,12 +34,16 @@ type DirectoryWatcher struct {
 	closeChan    chan struct{}
 
 	// OnPageNormalized is invoked after the watcher's own normalization
-	// write (minted id comments) with the bytes it wrote (#1005). The
-	// watcher layer has no *App, so the app wires its fingerprint refresh
-	// here: without it, a live editor baseline drifts once per normalized
-	// file and the next save refuses + stashes a conflict Silt itself
-	// created. Optional so tests and non-app embeds run without it.
-	OnPageNormalized func(path string, content []byte)
+	// write (minted id comments) with the bytes the file held BEFORE that
+	// write and the bytes it wrote (#1005). The watcher layer has no *App,
+	// so the app wires its fingerprint refresh here: without it, a live
+	// editor baseline drifts once per normalized file and the next save
+	// refuses + stashes a conflict Silt itself created. The prior bytes let
+	// the app-side refresh skip re-baselining when the stored baseline no
+	// longer matches them — an external edit landed since the editor's
+	// load, and the normalization bytes merely derive from it. Optional so
+	// tests and non-app embeds run without it.
+	OnPageNormalized func(path string, priorContent, content []byte)
 
 	// wg tracks the goroutines Start spawns (listenLoop + lease sweeper).
 	// Close drains it so an in-flight reindex finishes before the caller
@@ -816,14 +820,17 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 			dw.tracker.RegisterWrite(path)
 			// Direct write: watcher-layer normalization (minted id comments)
 			// has no *App, so the fingerprint refresh runs through the
-			// OnPageNormalized hook the app wires (refreshFingerprintAfterWrite
-			// — the same re-baseline trackedPageWrite performs). Without it a
-			// live editor baseline drifts on Silt's own normalization bytes
-			// and the next save refuses + stashes a phantom conflict (#1005).
+			// OnPageNormalized hook the app wires
+			// (refreshFingerprintAfterNormalization — a guarded variant of
+			// the re-baseline trackedPageWrite performs). Without it a live
+			// editor baseline drifts on Silt's own normalization bytes and
+			// the next save refuses + stashes a phantom conflict (#1005).
+			// The hook also receives the PRE-write bytes so it can decline
+			// the refresh when they no longer match the stored baseline.
 			if werr := parser.WriteFileAtomic(path, []byte(newContent)); werr != nil {
 				log.Printf("reindexFile: normalization write failed for %s: %v", path, werr)
 			} else if dw.OnPageNormalized != nil {
-				dw.OnPageNormalized(path, []byte(newContent))
+				dw.OnPageNormalized(path, contentBytes, []byte(newContent))
 			}
 		}
 

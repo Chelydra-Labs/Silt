@@ -345,6 +345,113 @@ func TestSiltIDRewrite_RefreshesFingerprint(t *testing.T) {
 	}
 }
 
+// 5b. Watcher normalization hook (#1005): the re-baseline must be
+// CONDITIONAL — pure-Silt normalization (the only delta since the editor's
+// load) refreshes so no phantom conflict fires, but normalization derived
+// from an external edit the editor never adopted must NOT re-baseline: the
+// pending save has to keep refusing so the edit surfaces as resolvable.
+func TestNormalizationHook_RefreshesPureSiltNormalization(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "HookNB", "", "NormPure"
+	blockID := "bbbbbb2b-2bbb-4bbb-8bbb-bbbbbbbbbbbb"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "hook body")
+
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	filePath := conflictPagePath(app, notebook, section, page)
+	prior, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read prior: %v", err)
+	}
+
+	// The watcher's normalization write: file unmodified since the load,
+	// so the stored baseline still hashes to the pre-write bytes.
+	normalized := append(append([]byte(nil), prior...), []byte("<!-- id: minted-normalization -->\n")...)
+	if err := os.WriteFile(filePath, normalized, 0o644); err != nil {
+		t.Fatalf("write normalized: %v", err)
+	}
+	app.refreshFingerprintAfterNormalization(filePath, prior, normalized)
+
+	// The pending save passes — re-baselining prevented the phantom
+	// conflict on Silt's own write.
+	if err := app.SaveFileBlocks(notebook, section, page, blocks); err != nil {
+		t.Fatalf("save after pure-Silt normalization must pass, got: %v", err)
+	}
+}
+
+func TestNormalizationHook_SkipsRefreshWhenExternalEditLanded(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "HookNB", "", "NormExternal"
+	blockID := "bbbbbb3b-3bbb-4bbb-8bbb-bbbbbbbbbbbb"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "hook body")
+
+	// Editor load anchors the baseline on the load bytes.
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	filePath := conflictPagePath(app, notebook, section, page)
+
+	// External edit lands; the watcher then normalizes the EXTERNAL bytes
+	// (pre-write bytes no longer match the editor's baseline).
+	external := "---\nnotebook: \"HookNB\"\npage: \"NormExternal\"\ntags: []\n---\nexternal body\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	normalizedExternal := append([]byte(external), []byte("<!-- id: minted-from-external -->\n")...)
+	if err := os.WriteFile(filePath, []byte(normalizedExternal), 0o644); err != nil {
+		t.Fatalf("normalization write: %v", err)
+	}
+	app.refreshFingerprintAfterNormalization(filePath, []byte(external), normalizedExternal)
+
+	// The refresh must NOT have re-based the editor gate onto the
+	// external-derived bytes: the pending save still refuses (resolvable),
+	// instead of passing and silently reverting the external edit.
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page, blocks))
+	got, _ := os.ReadFile(filePath)
+	if string(got) != string(normalizedExternal) {
+		t.Fatalf("refused save must leave the normalized external bytes:\n got: %q\nwant: %q", got, normalizedExternal)
+	}
+}
+
+func TestNormalizationHook_PreservesRowsPinnedBaseline(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "HookNB", "", "NormPinned"
+	blockID := "bbbbbb4b-4bbb-4bbb-8bbb-bbbbbbbbbbbb"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "hook body")
+
+	// External edit lands while the watcher's re-index debounce is pending,
+	// then the editor loads: the baseline pins to the pre-external rows.
+	external := "---\nnotebook: \"HookNB\"\npage: \"NormPinned\"\ntags: []\n---\nexternal body\n"
+	if err := os.WriteFile(conflictPagePath(app, notebook, section, page), []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	filePath := conflictPagePath(app, notebook, section, page)
+	key := core.NormalizeFileLockPath(filePath)
+	app.pageLoadFingerprintsMu.RLock()
+	pinnedSize := app.pageLoadFingerprints[key].Size
+	app.pageLoadFingerprintsMu.RUnlock()
+	if pinnedSize != rowBasisSentinelSize {
+		t.Fatalf("expected a rows-pinned baseline before the hook, got size %d", pinnedSize)
+	}
+
+	// The watcher normalizes the external bytes; the hook must not
+	// de-poison the pin (a sentinel hash never equals pre-write bytes).
+	normalizedExternal := append([]byte(external), []byte("<!-- id: minted-from-external -->\n")...)
+	app.refreshFingerprintAfterNormalization(filePath, []byte(external), normalizedExternal)
+
+	app.pageLoadFingerprintsMu.RLock()
+	pinnedSize = app.pageLoadFingerprints[key].Size
+	app.pageLoadFingerprintsMu.RUnlock()
+	if pinnedSize != rowBasisSentinelSize {
+		t.Fatalf("normalization hook must preserve the rows-pinned baseline, got size %d", pinnedSize)
+	}
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page, blocks))
+}
+
 // 6. Race: an external edit landing between the save's epoch snapshot and the
 // file-lock acquisition is still caught — the fingerprint check runs inside
 // the lock, against post-acquisition disk state.

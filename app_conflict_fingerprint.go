@@ -388,6 +388,12 @@ func (a *App) refreshFingerprintAfterWrite(filePath string, written []byte) {
 		// Page never loaded this session — nothing to re-baseline.
 		return
 	}
+	a.rebaselineToFingerprintFromWrite(key, filePath, written)
+}
+
+// rebaselineToFingerprintFromWrite is the shared store half of a post-write
+// re-baseline: stat the freshly written file and pin hash(written).
+func (a *App) rebaselineToFingerprintFromWrite(key, filePath string, written []byte) {
 	info, err := os.Stat(filePath)
 	if err != nil {
 		return
@@ -397,6 +403,36 @@ func (a *App) refreshFingerprintAfterWrite(filePath string, written []byte) {
 	fp.SHA256 = hex.EncodeToString(sum[:])
 	fp.stampCaptureTime(time.Now())
 	a.storePageLoadFingerprint(key, fp)
+}
+
+// refreshFingerprintAfterNormalization is the watcher-hook variant of
+// refreshFingerprintAfterWrite (#1005), wired to OnPageNormalized. The
+// watcher's normalization write derives from whatever bytes the file held —
+// including an external edit the live editor never adopted. Re-baselining
+// unconditionally would make the pending editor save stat/hash-match the
+// normalization bytes and silently revert that external edit, and would
+// overwrite a rows-pinned sentinel baseline (which exists precisely to
+// refuse until a reload re-anchors). So the refresh only runs when the
+// stored baseline still hashes to the PRE-write bytes: the only delta since
+// the editor's load is then Silt's own normalization, and re-baselining
+// prevents a phantom conflict. Anything else — external edit, sentinel pin
+// (whose hash is a canonical-rows encoding, never raw file bytes) — is left
+// to drift so the save refuses and the conflict surfaces as resolvable.
+func (a *App) refreshFingerprintAfterNormalization(filePath string, prior, written []byte) {
+	if a == nil || filePath == "" {
+		return
+	}
+	key := core.NormalizeFileLockPath(filePath)
+	baseline, ok := a.loadPageFingerprint(key)
+	if !ok {
+		// Page never loaded this session — nothing to re-baseline.
+		return
+	}
+	priorSum := sha256.Sum256(prior)
+	if hex.EncodeToString(priorSum[:]) != baseline.SHA256 {
+		return
+	}
+	a.rebaselineToFingerprintFromWrite(key, filePath, written)
 }
 
 // statRacilyClean reports whether a stat-equal current stat could be hiding a
