@@ -3,6 +3,7 @@ import { DragDropManager } from './useDragDrop'
 import type { DragDropDeps } from './useDragDrop'
 import type { NavSection } from './types'
 import { NavOrderManager } from './navOrder'
+import { wailsIPCError } from '../testing/wailsIpcError'
 
 // Mock the Wails IPC bindings.
 vi.mock('$silt-app', () =>
@@ -329,9 +330,7 @@ describe('DragDropManager', () => {
     const prose =
       'Roadmap.md could not be written safely and the previous version was restored. Your unsaved text is kept at /vault/.system/writebackups/Projects/Roadmap.md.pending'
     vi.mocked(MovePage).mockRejectedValueOnce(
-      new Error(
-        JSON.stringify({ code: 'verified_write_failed', message: prose })
-      )
+      wailsIPCError({ code: 'verified_write_failed', message: prose })
     )
     const deps = makeDeps()
     const dnd = new DragDropManager(deps)

@@ -43,6 +43,7 @@ vi.mock('@wailsio/runtime', () => ({
 }))
 
 import DependencyPicker from './DependencyPicker.svelte'
+import { wailsIPCError } from '../../../../lib/testing/wailsIpcError'
 import type { PluginContext } from '../../../sdk'
 import { v2CtxStubs } from '../../../test-helpers'
 
@@ -256,10 +257,48 @@ describe('DependencyPicker (#303)', () => {
     ).toBeInTheDocument()
   })
 
+  // #1019 advisory: a codeless OS error whose prose merely ECHOES a page
+  // named "Circular imports.md" is not the cycle sentinel — it must render
+  // verbatim, not as the friendly cycle copy.
+  it('renders a codeless path-bearing error verbatim, not as cycle copy', async () => {
+    mocks.sqliteQuery.mockImplementation(async () => ({
+      rows: [{ clean_content: 'X' }],
+      truncated: false
+    }))
+    mocks.searchTasks.mockResolvedValue([
+      {
+        id: 'dep-echo',
+        clean_content: 'Echo',
+        notebook: 'W',
+        section: '',
+        page: 'P'
+      }
+    ])
+    const osErr = 'open /vault/W/Circular imports.md: no such file or directory'
+    mocks.setTaskBlockedBy.mockRejectedValueOnce(new Error(osErr))
+    render(DependencyPicker, {
+      cardId: 'task-1',
+      blockedBy: [],
+      ctx: makeCtx()
+    })
+    await flush()
+
+    const input = screen.getByLabelText('Search tasks to add as dependencies')
+    await fireEvent.input(input, { target: { value: 'ech' } })
+    await new Promise((r) => setTimeout(r, 220))
+    await flush()
+    await fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(await screen.findByText(osErr)).toBeInTheDocument()
+    expect(
+      screen.queryByText(/Cannot add: would create a circular dependency/)
+    ).toBeNull()
+  })
+
   // #1009: adding a dependency writes through the same verified funnel as
   // removing one; a typed verified_write_failed rejection must render its
   // recovery prose (where the .pending copy lives) in the aria-live region,
-  // not the raw JSON envelope e.message carries.
+  // not the raw envelope the typed error arrives in.
   it('renders typed add-dependency recovery prose, not the raw JSON envelope', async () => {
     mocks.searchTasks.mockResolvedValue([
       {
@@ -271,13 +310,11 @@ describe('DependencyPicker (#303)', () => {
       }
     ])
     mocks.setTaskBlockedBy.mockRejectedValueOnce(
-      new Error(
-        JSON.stringify({
-          code: 'verified_write_failed',
-          message:
-            'Note.md could not be written safely and the previous version was restored. Your unsaved text is kept at /vault/.system/writebackups/Note.md.pending'
-        })
-      )
+      wailsIPCError({
+        code: 'verified_write_failed',
+        message:
+          'Note.md could not be written safely and the previous version was restored. Your unsaved text is kept at /vault/.system/writebackups/Note.md.pending'
+      })
     )
     render(DependencyPicker, {
       cardId: 'task-1',

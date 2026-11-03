@@ -3,6 +3,7 @@ import { v2CtxStubs } from '../../../test-helpers'
 import type { PluginContext } from '../../../sdk'
 import { createProposal } from './model'
 import { applyProposal, buildReplacedBlockText } from './apply'
+import { wailsIPCError } from '../../../../lib/testing/wailsIpcError'
 
 function scope(over: Record<string, unknown> = {}) {
   return {
@@ -109,9 +110,10 @@ describe('applyProposal', () => {
     const recovery =
       'Task.md could not be written safely and the previous version was restored. Your unsaved text is kept at /vault/.system/writebackups/Task.md.pending'
     const setTaskTags = vi.fn(async () => {
-      throw new Error(
-        JSON.stringify({ code: 'verified_write_failed', message: recovery })
-      )
+      throw wailsIPCError({
+        code: 'verified_write_failed',
+        message: recovery
+      })
     })
     const createBlock = vi.fn(async () => 'new-id')
     const sqliteQuery = vi.fn(async () => ({ rows: [], truncated: false }))

@@ -2,21 +2,18 @@ package main
 
 // IPC error-code contract (#478).
 //
-// Wails v2 serializes a bound method's `error` return across the IPC bridge,
-// but the JS runtime wraps it in `new Error(t.error)` — so a Go error arrives
-// in TypeScript as an `Error` whose `.message` is `err.Error()`. A custom Go
-// error struct's tagged fields do NOT survive: returning an object from the
-// ErrorFormatter flattens to `"[object Object]"` on `.message`.
-//
-// This package's contract: a typed IPCError carries a machine-readable Code
-// alongside the human Message. The App's ErrorFormatter (set in main.go)
-// serializes an IPCError (or a CapabilityDeniedError) as a JSON STRING —
-// `{"code":"...","message":"...""}` — which survives `new Error()` intact on
-// `.message`. The frontend's `coerceIPCError` (lib/ipcError.ts) JSON.parses
-// `.message` to recover the code; if parsing fails (a plain-prose error from
-// an unmigrated sentinel), it falls back to the raw message. This lets the
-// frontend map on a stable code instead of substring-matching Go prose, so a
-// backend wording change can no longer silently regress the friendly mapping.
+// Wails v3 carries a bound method's `error` return across the IPC bridge as
+// a 422 CallError body: `{"message": <prose>, "cause": <envelope>,
+// "kind": "RuntimeError"}`. This app's MarshalError hook (formatIPCError,
+// wired in main.go) supplies that cause — for an IPCError or
+// CapabilityDeniedError it is the `{"code":"...","message":"..."}`
+// envelope; any other error gets nil (Wails' default handling, the
+// pre-contract behavior). The JS runtime throws `new Error(json.message)`
+// with the already-parsed cause attached on `.cause`, so the frontend's
+// `coerceIPCError` (lib/ipcError.ts) reads the cause to recover the code and
+// falls back to plain prose when there is none. This lets the frontend map on
+// a stable code instead of substring-matching Go prose, so a backend wording
+// change can no longer silently regress the friendly mapping.
 
 import (
 	"encoding/json"
@@ -178,11 +175,11 @@ func wrapSentinelAsIPCError(code IPCErrorCode, msg string, sentinel error) *IPCE
 	return &IPCError{Code: code, Message: msg, sentinel: sentinel}
 }
 
-// ipcErrorPayload is the JSON shape the ErrorFormatter emits for an IPCError.
-// It is serialized to a STRING (not an object) so the Wails JS runtime's
-// `new Error(t.error)` preserves it on `.message` — the frontend parses it
-// back via coerceIPCError. The shape is also the documented contract for
-// plugin SDK error coercion.
+// ipcErrorPayload is the JSON shape the MarshalError hook emits for an
+// IPCError. Wails v3 inlines these bytes as the CallError's `cause`, which
+// the JS runtime attaches (already parsed) to the thrown Error's `.cause` —
+// the frontend recovers it via coerceIPCError. The shape is also the
+// documented contract for plugin SDK error coercion.
 type ipcErrorPayload struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { useNavCrud, type UseNavCrudDeps } from './useNavCrud.svelte'
 import type { NavigationTree } from './types'
 import type { ActiveTriple } from './useNavLoader.svelte'
+import { wailsIPCError } from '../testing/wailsIpcError'
 
 // Canonical IPC-boundary mock (AGENTS.md): the Wails bindings are stubbed so
 // the inline-create flow runs without real IPC.
@@ -124,7 +125,7 @@ describe('useNavCrud handleCreatePageInline refused-open gating (#1005)', () => 
 // it, and the raw JSON envelope would bury it.
 describe('navigationActionError prose passthrough', () => {
   const typedError = (code: string, message: string) =>
-    new Error(JSON.stringify({ code, message }))
+    wailsIPCError({ code, message })
 
   it('maps a generic navigation_duplicate wrap to the fixed string (no Go errno prose)', () => {
     const deps = makeDeps(true)

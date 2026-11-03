@@ -115,6 +115,7 @@ vi.mock('../plugins/context', () => ({
 
 import Sidebar from './Sidebar.svelte'
 import TasksSidebar from '../plugins/first-party/silt-tasks/Sidebar.svelte'
+import { wailsIPCError } from '../lib/testing/wailsIpcError'
 
 const NAV_TREE = {
   notebooks: [
@@ -1708,7 +1709,7 @@ describe('Sidebar', () => {
 
   it('keeps the duplicate prompt open with grounded typed conflict copy', async () => {
     mocks.duplicatePage.mockRejectedValueOnce(
-      new Error('{"code":"navigation_conflict","message":"collision"}')
+      wailsIPCError({ code: 'navigation_conflict', message: 'collision' })
     )
     mocks.getNavigationPreferences.mockResolvedValue({
       expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
@@ -1908,7 +1909,10 @@ describe('Sidebar', () => {
 
   it('surfaces a typed page reveal failure with grounded copy', async () => {
     mocks.revealPageInOS.mockRejectedValueOnce(
-      new Error('{"code":"navigation_reveal_failed","message":"shell failed"}')
+      wailsIPCError({
+        code: 'navigation_reveal_failed',
+        message: 'shell failed'
+      })
     )
     mocks.getNavigationPreferences.mockResolvedValue({
       expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
