@@ -130,8 +130,9 @@ type renameLinkJournalEntry struct {
 // renameHooks.writeFileAtomic test interceptors substitute it to inject
 // failures; the production path forwards through the per-root staged-write
 // dispatcher, so a detected non-atomic root gets verified mode on the
-// post-move content rewrites (#1009). Rollback writes stay plain
-// WriteFileAtomic — see renameTree (that asymmetry is load-bearing).
+// post-move content rewrites (#1009). Rollback writes bypass this seam
+// (fault injection must not break rollback) and route via trackedPageWrite's
+// per-root dispatch like any other Silt write.
 func (a *App) renameWriteFileAtomic(path string, content []byte) error {
 	if a.renameHooks != nil && a.renameHooks.writeFileAtomic != nil {
 		return a.renameHooks.writeFileAtomic(path, content)

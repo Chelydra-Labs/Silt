@@ -129,9 +129,10 @@ func (a *App) renameSingleFile(prepare func() (renameSingleFileStrategy, error))
 //
 // RenameSection and RenameNotebook share the same concurrency shape: lock
 // every descendant .md + inbound sources, tree-TOCTOU retry, full rollback on
-// error (forward write uses renameWriteFileAtomic, rollback uses plain
-// WriteFileAtomic — that asymmetry is load-bearing), reindexFileStrict with
-// rename hook, and reconcile INSIDE the lock. The op-specific differences
+// error (forward writes use renameWriteFileAtomic — the fault-injection seam
+// rollback deliberately bypasses — while both route through trackedPageWrite's
+// per-root dispatch), reindexFileStrict with rename hook, and reconcile
+// INSIDE the lock. The op-specific differences
 // (which frontmatter field, section/notebook derivation, literal vs resolved
 // source, reconcile hook name) are captured as closures in the strategy.
 
