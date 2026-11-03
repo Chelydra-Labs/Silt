@@ -10,11 +10,15 @@
   // destroys a resolving surface.
   let {
     viewMode = '',
+    targetBlockId = '',
+    targetKey = '',
     onConflictBusyChange,
     onToggleViewMode,
     ..._rest
   }: {
     viewMode?: string
+    targetBlockId?: string
+    targetKey?: string
     onConflictBusyChange?: (busy: boolean) => void
     onToggleViewMode?: () => void
     [key: string]: unknown
@@ -27,7 +31,12 @@
   })
 </script>
 
-<div data-testid="vsc-stub" data-viewmode={viewMode}>
+<div
+  data-testid="vsc-stub"
+  data-viewmode={viewMode}
+  data-targetblock={targetBlockId}
+  data-targetkey={targetKey}
+>
   <button
     type="button"
     data-testid="vsc-report-busy"

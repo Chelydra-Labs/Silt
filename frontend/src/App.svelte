@@ -820,10 +820,23 @@
       activeTab.notebook === notebook &&
       activeTab.section === section &&
       activeTab.page === page
-    tabManager.openPage(locator, isSamePage ? 'activate-only' : 'preview', {
-      fileDate: date,
-      blockId
-    })
+    // A refused open (all tabs conflict-busy, #1005) must stop the
+    // follow-through: the search targets below would feed the STILL-active
+    // page's view — a same-named heading scrolls the wrong page and a wrong
+    // block id burns its scroll budget. Mirrors openFromQuickSwitcher.
+    if (
+      !tabManager.openPage(locator, isSamePage ? 'activate-only' : 'preview', {
+        fileDate: date,
+        blockId
+      })
+    ) {
+      pushNotification({
+        kind: 'info',
+        message:
+          "Couldn't open that page — every tab is busy resolving a save conflict. Try again once a tab settles."
+      })
+      return
+    }
     activeView = 'notes'
     searchTargetBlockId = blockId
     searchTargetHeading = ''
