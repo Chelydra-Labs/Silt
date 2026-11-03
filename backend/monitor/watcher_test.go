@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1232,3 +1233,63 @@ func TestDirectoryWatcher_NormalizationWriteUsesInjectedWriter(t *testing.T) {
 		t.Fatalf("injected writer's bytes must be what lands on disk:\n injected: %q\n     disk: %q", injectedContent, onDisk)
 	}
 }
+
+// A failed normalization write must NOT MarkFileIndexed: the recorded stat
+// would reflect the failed write's bytes (torn, or restored to the
+// un-normalized content), and a warm restart's IsFileUnchanged would then
+// match — silently persisting the disk-vs-index divergence. The files row
+// stays stale so the next scan re-parses what is actually on disk.
+func TestDirectoryWatcher_NormalizationWriteFailureLeavesFilesRowStale(t *testing.T) {
+	vaultPath := t.TempDir()
+
+	dm, err := db.NewDatabaseManager("")
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	t.Cleanup(func() { _ = dm.Close() })
+
+	coord := core.NewExecutionCoordinator(dm.SQLDB())
+	tracker := NewWriteTracker()
+	t.Cleanup(tracker.Stop)
+
+	dw, err := NewDirectoryWatcher(vaultPath, dm, tracker, coord, 4)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher: %v", err)
+	}
+
+	dw.WritePageFile = func(string, []byte) error {
+		return errNormWriteFailedForTest
+	}
+
+	// Id-less content forces the normalization rewrite (the parse mints id
+	// comments and writes them back — the injected writer refuses).
+	filePath := filepath.Join(vaultPath, "Work", "Journal", "Daily", "2026-06-14.md")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filePath, []byte("# Title\n\n- [ ] no id yet\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	dw.reindexFile(filePath)
+
+	// The page WAS indexed (the handler ran) — the divergence, if marked,
+	// would be invisible until restart.
+	unchanged, uerr := func() (bool, error) {
+		st, serr := os.Stat(filePath)
+		if serr != nil {
+			return false, serr
+		}
+		return dm.IsFileUnchanged(filePath, st.ModTime().UnixNano(), st.Size())
+	}()
+	if uerr != nil {
+		t.Fatalf("IsFileUnchanged: %v", uerr)
+	}
+	if unchanged {
+		t.Errorf("files row marked after a failed normalization write — a warm restart would skip re-parsing the failed-write bytes")
+	}
+}
+
+// errNormWriteFailedForTest stands in for a hard verified-write failure at
+// the watcher's injected writer.
+var errNormWriteFailedForTest = errors.New("simulated verified-write failure")

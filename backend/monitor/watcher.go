@@ -811,6 +811,11 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 			return
 		}
 
+		// Set by the normalization write below when one runs and fails; a
+		// failed write leaves disk bytes that do not match the blocks about
+		// to be indexed (torn, or restored to the un-normalized content).
+		var normWriteErr error
+
 		// Read the PRIOR managed-block count for this page BEFORE
 		// IndexFileBlocks clears + reinserts the rows (the count is the input
 		// to the mass-re-mint heuristic, #443). The query is cheap (one COUNT
@@ -844,8 +849,9 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 			if dw.WritePageFile != nil {
 				writePage = dw.WritePageFile
 			}
-			if werr := writePage(path, []byte(newContent)); werr != nil {
-				log.Printf("reindexFile: normalization write failed for %s: %v", path, werr)
+			normWriteErr = writePage(path, []byte(newContent))
+			if normWriteErr != nil {
+				log.Printf("reindexFile: normalization write failed for %s: %v", path, normWriteErr)
 			} else if dw.OnPageNormalized != nil {
 				dw.OnPageNormalized(path, contentBytes, []byte(newContent))
 			}
@@ -915,7 +921,12 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 			log.Printf("reindexFile: atomic index failed for %s: %v", path, err)
 		} else {
 			indexedOK = true
-			if hasStat {
+			// A failed normalization write must not be marked as fully
+			// indexed: the stat below reflects the failed/torn bytes, and a
+			// warm restart's IsFileUnchanged would match it — silently
+			// persisting the disk-vs-index divergence. Leaving the files row
+			// stale makes the next scan re-parse what is actually on disk.
+			if hasStat && normWriteErr == nil {
 				dw.coordinator.WithDBWrite(func() {
 					if err := dw.dm.MarkFileIndexed(nil, path, fileMtime, fileSize); err != nil {
 						log.Printf("reindexFile: MarkFileIndexed failed for %s: %v", path, err)
