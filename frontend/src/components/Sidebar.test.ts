@@ -138,6 +138,48 @@ async function flush() {
   await new Promise((r) => setTimeout(r, 0))
 }
 
+// #1006 fixtures: a linked notebook whose nav entry carries the external
+// root path, so delete-confirm tests can assert the gating AND the copy.
+const LINKED_TREE = {
+  notebooks: [
+    {
+      name: 'Synced',
+      source: 'linked:abc',
+      root_path: '/mnt/ext/Synced',
+      sections: [{ name: 'Notes', pages: [{ name: 'Plan', count: 1 }] }]
+    }
+  ]
+}
+
+function renderSidebarWithTree(
+  tree: unknown,
+  active: { notebook: string; section: string; page: string }
+) {
+  mocks.listNavigation.mockResolvedValue(tree)
+  render(Sidebar, {
+    props: {
+      activeNotebook: active.notebook,
+      activeSection: active.section,
+      activePage: active.page,
+      activeView: 'notes',
+      collapsed: false,
+      onSelectNotebook: () => true,
+      onSelectSection: () => {},
+      onSelectPage: () => true,
+      onPinPage: () => true,
+      onSelectView: () => {}
+    }
+  })
+}
+
+/** Context-menu a row and click Delete to stage the confirm dialog. */
+async function openDeleteConfirm(row: Element) {
+  await fireEvent.contextMenu(row)
+  await flush()
+  await fireEvent.click(screen.getByRole('menuitem', { name: /Delete/i }))
+  await flush()
+}
+
 describe('Sidebar', () => {
   beforeEach(() => {
     settingsMock.config = null
@@ -1472,6 +1514,120 @@ describe('Sidebar', () => {
     ).toBeNull()
     // Gating: the destructive IPC must not fire while the dialog is open.
     expect(mocks.deletePage).not.toHaveBeenCalled()
+  })
+
+  it('linked page delete: DeletePage fires once, only after confirmation (#1006)', async () => {
+    renderSidebarWithTree(LINKED_TREE, {
+      notebook: 'Synced',
+      section: 'Notes',
+      page: 'Plan'
+    })
+    await flush()
+
+    await openDeleteConfirm(screen.getByText('Plan').closest('button')!)
+    expect(mocks.deletePage).not.toHaveBeenCalled()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Delete permanently' })
+    )
+    await flush()
+    expect(mocks.deletePage).toHaveBeenCalledTimes(1)
+    expect(mocks.deletePage).toHaveBeenCalledWith('Synced', 'Notes', 'Plan')
+  })
+
+  it('linked page delete: cancel leaves everything untouched (#1006)', async () => {
+    renderSidebarWithTree(LINKED_TREE, {
+      notebook: 'Synced',
+      section: 'Notes',
+      page: 'Plan'
+    })
+    await flush()
+
+    await openDeleteConfirm(screen.getByText('Plan').closest('button')!)
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await flush()
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(mocks.deletePage).not.toHaveBeenCalled()
+    // Cancel does not drop the row — the tree is untouched.
+    expect(screen.getByText('Plan')).toBeInTheDocument()
+  })
+
+  it('linked section delete: DeleteSection gated behind the linked confirm (#1006)', async () => {
+    renderSidebarWithTree(LINKED_TREE, {
+      notebook: 'Synced',
+      section: 'Notes',
+      page: ''
+    })
+    await flush()
+
+    await openDeleteConfirm(screen.getByRole('treeitem', { name: /Notes/ }))
+    // Same linked-root copy as page deletes — a section removes many files.
+    expect(
+      screen.getByText(/Delete from external folder\?/i)
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('section "Notes" and all its pages')
+    ).toBeInTheDocument()
+    expect(mocks.deleteSection).not.toHaveBeenCalled()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Delete permanently' })
+    )
+    await flush()
+    expect(mocks.deleteSection).toHaveBeenCalledTimes(1)
+    expect(mocks.deleteSection).toHaveBeenCalledWith('Synced', 'Notes')
+    expect(mocks.deletePage).not.toHaveBeenCalled()
+  })
+
+  it('vault page delete keeps the trash flow: no linked copy, DeletePage on confirm (#1006)', async () => {
+    renderSidebarWithTree(NAV_TREE, {
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily'
+    })
+    await flush()
+
+    await openDeleteConfirm(screen.getByText('Daily').closest('button')!)
+
+    // Vault copy, not the linked-root copy.
+    expect(screen.queryByText(/Delete from external folder\?/i)).toBeNull()
+    expect(
+      screen.queryByRole('button', { name: 'Delete permanently' })
+    ).toBeNull()
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await flush()
+    expect(mocks.deletePage).toHaveBeenCalledTimes(1)
+    expect(mocks.deletePage).toHaveBeenCalledWith('Work', 'Journal', 'Daily')
+  })
+
+  it('linked delete dialog: dialog semantics, surface focus, Esc cancels without IPC (#1006 a11y)', async () => {
+    renderSidebarWithTree(LINKED_TREE, {
+      notebook: 'Synced',
+      section: 'Notes',
+      page: 'Plan'
+    })
+    await flush()
+
+    await openDeleteConfirm(screen.getByText('Plan').closest('button')!)
+
+    const dialog = screen.getByRole('dialog', { name: 'Confirm delete' })
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    // Focus starts on the dialog surface, not the destructive confirm (#531).
+    expect(document.activeElement).toBe(dialog)
+    // Destructive confirm is styled/labeled as such.
+    expect(
+      screen.getByRole('button', { name: 'Delete permanently' })
+    ).toBeInTheDocument()
+
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await flush()
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(mocks.deletePage).not.toHaveBeenCalled()
+    expect(screen.getByText('Plan')).toBeInTheDocument()
   })
 
   it('restores expansion and uses one roving tree tab stop', async () => {
