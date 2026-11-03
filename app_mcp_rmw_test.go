@@ -241,6 +241,71 @@ func TestMCPUpdateBlocks_StrictRMW_InterleavingFetchDoesNotRearmStaleGenerations
 	}
 }
 
+// TestMCPUpdateBlocks_StrictRMW_EditorWriteInvalidatesBasis pins the
+// tracked-write choke point of the strict-RMW invalidation (#1005): the
+// boundary must be armed by EVERY committed Silt page write, not only
+// update_blocks commits. Named trigger: A fetch → editor save
+// (gateLoadBaseline) → a later fetch re-arms the shared basis slot on the
+// editor's bytes → A's stale update echoing the pre-save generation. At the
+// reviewed head the invalidation ran only under gate == gateMCPReadBasis,
+// so A's echo gated basis==disk, passed, and silently reverted the editor's
+// save — the PR's headline threat model (a human edit clobbered by an
+// agent's stale write).
+func TestMCPUpdateBlocks_StrictRMW_EditorWriteInvalidatesBasis(t *testing.T) {
+	app := newTestApp(t)
+	bridge := mcpBridge{app: app, vaultPath: app.vaultPath}
+	notebook, section, page := "McpEditorW", "", "McpEditorW"
+	blockID := "dddddd5d-dddd-4ddd-8ddd-dddddddddd5d"
+	seedConflictPage(t, app, notebook, section, page, blockID, "original body")
+	filePath := conflictPagePath(app, notebook, section, page)
+
+	// Client A fetches D0.
+	rows, gen, err := bridge.FetchPageBlocks(context.Background(), notebook, section, page)
+	if err != nil {
+		t.Fatalf("FetchPageBlocks (A): %v", err)
+	}
+
+	// The desktop editor saves (gateLoadBaseline — not an update_blocks
+	// commit). It must pass: the MCP fetch captured no editor baseline
+	// (captureNone) and disk still holds the bytes A was served.
+	if err := app.SaveFileBlocks(notebook, section, page,
+		editBlocks(rows, blockID, "editor saved body")); err != nil {
+		t.Fatalf("editor save must pass, got: %v", err)
+	}
+
+	// A second client's fetch — the normal RMW loop — re-arms the shared
+	// slot on the editor's bytes; the invalidation marker is gone from
+	// this point on.
+	if _, _, err := bridge.FetchPageBlocks(context.Background(), notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks (B): %v", err)
+	}
+
+	// A's update, built from the pre-save fetch, must refuse on the echoed
+	// generation alone and must not revert the editor's save.
+	requireConflict(t, bridge.UpdateBlocks(context.Background(), notebook, section, page,
+		editBlocks(rows, blockID, "mcp stale edit"), gen))
+	requireNoStash(t, app)
+	got, _ := os.ReadFile(filePath)
+	if !strings.Contains(string(got), "editor saved body") {
+		t.Fatalf("stale update must not revert the editor save, got %q", string(got))
+	}
+
+	// Recovery unchanged: A re-reads (a generation newer than the boundary
+	// the editor's write recorded) and the edit lands.
+	rows2, gen2, err := bridge.FetchPageBlocks(context.Background(), notebook, section, page)
+	if err != nil {
+		t.Fatalf("FetchPageBlocks (A re-read): %v", err)
+	}
+	if err := bridge.UpdateBlocks(context.Background(), notebook, section, page,
+		editBlocks(rows2, blockID, "mcp fresh edit"), gen2); err != nil {
+		t.Fatalf("update after re-read must pass, got: %v", err)
+	}
+	got, _ = os.ReadFile(filePath)
+	if !strings.Contains(string(got), "mcp fresh edit") {
+		t.Fatalf("re-read update must land, got %q", string(got))
+	}
+}
+
 // TestMCPReadBasis_BlocksFetchAnchorsOnRowsDuringDebounce pins the
 // rows-anchored blocks-fetch basis (#1005): during the watcher's re-index
 // debounce the DB rows are still pre-external while disk already holds the

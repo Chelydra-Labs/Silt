@@ -10,10 +10,11 @@ package main
 // landing in between. This file gives the MCP funnel its own scoped basis:
 // every fetch snapshots what the client actually observed (mcpReadBaselines
 // — the served rows for blocks fetches, the raw bytes for markdown), and the
-// MCP save funnel re-checks that basis inside LockFileWrite. A committed
-// update_blocks INVALIDATES the basis (strict read-modify-write: every
-// write consumes the fetch it was built from, so overlapping clients each
-// re-read before writing again).
+// MCP save funnel re-checks that basis inside LockFileWrite. Any committed
+// Silt page write INVALIDATES the basis (strict read-modify-write, enforced
+// at the trackedPageWrite choke point so editor, plugin, and batch writes
+// count too): every write consumes the fetch it was built from, so
+// overlapping clients each re-read before writing again.
 //
 // The basis slot is one per path and last-writer-wins, so the marker alone
 // cannot outlive a newer fetch: after client A commits and re-reads (the
@@ -131,7 +132,7 @@ func (a *App) captureMCPReadBasisForBlocksByLocator(notebook, section, page stri
 }
 
 // mcpBasisInvalidatedSize marks a read-basis invalidated by a committed
-// update_blocks (strict read-modify-write, #1005). Any real stat has
+// Silt page write (strict read-modify-write, #1005). Any real stat has
 // Size >= 0, so the marker can never stat-match; unlike an absent basis
 // (never fetched — legacy no-guard contract) the marker REFUSES: a committed
 // write invalidates every prior fetch, so each update_blocks must be built
@@ -139,16 +140,17 @@ func (a *App) captureMCPReadBasisForBlocksByLocator(notebook, section, page stri
 const mcpBasisInvalidatedSize int64 = -3
 
 // invalidateMCPReadBasis arms the strict-RMW marker for filePath. Called
-// in-lock from the committed update_blocks write: a basis refreshed from the
-// written bytes would instead let a SECOND client's update — built from the
-// pre-write fetch — gate basis==disk and silently revert this write
-// (cross-client clobber amplifier); and a post-write disk recapture can
-// adopt interleaved bytes the client never observed. Invalidation is the
-// only state that fails closed for every stale fetcher at once. It also
-// records the newest issued fetch generation: the marker alone dies the
-// moment ANY later fetch (including the committing client's own re-read)
-// re-arms the shared slot, so the echoed-generation check in
-// checkMCPClientBasis keeps refusing pre-commit generations after that.
+// in-lock from trackedPageWrite on every committed Silt page write (and the
+// two direct-write sites that honor the same contract inline): a basis
+// refreshed from the written bytes would instead let a SECOND client's
+// update — built from the pre-write fetch — gate basis==disk and silently
+// revert this write (cross-client clobber amplifier); and a post-write disk
+// recapture can adopt interleaved bytes the client never observed.
+// Invalidation is the only state that fails closed for every stale fetcher
+// at once. It also records the newest issued fetch generation: the marker
+// alone dies the moment ANY later fetch (including the committing client's
+// own re-read) re-arms the shared slot, so the echoed-generation check in
+// checkMCPClientBasis keeps refusing pre-write generations after that.
 func (a *App) invalidateMCPReadBasis(filePath string) {
 	if a == nil || filePath == "" {
 		return
@@ -192,7 +194,7 @@ func (a *App) checkMCPClientBasis(filePath string, clientGen int64) error {
 		return nil
 	}
 	if basis.Size == mcpBasisInvalidatedSize {
-		// Strict RMW: an update_blocks landed since this fetch. The client
+		// Strict RMW: a Silt write landed since this fetch. The client
 		// holds its payload; recovery is re-read + retry, not resolution.
 		return wrapSentinelAsIPCError(CodeExternalEditConflict,
 			fmt.Sprintf("%s since it was last read — read it again before writing: %s",
@@ -200,7 +202,7 @@ func (a *App) checkMCPClientBasis(filePath string, clientGen int64) error {
 			errExternalEditConflict)
 	}
 	if clientGen > 0 && clientGen <= invalidated {
-		// A committed update_blocks landed after the fetch this update was
+		// A committed Silt write landed after the fetch this update was
 		// built from. The shared slot has since been re-armed by some newer
 		// fetch (basis==disk again), so only the echoed generation still
 		// identifies this client's fetch as predating the commit — without

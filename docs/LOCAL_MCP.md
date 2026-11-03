@@ -104,14 +104,15 @@ Prefer these over `update_blocks` when adding a single block:
 
 `read_page` / `read_blocks` stamp every fetch of a page with a monotonic
 `read_generation`. Echo it back in `update_blocks`' optional
-`read_generation` input: if another `update_blocks` committed since your
-read — even if further fetches by other clients re-anchored the file state in
-between — your write refuses with `external_edit_conflict` instead of
-silently reverting the committed edit. Recovery is always re-read + retry
-with the new generation. Omitting `read_generation` (legacy clients) keeps a
-weaker contract: the write is still checked against the page's bytes and
-refused while a committed write's invalidation marker is armed, but that
-protection ends at the next fetch of any client.
+`read_generation` input: if any Silt write committed since your read —
+another `update_blocks`, an editor save, a plugin operation — even if
+further fetches by other clients re-anchored the file state in between —
+your write refuses with `external_edit_conflict` instead of silently
+reverting the committed edit. Recovery is always re-read + retry with the
+new generation. Omitting `read_generation` (legacy clients) keeps a weaker
+contract: the write is still checked against the page's bytes and refused
+while a committed write's invalidation marker is armed, but that protection
+ends at the next fetch of any client.
 
 ### Typed-properties tools
 

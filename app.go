@@ -96,9 +96,9 @@ type App struct {
 	// MCP fetch's read-basis (#1005 strict RMW): fetch N+1 must invalidate
 	// every update_blocks built from fetch <= N even after a later fetch
 	// re-armed the shared mcpReadBaselines slot. mcpBasisInvalidatedGen
-	// records the newest generation at the last committed update_blocks;
-	// an echoed generation at or below it refuses. Guarded by
-	// mcpReadBaselinesMu; lifecycle mirrors the baselines.
+	// records the newest generation at the last committed Silt page write
+	// (trackedPageWrite choke point); an echoed generation at or below it
+	// refuses. Guarded by mcpReadBaselinesMu; lifecycle mirrors the baselines.
 	mcpFetchGen            map[string]int64
 	mcpBasisInvalidatedGen map[string]int64
 	// refusedWrites stashes the editor save each external-edit refusal

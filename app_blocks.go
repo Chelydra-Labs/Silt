@@ -737,10 +737,11 @@ const (
 // read-basis gate (see app_mcp_rmw.go) so a read-modify-write refuses when
 // the file drifted since the fetch. clientReadGen is the read_generation the
 // client echoed from its fetch (0 when the client did not echo one). On
-// success the basis is invalidated in-lock (strict RMW): a follow-up
-// update_blocks must be built from a fresh fetch — refreshing the basis from
-// the written bytes would let a second client's stale fetch gate basis==disk
-// and silently revert this write.
+// success the basis is invalidated in-lock via trackedPageWrite (strict RMW,
+// like every Silt write): a follow-up update_blocks must be built from a
+// fresh fetch — refreshing the basis from the written bytes would let a
+// second client's stale fetch gate basis==disk and silently revert this
+// write.
 func (a *App) saveFileBlocksMCP(notebook, section, page string, blocks []parser.ParsedBlock, reason string, clientReadGen int64) error {
 	return a.saveFileBlocksWithGate(notebook, section, page, blocks, reason, gateMCPReadBasis, funnelProgrammatic, nil, clientReadGen)
 }
@@ -940,15 +941,10 @@ func (a *App) saveFileBlocksWithGate(notebook, section, page string, blocks []pa
 				}
 			}
 			writeErr = a.writePageFileLocked(filePath, source, safeNotebook, safeSection, safePage, blocks, reason)
-			if writeErr == nil && gate == gateMCPReadBasis {
-				// Strict RMW (#1005): the committed write invalidates every
-				// prior fetch's basis — in this lock session, from the write
-				// itself. A recapture re-reading disk in a SECOND lock
-				// session could adopt interleaved bytes the client never
-				// observed (fail-open), and refreshing to the written bytes
-				// would green-light another client's stale fetch.
-				a.invalidateMCPReadBasis(filePath)
-			}
+			// Strict RMW (#1005) for every gate, not just update_blocks:
+			// trackedPageWrite invalidates prior MCP fetch bases in this
+			// same lock session — a post-write recapture in a second session
+			// could adopt interleaved bytes the client never observed.
 		})
 	}) // LockBlocksWrite
 

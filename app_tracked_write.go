@@ -5,9 +5,9 @@ import (
 )
 
 // trackedPageWrite is the single write path for every Silt-owned page-file
-// write performed under a file write lock (#1005). It owns the three steps
-// every writer family owes the external-edit machinery, so a family cannot
-// forget one of them at its nth call site:
+// write performed under a file write lock (#1005). It owns the steps every
+// writer family owes the external-edit machinery, so a family cannot forget
+// one of them at its nth call site:
 //
 //  1. tracker.RegisterWrite — the watcher must suppress the self-write event
 //     (a watcher re-index racing the writer's own re-index).
@@ -17,6 +17,11 @@ import (
 //     write→signal→recapture window from false-conflicting against Silt's own
 //     bytes — which, under the stash-authoritative gate, would mint a phantom
 //     refused-write stash demanding manual resolution.
+//  4. invalidateMCPReadBasis — every committed Silt write, not just MCP
+//     update_blocks, invalidates prior MCP fetches: an editor/plugin/batch
+//     write followed by any later fetch re-arms the shared basis slot, and
+//     without the generation boundary a client echoing a pre-write
+//     read_generation would gate basis==disk and silently revert the write.
 //
 // Direct atomic-write call sites that remain are page writers that cannot use
 // this shape (each carries a one-line justification) or non-page control
@@ -27,6 +32,7 @@ func (a *App) trackedPageWrite(filePath string, content []byte) error {
 		return err
 	}
 	a.refreshFingerprintAfterWrite(filePath, content)
+	a.invalidateMCPReadBasis(filePath)
 	return nil
 }
 

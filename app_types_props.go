@@ -231,8 +231,11 @@ func (a *App) writePageFrontmatterEdit(filePath, source, notebook, section, page
 		}
 		// Silt's own write is never an external edit — re-baseline in the
 		// same lock (#1005) so an autosave in the write→reload window does
-		// not false-conflict against this rewrite.
+		// not false-conflict against this rewrite. The write also
+		// invalidates prior MCP fetch bases, mirroring trackedPageWrite
+		// (this is the one page writer that cannot route through it).
 		a.refreshFingerprintAfterWrite(filePath, []byte(newContent))
+		a.invalidateMCPReadBasis(filePath)
 		// Past this point the on-disk write has committed. The remaining steps
 		// (re-parse, atomic block+projection publish) refresh in-memory state
 		// only — a failure there means the dashboard is stale until the next

@@ -369,9 +369,10 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 		Page     string    `json:"page"`
 		Blocks   []blockIn `json:"blocks" jsonschema:"full replacement block list for the page"`
 		// ReadGeneration is the read_generation echoed from the client's last
-		// read of this page: an update_blocks committed after that fetch
-		// refuses instead of silently reverting it, even when a newer fetch
-		// has since re-anchored the file state (#1005).
+		// read of this page: any Silt write committed after that fetch (an
+		// update_blocks, an editor save, a plugin op) refuses instead of
+		// silently reverting it, even when a newer fetch has since re-anchored
+		// the file state (#1005).
 		ReadGeneration int64 `json:"read_generation,omitempty" jsonschema:"read_generation value from your last read_page/read_blocks of this page; omit only if you never read it"`
 	}
 	mcp.AddTool(s, &mcp.Tool{

@@ -437,6 +437,13 @@ func (a *App) refreshFingerprintAfterNormalization(filePath string, prior, writt
 	if a == nil || filePath == "" {
 		return
 	}
+	// The normalization write also invalidates prior MCP fetch bases —
+	// unconditionally, unlike the guarded editor refresh below: reverting a
+	// minted-id normalization would strip the id comments every ((uuid))
+	// reference targets, and the MCP side has no prior-bytes guard to lean
+	// on (the read_generation boundary is the only marker after a re-fetch
+	// re-arms the shared slot).
+	a.invalidateMCPReadBasis(filePath)
 	key := core.NormalizeFileLockPath(filePath)
 	baseline, ok := a.loadPageFingerprint(key)
 	if !ok {
