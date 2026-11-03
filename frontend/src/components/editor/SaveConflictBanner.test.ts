@@ -95,6 +95,12 @@ describe('SaveConflictBanner', () => {
         a.textContent?.includes("Couldn't resolve the conflict")
       )
     ).toBe(true)
+    // The container passes the coerced message; the banner renders it —
+    // for a typed verified-write failure that prose is the manual recovery
+    // path, and a fixed line would drop it.
+    expect(alerts.some((a) => a.textContent?.includes('vault closed'))).toBe(
+      true
+    )
     expect(screen.getByRole('button', { name: 'Keep my changes' })).toBeTruthy()
   })
 })

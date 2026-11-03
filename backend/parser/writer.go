@@ -73,23 +73,31 @@ func WriteFileAtomic(path string, content []byte) error {
 	}
 
 	// POSIX: fsync the parent dir so the renamed directory entry is durable.
-	// Skip on Windows — NTFS rename is already crash-safe and opening a
-	// directory handle for Sync is not the same contract.
-	if runtime.GOOS != "windows" {
-		dirFile, derr := os.Open(dir)
-		if derr != nil {
-			return derr
-		}
-		syncErr := dirFile.Sync()
-		closeErr := dirFile.Close()
-		if syncErr != nil {
-			return syncErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
+	if err := syncDirEntry(dir); err != nil {
+		return err
 	}
 
 	success = true
 	return nil
+}
+
+// syncDirEntry fsyncs a directory so an entry created inside it (a renamed
+// temp file, a written recovery copy) is durable across power loss — file
+// content fsync alone does not guarantee the directory entry survives.
+// POSIX only: NTFS rename metadata is already crash-safe and a Windows
+// directory handle does not carry the same Sync contract.
+func syncDirEntry(dir string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	dirFile, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	syncErr := dirFile.Sync()
+	closeErr := dirFile.Close()
+	if syncErr != nil {
+		return syncErr
+	}
+	return closeErr
 }

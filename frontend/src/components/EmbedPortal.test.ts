@@ -17,6 +17,7 @@ import {
 } from '@testing-library/svelte'
 import { tick } from 'svelte'
 import EmbedPortal from './EmbedPortal.svelte'
+import { wailsIPCError } from '../lib/testing/wailsIpcError'
 
 // --- IPC mocks (canonical vi.hoisted + vi.mock pattern) ---
 const mocks = vi.hoisted(() => ({
@@ -169,6 +170,57 @@ describe('EmbedPortal (#127)', () => {
           expect.stringContaining('edited')
         )
       })
+    }
+    vi.useRealTimers()
+  })
+
+  // #1019 advisory: typed recovery prose that merely CONTAINS "being edited"
+  // (a page named for the phrase) must surface as a save failure, not enter
+  // the focus-lock retry loop or show the busy copy — the substring fallback
+  // applies only to codeless prose.
+  it('surfaces typed recovery prose containing the legacy phrase instead of retrying', async () => {
+    vi.useFakeTimers()
+    mocks.resolveBlockReference.mockResolvedValue({
+      exists: true,
+      id: FIXTURE_UUID,
+      notebook: 'Work',
+      section: '',
+      page: 'Top',
+      file_date: '2026-06-15',
+      clean_text: 'editable content'
+    })
+    const prose =
+      'notes on being edited.md could not be written safely and the previous version was restored'
+    mocks.mutateBlock.mockRejectedValue(
+      wailsIPCError({ code: 'verified_write_failed', message: prose })
+    )
+    render(EmbedPortal, { props: { uuid: FIXTURE_UUID } })
+    await waitFor(() => {
+      expect(screen.getByLabelText(/embedded block preview/i)).toBeTruthy()
+    })
+
+    const preview = screen.getByLabelText(/embedded block preview/i)
+    await fireEvent.click(preview)
+    await tick()
+
+    const editable = document.querySelector('[contenteditable="true"]')
+    expect(editable).toBeTruthy()
+    if (editable) {
+      editable.textContent = 'edited content'
+      await fireEvent.input(editable)
+      vi.advanceTimersByTime(600)
+      await vi.waitFor(() => {
+        expect(mocks.mutateBlock).toHaveBeenCalled()
+      })
+      // No retry loop for a typed failure: exactly the debounced persist, and
+      // the failure copy names the recovery prose.
+      vi.advanceTimersByTime(5 * 800)
+      expect(mocks.mutateBlock).toHaveBeenCalledTimes(1)
+      await vi.waitFor(() => {
+        expect(document.body.textContent).toContain('Save failed:')
+      })
+      expect(document.body.textContent).not.toContain('Source block is busy')
+      expect(document.body.textContent).toContain(prose)
     }
     vi.useRealTimers()
   })

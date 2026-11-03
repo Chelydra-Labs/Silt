@@ -30,6 +30,7 @@ import {
   loadConfig,
   toggleFormatToolbar,
   toggleFocusMode,
+  appendDismissedTip,
   type SystemConfig
 } from '../settings/store.svelte'
 import { loadPlugins } from '../plugins/loader'
@@ -227,6 +228,28 @@ export function createStartupEvents(
     })
   }
 
+  // #1009: first write to a root detected as a non-atomic filesystem. The
+  // backend emits once per root per session (and not at all once the tip is
+  // in ui.dismissed_tips); "Don't show again" persists the dismissal, the
+  // plain close button hides it for the session only.
+  function handleStorageVerifiedWrite(
+    d: { root?: string; tip_id?: string } | undefined
+  ): void {
+    if (!d?.root || !d.tip_id) return
+    const tipID = d.tip_id
+    pushNotification({
+      kind: 'info',
+      message: `Silt is using extra-safe saves for ${d.root} because Silt can't guarantee crash-safe saves on this drive. If Silt is interrupted mid-save, a note could be damaged — a backup of the previous version is kept automatically. No action needed.`,
+      autoDismissMs: 0,
+      action: {
+        label: "Don't show again",
+        run: async () => {
+          await appendDismissedTip(tipID)
+        }
+      }
+    })
+  }
+
   // The replay router: fans a queued startup event out to the SAME named
   // handler its live Events.On listener uses, so a startup event is
   // indistinguishable from a live one to the handler.
@@ -249,6 +272,11 @@ export function createStartupEvents(
         break
       case EventName.EventVaultWatchCoverage:
         handleVaultWatchCoverage(data as string[])
+        break
+      case EventName.EventStorageVerifiedWrite:
+        handleStorageVerifiedWrite(
+          data as { root?: string; tip_id?: string } | undefined
+        )
         break
       default:
         break
@@ -498,6 +526,11 @@ export function createStartupEvents(
     off.push(
       Events.On(EventName.EventVaultWatchCoverage, (ev) => {
         handleVaultWatchCoverage(ev.data)
+      })
+    )
+    off.push(
+      Events.On(EventName.EventStorageVerifiedWrite, (ev) => {
+        handleStorageVerifiedWrite(ev.data)
       })
     )
     off.push(

@@ -789,6 +789,50 @@ leaves a partial file visible at the target path. A crash during steps 1–3
 leaves the existing file untouched; a crash during step 4 leaves either the
 old or the new content, never a mixture.
 
+That guarantee is conditional on the rename actually being atomic — which
+local filesystems promise and network mounts (NFS/SMB and similar) may not.
+Silt probes each writable root (the vault and every linked notebook) once per
+session with a per-OS detector; a root that cannot be probed at all (offline
+or unmounted at open/link time) fails safe and is treated as detected. On a
+detected non-atomic mount, page writes switch to a *verified*
+mode instead of pretending the guarantee holds: the same staged sequence,
+wrapped with a pre-write backup at `<root>/.system/writebackups/<relPath>`
+(one generation, swept by the next write) and a post-rename read-back
+(size + SHA-256 vs the written bytes). A torn result is retried once and then
+restored from the pre-write bytes. When the restore verifies, the page file
+never presents partial content; a restore that itself cannot be verified can
+leave torn bytes at the target, so the write fails with the typed
+`verified_write_failed` sentinel saying the previous version could not be
+restored (or, for a new page, that the torn partial file remains at the
+target). The message is built from the retention state that actually holds
+on disk and names only copies that exist — the unsaved text (`.pending`) and
+the pre-write backup are the manual recovery path. The write funnels never
+treat the failed write as landed (no baseline re-adoption; the failure is
+surfaced), but they cannot stop the NEXT startup scan from re-parsing
+whatever is on disk — torn bytes included — until the operator recovers from
+the named copies, so prompt recovery matters. The degradation is surfaced
+once per root as a dismissible notice. Backups live under `.system/` and
+never surface as pages. Local filesystems keep the plain staged protocol
+above, unchanged.
+
+Backup retention: each write sweeps the previous generation at the same
+relative path, and the session's root probe additionally removes backups whose
+target page no longer exists (deleted or renamed away — otherwise a deleted
+page's last backup would linger forever). `.pending` copies are never swept
+automatically: they are the post-failure recovery copy of text that exists
+nowhere else and are removed only by a later successful write at the same
+path or manually after recovery.
+
+Detection coverage is explicit, not universal: the detectors recognize
+NFS/SMB/CIFS/NCP mounts on Linux and NFS/DFS/WebDAV/CBFS/SMB/CIFS on
+Windows. FUSE mounts on Linux (sshfs, rclone, …) and all macOS mounts are
+currently *undetected* — a statable root the detector does not recognize is
+recorded local and keeps the plain staged protocol, unflagged, even though
+its renames may not be atomic (extending the detectors is tracked as #1020).
+A root that cannot be probed at all (offline/unmounted at open or link) is
+the one case that fails safe: it is treated as detected so the safety net is
+never silently dropped when the mount returns mid-session.
+
 7.1.1 Recovery and destructive operations (Tier 0)
 
 Atomic staging protects against torn writes. It does not protect against a

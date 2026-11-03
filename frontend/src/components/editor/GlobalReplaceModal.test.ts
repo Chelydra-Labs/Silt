@@ -55,6 +55,7 @@ vi.mock('@wailsio/runtime', () => ({
 }))
 
 import GlobalReplaceModal from './GlobalReplaceModal.svelte'
+import { wailsIPCError } from '../../lib/testing/wailsIpcError'
 
 // Shared block factory: keep raw_text equal to clean_text so the snapshot
 // shape matches what the component actually persists.
@@ -383,9 +384,10 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       block('b1', 'foo bar')
     ])
     mocks.SaveFileBlocksProgrammatic.mockRejectedValue(
-      new Error(
-        '{"code":"external_edit_conflict","message":"this page changed on disk since it was opened"}'
-      )
+      wailsIPCError({
+        code: 'external_edit_conflict',
+        message: 'this page changed on disk since it was opened'
+      })
     )
 
     const order: string[] = []

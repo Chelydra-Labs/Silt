@@ -71,6 +71,7 @@ vi.mock('$silt-app', () =>
 
 import MarkdownSourceViewer from './MarkdownSourceViewer.svelte'
 import type { ParsedBlock } from '../../lib/editor/types'
+import { wailsIPCError } from '../../lib/testing/wailsIpcError'
 import {
   getEditor,
   getEditorForLocator,
@@ -360,9 +361,10 @@ describe('MarkdownSourceViewer', () => {
     const onSaveRefused = vi.fn()
     mocks.savePageMarkdown.mockImplementation(() =>
       Promise.reject(
-        new Error(
-          '{"code":"external_edit_conflict","message":"this page changed on disk since it was opened"}'
-        )
+        wailsIPCError({
+          code: 'external_edit_conflict',
+          message: 'this page changed on disk since it was opened'
+        })
       )
     )
     try {
@@ -430,9 +432,10 @@ describe('MarkdownSourceViewer', () => {
     vi.useFakeTimers()
     mocks.savePageMarkdown.mockImplementation(() =>
       Promise.reject(
-        new Error(
-          '{"code":"external_edit_conflict","message":"this page changed on disk since it was opened"}'
-        )
+        wailsIPCError({
+          code: 'external_edit_conflict',
+          message: 'this page changed on disk since it was opened'
+        })
       )
     )
     mocks.fetchPageMarkdown
@@ -540,9 +543,10 @@ describe('MarkdownSourceViewer', () => {
     vi.useFakeTimers()
     mocks.savePageMarkdown.mockImplementation(() =>
       Promise.reject(
-        new Error(
-          '{"code":"external_edit_conflict","message":"this page changed on disk since it was opened"}'
-        )
+        wailsIPCError({
+          code: 'external_edit_conflict',
+          message: 'this page changed on disk since it was opened'
+        })
       )
     )
     mocks.fetchPageMarkdown.mockResolvedValue(FETCH_BODY)
@@ -613,9 +617,10 @@ describe('MarkdownSourceViewer', () => {
     const refuseSave = () => {
       mocks.savePageMarkdown.mockImplementation(() =>
         Promise.reject(
-          new Error(
-            '{"code":"external_edit_conflict","message":"this page changed on disk since it was opened"}'
-          )
+          wailsIPCError({
+            code: 'external_edit_conflict',
+            message: 'this page changed on disk since it was opened'
+          })
         )
       )
     }
@@ -853,9 +858,10 @@ describe('MarkdownSourceViewer', () => {
     vi.useFakeTimers()
     mocks.savePageMarkdown.mockImplementation(() =>
       Promise.reject(
-        new Error(
-          '{"code":"external_edit_conflict","message":"this page changed on disk since it was opened"}'
-        )
+        wailsIPCError({
+          code: 'external_edit_conflict',
+          message: 'this page changed on disk since it was opened'
+        })
       )
     )
     mocks.fetchPageMarkdown.mockResolvedValue(FETCH_BODY)
@@ -2304,9 +2310,10 @@ describe('MarkdownSourceViewer editor registry (#884)', () => {
     vi.useFakeTimers()
     const refusal = () =>
       Promise.reject(
-        new Error(
-          '{"code":"external_edit_conflict","message":"this page changed on disk since it was opened"}'
-        )
+        wailsIPCError({
+          code: 'external_edit_conflict',
+          message: 'this page changed on disk since it was opened'
+        })
       )
     mocks.savePageMarkdown.mockImplementation(refusal)
     mocks.fetchPageMarkdown.mockResolvedValue(FETCH_BODY)
@@ -2362,9 +2369,10 @@ describe('MarkdownSourceViewer editor registry (#884)', () => {
     vi.useFakeTimers()
     const refusal = () =>
       Promise.reject(
-        new Error(
-          '{"code":"external_edit_conflict","message":"this page changed on disk since it was opened"}'
-        )
+        wailsIPCError({
+          code: 'external_edit_conflict',
+          message: 'this page changed on disk since it was opened'
+        })
       )
     mocks.savePageMarkdown.mockImplementation(refusal)
     mocks.fetchPageMarkdown.mockResolvedValue(FETCH_BODY)

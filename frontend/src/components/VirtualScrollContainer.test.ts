@@ -514,6 +514,78 @@ describe('VirtualScrollContainer editor chrome', () => {
     })
   })
 
+  // #1009: a resolution whose replay write fails verification on a
+  // non-atomic root surfaces the typed verified_write_failed error. Its
+  // message names the retained recovery copies — the banner must render that
+  // prose, not the raw JSON envelope e.message carries.
+  it('renders typed conflict-resolution recovery prose, not the raw JSON envelope', async () => {
+    const { ResolveExternalConflict } = await import('$silt-app')
+    vi.mocked(ResolveExternalConflict).mockRejectedValueOnce(
+      new Error(
+        JSON.stringify({
+          code: 'verified_write_failed',
+          message:
+            'Note.md could not be written safely and the previous version was restored. Your unsaved text is kept at /vault/.system/writebackups/Note.md.pending'
+        })
+      )
+    )
+    render(VirtualScrollContainer, { props: baseProps() })
+
+    await fireEvent.click(screen.getByTestId('tiptap-stub-emit-conflict'))
+    await screen.findByTestId('save-conflict-banner')
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Keep both as pages' })
+    )
+    await waitFor(() =>
+      expect(screen.getByText(/Your unsaved text is kept at/)).toBeTruthy()
+    )
+    expect(document.body.textContent).not.toContain('{"code"')
+  })
+
+  // #1009: the inline title rename's frontmatter rewrite can fail
+  // verification on a non-atomic root. The typed error's recovery prose must
+  // reach the user (toast) before the title reverts — console-only would
+  // hide the manual recovery path.
+  it('toasts coerced recovery prose when the inline title rename fails', async () => {
+    const { RenamePage } = await import('$silt-app')
+    const { notificationsState, _resetForTests } =
+      await import('../notifications/store.svelte')
+    _resetForTests()
+    vi.mocked(RenamePage).mockRejectedValueOnce(
+      new Error(
+        JSON.stringify({
+          code: 'verified_write_failed',
+          message:
+            'Note.md could not be written safely and the partial file was removed. Your unsaved text is kept at /vault/.system/writebackups/Note.md.pending'
+        })
+      )
+    )
+    render(VirtualScrollContainer, { props: baseProps() })
+
+    const title = screen.getByRole('heading', { name: 'Page title' })
+    title.focus()
+    title.textContent = 'Renamed'
+    await fireEvent.blur(title)
+
+    await waitFor(() =>
+      expect(
+        notificationsState.items.some((n) =>
+          n.message.includes('Your unsaved text is kept at')
+        )
+      ).toBe(true)
+    )
+    expect(
+      notificationsState.items.some((n) => n.message.includes('{"code"'))
+    ).toBe(false)
+    // The failed rename reverts the visible title to the page name.
+    await waitFor(() => {
+      expect(
+        screen.getByRole('heading', { name: 'Page title' }).textContent
+      ).toBe(baseProps().page)
+    })
+  })
+
   // D1 regression: the banner is latched in VSC (like MSV's saveRefused), so
   // keystroke-driven pending emissions cannot flicker it away while the
   // re-refused save keeps the conflict alive.

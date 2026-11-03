@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { AutosaveManager } from './useAutosave'
 import type { AutosaveDeps } from './useAutosave'
+import { wailsIPCError } from '../testing/wailsIpcError'
 
 // Mock the Wails IPC binding.
 vi.mock('$silt-app', () =>
@@ -134,9 +135,41 @@ describe('AutosaveManager', () => {
   // #1005: the external-edit refusal is a distinct error state — the surface
   // must offer resolution actions, not a retry.
   const conflictError = () =>
-    new Error(
-      '{"code":"external_edit_conflict","message":"this page changed on disk since it was opened: 2026-06-22.md"}'
-    )
+    wailsIPCError({
+      code: 'external_edit_conflict',
+      message: 'this page changed on disk since it was opened: 2026-06-22.md'
+    })
+
+  // #1009: a typed verified-write failure carries the user's manual recovery
+  // path (where the retained copies live) in the message — the save surfaces
+  // must render that prose, not the JSON envelope it arrives in.
+  const verifiedWriteError = () =>
+    wailsIPCError({
+      code: 'verified_write_failed',
+      message:
+        '2026-06-22.md could not be written safely and its previous version could not be restored. Your unsaved text is kept at /vault/.system/writebackups/Work/Journal/2026-06-22.md.pending'
+    })
+
+  it('surfaces verified_write_failed recovery prose, not the raw JSON envelope', async () => {
+    const { SaveFileBlocks } = await import('$silt-app')
+    const { pushNotification } =
+      await import('../../notifications/store.svelte')
+    vi.mocked(SaveFileBlocks).mockRejectedValueOnce(verifiedWriteError())
+    const deps = makeDeps()
+    const autosave = new AutosaveManager(deps)
+
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    await vi.advanceTimersByTimeAsync(0)
+
+    const prose =
+      '2026-06-22.md could not be written safely and its previous version could not be restored. Your unsaved text is kept at /vault/.system/writebackups/Work/Journal/2026-06-22.md.pending'
+    expect(deps.onStateChange).toHaveBeenCalledWith(true, prose)
+    expect(pushNotification).toHaveBeenCalledTimes(1)
+    const toast = vi.mocked(pushNotification).mock.calls[0][0]
+    expect(toast.message).toContain(prose)
+    expect(toast.message).not.toContain('{"code"')
+  })
 
   it('marks external_edit_conflict with the conflict flag and no retry toast', async () => {
     const { SaveFileBlocks } = await import('$silt-app')
@@ -409,12 +442,10 @@ describe('AutosaveManager', () => {
   it('treats page_write_stale as a silent reload', async () => {
     const { SaveFileBlocks } = await import('$silt-app')
     vi.mocked(SaveFileBlocks).mockRejectedValueOnce(
-      new Error(
-        JSON.stringify({
-          code: 'page_write_stale',
-          message: 'the page was updated elsewhere; reload and try again'
-        })
-      )
+      wailsIPCError({
+        code: 'page_write_stale',
+        message: 'the page was updated elsewhere; reload and try again'
+      })
     )
     const deps = makeDeps()
     const autosave = new AutosaveManager(deps)

@@ -126,11 +126,18 @@ type renameLinkJournalEntry struct {
 	page     string
 }
 
+// renameWriteFileAtomic is the tree-rename forward-write seam: the
+// renameHooks.writeFileAtomic test interceptors substitute it to inject
+// failures; the production path forwards through the per-root staged-write
+// dispatcher, so a detected non-atomic root gets verified mode on the
+// post-move content rewrites (#1009). Rollback writes bypass this seam
+// (fault injection must not break rollback) and route via trackedPageWrite's
+// per-root dispatch like any other Silt write.
 func (a *App) renameWriteFileAtomic(path string, content []byte) error {
 	if a.renameHooks != nil && a.renameHooks.writeFileAtomic != nil {
 		return a.renameHooks.writeFileAtomic(path, content)
 	}
-	return parser.WriteFileAtomic(path, content)
+	return a.writePageStaged(path, content)
 }
 
 func (a *App) renameIndexFile(source, notebook, section, page string, blocks []parser.ParsedBlock, meta parser.FileMetadata, warnings ...string) error {
@@ -527,10 +534,16 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 				}
 				content := updateFrontmatterField(string(contentBytes), "page", safeNewPage)
 				a.tracker.RegisterWrite(newFile)
-				// Direct write: brand-new path (rename refused an existing
-				// target), so no baseline can key it — conflict-state
-				// migration is owned by renameSingleFile (#1005).
-				return parser.WriteFileAtomic(newFile, []byte(content))
+				// Staged write WITHOUT the baseline steps trackedPageWrite
+				// adds: brand-new path (rename refused an existing target),
+				// so no baseline can key it — conflict-state migration is
+				// owned by renameSingleFile (#1005). writePageStaged still
+				// dispatches per root, so a non-atomic one lands this rewrite
+				// in verified mode (#1009). On failure the error aborts
+				// before clearAndReindex, so old-path index entries persist
+				// (fail-safe: saves against them fail closed; the next scan
+				// reconciles).
+				return a.writePageStaged(newFile, []byte(content))
 			},
 			rewriteInbound: func(heldPaths map[string]bool) {
 				a.rewriteInboundPageLinksWithJournal(source, safeNotebook, safeSection, safeOldPage, safeNotebook, safeSection, safeNewPage, nil, heldPaths)
@@ -619,13 +632,30 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 				if err := os.Rename(oldFile, newFile); err != nil {
 					return err
 				}
-				// section: frontmatter rewrite: log on failure (file already
-				// moved) and fall through so the old index entries are cleaned.
 				content := updateFrontmatterField(string(contentBytes), "section", safeTo)
 				a.tracker.RegisterWrite(newFile)
-				// Direct write: brand-new path (see RenamePage's renameStep).
-				if err := parser.WriteFileAtomic(newFile, []byte(content)); err != nil {
-					log.Printf("MovePage: WriteFileAtomic failed at %s (file already moved): %v", newFile, err)
+				// Staged write without the baseline steps, as in RenamePage's
+				// renameStep; writePageStaged still dispatches per root so a
+				// non-atomic one lands the rewrite in verified mode (#1009).
+				if err := a.writePageStaged(newFile, []byte(content)); err != nil {
+					if verifiedWriteFailed(err) {
+						// The bytes at newFile are untrusted (torn, or restored
+						// to the moved bytes with this rewrite retained as
+						// .pending). Returning aborts before clearAndReindex
+						// so they are never indexed and the typed error's
+						// recovery prose surfaces — the failure mode
+						// RenamePage already uses. The old-path index entries
+						// this skips stay until the next scan reconciles them:
+						// deliberate fail-safe — saves against the phantom
+						// fail closed on the moved file, and index cleanup
+						// must not run downstream of untrusted bytes.
+						return err
+					}
+					// Plain staged-write failure: the atomic writer leaves
+					// complete bytes (old or new) and the file is already
+					// moved, so log and fall through to clean the old index
+					// entries.
+					log.Printf("MovePage: page write failed at %s (file already moved): %v", newFile, err)
 				}
 				return nil
 			},

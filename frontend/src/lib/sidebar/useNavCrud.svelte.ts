@@ -81,6 +81,12 @@ export function navigationActionError(
     case IPCErrorCode.CodeNavigationReveal:
       return 'The item could not be revealed in the file manager.'
     case IPCErrorCode.CodeNavigationDuplicate:
+      // A hard verified-write failure keeps its own code
+      // (verified_write_failed) and flows through the default branch's
+      // prose passthrough below. navigation_duplicate itself wraps plain
+      // write/parse/index failures in raw Go prose (paths, errno) that
+      // carries no recovery information, so the dialog keeps the calm
+      // fixed string.
       return 'The page could not be duplicated.'
     default:
       return (
@@ -328,7 +334,11 @@ export function useNavCrud(deps: UseNavCrudDeps) {
       renameCtx = null
       createError = ''
     } catch (e) {
-      createError = e instanceof Error ? e.message : String(e)
+      // Typed IPC errors ride the v3 cause envelope; the recovery prose
+      // (a verified-write failure during rename names the retained copies)
+      // lives in coerced.message.
+      createError =
+        coerceIPCError(e).message || 'The action could not be completed.'
     } finally {
       creating = false
     }

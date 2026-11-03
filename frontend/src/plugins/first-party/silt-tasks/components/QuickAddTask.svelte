@@ -13,6 +13,7 @@
   // shim over the app-level CreateStandaloneTask binding. One component, one
   // source of truth for the Enter/Escape/busy/error behavior.
   import type { PluginContext, TaskStatus } from '../../../sdk'
+  import { friendlyCaughtError } from '../errors'
   import ErrorBanner from './ErrorBanner.svelte'
 
   interface Props {
@@ -119,8 +120,9 @@
     } catch (err) {
       // Surface the failure inline so the user knows the create did not land
       // (disk full / vault reloading / locked file / canceled session). The
-      // text stays in place for an easy retry.
-      errorMsg = err instanceof Error ? err.message : String(err)
+      // text stays in place for an easy retry. Friendly coercion keeps a
+      // typed failure's recovery prose out of the JSON envelope.
+      errorMsg = friendlyCaughtError(err)
     } finally {
       busy = false
     }

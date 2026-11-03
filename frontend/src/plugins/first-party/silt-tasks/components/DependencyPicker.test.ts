@@ -1,6 +1,12 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { tick } from 'svelte'
-import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  waitFor
+} from '@testing-library/svelte'
 
 // Hoisted mocks: searchTasks is the ctx method the typeahead calls (wrapping
 // the SearchBlocks binding); sqliteQuery resolves dep-label lookups so chips
@@ -37,6 +43,7 @@ vi.mock('@wailsio/runtime', () => ({
 }))
 
 import DependencyPicker from './DependencyPicker.svelte'
+import { wailsIPCError } from '../../../../lib/testing/wailsIpcError'
 import type { PluginContext } from '../../../sdk'
 import { v2CtxStubs } from '../../../test-helpers'
 
@@ -248,6 +255,133 @@ describe('DependencyPicker (#303)', () => {
     expect(
       await screen.findByText(/Cannot add: would create a circular dependency/)
     ).toBeInTheDocument()
+  })
+
+  // #1019 advisory: a codeless OS error whose prose merely ECHOES a page
+  // named "Circular imports.md" is not the cycle sentinel — it must render
+  // verbatim, not as the friendly cycle copy.
+  it('renders a codeless path-bearing error verbatim, not as cycle copy', async () => {
+    mocks.sqliteQuery.mockImplementation(async () => ({
+      rows: [{ clean_content: 'X' }],
+      truncated: false
+    }))
+    mocks.searchTasks.mockResolvedValue([
+      {
+        id: 'dep-echo',
+        clean_content: 'Echo',
+        notebook: 'W',
+        section: '',
+        page: 'P'
+      }
+    ])
+    const osErr = 'open /vault/W/Circular imports.md: no such file or directory'
+    mocks.setTaskBlockedBy.mockRejectedValueOnce(new Error(osErr))
+    render(DependencyPicker, {
+      cardId: 'task-1',
+      blockedBy: [],
+      ctx: makeCtx()
+    })
+    await flush()
+
+    const input = screen.getByLabelText('Search tasks to add as dependencies')
+    await fireEvent.input(input, { target: { value: 'ech' } })
+    await new Promise((r) => setTimeout(r, 220))
+    await flush()
+    await fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(await screen.findByText(osErr)).toBeInTheDocument()
+    expect(
+      screen.queryByText(/Cannot add: would create a circular dependency/)
+    ).toBeNull()
+  })
+
+  // #1009: adding a dependency writes through the same verified funnel as
+  // removing one; a typed verified_write_failed rejection must render its
+  // recovery prose (where the .pending copy lives) in the aria-live region,
+  // not the raw envelope the typed error arrives in.
+  it('renders typed add-dependency recovery prose, not the raw JSON envelope', async () => {
+    mocks.searchTasks.mockResolvedValue([
+      {
+        id: 'dep-torn',
+        clean_content: 'Torn write',
+        notebook: 'W',
+        section: '',
+        page: 'P'
+      }
+    ])
+    mocks.setTaskBlockedBy.mockRejectedValueOnce(
+      wailsIPCError({
+        code: 'verified_write_failed',
+        message:
+          'Note.md could not be written safely and the previous version was restored. Your unsaved text is kept at /vault/.system/writebackups/Note.md.pending'
+      })
+    )
+    render(DependencyPicker, {
+      cardId: 'task-1',
+      blockedBy: [],
+      ctx: makeCtx()
+    })
+    await flush()
+
+    const input = screen.getByLabelText('Search tasks to add as dependencies')
+    await fireEvent.input(input, { target: { value: 'torn' } })
+    await new Promise((r) => setTimeout(r, 220))
+    await flush()
+    await fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(
+      await screen.findByText(/Your unsaved text is kept at/)
+    ).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('{"code"')
+    // The optimistic add was reverted.
+    await waitFor(() =>
+      expect(screen.getByText('No prerequisites.')).toBeInTheDocument()
+    )
+  })
+
+  // The typed envelope's recovery prose embeds the target page name, so a
+  // page named "Circular imports.md" makes the prose match the cycle regex.
+  // The mapping must discriminate on the typed code, not the prose: a typed
+  // envelope renders verbatim; only the plain-prose cycle sentinel (no code)
+  // gets the friendly cycle copy.
+  it('renders typed recovery prose verbatim even when the page name contains "circular"', async () => {
+    mocks.searchTasks.mockResolvedValue([
+      {
+        id: 'dep-circ',
+        clean_content: 'Circular dep',
+        notebook: 'W',
+        section: '',
+        page: 'P'
+      }
+    ])
+    mocks.setTaskBlockedBy.mockRejectedValueOnce(
+      new Error(
+        JSON.stringify({
+          code: 'verified_write_failed',
+          message:
+            'Circular imports.md could not be written safely and the previous version was restored. Your unsaved text is kept at /vault/.system/writebackups/Circular imports.md.pending'
+        })
+      )
+    )
+    render(DependencyPicker, {
+      cardId: 'task-1',
+      blockedBy: [],
+      ctx: makeCtx()
+    })
+    await flush()
+
+    const input = screen.getByLabelText('Search tasks to add as dependencies')
+    await fireEvent.input(input, { target: { value: 'circ' } })
+    await new Promise((r) => setTimeout(r, 220))
+    await flush()
+    await fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(
+      await screen.findByText(/Your unsaved text is kept at/)
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/Cannot add: would create a circular dependency/)
+    ).toBeNull()
   })
 
   it('portals the results listbox out of the scroll container so it is not clipped (#376)', async () => {

@@ -253,10 +253,12 @@ func (a *App) rewritePageReservedProps(loc db.TypedPageLocator, renames []types.
 	// Atomic write + self-write arm + reindex (blocks + projections).
 	// Direct write: one-shot schema migration that runs at vault open,
 	// before any editor load can capture a baseline to refresh (#1005).
+	// writePageStaged (not raw WriteFileAtomic) so a non-atomic root still
+	// gets the #1009 verified mode for these rewrites.
 	if a.tracker != nil {
 		a.tracker.RegisterWrite(filePath)
 	}
-	if err := parser.WriteFileAtomic(filePath, []byte(content)); err != nil {
+	if err := a.writePageStaged(filePath, []byte(content)); err != nil {
 		log.Printf("types: reserved-prop migrate: write %s: %v", filePath, err)
 		return false
 	}

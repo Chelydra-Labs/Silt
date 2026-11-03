@@ -16,6 +16,7 @@
   import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
   import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
   import QuickAddTask from '../components/QuickAddTask.svelte'
+  import { friendlyCaughtError } from '../errors'
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
   import BlockedDoneGuard from '../components/BlockedDoneGuard.svelte'
@@ -99,7 +100,7 @@
   // ctx is a stable plugin-context singleton — see BoardView for rationale.
   // svelte-ignore state_referenced_locally
   const blockedGuard = useBlockedDoneGuard<TaskDetail>(ctx, (e) => {
-    markDownError = e instanceof Error ? e.message : String(e)
+    markDownError = friendlyCaughtError(e)
     markDownTimer = setTimeout(() => {
       markDownError = ''
       markDownTimer = null
@@ -477,7 +478,7 @@
       await ctx.updateBlockState(item.id, 'DONE')
       openItems = openItems.filter((i) => i.id !== item.id)
     } catch (e) {
-      markDownError = e instanceof Error ? e.message : String(e)
+      markDownError = friendlyCaughtError(e)
       markDownTimer = setTimeout(() => {
         markDownError = ''
         markDownTimer = null
@@ -623,7 +624,9 @@
   let liveMessage = $state('')
 
   function flashOrderError(e: unknown) {
-    orderError = e instanceof Error ? e.message : String(e)
+    // Friendly coercion: typed failures (e.g. verified_write_failed naming
+    // retained copies) ride the v3 cause envelope.
+    orderError = friendlyCaughtError(e)
     if (orderErrorTimer) clearTimeout(orderErrorTimer)
     orderErrorTimer = setTimeout(() => {
       orderError = ''

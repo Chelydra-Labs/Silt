@@ -95,7 +95,8 @@ func (a *App) PluginReadFile(pluginID, sessionToken, notebook, relPath string) (
 var maxPluginScratchBytes int64 = 500 * 1024 * 1024 // 500 MB
 
 // PluginWriteFile writes a file within a notebook atomically (temp+fsync+rename
-// via parser.WriteFileAtomic, under the per-file mutex + WriteTracker). Gated
+// via the app's per-root staged-write dispatcher, under the per-file mutex +
+// WriteTracker). Gated
 // by write-files; the qualifier (notebook | vault) is enforced at the grant
 // level — a notebook-scoped grant only allows writes inside the resolved
 // notebook root.
@@ -141,11 +142,12 @@ func (a *App) PluginWriteFile(pluginID, sessionToken, notebook, relPath string, 
 			}
 		}
 		a.tracker.RegisterWrite(abs)
-		// Direct write: plugin-supplied raw bytes, not a page-content
-		// derivation — refreshing a page baseline here would mask a real
-		// concurrent write; the external-edit gate is deliberately not
-		// consulted for plugin raw IO (#1005).
-		writeErr = parser.WriteFileAtomic(abs, data)
+		// Plugin-supplied raw bytes are not a page-content derivation, so
+		// the baseline steps and the external-edit gate stay deliberately
+		// unconsulted for plugin raw IO (#1005); the write itself still
+		// dispatches per root — torn-write protection is orthogonal to the
+		// gate, so a non-atomic root lands in verified mode (#1009).
+		writeErr = a.writePageStaged(abs, data)
 	})
 	return writeErr
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 )
@@ -129,9 +130,10 @@ func (a *App) renameSingleFile(prepare func() (renameSingleFileStrategy, error))
 //
 // RenameSection and RenameNotebook share the same concurrency shape: lock
 // every descendant .md + inbound sources, tree-TOCTOU retry, full rollback on
-// error (forward write uses renameWriteFileAtomic, rollback uses plain
-// WriteFileAtomic — that asymmetry is load-bearing), reindexFileStrict with
-// rename hook, and reconcile INSIDE the lock. The op-specific differences
+// error (forward writes use renameWriteFileAtomic — the fault-injection seam
+// rollback deliberately bypasses — while both route through trackedPageWrite's
+// per-root dispatch), reindexFileStrict with rename hook, and reconcile
+// INSIDE the lock. The op-specific differences
 // (which frontmatter field, section/notebook derivation, literal vs resolved
 // source, reconcile hook name) are captured as closures in the strategy.
 
@@ -254,13 +256,20 @@ func (a *App) renameTree(prepare func() (renameTreeStrategy, error)) error {
 			for _, file := range files {
 				newPath := filepath.Join(s.newDir, file.relPath)
 				a.tracker.RegisterWrite(newPath)
-				// Direct write (renameWriteFileAtomic): the renameHooks test
-				// seam must intercept the forward write, and the path is
-				// brand-new post-rename — conflict-state migration is owned
-				// by renameTree's success path (#1005).
+				// Forward write via the renameWriteFileAtomic seam (so the
+				// renameHooks tests can intercept it); production dispatch is
+				// per root — a non-atomic root gets verified mode here
+				// (#1009). Baseline refresh stays skipped: brand-new path
+				// post-rename, conflict-state migration is owned by
+				// renameTree's success path (#1005).
 				if err := a.renameWriteFileAtomic(newPath, file.updatedContent); err != nil {
 					runErr = fmt.Errorf("%s: write %s: %w", s.label, file.relPath, err)
 					if rollbackErr := a.rollbackRename(s.oldDir, s.newDir, files, s.rollbackSource, linkJournal, configSnapshot, false); rollbackErr != nil {
+						// The typed IPC serialization keeps only the innermost
+						// error's prose, so the (rollback failed: …) wrap never
+						// reaches the UI — this log is the last place the
+						// rollback diagnostic exists.
+						log.Printf("%s: rollback after failed forward write of %s: %v", s.label, file.relPath, rollbackErr)
 						runErr = fmt.Errorf("%w (rollback failed: %v)", runErr, rollbackErr)
 					}
 					return
@@ -284,6 +293,9 @@ func (a *App) renameTree(prepare func() (renameTreeStrategy, error)) error {
 			}
 			if runErr != nil {
 				if rollbackErr := a.rollbackRename(s.oldDir, s.newDir, files, s.rollbackSource, linkJournal, configSnapshot, s.rollbackReconcileHookEnabled(configAttempted)); rollbackErr != nil {
+					// Same serialization drop as the forward-write rollback
+					// above: only the log preserves the rollback failure.
+					log.Printf("%s: rollback after rename step failure (%v): %v", s.label, runErr, rollbackErr)
 					runErr = fmt.Errorf("%w (rollback failed: %v)", runErr, rollbackErr)
 				}
 			}

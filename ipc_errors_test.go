@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // TestFormatIPCError_EmitsCodeIndependentOfMessage is the #478 pinning test: a
@@ -86,5 +88,53 @@ func TestIPCError_ErrorsIsCompat(t *testing.T) {
 func TestIPCError_ErrorReturnsMessage(t *testing.T) {
 	if got := blockBeingEditedError().Error(); got != errBlockBeingEdited.Error() {
 		t.Errorf("blockBeingEditedError().Error() = %q, want %q (the sentinel prose)", got, errBlockBeingEdited.Error())
+	}
+}
+
+// TestCallErrorBody_CarriesEnvelopeInCause pins the Wails v3 wire contract the
+// frontend coercion depends on (#1019): a failed binding call rejects with a
+// 422 CallError body carrying the human PROSE on `message` and the
+// formatIPCError envelope inlined as a JSON OBJECT on `cause`. The v3 runtime
+// throws `new Error(json.message)` with that parsed cause attached, which is
+// where the frontend recovers the stable code. If a Wails upgrade changes the
+// marshaling (base64-encodes the cause, moves the envelope), every code-based
+// frontend discrimination breaks silently — this test fails loudly instead.
+func TestCallErrorBody_CarriesEnvelopeInCause(t *testing.T) {
+	ipcErr := blockBeingEditedError()
+	// Exactly what wails v3 pkg/application/bindings.go builds for a method
+	// with one error output: MarshalError (our formatIPCError) becomes the
+	// json.RawMessage cause.
+	cerr := &application.CallError{
+		Message: ipcErr.Error(),
+		Cause:   json.RawMessage(formatIPCError(ipcErr)),
+		Kind:    application.RuntimeError,
+	}
+	body, err := json.Marshal(cerr)
+	if err != nil {
+		t.Fatalf("marshal CallError: %v", err)
+	}
+	var got struct {
+		Message string          `json:"message"`
+		Cause   json.RawMessage `json:"cause"`
+		Kind    string          `json:"kind"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unmarshal CallError body: %v", err)
+	}
+	if got.Message != errBlockBeingEdited.Error() {
+		t.Errorf("message = %q, want the human prose %q", got.Message, errBlockBeingEdited.Error())
+	}
+	if got.Kind != "RuntimeError" {
+		t.Errorf("kind = %q, want RuntimeError", got.Kind)
+	}
+	var env ipcErrorPayload
+	if err := json.Unmarshal(got.Cause, &env); err != nil {
+		t.Fatalf("cause is not an inlined JSON object (wire contract broken): %v (cause=%s)", err, got.Cause)
+	}
+	if env.Code != string(CodeBlockBeingEdited) {
+		t.Errorf("cause.code = %q, want %q", env.Code, CodeBlockBeingEdited)
+	}
+	if env.Message != errBlockBeingEdited.Error() {
+		t.Errorf("cause.message = %q, want %q", env.Message, errBlockBeingEdited.Error())
 	}
 }

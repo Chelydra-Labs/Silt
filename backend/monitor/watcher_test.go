@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,7 +17,10 @@ func TestDirectoryWatcher_ReindexFileHoldsFileLock(t *testing.T) {
 	// Verifies the fix for the lost-update race: reindexFile must hold
 	// the per-file IO lock for the duration of read+parse+write+index
 	// so a concurrent UpdateBlockState cannot land between the watcher's
-	// read and the watcher's eventual write.
+	// read and the watcher's eventual write. The injected writer probes
+	// the lock at write time, pinning that the normalization write itself
+	// executes INSIDE the LockFileWrite closure (lexical nesting alone
+	// would not catch a write moved out of it).
 	vaultPath := t.TempDir()
 
 	dm, err := db.NewDatabaseManager("")
@@ -34,11 +38,31 @@ func TestDirectoryWatcher_ReindexFileHoldsFileLock(t *testing.T) {
 		t.Fatalf("NewDirectoryWatcher: %v", err)
 	}
 
-	filePath := filepath.Join(vaultPath, "test.md")
-	if err := os.WriteFile(filePath, []byte(
-		"# Test <!-- id: aaaa1111-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n"+
-			"- [ ] x <!-- id: bbbb2222-bbbb-bbbb-bbbb-bbbbbbbbbbbb -->\n",
-	), 0o644); err != nil {
+	var writeRan, writeUnderLock bool
+	dw.WritePageFile = func(p string, c []byte) error {
+		writeRan = true
+		// Probe the per-file lock from a second goroutine: the coordinator's
+		// mutex is not reentrant, so probing in-line would self-deadlock.
+		// The probe can acquire immediately only if the lock is FREE at
+		// write time — i.e. the write is no longer inside the closure.
+		acquired := make(chan struct{})
+		go coord.LockFileWrite(p, func() { close(acquired) })
+		select {
+		case <-acquired:
+			writeUnderLock = false
+		case <-time.After(150 * time.Millisecond):
+			writeUnderLock = true
+		}
+		return os.WriteFile(p, c, 0o644)
+	}
+
+	// Id-less content at a mappable depth: the parse mints id comments, so
+	// the normalization rewrite (and thus the injected writer) actually runs.
+	filePath := filepath.Join(vaultPath, "Work", "Journal", "Daily", "2026-06-13.md")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filePath, []byte("# Title\n\n- [ ] no id yet\n"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
 
@@ -77,6 +101,13 @@ func TestDirectoryWatcher_ReindexFileHoldsFileLock(t *testing.T) {
 		t.Fatalf("reindexFile did not return within 2s after the file lock was released")
 	}
 	<-lockReleased
+
+	if !writeRan {
+		t.Fatal("the normalization write never ran; the fixture must stay id-less so the rewrite executes")
+	}
+	if !writeUnderLock {
+		t.Fatal("the normalization write executed while the per-file lock was acquirable — it is no longer inside the LockFileWrite closure")
+	}
 }
 
 func TestDirectoryWatcher_ReindexFileIndexesFile(t *testing.T) {
@@ -1173,3 +1204,122 @@ func TestDirectoryWatcher_NormalizationWriteFiresHook(t *testing.T) {
 		t.Fatalf("hook must observe the pre-write bytes, got %q", hookPrior)
 	}
 }
+
+// TestDirectoryWatcher_NormalizationWriteUsesInjectedWriter pins the #1009
+// routing contract: the normalization rewrite must go through the injected
+// WritePageFile when the app wires its per-root staged-write dispatcher, so a
+// detected non-atomic mount gets verified mode for the watcher's own writes
+// too. A nil callback keeps the plain staged sequence.
+func TestDirectoryWatcher_NormalizationWriteUsesInjectedWriter(t *testing.T) {
+	vaultPath := t.TempDir()
+
+	dm, err := db.NewDatabaseManager("")
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	t.Cleanup(func() { _ = dm.Close() })
+
+	coord := core.NewExecutionCoordinator(dm.SQLDB())
+	tracker := NewWriteTracker()
+	t.Cleanup(tracker.Stop)
+
+	dw, err := NewDirectoryWatcher(vaultPath, dm, tracker, coord, 4)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher: %v", err)
+	}
+
+	var injectedPath string
+	var injectedContent []byte
+	dw.WritePageFile = func(p string, c []byte) error {
+		injectedPath, injectedContent = p, c
+		// The injected writer IS the write step in production; perform it so
+		// the on-disk state matches what was routed through the callback.
+		return os.WriteFile(p, c, 0o644)
+	}
+
+	// Id-less content forces the normalization rewrite (the parse mints id
+	// comments and writes them back).
+	filePath := filepath.Join(vaultPath, "Work", "Journal", "Daily", "2026-06-14.md")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filePath, []byte("# Title\n\n- [ ] no id yet\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	dw.reindexFile(filePath)
+
+	if injectedPath != filePath {
+		t.Fatalf("normalization write must route through the injected writer for its path, got %q", injectedPath)
+	}
+	if !strings.Contains(string(injectedContent), "<!-- id:") {
+		t.Fatalf("injected writer must receive the normalized content, got %q", injectedContent)
+	}
+	onDisk, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read after reindex: %v", err)
+	}
+	if string(injectedContent) != string(onDisk) {
+		t.Fatalf("injected writer's bytes must be what lands on disk:\n injected: %q\n     disk: %q", injectedContent, onDisk)
+	}
+}
+
+// A failed normalization write must NOT MarkFileIndexed: the recorded stat
+// would reflect the failed write's bytes (torn, or restored to the
+// un-normalized content), and a warm restart's IsFileUnchanged would then
+// match — silently persisting the disk-vs-index divergence. The files row
+// stays stale so the next scan re-parses what is actually on disk.
+func TestDirectoryWatcher_NormalizationWriteFailureLeavesFilesRowStale(t *testing.T) {
+	vaultPath := t.TempDir()
+
+	dm, err := db.NewDatabaseManager("")
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	t.Cleanup(func() { _ = dm.Close() })
+
+	coord := core.NewExecutionCoordinator(dm.SQLDB())
+	tracker := NewWriteTracker()
+	t.Cleanup(tracker.Stop)
+
+	dw, err := NewDirectoryWatcher(vaultPath, dm, tracker, coord, 4)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher: %v", err)
+	}
+
+	dw.WritePageFile = func(string, []byte) error {
+		return errNormWriteFailedForTest
+	}
+
+	// Id-less content forces the normalization rewrite (the parse mints id
+	// comments and writes them back — the injected writer refuses).
+	filePath := filepath.Join(vaultPath, "Work", "Journal", "Daily", "2026-06-14.md")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filePath, []byte("# Title\n\n- [ ] no id yet\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	dw.reindexFile(filePath)
+
+	// The page WAS indexed (the handler ran) — the divergence, if marked,
+	// would be invisible until restart.
+	unchanged, uerr := func() (bool, error) {
+		st, serr := os.Stat(filePath)
+		if serr != nil {
+			return false, serr
+		}
+		return dm.IsFileUnchanged(filePath, st.ModTime().UnixNano(), st.Size())
+	}()
+	if uerr != nil {
+		t.Fatalf("IsFileUnchanged: %v", uerr)
+	}
+	if unchanged {
+		t.Errorf("files row marked after a failed normalization write — a warm restart would skip re-parsing the failed-write bytes")
+	}
+}
+
+// errNormWriteFailedForTest stands in for a hard verified-write failure at
+// the watcher's injected writer.
+var errNormWriteFailedForTest = errors.New("simulated verified-write failure")

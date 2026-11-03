@@ -3,6 +3,7 @@
 
 import type { PluginContext } from '../../../sdk'
 import type { Proposal } from '../types'
+import { coerceIPCError } from '../../../../lib/ipcError'
 
 export type ApplyResult =
   { ok: true; detail?: string } | { ok: false; error: string }
@@ -36,8 +37,9 @@ export async function applyProposal(
         }
     }
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    return { ok: false, error: msg }
+    // Apply paths write page bytes; a typed failure's recovery prose must
+    // not stay buried in the JSON envelope.
+    return { ok: false, error: coerceIPCError(e).message }
   }
 }
 
@@ -122,7 +124,7 @@ async function applyTasks(
       }
       applied++
     } catch (e) {
-      errors.push(e instanceof Error ? e.message : String(e))
+      errors.push(coerceIPCError(e).message)
     }
   }
   if (applied === 0) {
@@ -175,7 +177,13 @@ async function applyTags(
       const merged = [...new Set([...existing, ...tags])]
       await ctx.setTaskTags(blockId, merged)
       return { ok: true, detail: 'Tags merged onto task' }
-    } catch {
+    } catch (e) {
+      // A typed failure (e.g. verified_write_failed) is a hard structured-
+      // write failure: its recovery prose must surface as an error, not be
+      // masked by an "applied" hashtag insert. The fallback below stays
+      // for plain-prose errors (block not a task, task not found).
+      const { code, message } = coerceIPCError(e)
+      if (code) return { ok: false, error: message }
       /* fall through to hashtag insert */
     }
   }

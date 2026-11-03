@@ -45,6 +45,15 @@ type DirectoryWatcher struct {
 	// tests and non-app embeds run without it.
 	OnPageNormalized func(path string, priorContent, content []byte)
 
+	// WritePageFile performs the staged write for the watcher's own
+	// normalization rewrites. Same injection shape as OnPageNormalized: the
+	// watcher layer has no *App and no root-detection state, so the app
+	// wires its per-root staged-write dispatcher here — on a detected
+	// non-atomic mount the normalization write runs in verified mode
+	// (backup + read-back + restore) instead of the plain staged sequence
+	// (#1009). Optional: nil → plain staged write (tests, non-app embeds).
+	WritePageFile func(path string, content []byte) error
+
 	// wg tracks the goroutines Start spawns (listenLoop + lease sweeper).
 	// Close drains it so an in-flight reindex finishes before the caller
 	// closes the DB — otherwise the reindex goroutine races/null-derefs
@@ -802,6 +811,11 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 			return
 		}
 
+		// Set by the normalization write below when one runs and fails; a
+		// failed write leaves disk bytes that do not match the blocks about
+		// to be indexed (torn, or restored to the un-normalized content).
+		var normWriteErr error
+
 		// Read the PRIOR managed-block count for this page BEFORE
 		// IndexFileBlocks clears + reinserts the rows (the count is the input
 		// to the mass-re-mint heuristic, #443). The query is cheap (one COUNT
@@ -818,17 +832,26 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 
 		if modified {
 			dw.tracker.RegisterWrite(path)
-			// Direct write: watcher-layer normalization (minted id comments)
-			// has no *App, so the fingerprint refresh runs through the
-			// OnPageNormalized hook the app wires
+			// The normalization write routes through the injected
+			// WritePageFile when the app wires its staged-write dispatcher,
+			// so a detected non-atomic root gets verified mode for the
+			// watcher's own rewrites too (#1009); nil keeps the plain
+			// staged sequence. Watcher-layer normalization (minted id
+			// comments) has no *App, so the fingerprint refresh runs through
+			// the OnPageNormalized hook the app wires
 			// (refreshFingerprintAfterNormalization — a guarded variant of
 			// the re-baseline trackedPageWrite performs). Without it a live
 			// editor baseline drifts on Silt's own normalization bytes and
 			// the next save refuses + stashes a phantom conflict (#1005).
 			// The hook also receives the PRE-write bytes so it can decline
 			// the refresh when they no longer match the stored baseline.
-			if werr := parser.WriteFileAtomic(path, []byte(newContent)); werr != nil {
-				log.Printf("reindexFile: normalization write failed for %s: %v", path, werr)
+			writePage := parser.WriteFileAtomic
+			if dw.WritePageFile != nil {
+				writePage = dw.WritePageFile
+			}
+			normWriteErr = writePage(path, []byte(newContent))
+			if normWriteErr != nil {
+				log.Printf("reindexFile: normalization write failed for %s: %v", path, normWriteErr)
 			} else if dw.OnPageNormalized != nil {
 				dw.OnPageNormalized(path, contentBytes, []byte(newContent))
 			}
@@ -898,7 +921,12 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 			log.Printf("reindexFile: atomic index failed for %s: %v", path, err)
 		} else {
 			indexedOK = true
-			if hasStat {
+			// A failed normalization write must not be marked as fully
+			// indexed: the stat below reflects the failed/torn bytes, and a
+			// warm restart's IsFileUnchanged would match it — silently
+			// persisting the disk-vs-index divergence. Leaving the files row
+			// stale makes the next scan re-parse what is actually on disk.
+			if hasStat && normWriteErr == nil {
 				dw.coordinator.WithDBWrite(func() {
 					if err := dw.dm.MarkFileIndexed(nil, path, fileMtime, fileSize); err != nil {
 						log.Printf("reindexFile: MarkFileIndexed failed for %s: %v", path, err)

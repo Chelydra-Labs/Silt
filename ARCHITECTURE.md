@@ -497,13 +497,45 @@ crash). Reconnect re-indexes on the next fsnotify event (the watch survives a
 temporary mount drop). Linking a folder that is offline at link time registers
 the link and indexes best-effort (logged); the user can re-link once it's back.
 
-Sync-conflict caveat. Silt's atomic write is temp-file + `os.Rename`. On a
-network filesystem (SMB/WebDAV) `os.Rename` may not be atomic the way it is on a
-local FS, but the `WriteTracker` self-write suppression and the editor focus
-lock still hold, so external (non-Silt) edits to the same file are reconciled
-by the existing diff/lease machinery once both sides land. A vault index must
-stay on a local disk regardless (WAL does not work on NFS/SMB — §3), so only
-the markdown crosses the mount.
+Sync-conflict caveat (handled case). Silt's atomic write is temp-file +
+`os.Rename`. On a network filesystem (SMB/WebDAV) `os.Rename` may not be
+atomic the way it is on a local FS, so roots are probed once per session
+(`probeRootNetworkFS` wrapping `db.IsNetworkFS`, cached per root at
+open/link; a root that cannot be
+probed at all — offline/unmounted — fails safe and is treated as detected)
+and page writes on a detected mount route through the verified staged
+writer (#1009): a pre-write
+backup lands on the same mount (`<root>/.system/writebackups/<relPath>`, one
+generation, swept by the next write, invisible to indexing), the usual staged
+sequence runs unchanged, and a post-rename read-back (size + SHA-256)
+confirms the bytes. A torn destination is retried once, then restored from
+the pre-write bytes — when the restore verifies, the page file is never left
+presenting a partial write. A write whose restore itself cannot be verified
+fails with the typed `verified_write_failed` sentinel: the target may then
+still hold torn bytes, which is why the message (single-sourced from the
+retention state that actually holds, naming only copies that exist) is the
+manual recovery path. The write funnels never treat the failed write as
+landed, but the next startup scan re-parses whatever is on disk — torn bytes
+included — until the operator recovers from the named copies.
+The
+verification read runs inside the same `LockFileWrite` transaction as the
+write and re-baselines the load fingerprint through the `trackedPageWrite`
+choke point (it is Silt's own write, never an external edit), and the
+degraded crash-safety is surfaced once per root as a dismissible notice. The
+dispatch is not limited to editor saves: the rename/move frontmatter
+rewrites, the watcher's own normalization writes (via an injected
+`WritePageFile` writer), and plugin raw page-path writes all route through
+the same per-root dispatcher. Detection coverage is per-OS and explicit:
+NFS/SMB/CIFS/NCP on Linux, NFS/DFS/WebDAV/CBFS/SMB/CIFS on Windows; Linux
+FUSE mounts (sshfs, rclone) and all macOS mounts are currently undetected —
+a statable root the detector does not recognize records local (#1020), while
+a root that cannot be probed at all (offline/unmounted at open/link) fails
+safe to verified mode. The
+`WriteTracker` self-write suppression and the editor focus lock still hold,
+so external (non-Silt) edits to the same file are reconciled by the existing
+diff/lease machinery once both sides land. A vault index must stay on a local
+disk regardless (WAL does not work on NFS/SMB — §3), so only the markdown
+crosses the mount.
 
 External-edit conflict detection (#1005). Atomic staging also does not stop a
 whole-page editor save from *semantically* clobbering an external edit: the
@@ -551,8 +583,10 @@ and explicitly indexed, so it surfaces as a real page rather than a watcher
 ghost; when a sibling write reports a durability error after its rename
 committed, the resolution indexes the landed copy itself) and settles the
 winner per the user's keep-mine / keep-theirs / keep-both choice. The
-rename/move path (`renameWriteFileAtomic`) bypasses the gate by design: moves
-are not content rewrites. Known caveats: `LockFileWrite` serializes only
+rename/move path (`renameWriteFileAtomic`) bypasses the load-baseline gate
+by design: moves are not content rewrites (the post-move content rewrites
+still dispatch per root through the verified-write layer, #1009). Known
+caveats: `LockFileWrite` serializes only
 Silt's own writers — an external write landing between the in-lock stat check
 and the atomic rename is still clobbered; closing that micro-race requires
 cross-process file locking, which is out of scope (and under the

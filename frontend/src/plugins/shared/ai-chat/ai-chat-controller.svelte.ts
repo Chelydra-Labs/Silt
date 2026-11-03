@@ -1,6 +1,7 @@
 import type { PluginAIChatMessage, PluginContext } from '../../sdk'
 import { aiProviderNeedsSetup } from '../../../settings/ai-setup'
 import { settings as appSettings } from '../../../settings/store.svelte'
+import { coerceIPCError } from '../../../lib/ipcError'
 import {
   createAgentSession,
   type AgentOptions,
@@ -636,11 +637,13 @@ export function createAIChatController(initialContext?: PluginContext) {
   // the proposal in its prior state (pending where possible) so the user can
   // retry, instead of letting the rejected promise strand the card in limbo.
   function reportProposalError(verb: string, error: unknown): void {
+    // Accepting a proposal writes page bytes; a typed failure's recovery
+    // prose must not stay buried in the JSON envelope.
     append(
       statusEntry({
         role: 'system',
         status: 'error',
-        message: `Could not ${verb} proposal: ${error instanceof Error ? error.message : String(error)}`
+        message: `Could not ${verb} proposal: ${coerceIPCError(error).message}`
       })
     )
   }
