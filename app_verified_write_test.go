@@ -422,6 +422,101 @@ func TestVerifiedWrite_TipEmittedOncePerRoot(t *testing.T) {
 	}
 }
 
+// F1 residual (iter-2 fix-now #1): MovePage's post-move `section:` rewrite
+// failing a verified write must surface the typed error and abort before
+// clearAndReindex — logging + dropping it reported a successful move while
+// indexing the untrusted bytes at the new path.
+func TestVerifiedWrite_MovePageTornFrontmatterRewriteFailsLoud(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	notebook, page := "VNB", "TornMove"
+	blockID := "9a9a9a9a-1b1b-4c1c-8d1d-2e2e2e2e2e2e"
+	seedConflictPage(t, app, notebook, "From", page, blockID, "move me safely")
+	oldPath := conflictPagePath(app, notebook, "From", page)
+	moved, err := os.ReadFile(oldPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	renames := 0
+	origHook := parser.VerifiedWriteAfterRenameHook
+	parser.VerifiedWriteAfterRenameHook = func(path string) error {
+		renames++
+		if renames <= 2 { // write + retry torn; the restore rename stays clean
+			return os.WriteFile(path, []byte("TORN-PARTIAL"), 0o644)
+		}
+		return nil
+	}
+	t.Cleanup(func() { parser.VerifiedWriteAfterRenameHook = origHook })
+
+	err = app.MovePage(notebook, "From", "DestSec", page)
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeVerifiedWriteFailed {
+		t.Fatalf("MovePage must fail with the typed verified error, got %v", err)
+	}
+
+	// The moved bytes must sit intact at the new path (restored) — and the
+	// rewritten content is retained for recovery.
+	newPath := conflictPagePath(app, notebook, "DestSec", page)
+	onDisk, rerr := os.ReadFile(newPath)
+	if rerr != nil {
+		t.Fatalf("moved page missing after torn rewrite: %v", rerr)
+	}
+	if string(onDisk) != string(moved) {
+		t.Fatalf("moved bytes not restored at the new path:\n got: %q\nwant: %q", string(onDisk), string(moved))
+	}
+	pending := filepath.Join(app.vaultPath, ".system", "writebackups", notebook, "DestSec", page+".md.pending")
+	gotPending, perr := os.ReadFile(pending)
+	if perr != nil {
+		t.Fatalf("no retained pending copy at %s: %v", pending, perr)
+	}
+	if !strings.Contains(string(gotPending), "DestSec") {
+		t.Errorf("pending copy = %q, want the rewritten frontmatter retained", string(gotPending))
+	}
+	// The abort landed before clearAndReindex: the new location must not be
+	// indexed as a landed move.
+	if idx, ferr := app.FetchPageBlocks(notebook, "DestSec", page); ferr == nil && len(idx) > 0 {
+		t.Errorf("untrusted move must not be indexed at the new section: %d blocks", len(idx))
+	}
+}
+
+// Iter-2 fix-now #5: DuplicatePage's target write failing a verified write
+// must keep the typed code and recovery prose — the generic
+// navigation_duplicate wrap erased both, and the frontend's fixed copy for
+// that code dropped the recovery path entirely.
+func TestVerifiedWrite_DuplicatePageTornWriteKeepsTypedError(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	notebook, section, page := "VNB", "", "TornDup"
+	blockID := "8b8b8b8b-2c2c-4d2d-8e3e-4f4f4f4f4f4f"
+	seedConflictPage(t, app, notebook, section, page, blockID, "duplicate me safely")
+
+	renames := 0
+	origHook := parser.VerifiedWriteAfterRenameHook
+	parser.VerifiedWriteAfterRenameHook = func(path string) error {
+		renames++
+		if strings.HasSuffix(path, "TornDupCopy.md") && renames <= 2 {
+			return os.WriteFile(path, []byte("TORN-PARTIAL"), 0o644)
+		}
+		return nil
+	}
+	t.Cleanup(func() { parser.VerifiedWriteAfterRenameHook = origHook })
+
+	err := app.DuplicatePage(notebook, section, page, "TornDupCopy")
+	var ipc *IPCError
+	if !errors.As(err, &ipc) {
+		t.Fatalf("want IPCError, got %v", err)
+	}
+	if ipc.Code != CodeVerifiedWriteFailed {
+		t.Fatalf("code = %s, want %s (typed passthrough, not the re-wrapped navigation_duplicate)", ipc.Code, CodeVerifiedWriteFailed)
+	}
+	if !strings.Contains(ipc.Message, "TornDupCopy") || !strings.Contains(ipc.Message, "writebackups") {
+		t.Errorf("recovery prose must name the file and where the retained copy lives: %q", ipc.Message)
+	}
+}
+
 // seedBlocksFrom re-reads the page's current blocks so a test can edit from
 // the latest on-disk generation (SaveFileBlocks renders whole pages).
 func seedBlocksFrom(t *testing.T, app *App, notebook, section, page, body string) []parser.ParsedBlock {

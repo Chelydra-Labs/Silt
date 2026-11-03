@@ -629,14 +629,25 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 				if err := os.Rename(oldFile, newFile); err != nil {
 					return err
 				}
-				// section: frontmatter rewrite: log on failure (file already
-				// moved) and fall through so the old index entries are cleaned.
 				content := updateFrontmatterField(string(contentBytes), "section", safeTo)
 				a.tracker.RegisterWrite(newFile)
 				// Staged write without the baseline steps, as in RenamePage's
 				// renameStep; writePageStaged still dispatches per root so a
 				// non-atomic one lands the rewrite in verified mode (#1009).
 				if err := a.writePageStaged(newFile, []byte(content)); err != nil {
+					if verifiedWriteFailed(err) {
+						// The bytes at newFile are untrusted (torn, or restored
+						// to the moved bytes with this rewrite retained as
+						// .pending). Returning aborts before clearAndReindex
+						// so they are never indexed and the typed error's
+						// recovery prose surfaces — the failure mode
+						// RenamePage already uses.
+						return err
+					}
+					// Plain staged-write failure: the atomic writer leaves
+					// complete bytes (old or new) and the file is already
+					// moved, so log and fall through to clean the old index
+					// entries.
 					log.Printf("MovePage: page write failed at %s (file already moved): %v", newFile, err)
 				}
 				return nil

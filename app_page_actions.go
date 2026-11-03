@@ -180,7 +180,15 @@ func (a *App) DuplicatePage(notebook, section, page, targetName string) error {
 		// trackedPageWrite: creation keeps an absent-file baseline honest
 		// (#1005), same as CreatePage's scaffold.
 		if writeErr := a.trackedPageWrite(targetPath, []byte(duplicate)); writeErr != nil {
-			runErr = pageActionError(CodeNavigationDuplicate, "duplicate page cannot be written", writeErr)
+			// A hard verified-write failure keeps its typed code and recovery
+			// prose (where the retained copies live): the generic wrap would
+			// erase both behind navigation_duplicate's fixed frontend copy —
+			// same passthrough as historyWriteError.
+			if verifiedWriteFailed(writeErr) {
+				runErr = writeErr
+			} else {
+				runErr = pageActionError(CodeNavigationDuplicate, "duplicate page cannot be written", writeErr)
+			}
 			return
 		}
 		parsedBlocks, meta, _, _, reparseErr := duplicatePagePostWriteParse(
