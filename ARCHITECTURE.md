@@ -500,15 +500,21 @@ the link and indexes best-effort (logged); the user can re-link once it's back.
 Sync-conflict caveat (handled case). Silt's atomic write is temp-file +
 `os.Rename`. On a network filesystem (SMB/WebDAV) `os.Rename` may not be
 atomic the way it is on a local FS, so roots are probed once per session
-(`db.IsNetworkFS`, cached per root at open/link) and page writes on a
-detected mount route through the verified staged writer (#1009): a pre-write
+(`db.IsNetworkFS`, cached per root at open/link; a root that cannot be
+probed at all — offline/unmounted — fails safe and is treated as detected)
+and page writes on a detected mount route through the verified staged
+writer (#1009): a pre-write
 backup lands on the same mount (`<root>/.system/writebackups/<relPath>`, one
 generation, swept by the next write, invisible to indexing), the usual staged
 sequence runs unchanged, and a post-rename read-back (size + SHA-256)
 confirms the bytes. A torn destination is retried once, then restored from
-the backup — the page file is never left presenting a partial write — and a
-still-unverifiable write fails with the typed `verified_write_failed`
-sentinel naming the retained backup and pending-content copies. The
+the pre-write bytes — when the restore verifies, the page file is never left
+presenting a partial write. A write whose restore itself cannot be verified
+fails with the typed `verified_write_failed` sentinel: the target may then
+still hold torn bytes, which is why the message (single-sourced from the
+retention state that actually holds, naming only copies that exist) is the
+manual recovery path and consumers never index or adopt the target's bytes.
+The
 verification read runs inside the same `LockFileWrite` transaction as the
 write and re-baselines the load fingerprint through the `trackedPageWrite`
 choke point (it is Silt's own write, never an external edit), and the
@@ -518,8 +524,10 @@ rewrites, the watcher's own normalization writes (via an injected
 `WritePageFile` writer), and plugin raw page-path writes all route through
 the same per-root dispatcher. Detection coverage is per-OS and explicit:
 NFS/SMB/CIFS/NCP on Linux, NFS/DFS/WebDAV/CBFS/SMB/CIFS on Windows; Linux
-FUSE mounts (sshfs, rclone) and all macOS mounts are currently undetected
-(#1020). The
+FUSE mounts (sshfs, rclone) and all macOS mounts are currently undetected —
+a statable root the detector does not recognize records local (#1020), while
+a root that cannot be probed at all (offline/unmounted at open/link) fails
+safe to verified mode. The
 `WriteTracker` self-write suppression and the editor focus lock still hold,
 so external (non-Silt) edits to the same file are reconciled by the existing
 diff/lease machinery once both sides land. A vault index must stay on a local

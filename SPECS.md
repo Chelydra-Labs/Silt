@@ -792,25 +792,34 @@ old or the new content, never a mixture.
 That guarantee is conditional on the rename actually being atomic — which
 local filesystems promise and network mounts (NFS/SMB and similar) may not.
 Silt probes each writable root (the vault and every linked notebook) once per
-session with a per-OS detector; on a detected non-atomic mount, page writes
-switch to a *verified*
+session with a per-OS detector; a root that cannot be probed at all (offline
+or unmounted at open/link time) fails safe and is treated as detected. On a
+detected non-atomic mount, page writes switch to a *verified*
 mode instead of pretending the guarantee holds: the same staged sequence,
 wrapped with a pre-write backup at `<root>/.system/writebackups/<relPath>`
 (one generation, swept by the next write) and a post-rename read-back
 (size + SHA-256 vs the written bytes). A torn result is retried once and then
-restored from the backup, so the page file never presents partial content; a
-write that still cannot be verified fails with the typed `verified_write_failed`
-sentinel naming the retained backup and pending-content copies. The
-degradation is surfaced once per root as a dismissible notice. Backups live
-under `.system/` and never surface as pages. Local filesystems keep the plain
-staged protocol above, unchanged.
+restored from the pre-write bytes. When the restore verifies, the page file
+never presents partial content; a restore that itself cannot be verified can
+leave torn bytes at the target, so the write fails with the typed
+`verified_write_failed` sentinel saying the previous version could not be
+restored. The message is built from the retention state that actually holds
+on disk and names only copies that exist — the unsaved text (`.pending`) and
+the pre-write backup are the manual recovery path, and consumers never index
+or adopt the target's bytes after this error. The degradation is surfaced
+once per root as a dismissible notice. Backups live under `.system/` and
+never surface as pages. Local filesystems keep the plain staged protocol
+above, unchanged.
 
 Detection coverage is explicit, not universal: the detectors recognize
 NFS/SMB/CIFS/NCP mounts on Linux and NFS/DFS/WebDAV/CBFS/SMB/CIFS on
 Windows. FUSE mounts on Linux (sshfs, rclone, …) and all macOS mounts are
-currently *undetected* — they keep the plain staged protocol and are not
-flagged, even though their renames may not be atomic. Extending the
-detectors is tracked as #1020.
+currently *undetected* — a statable root the detector does not recognize is
+recorded local and keeps the plain staged protocol, unflagged, even though
+its renames may not be atomic (extending the detectors is tracked as #1020).
+A root that cannot be probed at all (offline/unmounted at open or link) is
+the one case that fails safe: it is treated as detected so the safety net is
+never silently dropped when the mount returns mid-session.
 
 7.1.1 Recovery and destructive operations (Tier 0)
 
