@@ -805,8 +805,11 @@ leave torn bytes at the target, so the write fails with the typed
 `verified_write_failed` sentinel saying the previous version could not be
 restored. The message is built from the retention state that actually holds
 on disk and names only copies that exist — the unsaved text (`.pending`) and
-the pre-write backup are the manual recovery path, and consumers never index
-or adopt the target's bytes after this error. The degradation is surfaced
+the pre-write backup are the manual recovery path. The write funnels never
+treat the failed write as landed (no baseline re-adoption; the failure is
+surfaced), but they cannot stop the NEXT startup scan from re-parsing
+whatever is on disk — torn bytes included — until the operator recovers from
+the named copies, so prompt recovery matters. The degradation is surfaced
 once per root as a dismissible notice. Backups live under `.system/` and
 never surface as pages. Local filesystems keep the plain staged protocol
 above, unchanged.

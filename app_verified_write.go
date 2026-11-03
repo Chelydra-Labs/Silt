@@ -92,8 +92,10 @@ func (a *App) detectVerifiedWriteRoots() {
 // wrapped in backup + read-back), so an unprobeable root keeps writing AND
 // keeps the safety net rather than silently losing it (warn-and-continue,
 // #1009). What stays LOCAL is a root the detector positively classifies as
-// local — including statable-but-unrecognized mounts (Linux FUSE, macOS),
-// the detection-coverage gap tracked as #1020.
+// local — including statable-but-unrecognized mounts (Linux FUSE, macOS) —
+// and, on Windows, a root whose classification fails AFTER stat
+// (GetVolumePathName/GetVolumeInformation errors return nil → LOCAL). Both
+// are the detection-coverage gap tracked as #1020.
 func (a *App) detectVerifiedWriteRoot(root string) {
 	if root == "" {
 		return

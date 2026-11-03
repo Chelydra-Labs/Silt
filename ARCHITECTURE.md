@@ -500,7 +500,8 @@ the link and indexes best-effort (logged); the user can re-link once it's back.
 Sync-conflict caveat (handled case). Silt's atomic write is temp-file +
 `os.Rename`. On a network filesystem (SMB/WebDAV) `os.Rename` may not be
 atomic the way it is on a local FS, so roots are probed once per session
-(`db.IsNetworkFS`, cached per root at open/link; a root that cannot be
+(`probeRootNetworkFS` wrapping `db.IsNetworkFS`, cached per root at
+open/link; a root that cannot be
 probed at all — offline/unmounted — fails safe and is treated as detected)
 and page writes on a detected mount route through the verified staged
 writer (#1009): a pre-write
@@ -513,7 +514,9 @@ presenting a partial write. A write whose restore itself cannot be verified
 fails with the typed `verified_write_failed` sentinel: the target may then
 still hold torn bytes, which is why the message (single-sourced from the
 retention state that actually holds, naming only copies that exist) is the
-manual recovery path and consumers never index or adopt the target's bytes.
+manual recovery path. The write funnels never treat the failed write as
+landed, but the next startup scan re-parses whatever is on disk — torn bytes
+included — until the operator recovers from the named copies.
 The
 verification read runs inside the same `LockFileWrite` transaction as the
 write and re-baselines the load fingerprint through the `trackedPageWrite`
