@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -396,5 +397,67 @@ func TestWriteFileAtomicVerified_NewPageRetentionFailureNamesCause(t *testing.T)
 	}
 	if got := readOrEmpty(t, target); got != "" {
 		t.Errorf("target = %q, want the torn file removed", got)
+	}
+}
+
+// New-page failure where even the torn-file removal fails (a wedged
+// non-atomic mount): no previous version ever existed, so the default-branch
+// lead must not claim one — it must say the torn partial file is still at the
+// target, where the next startup scan will index it.
+func TestWriteFileAtomicVerified_NewPageRemovalFailedNamesTornRemains(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory mode bits do not gate removal on Windows")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "page.md")
+	// Keep the backup outside dir's mode change so .pending retention still
+	// lands and the prose names it (the recovery path must survive this corner).
+	backup := filepath.Join(dir, "backups", "b.md")
+	if err := os.MkdirAll(filepath.Dir(backup), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	orig := VerifiedWriteAfterRenameHook
+	calls := 0
+	VerifiedWriteAfterRenameHook = func(path string) error {
+		calls++
+		if err := os.WriteFile(path, []byte("TORN!"), 0o644); err != nil {
+			return err
+		}
+		if calls == 2 {
+			// Write and retry are torn; revoke write on the target's
+			// directory so the recovery os.Remove fails with EACCES.
+			return os.Chmod(dir, 0o500)
+		}
+		return nil
+	}
+	t.Cleanup(func() {
+		VerifiedWriteAfterRenameHook = orig
+		_ = os.Chmod(dir, 0o755)
+	})
+
+	err := WriteFileAtomicVerified(target, backup, []byte("first"))
+	var vwe *VerifiedWriteError
+	if !errors.As(err, &vwe) {
+		t.Fatalf("want *VerifiedWriteError, got %v", err)
+	}
+	if vwe.Restored {
+		t.Skip("removal succeeded despite the read-only directory (running privileged?)")
+	}
+	msg := vwe.Error()
+	if !strings.Contains(msg, "torn partial file remains at") {
+		t.Errorf("new-page removal-failed lead must say the torn file remains: %q", msg)
+	}
+	if !strings.Contains(msg, target) {
+		t.Errorf("lead must name the target path the torn file remains at: %q", msg)
+	}
+	if strings.Contains(msg, "previous version") {
+		t.Errorf("new page had no previous version to claim: %q", msg)
+	}
+	if !strings.Contains(msg, backup+".pending") {
+		t.Errorf("prose must still name the retained .pending copy: %q", msg)
+	}
+	// The prose's claim is true: the torn bytes are still at the target.
+	if got := readOrEmpty(t, target); got != "TORN!" {
+		t.Errorf("target = %q, want the torn bytes still present", got)
 	}
 }

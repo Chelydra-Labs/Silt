@@ -94,7 +94,14 @@ func (e *VerifiedWriteError) Error() string {
 	case e.Restored:
 		msg = fmt.Sprintf("%s could not be written safely and the previous version was restored", name)
 	default:
-		msg = fmt.Sprintf("%s could not be written safely and its previous version could not be restored", name)
+		if e.newPage {
+			// No previous version ever existed; the removal failed, so the
+			// truthful state is torn partial bytes still at the target —
+			// where the next startup scan will index them.
+			msg = fmt.Sprintf("%s could not be written safely and the torn partial file remains at %s", name, e.Target)
+		} else {
+			msg = fmt.Sprintf("%s could not be written safely and its previous version could not be restored", name)
+		}
 	}
 	switch {
 	case e.Pending != "":
