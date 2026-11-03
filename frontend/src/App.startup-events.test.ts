@@ -334,14 +334,14 @@ describe('startup events (golden master)', () => {
     await waitFor(() =>
       expect(
         hasNotification((m) =>
-          /This folder is on a network drive, so Silt now double-checks every save/.test(
+          /Silt is using extra-safe saves for \/mnt\/nas\/vault because it's on a network drive/.test(
             m
           )
         )
       ).toBe(true)
     )
     const tip = notificationsState.items.find((n) =>
-      /double-checks every save/.test(n.message)
+      /extra-safe saves for \/mnt\/nas\/vault/.test(n.message)
     )
     expect(tip).toBeDefined()
     // Sticky: the notice must outlive the default 5s so an in-flight save
@@ -365,7 +365,7 @@ describe('startup events (golden master)', () => {
     await waitFor(() =>
       expect(
         hasNotification((m) =>
-          /This folder is on a network drive, so Silt now double-checks every save/.test(
+          /Silt is using extra-safe saves for \/mnt\/share because it's on a network drive/.test(
             m
           )
         )

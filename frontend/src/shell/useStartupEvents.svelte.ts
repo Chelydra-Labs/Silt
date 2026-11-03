@@ -239,8 +239,7 @@ export function createStartupEvents(
     const tipID = d.tip_id
     pushNotification({
       kind: 'info',
-      message:
-        'This folder is on a network drive, so Silt now double-checks every save. If Silt is interrupted mid-save, a note could be damaged — a backup of the previous version is kept automatically. No action needed.',
+      message: `Silt is using extra-safe saves for ${d.root} because it's on a network drive. If Silt is interrupted mid-save, a note could be damaged — a backup of the previous version is kept automatically. No action needed.`,
       autoDismissMs: 0,
       action: {
         label: "Don't show again",
