@@ -17,7 +17,10 @@ func TestDirectoryWatcher_ReindexFileHoldsFileLock(t *testing.T) {
 	// Verifies the fix for the lost-update race: reindexFile must hold
 	// the per-file IO lock for the duration of read+parse+write+index
 	// so a concurrent UpdateBlockState cannot land between the watcher's
-	// read and the watcher's eventual write.
+	// read and the watcher's eventual write. The injected writer probes
+	// the lock at write time, pinning that the normalization write itself
+	// executes INSIDE the LockFileWrite closure (lexical nesting alone
+	// would not catch a write moved out of it).
 	vaultPath := t.TempDir()
 
 	dm, err := db.NewDatabaseManager("")
@@ -35,11 +38,31 @@ func TestDirectoryWatcher_ReindexFileHoldsFileLock(t *testing.T) {
 		t.Fatalf("NewDirectoryWatcher: %v", err)
 	}
 
-	filePath := filepath.Join(vaultPath, "test.md")
-	if err := os.WriteFile(filePath, []byte(
-		"# Test <!-- id: aaaa1111-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n"+
-			"- [ ] x <!-- id: bbbb2222-bbbb-bbbb-bbbb-bbbbbbbbbbbb -->\n",
-	), 0o644); err != nil {
+	var writeRan, writeUnderLock bool
+	dw.WritePageFile = func(p string, c []byte) error {
+		writeRan = true
+		// Probe the per-file lock from a second goroutine: the coordinator's
+		// mutex is not reentrant, so probing in-line would self-deadlock.
+		// The probe can acquire immediately only if the lock is FREE at
+		// write time — i.e. the write is no longer inside the closure.
+		acquired := make(chan struct{})
+		go coord.LockFileWrite(p, func() { close(acquired) })
+		select {
+		case <-acquired:
+			writeUnderLock = false
+		case <-time.After(150 * time.Millisecond):
+			writeUnderLock = true
+		}
+		return os.WriteFile(p, c, 0o644)
+	}
+
+	// Id-less content at a mappable depth: the parse mints id comments, so
+	// the normalization rewrite (and thus the injected writer) actually runs.
+	filePath := filepath.Join(vaultPath, "Work", "Journal", "Daily", "2026-06-13.md")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filePath, []byte("# Title\n\n- [ ] no id yet\n"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
 
@@ -78,6 +101,13 @@ func TestDirectoryWatcher_ReindexFileHoldsFileLock(t *testing.T) {
 		t.Fatalf("reindexFile did not return within 2s after the file lock was released")
 	}
 	<-lockReleased
+
+	if !writeRan {
+		t.Fatal("the normalization write never ran; the fixture must stay id-less so the rewrite executes")
+	}
+	if !writeUnderLock {
+		t.Fatal("the normalization write executed while the per-file lock was acquirable — it is no longer inside the LockFileWrite closure")
+	}
 }
 
 func TestDirectoryWatcher_ReindexFileIndexesFile(t *testing.T) {
