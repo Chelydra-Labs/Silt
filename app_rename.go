@@ -126,11 +126,17 @@ type renameLinkJournalEntry struct {
 	page     string
 }
 
+// renameWriteFileAtomic is the tree-rename forward-write seam: the
+// renameHooks.writeFileAtomic test interceptors substitute it to inject
+// failures; the production path forwards through the per-root staged-write
+// dispatcher, so a detected non-atomic root gets verified mode on the
+// post-move content rewrites (#1009). Rollback writes stay plain
+// WriteFileAtomic — see renameTree (that asymmetry is load-bearing).
 func (a *App) renameWriteFileAtomic(path string, content []byte) error {
 	if a.renameHooks != nil && a.renameHooks.writeFileAtomic != nil {
 		return a.renameHooks.writeFileAtomic(path, content)
 	}
-	return parser.WriteFileAtomic(path, content)
+	return a.writePageStaged(path, content)
 }
 
 func (a *App) renameIndexFile(source, notebook, section, page string, blocks []parser.ParsedBlock, meta parser.FileMetadata, warnings ...string) error {
@@ -527,10 +533,13 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 				}
 				content := updateFrontmatterField(string(contentBytes), "page", safeNewPage)
 				a.tracker.RegisterWrite(newFile)
-				// Direct write: brand-new path (rename refused an existing
-				// target), so no baseline can key it — conflict-state
-				// migration is owned by renameSingleFile (#1005).
-				return parser.WriteFileAtomic(newFile, []byte(content))
+				// Staged write WITHOUT the baseline steps trackedPageWrite
+				// adds: brand-new path (rename refused an existing target),
+				// so no baseline can key it — conflict-state migration is
+				// owned by renameSingleFile (#1005). writePageStaged still
+				// dispatches per root, so a non-atomic one lands this rewrite
+				// in verified mode (#1009).
+				return a.writePageStaged(newFile, []byte(content))
 			},
 			rewriteInbound: func(heldPaths map[string]bool) {
 				a.rewriteInboundPageLinksWithJournal(source, safeNotebook, safeSection, safeOldPage, safeNotebook, safeSection, safeNewPage, nil, heldPaths)
@@ -623,9 +632,11 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 				// moved) and fall through so the old index entries are cleaned.
 				content := updateFrontmatterField(string(contentBytes), "section", safeTo)
 				a.tracker.RegisterWrite(newFile)
-				// Direct write: brand-new path (see RenamePage's renameStep).
-				if err := parser.WriteFileAtomic(newFile, []byte(content)); err != nil {
-					log.Printf("MovePage: WriteFileAtomic failed at %s (file already moved): %v", newFile, err)
+				// Staged write without the baseline steps, as in RenamePage's
+				// renameStep; writePageStaged still dispatches per root so a
+				// non-atomic one lands the rewrite in verified mode (#1009).
+				if err := a.writePageStaged(newFile, []byte(content)); err != nil {
+					log.Printf("MovePage: page write failed at %s (file already moved): %v", newFile, err)
 				}
 				return nil
 			},

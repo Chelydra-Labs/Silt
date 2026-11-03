@@ -513,6 +513,13 @@ verification read runs inside the same `LockFileWrite` transaction as the
 write and re-baselines the load fingerprint through the `trackedPageWrite`
 choke point (it is Silt's own write, never an external edit), and the
 degraded crash-safety is surfaced once per root as a dismissible notice. The
+dispatch is not limited to editor saves: the rename/move frontmatter
+rewrites, the watcher's own normalization writes (via an injected
+`WritePageFile` writer), and plugin raw page-path writes all route through
+the same per-root dispatcher. Detection coverage is per-OS and explicit:
+NFS/SMB/CIFS/NCP on Linux, NFS/DFS/WebDAV/CBFS/SMB/CIFS on Windows; Linux
+FUSE mounts (sshfs, rclone) and all macOS mounts are currently undetected
+(#1020). The
 `WriteTracker` self-write suppression and the editor focus lock still hold,
 so external (non-Silt) edits to the same file are reconciled by the existing
 diff/lease machinery once both sides land. A vault index must stay on a local
@@ -565,8 +572,10 @@ and explicitly indexed, so it surfaces as a real page rather than a watcher
 ghost; when a sibling write reports a durability error after its rename
 committed, the resolution indexes the landed copy itself) and settles the
 winner per the user's keep-mine / keep-theirs / keep-both choice. The
-rename/move path (`renameWriteFileAtomic`) bypasses the gate by design: moves
-are not content rewrites. Known caveats: `LockFileWrite` serializes only
+rename/move path (`renameWriteFileAtomic`) bypasses the load-baseline gate
+by design: moves are not content rewrites (the post-move content rewrites
+still dispatch per root through the verified-write layer, #1009). Known
+caveats: `LockFileWrite` serializes only
 Silt's own writers — an external write landing between the in-lock stat check
 and the atomic rename is still clobbered; closing that micro-race requires
 cross-process file locking, which is out of scope (and under the

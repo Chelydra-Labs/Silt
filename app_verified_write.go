@@ -63,9 +63,10 @@ func (a *App) detectVerifiedWriteRoots() {
 
 // detectVerifiedWriteRoot probes one root and records the outcome. Idempotent
 // per session (each root is probed at most once, at open or link). A probe
-// error logs and records the root as LOCAL: the verified mode is an
-// enhancement layered on the plain staged write, and an unprobeable root must
-// not lose the ability to write entirely (warn-and-continue, #1009).
+// error records the root as NETWORK: verified mode is strictly additive (the
+// same staged write wrapped in backup + read-back), so an unprobeable root
+// keeps writing AND keeps the safety net rather than silently losing it
+// (warn-and-continue, #1009).
 func (a *App) detectVerifiedWriteRoot(root string) {
 	if root == "" {
 		return

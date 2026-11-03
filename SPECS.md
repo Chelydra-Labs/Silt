@@ -790,9 +790,10 @@ leaves the existing file untouched; a crash during step 4 leaves either the
 old or the new content, never a mixture.
 
 That guarantee is conditional on the rename actually being atomic — which
-local filesystems promise and network mounts (NFS/SMB/FUSE) may not. Silt
-probes each writable root (the vault and every linked notebook) once per
-session; on a detected non-atomic mount, page writes switch to a *verified*
+local filesystems promise and network mounts (NFS/SMB and similar) may not.
+Silt probes each writable root (the vault and every linked notebook) once per
+session with a per-OS detector; on a detected non-atomic mount, page writes
+switch to a *verified*
 mode instead of pretending the guarantee holds: the same staged sequence,
 wrapped with a pre-write backup at `<root>/.system/writebackups/<relPath>`
 (one generation, swept by the next write) and a post-rename read-back
@@ -803,6 +804,13 @@ sentinel naming the retained backup and pending-content copies. The
 degradation is surfaced once per root as a dismissible notice. Backups live
 under `.system/` and never surface as pages. Local filesystems keep the plain
 staged protocol above, unchanged.
+
+Detection coverage is explicit, not universal: the detectors recognize
+NFS/SMB/CIFS/NCP mounts on Linux and NFS/DFS/WebDAV/CBFS/SMB/CIFS on
+Windows. FUSE mounts on Linux (sshfs, rclone, …) and all macOS mounts are
+currently *undetected* — they keep the plain staged protocol and are not
+flagged, even though their renames may not be atomic. Extending the
+detectors is tracked as #1020.
 
 7.1.1 Recovery and destructive operations (Tier 0)
 

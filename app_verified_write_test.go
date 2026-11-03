@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"silt/backend/parser"
+	"silt/backend/vault"
 )
 
 // forceNetworkRoot swaps the detection seam to report every probe as a
@@ -402,4 +403,140 @@ func seedBlocksFrom(t *testing.T, app *App, notebook, section, page, body string
 	}
 	blockID := rows[0].ID
 	return editBlocks(rows, blockID, body)
+}
+
+// F1 (#1009): the rename frontmatter rewrite is a Silt-owned page write, and
+// the old file is already consumed by os.Rename when it runs — a torn write
+// at the new path would be unrecoverable page loss. On a forced-network root
+// the rewrite must land in verified mode: torn → restored to the moved bytes,
+// rewritten content retained as .pending, typed error surfaced.
+func TestVerifiedWrite_RenamePageTornFrontmatterRewriteRestores(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	notebook, section, page := "VNB", "", "TornRename"
+	blockID := "1f1f1f1f-2f2f-4f2f-8f2f-3f3f3f3f3f3f"
+	seedConflictPage(t, app, notebook, section, page, blockID, "rename me safely")
+	oldPath := conflictPagePath(app, notebook, section, page)
+	moved, err := os.ReadFile(oldPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	renames := 0
+	origHook := parser.VerifiedWriteAfterRenameHook
+	parser.VerifiedWriteAfterRenameHook = func(path string) error {
+		renames++
+		if renames <= 2 { // write + retry torn; the restore rename stays clean
+			return os.WriteFile(path, []byte("TORN-PARTIAL"), 0o644)
+		}
+		return nil
+	}
+	t.Cleanup(func() { parser.VerifiedWriteAfterRenameHook = origHook })
+
+	err = app.RenamePage(notebook, section, page, "TornRenameNew")
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeVerifiedWriteFailed {
+		t.Fatalf("want typed %s error, got %v", CodeVerifiedWriteFailed, err)
+	}
+
+	// The moved bytes must sit intact at the new path — no torn partial.
+	newPath := conflictPagePath(app, notebook, section, "TornRenameNew")
+	onDisk, rerr := os.ReadFile(newPath)
+	if rerr != nil {
+		t.Fatalf("new page missing after torn rewrite: %v", rerr)
+	}
+	if string(onDisk) != string(moved) {
+		t.Fatalf("moved bytes not restored at the new path:\n got: %q\nwant: %q", string(onDisk), string(moved))
+	}
+	if _, serr := os.Stat(oldPath); !os.IsNotExist(serr) {
+		t.Errorf("old path still holds a file: %v", serr)
+	}
+	// The rewritten content (new page: frontmatter) is retained for recovery.
+	pending := filepath.Join(app.vaultPath, ".system", "writebackups", notebook, section, "TornRenameNew.md.pending")
+	gotPending, perr := os.ReadFile(pending)
+	if perr != nil {
+		t.Fatalf("no retained pending copy at %s: %v", pending, perr)
+	}
+	if !strings.Contains(string(gotPending), "TornRenameNew") {
+		t.Errorf("pending copy = %q, want the rewritten frontmatter retained", string(gotPending))
+	}
+}
+
+// F1 (#1009): the watcher's normalization write is wired (vault init) to the
+// app's per-root staged-write dispatcher. Runs the real initializeVaultServices
+// so the production wiring is what's under test, then forces a network root
+// via the probe seam and a torn write via the rename hook: the callback must
+// run verified mode and restore the original.
+func TestVerifiedWrite_WatcherNormalizationWriteVerifiedOnNetworkRoot(t *testing.T) {
+	vaultPath := t.TempDir()
+	t.Setenv("SILT_DATA_DIR", t.TempDir())
+	if err := vault.ScaffoldVault(vaultPath); err != nil {
+		t.Fatalf("ScaffoldVault: %v", err)
+	}
+
+	// Swap the probe BEFORE init so the production open path itself records
+	// the root as a network mount.
+	orig := rootNetworkFSCheck
+	rootNetworkFSCheck = func(string) error {
+		return errors.New("network filesystem detected: simulated mount")
+	}
+	t.Cleanup(func() { rootNetworkFSCheck = orig })
+
+	// The note is seeded BEFORE init: a post-init os.WriteFile would fire a
+	// live fsnotify event whose reindex consumes the torn-hook counter below
+	// before the direct call under test runs.
+	filePath := filepath.Join(vaultPath, "Work", "Journal", "Daily.md")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filePath, []byte("# Journal\n\n- [ ] external sync dropped this in\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &App{spacesPerTab: 4}
+	if err := app.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("initializeVaultServices: %v", err)
+	}
+	t.Cleanup(func() { _ = app.CloseVault() })
+
+	if app.watcher == nil || app.watcher.WritePageFile == nil {
+		t.Fatalf("normalization write not wired to the staged-write dispatcher")
+	}
+
+	// The live watcher may reindex this file off its own init-scan events and
+	// call the wired writer concurrently with the direct call under test
+	// (racing the shared torn-hook counter). Suppress it the production way:
+	// an editor holding focus makes reindexFile stand down for the path.
+	app.watcher.LockFocus(filePath)
+	t.Cleanup(func() { app.watcher.UnlockFocus(filePath) })
+
+	original, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	renames := 0
+	origHook := parser.VerifiedWriteAfterRenameHook
+	parser.VerifiedWriteAfterRenameHook = func(path string) error {
+		renames++
+		if renames <= 2 { // write + retry torn; the restore rename stays clean
+			return os.WriteFile(path, []byte("TORN-PARTIAL"), 0o644)
+		}
+		return nil
+	}
+	t.Cleanup(func() { parser.VerifiedWriteAfterRenameHook = origHook })
+
+	err = app.watcher.WritePageFile(filePath, []byte("# Journal\n\n- [ ] external sync dropped this in <!-- id: minted -->\n"))
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeVerifiedWriteFailed {
+		t.Fatalf("want typed %s error, got %v", CodeVerifiedWriteFailed, err)
+	}
+	onDisk, rerr := os.ReadFile(filePath)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(onDisk) != string(original) {
+		t.Fatalf("external content not restored after torn normalization write:\n got: %q\nwant: %q", string(onDisk), string(original))
+	}
 }

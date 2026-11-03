@@ -310,6 +310,10 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// longer match the stored baseline (an external edit landed since the
 	// editor's load — the normalization merely derives from it).
 	watcher.OnPageNormalized = a.refreshFingerprintAfterNormalization
+	// The normalization write itself routes through the app's per-root
+	// staged-write dispatcher, so a detected non-atomic root gets verified
+	// mode for the watcher's own rewrites too (#1009).
+	watcher.WritePageFile = a.writePageStaged
 	if err := watcher.Start(); err != nil {
 		_ = watcher.Close()
 		_ = dbMgr.Close()

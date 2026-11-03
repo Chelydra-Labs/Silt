@@ -1173,3 +1173,62 @@ func TestDirectoryWatcher_NormalizationWriteFiresHook(t *testing.T) {
 		t.Fatalf("hook must observe the pre-write bytes, got %q", hookPrior)
 	}
 }
+
+// TestDirectoryWatcher_NormalizationWriteUsesInjectedWriter pins the #1009
+// routing contract: the normalization rewrite must go through the injected
+// WritePageFile when the app wires its per-root staged-write dispatcher, so a
+// detected non-atomic mount gets verified mode for the watcher's own writes
+// too. A nil callback keeps the plain staged sequence.
+func TestDirectoryWatcher_NormalizationWriteUsesInjectedWriter(t *testing.T) {
+	vaultPath := t.TempDir()
+
+	dm, err := db.NewDatabaseManager("")
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	t.Cleanup(func() { _ = dm.Close() })
+
+	coord := core.NewExecutionCoordinator(dm.SQLDB())
+	tracker := NewWriteTracker()
+	t.Cleanup(tracker.Stop)
+
+	dw, err := NewDirectoryWatcher(vaultPath, dm, tracker, coord, 4)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher: %v", err)
+	}
+
+	var injectedPath string
+	var injectedContent []byte
+	dw.WritePageFile = func(p string, c []byte) error {
+		injectedPath, injectedContent = p, c
+		// The injected writer IS the write step in production; perform it so
+		// the on-disk state matches what was routed through the callback.
+		return os.WriteFile(p, c, 0o644)
+	}
+
+	// Id-less content forces the normalization rewrite (the parse mints id
+	// comments and writes them back).
+	filePath := filepath.Join(vaultPath, "Work", "Journal", "Daily", "2026-06-14.md")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filePath, []byte("# Title\n\n- [ ] no id yet\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	dw.reindexFile(filePath)
+
+	if injectedPath != filePath {
+		t.Fatalf("normalization write must route through the injected writer for its path, got %q", injectedPath)
+	}
+	if !strings.Contains(string(injectedContent), "<!-- id:") {
+		t.Fatalf("injected writer must receive the normalized content, got %q", injectedContent)
+	}
+	onDisk, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read after reindex: %v", err)
+	}
+	if string(injectedContent) != string(onDisk) {
+		t.Fatalf("injected writer's bytes must be what lands on disk:\n injected: %q\n     disk: %q", injectedContent, onDisk)
+	}
+}

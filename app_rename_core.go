@@ -254,10 +254,12 @@ func (a *App) renameTree(prepare func() (renameTreeStrategy, error)) error {
 			for _, file := range files {
 				newPath := filepath.Join(s.newDir, file.relPath)
 				a.tracker.RegisterWrite(newPath)
-				// Direct write (renameWriteFileAtomic): the renameHooks test
-				// seam must intercept the forward write, and the path is
-				// brand-new post-rename — conflict-state migration is owned
-				// by renameTree's success path (#1005).
+				// Forward write via the renameWriteFileAtomic seam (so the
+				// renameHooks tests can intercept it); production dispatch is
+				// per root — a non-atomic root gets verified mode here
+				// (#1009). Baseline refresh stays skipped: brand-new path
+				// post-rename, conflict-state migration is owned by
+				// renameTree's success path (#1005).
 				if err := a.renameWriteFileAtomic(newPath, file.updatedContent); err != nil {
 					runErr = fmt.Errorf("%s: write %s: %w", s.label, file.relPath, err)
 					if rollbackErr := a.rollbackRename(s.oldDir, s.newDir, files, s.rollbackSource, linkJournal, configSnapshot, false); rollbackErr != nil {
