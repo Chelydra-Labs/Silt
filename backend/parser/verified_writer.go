@@ -54,7 +54,12 @@ type VerifiedWriteError struct {
 	Target string
 	// Backup is the pre-write backup path, set only when the backup copy was
 	// actually written ("" when no backup was requested, the page was new, or
-	// the pre-write step failed before any copy existed).
+	// the pre-write step failed before any copy existed). Best-effort at
+	// return: the backup is re-stat'd and re-read inside the failing write,
+	// but the app-layer orphan sweep runs lock-free against error rendering,
+	// so a backup whose target vanished can still be swept after this error
+	// is constructed yet before Error() renders — the unconditional .pending
+	// retention keeps the unsaved text recoverable either way.
 	Backup string
 	// Pending is where the incoming bytes were retained (backupPath +
 	// ".pending"; "" when retention itself failed — see RetentionErr — or no
