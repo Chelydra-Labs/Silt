@@ -102,7 +102,10 @@ export interface TabManagerController {
   handleReorderTab: (fromId: string, toId: string, before: boolean) => void
   handleCycleTab: (dir: 1 | -1) => void
   handleToggleViewMode: (tabId: string) => void
-  selectNotebookContext: (notebook: string) => void
+  // Refused-open contract (#1005): false = the user declined to leave an
+  // unsaved templates draft, so nothing switched and callers must not apply
+  // their nav writes (displayedTabs would desync from activeTabId).
+  selectNotebookContext: (notebook: string) => boolean
   syncActiveFromTab: () => void
   pageRenamed: (detail: PageRenamedDetail) => void
   /** Repoint a page's section across the open tabs (sidebar drag, #177). */
@@ -298,8 +301,8 @@ export function createTabManager(deps: TabManagerDeps): TabManagerController {
     schedulePersistTabs()
   }
 
-  function selectNotebookContext(notebook: string): void {
-    if (!deps.confirmTemplateTransition()) return
+  function selectNotebookContext(notebook: string): boolean {
+    if (!deps.confirmTemplateTransition()) return false
     deps.setActiveNotebook(notebook)
     const notebookTabs = openTabs
       .filter((tab) => tab.notebook === notebook)
@@ -310,6 +313,7 @@ export function createTabManager(deps: TabManagerDeps): TabManagerController {
       deps.setActiveSection('')
       deps.setActivePage('')
     }
+    return true
   }
 
   function handleSelectTab(id: string): void {

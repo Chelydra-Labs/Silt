@@ -1161,8 +1161,7 @@
             // resolution is in flight (#1005). The boolean feeds the
             // sidebar's refused-open contract.
             if (anyTabConflictBusy) return false
-            tabManager.selectNotebookContext(nb)
-            return true
+            return tabManager.selectNotebookContext(nb)
           }}
           onSelectSection={(sec) => (activeSection = sec)}
           onSelectPage={(nb, sec, pg) =>

@@ -307,3 +307,49 @@ describe('useTabManager — tasks-view routing refused-open contract (#1005)', (
     }
   })
 })
+
+describe('useTabManager — selectNotebookContext refused-open contract (#1005)', () => {
+  let destroy: (() => void) | undefined
+
+  afterEach(() => {
+    destroy?.()
+    destroy = undefined
+  })
+
+  function makeTabs(confirm: boolean): {
+    deps: TabManagerDeps
+    tabs: TabManagerController
+  } {
+    const deps = makeDeps()
+    deps.confirmTemplateTransition = () => confirm
+    let tabs!: TabManagerController
+    destroy = $effect.root(() => {
+      tabs = createTabManager(deps)
+    })
+    return { deps, tabs }
+  }
+
+  it('reports false and keeps the context when the template confirm declines', () => {
+    const { deps, tabs } = makeTabs(false)
+    tabs.openPage({ notebook: 'Work', section: 'Inbox', page: 'Alpha' }, 'pin')
+    const landed = tabs.selectNotebookContext('Personal')
+    // A declined confirm must read as a refused switch, not a landing —
+    // sidebar callers gate their nav writes on this boolean.
+    expect(landed).toBe(false)
+    expect(deps.getActiveNotebook()).toBe('Work')
+    expect(tabs.displayedTabs.map((t) => t.page)).toEqual(['Alpha'])
+  })
+
+  it('reports true and switches context when the template confirm allows it', () => {
+    const { deps, tabs } = makeTabs(true)
+    tabs.openPage({ notebook: 'Work', section: 'Inbox', page: 'Alpha' }, 'pin')
+    tabs.openPage(
+      { notebook: 'Personal', section: 'Day', page: 'Diary' },
+      'pin'
+    )
+    const landed = tabs.selectNotebookContext('Work')
+    expect(landed).toBe(true)
+    expect(deps.getActiveNotebook()).toBe('Work')
+    expect(tabs.displayedTabs.map((t) => t.page)).toEqual(['Alpha'])
+  })
+})
