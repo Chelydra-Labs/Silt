@@ -4,7 +4,7 @@ import {
   type PersistedTabsPayload,
   type TabPersistenceDeps
 } from './persistence.svelte'
-import type { TabEntry } from '../tabs'
+import type { TabEntry, ViewMode } from '../tabs'
 
 // Canonical IPC-boundary mock (AGENTS.md): the Wails binding is stubbed so the
 // sequence guard and the locator-key logic are exercised without real IPC.
@@ -197,6 +197,126 @@ describe('tab persistence invariants', () => {
       busy.clear()
       persistence.applyDeferredTabRehydrate()
       expect(deps.setTabViewMode).toHaveBeenCalledWith('tab1', 'source')
+    })
+
+    // The deferred snapshot is stale by definition: anything the user did
+    // inside the busy window is newer. A view-mode toggle is allowed on any
+    // non-busy tab and persists immediately, so replaying the snapshot over
+    // it would revert the toggle through the non-persisting reconcile dep
+    // and leave memory and disk diverged (#1005).
+    it('does not replay the deferred snapshot over a user view-mode toggle made inside the window', async () => {
+      const busy = new Set<string>(['tabA'])
+      const tabs: TabEntry[] = [
+        {
+          id: 'tabA',
+          notebook: 'nb',
+          section: '',
+          page: 'p1',
+          preview: false,
+          lastActivatedAt: 1,
+          viewMode: 'edit'
+        },
+        {
+          id: 'tabB',
+          notebook: 'nb',
+          section: '',
+          page: 'p2',
+          preview: false,
+          lastActivatedAt: 0,
+          viewMode: 'edit'
+        }
+      ]
+      const setTabViewMode = vi.fn((id: string, mode: ViewMode) => {
+        const tab = tabs.find((t) => t.id === id)
+        if (tab) tab.viewMode = mode
+      })
+      const persistence = createTabPersistence({
+        ...deps,
+        getTabs: vi.fn(() => tabs),
+        setTabViewMode,
+        getConflictBusyTabIds: () => busy
+      })
+      persistence.initBaseline([
+        { notebook: 'nb', section: '', page: 'p1' },
+        { notebook: 'nb', section: '', page: 'p2' }
+      ])
+
+      // External edit flips p1 to 'source' while tabA resolves → deferred.
+      persistence.handleConfigChangedTabRehydrate({
+        ui: {
+          open_tabs: [
+            { notebook: 'nb', section: '', page: 'p1', view_mode: 'source' },
+            { notebook: 'nb', section: '', page: 'p2', view_mode: 'edit' }
+          ]
+        }
+      })
+      expect(setTabViewMode).not.toHaveBeenCalled()
+
+      // The user toggles non-busy tabB to 'source' mid-window; the app
+      // persists that choice via its own schedulePersistTabs.
+      tabs[1].viewMode = 'source'
+
+      // Drain: p1's external flip applies, tabB's in-window toggle does
+      // not revert to the snapshot's stale 'edit'.
+      busy.clear()
+      persistence.applyDeferredTabRehydrate()
+      expect(setTabViewMode).toHaveBeenCalledTimes(1)
+      expect(setTabViewMode).toHaveBeenCalledWith('tabA', 'source')
+      expect(tabs[1].viewMode).toBe('source')
+
+      // The applied state persists: the user's mid-window persist rewrote
+      // the whole tab list and could have clobbered the external
+      // view_mode on disk, so the drain re-persists.
+      mocks.SetOpenTabs.mockClear()
+      persistence.flushPendingPersist()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(mocks.SetOpenTabs).toHaveBeenCalledTimes(1)
+      expect(mocks.SetOpenTabs.mock.calls[0][0]).toEqual([
+        expect.objectContaining({ page: 'p1', view_mode: 'source' }),
+        expect.objectContaining({ page: 'p2', view_mode: 'source' })
+      ])
+    })
+
+    // prevOpenTabsKey must track the app's own persistTabs writes: without
+    // the re-pin, the baseline goes stale after any in-app pinned-tab
+    // change and the next equal-set config echo is misread as a locator
+    // diff — deferred during busy and rebuilt at drain for nothing (fresh
+    // tab ids, every editor surface remounts).
+    it('an app-persisted tab set keeps the locator baseline fresh: an equal-set config echo neither defers nor rebuilds', async () => {
+      const busy = new Set<string>(['tabA'])
+      const tabs: TabEntry[] = [
+        {
+          id: 'tabA',
+          notebook: 'nb',
+          section: '',
+          page: 'p1',
+          preview: false,
+          lastActivatedAt: 0,
+          viewMode: 'edit'
+        }
+      ]
+      const persistence = createTabPersistence({
+        ...deps,
+        getTabs: vi.fn(() => tabs),
+        getConflictBusyTabIds: () => busy
+      })
+      // Boot baseline predates the app's own pinned-tab write.
+      persistence.initBaseline([])
+
+      // The app persists its current pinned set.
+      await persistence.persistTabs()
+
+      // An external config event whose locator set equals the now-persisted
+      // in-memory tabs must classify as a no-op — nothing defers, so the
+      // drain rebuilds nothing (GetOpenTabs is the rebuild fetch).
+      persistence.handleConfigChangedTabRehydrate({
+        ui: { open_tabs: [{ notebook: 'nb', section: '', page: 'p1' }] }
+      })
+      busy.clear()
+      persistence.applyDeferredTabRehydrate()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(mocks.GetOpenTabs).not.toHaveBeenCalled()
+      expect(deps.setTabs).not.toHaveBeenCalled()
     })
   })
 })

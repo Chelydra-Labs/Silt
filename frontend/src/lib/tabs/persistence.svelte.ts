@@ -74,6 +74,16 @@ function tabSetKey(
     .join('|')
 }
 
+/** Locator identity of a tab — the key the deferred view-mode baseline and
+ * the config reconcile both match tabs by (tab ids churn on rebuild). */
+function tabLocatorKey(t: {
+  notebook: string
+  section: string
+  page: string
+}): string {
+  return `${t.notebook}\x00${t.section}\x00${t.page}`
+}
+
 /**
  * Build the persistence/hydration helpers bound to App's reactive tab state.
  * Returns the public surface App consumes; the timers, sequence guard, and
@@ -83,7 +93,10 @@ export function createTabPersistence(deps: TabPersistenceDeps) {
   let persistTabsTimer: ReturnType<typeof setTimeout> | null = null
   // Snapshot of the persisted open_tabs list for config:changed change
   // detection. Kept here so loadPersistedTabs can update it alongside the
-  // in-memory hydration (prevents a re-hydrate cycle).
+  // in-memory hydration (prevents a re-hydrate cycle), and re-pinned by
+  // persistTabs after every successful SetOpenTabs so it tracks what is
+  // actually on disk — a stale baseline misreads an equal-set config echo
+  // as a locator diff and rebuilds the tab strip for nothing.
   let prevOpenTabsKey = ''
 
   // Monotonic request sequence for loadPersistedTabs. Only the most-recent
@@ -95,6 +108,17 @@ export function createTabPersistence(deps: TabPersistenceDeps) {
   // conflict-busy (see handleConfigChangedTabRehydrate). Null = nothing
   // pending; a newer config:changed overwrites an older deferred one.
   let deferredRehydrateCfg: TabRehydrateConfig | undefined | null = null
+
+  // In-memory view modes by locator, snapshotted when the current busy
+  // window's FIRST deferral landed (#1005). At drain, a tab whose mode has
+  // moved off this baseline was toggled by the user mid-window — a toggle
+  // that already persisted — so replaying the deferred snapshot over it
+  // would silently revert it through the non-persisting reconcile dep and
+  // leave memory and disk diverged. Re-snapshotting on every overwrite
+  // would re-adopt mid-window toggles as "baseline", so it is captured
+  // only when there was nothing pending. A plain record, not SvelteMap:
+  // never read in a reactive context, just compared at drain.
+  let deferredViewModeBaseline: Record<string, ViewMode> | null = null
 
   // #1005 conflict-busy probes. Optional dep: absence (bare test rigs)
   // means "nothing busy".
@@ -141,6 +165,10 @@ export function createTabPersistence(deps: TabPersistenceDeps) {
             }
           : null
       )
+      // Disk now holds exactly `pinned` — pin the locator baseline to it so
+      // the app's own write echo classifies as the no-op it is (see
+      // prevOpenTabsKey).
+      prevOpenTabsKey = tabSetKey(pinned)
     } catch (e) {
       console.error('SetOpenTabs failed:', e)
     }
@@ -237,6 +265,11 @@ export function createTabPersistence(deps: TabPersistenceDeps) {
       // frontend's own persistTabs echo is a no-op against the last-applied
       // state and must not overwrite a deferred external diff.
       if (configWouldApplyChanges(cfg)) {
+        if (deferredRehydrateCfg === null) {
+          deferredViewModeBaseline = Object.fromEntries(
+            deps.getTabs().map((t) => [tabLocatorKey(t), t.viewMode])
+          )
+        }
         deferredRehydrateCfg = cfg
       }
       return
@@ -275,15 +308,27 @@ export function createTabPersistence(deps: TabPersistenceDeps) {
     if (deferredRehydrateCfg === null) return
     if (busyTabCount() > 0) return
     const cfg = deferredRehydrateCfg
+    const viewModesAtDefer = deferredViewModeBaseline
     deferredRehydrateCfg = null
-    applyTabRehydrate(cfg)
+    deferredViewModeBaseline = null
+    if (applyTabRehydrate(cfg, viewModesAtDefer)) {
+      // The snapshot predates the busy window: the user's own mid-window
+      // persist rewrites the whole tab list and may have clobbered the
+      // external view_mode on disk. Re-persist so the applied state lands.
+      schedulePersistTabs()
+    }
   }
 
-  function applyTabRehydrate(cfg: TabRehydrateConfig | undefined): void {
+  function applyTabRehydrate(
+    cfg: TabRehydrateConfig | undefined,
+    skipUserToggledViewModes?: Record<string, ViewMode> | null
+  ): boolean {
+    let applied = false
     const nextTabsKey = tabSetKey(cfg?.ui?.open_tabs)
     if (nextTabsKey !== prevOpenTabsKey) {
       prevOpenTabsKey = nextTabsKey
       void loadPersistedTabs()
+      applied = true
     }
     const externalTabs = cfg?.ui?.open_tabs ?? []
     if (externalTabs.length > 0) {
@@ -301,13 +346,24 @@ export function createTabPersistence(deps: TabPersistenceDeps) {
           // the deferred re-run (or the next config:changed) reconciles it.
           continue
         }
+        if (skipUserToggledViewModes) {
+          // Deferred replay only (#1005): a mode that moved since the
+          // snapshot was taken — or a tab that did not exist at snapshot
+          // time — is user-owned mid-window state; the snapshot's value
+          // for it is stale and must not replay.
+          const atDefer = skipUserToggledViewModes[tabLocatorKey(tab)]
+          if (atDefer === undefined || atDefer !== tab.viewMode) continue
+        }
         const mode: ViewMode = ref.view_mode === 'source' ? 'source' : 'edit'
         if (tab.viewMode !== mode) {
           deps.setTabViewMode(tab.id, mode)
-          // Do NOT schedulePersistTabs — this change is already on disk.
+          applied = true
+          // No schedulePersistTabs here — the immediate path's cfg is
+          // already on disk, and the deferred path persists at the drain.
         }
       }
     }
+    return applied
   }
 
   /**
