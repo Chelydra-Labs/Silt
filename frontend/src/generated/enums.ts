@@ -68,7 +68,8 @@ export const IPCErrorCode = {
   CodeNavigationDuplicate: 'navigation_duplicate',
   CodeNavigationReveal: 'navigation_reveal_failed',
   CodeAmbiguousTarget: 'ambiguous_target',
-  CodeExternalEditConflict: 'external_edit_conflict'
+  CodeExternalEditConflict: 'external_edit_conflict',
+  CodeVerifiedWriteFailed: 'verified_write_failed'
 } as const
 
 export type IPCErrorCode = (typeof IPCErrorCode)[keyof typeof IPCErrorCode]
@@ -88,7 +89,8 @@ export const IPCErrorCodeNames = [
   'CodePageHistoryExists',
   'CodePageStillExists',
   'CodePageWriteStale',
-  'CodeVaultClosing'
+  'CodeVaultClosing',
+  'CodeVerifiedWriteFailed'
 ] as const
 
 // EventName — generated from the Go const block. Do not edit by hand.
@@ -116,6 +118,7 @@ export const EventName = {
   EventVaultInitWarnings: 'vault:init-warnings',
   EventVaultWatchCoverage: 'vault:watch-coverage',
   EventVaultArchiveProgress: 'vault:archive:progress',
+  EventStorageVerifiedWrite: 'storage:verified-write',
   EventIndexReMintWarning: 'index:re-mint-warning',
   EventPageLinksRewritten: 'page-links:rewritten',
   EventUpdateDownloadProgress: 'update:download:progress',
@@ -164,6 +167,7 @@ export const EventNameNames = [
   'EventSecurityEvent',
   'EventSettingsFingerprintMismatch',
   'EventSpellcheckDownloadProgress',
+  'EventStorageVerifiedWrite',
   'EventTemplatesChanged',
   'EventThemeChanged',
   'EventThemeFilesDropped',

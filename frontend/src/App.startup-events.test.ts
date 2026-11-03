@@ -27,6 +27,12 @@ import {
 // exactly as App registered it (mirrors App.menu-save.test.ts).
 const eventHandlers = new Map<string, (...args: unknown[]) => void>()
 
+// settings store mock handle: the verified-write tip's "Don't show again"
+// action routes through appendDismissedTip (#1009).
+const settingsMocks = vi.hoisted(() => ({
+  appendDismissedTip: vi.fn(async () => true)
+}))
+
 const bindings = vi.hoisted(() => ({
   IsVaultInitialized: vi.fn(async () => false),
   GetOpenTabs: vi.fn(
@@ -109,7 +115,8 @@ vi.mock('./settings/store.svelte', () => ({
   initConfigHotReload: vi.fn(() => () => {}),
   toggleFormatToolbar: vi.fn(async () => true),
   toggleFocusMode: vi.fn(async () => true),
-  toggleTypewriterMode: vi.fn(async () => true)
+  toggleTypewriterMode: vi.fn(async () => true),
+  appendDismissedTip: settingsMocks.appendDismissedTip
 }))
 vi.mock('./theme/store.svelte', () => ({ initThemes: vi.fn(() => () => {}) }))
 vi.mock('./templates/store.svelte', () => ({
@@ -315,5 +322,64 @@ describe('startup events (golden master)', () => {
     await waitFor(() =>
       expect(hasNotification((m) => /only-via-replay/.test(m))).toBe(true)
     )
+  })
+
+  // --- storage:verified-write (#1009): one-time degraded-safety tip --------
+  it('shows the verified-write tip live, sticky, with a persistent dismiss action', async () => {
+    await mountApp()
+    emitLive(EventName.EventStorageVerifiedWrite, {
+      root: '/mnt/nas/vault',
+      tip_id: 'verified_write_network_abc123def456'
+    })
+    await waitFor(() =>
+      expect(
+        hasNotification((m) =>
+          /Writes to \/mnt\/nas\/vault use verified mode/.test(m)
+        )
+      ).toBe(true)
+    )
+    const tip = notificationsState.items.find((n) =>
+      /use verified mode/.test(n.message)
+    )
+    expect(tip).toBeDefined()
+    // Sticky: the notice must outlive the default 5s so an in-flight save
+    // flow cannot silently drop it.
+    expect(tip!.autoDismissMs).toBe(0)
+    expect(tip!.action?.label).toBe("Don't show again")
+    await tip!.action!.run()
+    expect(settingsMocks.appendDismissedTip).toHaveBeenCalledWith(
+      'verified_write_network_abc123def456'
+    )
+  })
+
+  it('replays a queued verified-write tip through the same handler', async () => {
+    bindings.GetStartupEvents.mockResolvedValue([
+      {
+        Name: EventName.EventStorageVerifiedWrite,
+        Payload: { root: '/mnt/share', tip_id: 'verified_write_network_1' }
+      }
+    ])
+    await mountApp()
+    await waitFor(() =>
+      expect(
+        hasNotification((m) =>
+          /Writes to \/mnt\/share use verified mode/.test(m)
+        )
+      ).toBe(true)
+    )
+  })
+
+  it('ignores a malformed verified-write payload (no partial tip)', async () => {
+    await mountApp()
+    emitLive(EventName.EventStorageVerifiedWrite, undefined)
+    emitLive(EventName.EventStorageVerifiedWrite, { root: '/x' })
+    await tick()
+    expect(notificationsState.items).toHaveLength(0)
+  })
+
+  it('shows no verified-write tip when the backend never emits (local roots)', async () => {
+    await mountApp()
+    await tick()
+    expect(notificationsState.items).toHaveLength(0)
   })
 })
