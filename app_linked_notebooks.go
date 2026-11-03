@@ -119,6 +119,9 @@ func (a *App) LinkNotebook(folderPath string) (config.LinkedNotebook, error) {
 	if a.watcher != nil {
 		_ = a.watcher.AddWatchRoot(ln.RootPath, ln.Source(), ln.DisplayName)
 	}
+	// #1009: probe the new root so its writes pick the right staged mode from
+	// the first save; a network root also logs + tips on first write.
+	a.detectVerifiedWriteRoot(ln.RootPath)
 	if _, idxErr := a.indexLinkedTree(ln); idxErr != nil {
 		log.Printf("LinkNotebook(%s): indexTree failed: %v (link registered; will retry on next change)", ln.DisplayName, idxErr)
 	}
@@ -173,6 +176,9 @@ func (a *App) UnlinkNotebook(id string) error {
 	// releasing configMu so the dedicated linkedConfigsMu is the only lock
 	// held (no nested locking).
 	a.invalidateLinkedConfig("linked:" + id)
+	// #1009: drop the root's storage probe too — the root is no longer
+	// writable through Silt, and a re-link re-probes.
+	a.forgetVerifiedWriteRoot(rootPath)
 
 	if a.watcher != nil && rootPath != "" {
 		a.watcher.RemoveWatchRoot(rootPath)

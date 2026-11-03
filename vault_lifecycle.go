@@ -63,6 +63,9 @@ func (a *App) teardownVaultServices() {
 	// path: a stash into a closed vault can never resolve and would hijack a
 	// same-named page after a reopen (#1005).
 	a.clearConflictState()
+	// Root storage probes are vault-session state too: the next vault's roots
+	// (and its linked roots) are re-probed at open (#1009).
+	a.clearVerifiedWriteRoots()
 	// Drop Dev Mode menu enablement unless SILT_DEBUG keeps it on (#684).
 	a.syncOpenDevToolsMenuItemEnabled(strings.EqualFold(os.Getenv("SILT_DEBUG"), "1"))
 	// Session security aggregates are vault-scoped in practice; clear on

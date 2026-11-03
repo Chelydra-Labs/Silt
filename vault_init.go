@@ -131,6 +131,12 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	a.configMu.Unlock()
 	a.verifyLinkedNotebookFingerprints()
 
+	// #1009: probe each writable root (vault + linked) once per session so
+	// page writes on non-atomic mounts route through the verified staged
+	// writer. After the fingerprint pass above, quarantined links are already
+	// excluded. Warn-and-continue: detection never blocks the open.
+	a.detectVerifiedWriteRoots()
+
 	// storageWarnings collects non-fatal caveats surfaced during vault init:
 	// the index relocation/migration notes (paths.ResolveAndMigrateIndexPath,
 	// below) and the DB layer's WAL-fallback warning (dbMgr.Warnings, below).

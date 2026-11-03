@@ -1,0 +1,405 @@
+package main
+
+// Verified-write mode tests (#1009): per-root detection through the
+// rootNetworkFSCheck seam, the trackedPageWrite dispatch (verified roots get
+// backup+verify, local roots stay on the plain staged sequence), the typed
+// hard-failure error, hazard-2 fingerprint refresh inside the write
+// transaction, backup invisibility to indexing, and the one-time tip event.
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"silt/backend/parser"
+)
+
+// forceNetworkRoot swaps the detection seam to report every probe as a
+// network mount (a CI temp dir cannot reproduce one) and registers the probe
+// outcome for root.
+func forceNetworkRoot(t *testing.T, app *App, root string) {
+	t.Helper()
+	orig := rootNetworkFSCheck
+	rootNetworkFSCheck = func(string) error {
+		return errors.New("network filesystem detected: simulated mount")
+	}
+	t.Cleanup(func() { rootNetworkFSCheck = orig })
+	app.detectVerifiedWriteRoot(root)
+}
+
+// captureVerifiedTipEvents swaps the event emitter and marks the frontend
+// ready so emitOrQueue emits live; returns a collector for
+// storage:verified-write payloads.
+func captureVerifiedTipEvents(t *testing.T, app *App) *[]VerifiedWriteTipPayload {
+	t.Helper()
+	var got []VerifiedWriteTipPayload
+	orig := app.eventEmit
+	app.eventEmit = func(name string, data ...any) {
+		if name == string(EventStorageVerifiedWrite) {
+			if p, ok := data[0].(VerifiedWriteTipPayload); ok {
+				got = append(got, p)
+			}
+		}
+	}
+	t.Cleanup(func() { app.eventEmit = orig })
+	app.startupEventsMu.Lock()
+	app.frontendReady = true
+	app.startupEventsMu.Unlock()
+	t.Cleanup(func() {
+		app.startupEventsMu.Lock()
+		app.frontendReady = false
+		app.startupEventsMu.Unlock()
+	})
+	return &got
+}
+
+// 1. Forced network FS → verified write: backup created, verify passes, and
+// the backup generation is swept (replaced) by the next write.
+func TestVerifiedWrite_ForcedNetworkBackupCreatedAndSwept(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	notebook, section, page := "VNB", "Sub", "BackupSweep"
+	blockID := "ccccccc3-cccc-4ccc-8ccc-cccccccccccc"
+	seedConflictPage(t, app, notebook, section, page, blockID, "first body")
+	filePath := conflictPagePath(app, notebook, section, page)
+	original, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup := filepath.Join(app.vaultPath, ".system", "writebackups", notebook, section, page+".md")
+
+	// First verified write: the pre-write (seed) bytes become the backup.
+	blocks2 := seedBlocksFrom(t, app, notebook, section, page, "second body")
+	if err := app.SaveFileBlocks(notebook, section, page, blocks2); err != nil {
+		t.Fatalf("verified save 1: %v", err)
+	}
+	gotBackup, err := os.ReadFile(backup)
+	if err != nil {
+		t.Fatalf("backup after write 1: %v", err)
+	}
+	if string(gotBackup) != string(original) {
+		t.Errorf("backup after write 1 = %q, want the pre-write bytes", string(gotBackup))
+	}
+
+	// Second verified write: the backup generation is swept — it now holds
+	// write 1's result, not the seed bytes.
+	blocks3 := seedBlocksFrom(t, app, notebook, section, page, "third body")
+	if err := app.SaveFileBlocks(notebook, section, page, blocks3); err != nil {
+		t.Fatalf("verified save 2: %v", err)
+	}
+	gotBackup, err = os.ReadFile(backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotBackup) == string(original) {
+		t.Errorf("backup still holds the swept generation after write 2")
+	}
+	if !strings.Contains(string(gotBackup), "second body") {
+		t.Errorf("backup after write 2 = %q, want write 1's content", string(gotBackup))
+	}
+	onDisk, _ := os.ReadFile(filePath)
+	if !strings.Contains(string(onDisk), "third body") {
+		t.Errorf("target = %q, want write 2's content", string(onDisk))
+	}
+}
+
+// 2. Torn destination (write + retry both torn, restore clean) → typed error,
+// original intact, pending copy retained, no partial page.
+func TestVerifiedWrite_TornDestinationRestoresOriginal(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	notebook, section, page := "VNB", "", "TornDest"
+	blockID := "ddddddd4-dddd-4ddd-8ddd-dddddddddddd"
+	seedConflictPage(t, app, notebook, section, page, blockID, "original body")
+	filePath := conflictPagePath(app, notebook, section, page)
+	original, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	renames := 0
+	origHook := parser.VerifiedWriteAfterRenameHook
+	parser.VerifiedWriteAfterRenameHook = func(path string) error {
+		renames++
+		if renames <= 2 { // write + retry torn; the restore rename stays clean
+			return os.WriteFile(path, []byte("TORN-PARTIAL"), 0o644)
+		}
+		return nil
+	}
+	t.Cleanup(func() { parser.VerifiedWriteAfterRenameHook = origHook })
+
+	blocks := seedBlocksFrom(t, app, notebook, section, page, "my precious new text")
+	err = app.SaveFileBlocks(notebook, section, page, blocks)
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeVerifiedWriteFailed {
+		t.Fatalf("want typed %s error, got %v", CodeVerifiedWriteFailed, err)
+	}
+
+	onDisk, rerr := os.ReadFile(filePath)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(onDisk) != string(original) {
+		t.Fatalf("original not restored:\n got: %q\nwant: %q", string(onDisk), string(original))
+	}
+	pendingPath := filepath.Join(app.vaultPath, ".system", "writebackups", notebook, section, page+".md.pending")
+	pending, perr := os.ReadFile(pendingPath)
+	if perr != nil {
+		t.Fatalf("no retained pending copy at %s: %v", pendingPath, perr)
+	}
+	if !strings.Contains(string(pending), "my precious new text") {
+		t.Errorf("pending copy = %q, want the new text retained", string(pending))
+	}
+	if !strings.Contains(ipc.Message, ".system") || !strings.Contains(ipc.Message, "writebackups") {
+		t.Errorf("error must name where the retained copies live: %q", ipc.Message)
+	}
+}
+
+// 3. Hard failure (restore also torn) → typed error, backup + pending both
+// retained on disk for manual recovery.
+func TestVerifiedWrite_HardFailureRetainsTempAndBackup(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	notebook, section, page := "VNB", "", "HardFail"
+	blockID := "eeeeeee5-eeee-4eee-8eee-eeeeeeeeeeee"
+	seedConflictPage(t, app, notebook, section, page, blockID, "keep me safe")
+	backup := filepath.Join(app.vaultPath, ".system", "writebackups", notebook, section, page+".md")
+
+	origHook := parser.VerifiedWriteAfterRenameHook
+	parser.VerifiedWriteAfterRenameHook = func(path string) error {
+		// Every rename on this mount tears.
+		return os.WriteFile(path, []byte("TORN"), 0o644)
+	}
+	t.Cleanup(func() { parser.VerifiedWriteAfterRenameHook = origHook })
+
+	blocks := seedBlocksFrom(t, app, notebook, section, page, "doomed write")
+	err := app.SaveFileBlocks(notebook, section, page, blocks)
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeVerifiedWriteFailed {
+		t.Fatalf("want typed %s error, got %v", CodeVerifiedWriteFailed, err)
+	}
+	if got, rerr := os.ReadFile(backup); rerr != nil || !strings.Contains(string(got), "keep me safe") {
+		t.Errorf("backup not retained: %v", rerr)
+	}
+	if got, rerr := os.ReadFile(backup + ".pending"); rerr != nil || !strings.Contains(string(got), "doomed write") {
+		t.Errorf("pending copy not retained: %v", rerr)
+	}
+}
+
+// 4. Local root (#1009 AC3): NO backup, NO read-back (counter seam), the
+// plain staged sequence is unchanged.
+func TestVerifiedWrite_LocalRootPlainSequenceUnchanged(t *testing.T) {
+	app := newTestApp(t)
+	orig := rootNetworkFSCheck
+	rootNetworkFSCheck = func(string) error { return nil }
+	t.Cleanup(func() { rootNetworkFSCheck = orig })
+	app.detectVerifiedWriteRoot(app.vaultPath)
+
+	var verifiedPasses atomic.Int64
+	origHook := parser.VerifiedWriteAfterRenameHook
+	parser.VerifiedWriteAfterRenameHook = func(path string) error {
+		verifiedPasses.Add(1)
+		return nil
+	}
+	t.Cleanup(func() { parser.VerifiedWriteAfterRenameHook = origHook })
+
+	notebook, section, page := "VNB", "", "LocalPlain"
+	blockID := "fffffff6-ffff-4fff-8fff-ffffffffffff"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "local body")
+
+	edited := editBlocks(blocks, blockID, "local body edited")
+	if err := app.SaveFileBlocks(notebook, section, page, edited); err != nil {
+		t.Fatalf("local save: %v", err)
+	}
+	if n := verifiedPasses.Load(); n != 0 {
+		t.Errorf("verified mode ran on a local root (%d rename hooks fired)", n)
+	}
+	if _, err := os.Stat(filepath.Join(app.vaultPath, ".system", "writebackups")); !os.IsNotExist(err) {
+		t.Errorf("local write created backups: %v", err)
+	}
+	onDisk, _ := os.ReadFile(conflictPagePath(app, notebook, section, page))
+	if !strings.Contains(string(onDisk), "local body edited") {
+		t.Errorf("target = %q, want the edited body", string(onDisk))
+	}
+}
+
+// 5. Hazard 2: a verified write refreshes the load fingerprint inside the
+// same transaction — the next editor save is clean — while a real external
+// edit afterwards still refuses (the gate is not disarmed).
+func TestVerifiedWrite_Hazard2FingerprintRefreshedInTransaction(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "VNB", "", "HazTwo"
+	blockID := "11111111-2222-4333-8444-555555555555"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "base body")
+
+	// Editor load — snapshots the baseline the gate checks against.
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	// Verified write through the funnel (Silt's own write).
+	first := editBlocks(blocks, blockID, "verified edit one")
+	if err := app.SaveFileBlocks(notebook, section, page, first); err != nil {
+		t.Fatalf("verified save: %v", err)
+	}
+
+	// The next editor save must pass cleanly: the post-write fingerprint
+	// refresh happened inside the same lock as the verification read.
+	second := editBlocks(blocks, blockID, "verified edit two")
+	if err := app.SaveFileBlocks(notebook, section, page, second); err != nil {
+		t.Fatalf("subsequent save after verified write was not clean (fingerprint not refreshed): %v", err)
+	}
+
+	// A genuine external edit still refuses — refresh did not disarm the gate.
+	filePath := conflictPagePath(app, notebook, section, page)
+	external := "---\nnotebook: \"VNB\"\nsection: \"\"\npage: \"HazTwo\"\ndate: \"2026-01-01\"\ntags: []\n---\nexternal rewrite <!-- id: 99999999-8888-4777-8666-555555555555 -->\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	third := editBlocks(blocks, blockID, "my unsaved text")
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page, third))
+}
+
+// 6. Backups under .system/ never surface as pages (WalkMarkdown feeds every
+// indexing path, cold start and link alike).
+func TestVerifiedWrite_BackupsNeverIndexed(t *testing.T) {
+	vaultRoot := t.TempDir()
+	linkedRoot := t.TempDir()
+	for _, root := range []string{vaultRoot, linkedRoot} {
+		nb := filepath.Join(root, "NB")
+		if err := os.MkdirAll(nb, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(nb, "real.md"), []byte("real page\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		backup := filepath.Join(root, ".system", "writebackups", "NB", "real.md")
+		if err := os.MkdirAll(filepath.Dir(backup), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(backup, []byte("backup copy\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(backup+".pending", []byte("pending copy\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, root := range []string{vaultRoot, linkedRoot} {
+		files, _, err := parser.WalkMarkdown(root)
+		if err != nil {
+			t.Fatalf("WalkMarkdown(%s): %v", root, err)
+		}
+		for _, f := range files {
+			if strings.Contains(f, ".system") {
+				t.Errorf("backup surfaced as a page: %s", f)
+			}
+		}
+		if len(files) != 1 {
+			t.Errorf("WalkMarkdown(%s) = %v, want exactly the real page", root, files)
+		}
+	}
+}
+
+// Detection at link time + forget at unlink.
+func TestVerifiedWrite_LinkDetectionLifecycle(t *testing.T) {
+	app := newTestApp(t)
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "notes", "a.md"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := rootNetworkFSCheck
+	rootNetworkFSCheck = func(p string) error {
+		if p == root {
+			return errors.New("simulated network mount")
+		}
+		return nil
+	}
+	t.Cleanup(func() { rootNetworkFSCheck = orig })
+
+	ln, err := app.LinkNotebook(root)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+	app.verifiedRootsMu.RLock()
+	network := app.rootStorageProbes[root]
+	app.verifiedRootsMu.RUnlock()
+	if !network {
+		t.Fatalf("linked network root not detected at link time")
+	}
+
+	if err := app.UnlinkNotebook(ln.ID); err != nil {
+		t.Fatalf("UnlinkNotebook: %v", err)
+	}
+	app.verifiedRootsMu.RLock()
+	_, probed := app.rootStorageProbes[root]
+	app.verifiedRootsMu.RUnlock()
+	if probed {
+		t.Errorf("unlink left the root's storage probe behind")
+	}
+}
+
+// Tip: emitted once per root per session, not when already dismissed.
+func TestVerifiedWrite_TipEmittedOncePerRoot(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+	got := captureVerifiedTipEvents(t, app)
+
+	notebook, section, page := "VNB", "", "TipOnce"
+	blockID := "aaaaaaa7-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "tip body")
+	for i := 0; i < 3; i++ {
+		edited := editBlocks(blocks, blockID, "tip body "+strings.Repeat("x", i+1))
+		if err := app.SaveFileBlocks(notebook, section, page, edited); err != nil {
+			t.Fatalf("save %d: %v", i, err)
+		}
+	}
+	if len(*got) != 1 {
+		t.Fatalf("tip events = %d, want exactly one for the session", len(*got))
+	}
+	want := VerifiedWriteTipID(app.vaultPath)
+	if (*got)[0].TipID != want || (*got)[0].Root != app.vaultPath {
+		t.Errorf("tip payload = %+v, want {root: %s, tip_id: %s}", (*got)[0], app.vaultPath, want)
+	}
+
+	// Already dismissed for this root → no emission at all.
+	app2 := newTestApp(t)
+	forceNetworkRoot(t, app2, app2.vaultPath)
+	app2.configMu.Lock()
+	app2.cfg.UI.DismissedTips = []string{VerifiedWriteTipID(app2.vaultPath)}
+	app2.configMu.Unlock()
+	got2 := captureVerifiedTipEvents(t, app2)
+	blocks2 := seedConflictPage(t, app2, "VNB", "", "TipDismissed", blockID, "tip body")
+	if err := app2.SaveFileBlocks("VNB", "", "TipDismissed", editBlocks(blocks2, blockID, "edited")); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if len(*got2) != 0 {
+		t.Errorf("dismissed tip re-emitted: %+v", *got2)
+	}
+}
+
+// seedBlocksFrom re-reads the page's current blocks so a test can edit from
+// the latest on-disk generation (SaveFileBlocks renders whole pages).
+func seedBlocksFrom(t *testing.T, app *App, notebook, section, page, body string) []parser.ParsedBlock {
+	t.Helper()
+	rows, err := app.FetchPageBlocks(notebook, section, page)
+	if err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatalf("no blocks to edit")
+	}
+	blockID := rows[0].ID
+	return editBlocks(rows, blockID, body)
+}

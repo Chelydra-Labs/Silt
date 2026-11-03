@@ -107,9 +107,18 @@ type App struct {
 	// programmatic refusal can never evict an editor-owned stash.
 	refusedWrites   map[string]refusedPageWrite
 	refusedWritesMu sync.Mutex
-	vaultPath       string
-	spacesPerTab    int
-	wg              sync.WaitGroup
+	// rootStorageProbes caches the per-root network-FS probe outcome (#1009),
+	// keyed by cleaned root path (vault root + linked roots); true = the root
+	// is on a non-atomic filesystem, so page writes under it route through the
+	// verified staged writer (app_verified_write.go). Probed once per session
+	// at open/link; verifiedTipNotified dedupes the degraded-safety tip per
+	// root per session. Both vault-session-scoped, cleared on teardown/unlink.
+	rootStorageProbes   map[string]bool
+	verifiedTipNotified map[string]bool
+	verifiedRootsMu     sync.RWMutex
+	vaultPath           string
+	spacesPerTab        int
+	wg                  sync.WaitGroup
 
 	// cfg is the parsed .system/config.yaml, the single source of truth for
 	// non-vault-path settings. configMu guards it; it is replaced wholesale on

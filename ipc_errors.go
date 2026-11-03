@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"silt/backend/parser"
 	"silt/backend/plugins"
 )
 
@@ -61,6 +62,31 @@ func errExternalEditConflictWrap(err error) error {
 // disconnected SMB/NFS mount) mint a sticky, manually-resolvable stash that
 // outlives the error — refusing alone lets the next save self-heal.
 var errExternalEditUnverified = fmt.Errorf("page state could not be verified")
+
+// verifiedWriteFailedError surfaces a hard verified-write failure (#1009):
+// the write could not be landed durably even after retry + restore. Fail
+// loud, and name every retained copy — the message is the user's manual
+// recovery path (the pre-write backup and the unsaved new text).
+func verifiedWriteFailedError(vwe *parser.VerifiedWriteError) *IPCError {
+	target := filepath.Base(vwe.Target)
+	var msg string
+	if vwe.Restored {
+		msg = fmt.Sprintf("%s could not be written safely and the previous version was restored", target)
+	} else {
+		msg = fmt.Sprintf("%s could not be written safely and its previous version could not be restored", target)
+	}
+	if vwe.Pending != "" {
+		msg += fmt.Sprintf(". Your unsaved text is kept at %s", vwe.Pending)
+		if vwe.Backup != "" {
+			msg += fmt.Sprintf(" and the pre-write backup is at %s", vwe.Backup)
+		}
+	} else if vwe.Backup != "" {
+		msg += fmt.Sprintf(". The pre-write backup is at %s (the unsaved text could not be retained on disk: %v)", vwe.Backup, vwe.RetentionErr)
+	} else {
+		msg += ". Neither a backup nor an unsaved copy could be retained on disk"
+	}
+	return NewIPCError(CodeVerifiedWriteFailed, msg)
+}
 
 // IPCErrorCode is the stable, serialized error code crossing the Wails
 // boundary. Add new constants here as user-facing sentinels migrate (#478
@@ -112,6 +138,11 @@ const (
 	// sync client, second Silt window). Distinct from CodePageWriteStale —
 	// the resolution UX is keep-mine/theirs/both, not reload-and-retry (#1005).
 	CodeExternalEditConflict IPCErrorCode = "external_edit_conflict"
+	// CodeVerifiedWriteFailed: a page write on a detected non-atomic
+	// filesystem could not be verified after backup + retry + restore (#1009).
+	// The message names the retained backup and pending-content copies; the
+	// page file itself is never left presenting partial content.
+	CodeVerifiedWriteFailed IPCErrorCode = "verified_write_failed"
 )
 
 // IPCError carries a machine-readable Code across the Wails boundary so the

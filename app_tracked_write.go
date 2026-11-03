@@ -11,7 +11,9 @@ import (
 //
 //  1. tracker.RegisterWrite — the watcher must suppress the self-write event
 //     (a watcher re-index racing the writer's own re-index).
-//  2. the atomic write itself (atomicPageWrite, the package's test seam).
+//  2. the staged write itself (writePageStaged: plain or, on a detected
+//     non-atomic root, verified mode — atomicPageWrite stays the local-path
+//     package test seam).
 //  3. refreshFingerprintAfterWrite — a Silt write is never an external edit;
 //     re-baselining in the same lock keeps an editor autosave landing in the
 //     write→signal→recapture window from false-conflicting against Silt's own
@@ -26,9 +28,15 @@ import (
 // Direct atomic-write call sites that remain are page writers that cannot use
 // this shape (each carries a one-line justification) or non-page control
 // files the fingerprint machinery never keys.
+//
+// #1009: the write itself dispatches per root (writePageStaged) — a root
+// detected as non-atomic (network mount) uses the verified staged writer
+// (backup + read-back + restore) while every local root keeps the plain
+// staged sequence byte-identical. The dispatch stays INSIDE this choke point
+// so the register → write → re-baseline contract holds for both modes.
 func (a *App) trackedPageWrite(filePath string, content []byte) error {
 	a.tracker.RegisterWrite(filePath)
-	if err := atomicPageWrite(filePath, content); err != nil {
+	if err := a.writePageStaged(filePath, content); err != nil {
 		return err
 	}
 	a.refreshFingerprintAfterWrite(filePath, content)

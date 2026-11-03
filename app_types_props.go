@@ -219,9 +219,11 @@ func (a *App) writePageFrontmatterEdit(filePath, source, notebook, section, page
 		// Direct write (not trackedPageWrite): the frontmatterWriteAtomic
 		// fault-injection seam must intercept exactly this write in the
 		// rollback tests; the register+refresh contract trackedPageWrite
-		// owns is honored inline below.
+		// owns is honored inline below. writePageStaged keeps the #1009
+		// per-root dispatch (verified mode on non-atomic mounts) for the
+		// production path the seam does not replace.
 		a.tracker.RegisterWrite(filePath)
-		writeFn := parser.WriteFileAtomic
+		writeFn := a.writePageStaged
 		if a.frontmatterWriteAtomic != nil {
 			writeFn = a.frontmatterWriteAtomic
 		}

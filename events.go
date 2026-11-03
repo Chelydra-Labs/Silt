@@ -73,6 +73,11 @@ const (
 	EventVaultWatchCoverage   EventName = "vault:watch-coverage"
 	EventVaultArchiveProgress EventName = "vault:archive:progress"
 
+	// Emitted on the first page write to a root detected as a non-atomic
+	// filesystem (#1009), unless the degraded-safety tip for that root was
+	// already dismissed. Payload: VerifiedWriteTipPayload{root, tip_id}.
+	EventStorageVerifiedWrite EventName = "storage:verified-write"
+
 	// Index / page links.
 	EventIndexReMintWarning EventName = "index:re-mint-warning"
 	EventPageLinksRewritten EventName = "page-links:rewritten"
