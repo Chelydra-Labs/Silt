@@ -396,7 +396,9 @@ export function createTabPersistence(deps: TabPersistenceDeps) {
           // Deferred replay only (#1005): a mode that moved since the
           // snapshot was taken — or a tab that did not exist at snapshot
           // time — is user-owned mid-window state; the snapshot's value
-          // for it is stale and must not replay.
+          // for it is stale and must not replay. Net-zero toggle pairs
+          // (edit→source→edit) replay by design — base == ours, so theirs
+          // wins; "fixing" that would break the untouched-tab case.
           const atDefer = deferred.viewModes[tabLocatorKey(tab)]
           if (atDefer === undefined || atDefer !== tab.viewMode) continue
         }

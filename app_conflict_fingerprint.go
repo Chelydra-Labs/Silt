@@ -410,6 +410,12 @@ func (a *App) refreshFingerprintAfterWrite(filePath string, written []byte) {
 		// letting the editor's pending save pass both gates and silently
 		// revert the external edit the sentinel exists to surface. Same
 		// decline-on-sentinel as refreshFingerprintAfterNormalization.
+		// The sentinel outlives even a conflict resolution (resolve's writes
+		// route here and decline too): recovery is the unconditional
+		// re-anchor on the next blocks fetch — resolution emits block:changed,
+		// which reloads the open surface. A user edit that autosaves in that
+		// async window is false-refused once and needs a second resolution;
+		// fail-closed beats a silent revert.
 		return
 	}
 	a.rebaselineToFingerprintFromWrite(key, filePath, written)
