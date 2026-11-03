@@ -552,6 +552,163 @@ func TestCreatePage_DropsLingeringRefusedWriteStash(t *testing.T) {
 	}
 }
 
+// 6c-2. DuplicatePage recreating a page at a path whose old page left a
+// refused-write stash must drop that stash too (#1005): the duplicate is a
+// NEW page and its first save must not phantom-refuse with the dead page's
+// foreign conflict — and keep_mine on that dead stash would replay the old
+// buffer over the fresh duplicate.
+func TestDuplicatePage_DropsLingeringRefusedWriteStash(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section := "DupStashNB", ""
+	srcBlockID := "cccccc1c-4ccc-4ccc-8ccc-cccccccccccc"
+	dupBlockID := "cccccc2c-4ccc-4ccc-8ccc-cccccccccccc"
+	srcBlocks := seedConflictPage(t, app, notebook, section, "Src", srcBlockID, "source body")
+	dupBlocks := seedConflictPage(t, app, notebook, section, "Dup", dupBlockID, "old dup body")
+	dupPath := conflictPagePath(app, notebook, section, "Dup")
+
+	// Editor load of Dup captures the baseline the refusing save gates on.
+	if _, err := app.FetchPageBlocks(notebook, section, "Dup"); err != nil {
+		t.Fatalf("FetchPageBlocks (Dup): %v", err)
+	}
+
+	// The old Dup page's save refuses → stash minted at the Dup path.
+	external := "---\nnotebook: \"DupStashNB\"\npage: \"Dup\"\ntags: []\n---\nexternal dup\n"
+	if err := os.WriteFile(dupPath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	requireConflict(t, app.SaveFileBlocks(notebook, section, "Dup",
+		editBlocks(dupBlocks, dupBlockID, "my unsaved dup text")))
+
+	// Dup is deleted EXTERNALLY (no Silt delete hook fires) and the
+	// duplicate recreates a page at the same path.
+	if err := os.Remove(dupPath); err != nil {
+		t.Fatalf("external remove: %v", err)
+	}
+	if err := app.DuplicatePage(notebook, section, "Src", "Dup"); err != nil {
+		t.Fatalf("DuplicatePage: %v", err)
+	}
+	app.refusedWritesMu.Lock()
+	stashed := len(app.refusedWrites)
+	app.refusedWritesMu.Unlock()
+	if stashed != 0 {
+		t.Fatalf("DuplicatePage must drop the foreign stash at the reused path, got %d pending", stashed)
+	}
+
+	// The duplicate's first save must not phantom-refuse on the old conflict.
+	if _, err := app.FetchPageBlocks(notebook, section, "Dup"); err != nil {
+		t.Fatalf("FetchPageBlocks (duplicate): %v", err)
+	}
+	if err := app.SaveFileBlocks(notebook, section, "Dup",
+		editBlocks(srcBlocks, srcBlockID, "fresh duplicate text")); err != nil {
+		t.Fatalf("duplicate's first save must pass, got: %v", err)
+	}
+}
+
+// 6c-3. RestoreDeletedPageVersion recreating a missing page at a path whose
+// old page left a refused-write stash must drop that stash too (#1005) —
+// the restored page's first save must not phantom-refuse with the dead
+// page's foreign conflict.
+func TestRestoreDeletedPageVersion_DropsLingeringRefusedWriteStash(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	notebook, section := "RestoreStashNB", ""
+	page := "Gone"
+	blockID := "cccccc3c-4ccc-4ccc-8ccc-cccccccccccc"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "first body")
+	filePath := conflictPagePath(app, notebook, section, page)
+
+	// Two saved bodies so the deleted page keeps an restorable version.
+	savePageBody(t, app, notebook, section, page, "first body\n")
+	savePageBody(t, app, notebook, section, page, "second body\n")
+	list, err := app.ListPageVersions(notebook, section, page)
+	if err != nil || len(list) == 0 {
+		t.Fatalf("ListPageVersions: %v len=%d", err, len(list))
+	}
+	versionID := list[len(list)-1].ID
+
+	// Editor load captures the baseline the refusing save is gated against.
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+
+	// The old page's save refuses → stash minted.
+	external := "---\nnotebook: \"RestoreStashNB\"\npage: \"Gone\"\ntags: []\n---\nexternal body\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page,
+		editBlocks(blocks, blockID, "my unsaved text")))
+
+	// The page is deleted EXTERNALLY (orphan history survives) and the
+	// restore recreates a page at the same path.
+	if err := os.Remove(filePath); err != nil {
+		t.Fatalf("external remove: %v", err)
+	}
+	if err := app.RestoreDeletedPageVersion(notebook, section, page, versionID, "", "", ""); err != nil {
+		t.Fatalf("RestoreDeletedPageVersion: %v", err)
+	}
+	app.refusedWritesMu.Lock()
+	stashed := len(app.refusedWrites)
+	app.refusedWritesMu.Unlock()
+	if stashed != 0 {
+		t.Fatalf("restore must drop the foreign stash at the reused path, got %d pending", stashed)
+	}
+
+	// The restored page's first save must not phantom-refuse.
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks (restored): %v", err)
+	}
+	if err := app.SaveFileBlocks(notebook, section, page,
+		editBlocks(blocks, blockID, "fresh restored text")); err != nil {
+		t.Fatalf("restored page's first save must pass, got: %v", err)
+	}
+}
+
+// 6b-2. A Source-mode (markdown) load on a page whose BLOCK editor holds
+// drifted rows must not erase the rows-pinned sentinel (#1005): the load
+// re-anchoring on current disk bytes would let the block editor's pending
+// save pass both gates and silently revert the external edit the sentinel
+// exists to surface. Same decline-on-sentinel as the write-side guards.
+func TestMarkdownLoad_DoesNotEraseRowsPinnedSentinel(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "SentinelMdNB", "", "SentinelMdPage"
+	blockID := "bbbbbb8b-4bbb-4bbb-8bbb-bbbbbbbbbbbb"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "sentinel body")
+	filePath := conflictPagePath(app, notebook, section, page)
+	key := core.NormalizeFileLockPath(filePath)
+
+	// External edit while the debounce is pending, then the block editor
+	// loads: the baseline pins to the pre-external rows.
+	external := "---\nnotebook: \"SentinelMdNB\"\npage: \"SentinelMdPage\"\ntags: []\n---\nexternal body\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	app.pageLoadFingerprintsMu.RLock()
+	pinnedSize := app.pageLoadFingerprints[key].Size
+	app.pageLoadFingerprintsMu.RUnlock()
+	if pinnedSize != rowBasisSentinelSize {
+		t.Fatalf("expected a rows-pinned baseline, got size %d", pinnedSize)
+	}
+
+	// A second surface loads Source mode on the same page.
+	if _, err := app.FetchPageMarkdown(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageMarkdown: %v", err)
+	}
+
+	app.pageLoadFingerprintsMu.RLock()
+	pinnedSize = app.pageLoadFingerprints[key].Size
+	app.pageLoadFingerprintsMu.RUnlock()
+	if pinnedSize != rowBasisSentinelSize {
+		t.Fatalf("markdown load must preserve the rows-pinned baseline, got size %d", pinnedSize)
+	}
+	// The block editor's pending save (built from the pre-external rows)
+	// still refuses instead of silently reverting the external edit.
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page, blocks))
+}
+
 // 6. Race: an external edit landing between the save's epoch snapshot and the
 // file-lock acquisition is still caught — the fingerprint check runs inside
 // the lock, against post-acquisition disk state.

@@ -378,6 +378,15 @@ func (a *App) loadPageFingerprint(key string) (FileFingerprint, bool) {
 	return fp, ok
 }
 
+// hasRowsPinnedSentinel reports whether filePath's load baseline is the
+// rows-pinned sentinel (#1005). Markdown-funnel loads consult it before
+// re-anchoring: overwriting the sentinel with disk bytes would disarm the
+// block editor's drift protection (see fetchPageMarkdown).
+func (a *App) hasRowsPinnedSentinel(filePath string) bool {
+	fp, ok := a.loadPageFingerprint(core.NormalizeFileLockPath(filePath))
+	return ok && fp.Size == rowBasisSentinelSize
+}
+
 // refreshFingerprintAfterWrite re-baselines filePath to the bytes Silt just
 // wrote (Silt's own write is never an external edit). Stat gives the post-write
 // times; the hash comes from the in-memory bytes — no extra file read. If the

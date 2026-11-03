@@ -171,6 +171,12 @@ func (a *App) DuplicatePage(notebook, section, page, targetName string) error {
 		duplicate := parser.RenderFileContent(blocks, body, frontmatter, a.spacesPerTab)
 
 		duplicatePageBeforeWrite()
+		// Conflict state keyed at this path belongs to a page that no longer
+		// exists (target-absent checked above): a lingering refused-write
+		// stash could never resolve and would phantom-refuse the duplicate's
+		// first save with the dead page's foreign conflict (#1005) — same
+		// drop as CreatePage's scaffold.
+		a.dropConflictStateForPath(targetPath)
 		// trackedPageWrite: creation keeps an absent-file baseline honest
 		// (#1005), same as CreatePage's scaffold.
 		if writeErr := a.trackedPageWrite(targetPath, []byte(duplicate)); writeErr != nil {

@@ -992,48 +992,71 @@ func (a *App) FetchPageMarkdownProgrammatic(notebook, section, page string) (str
 }
 
 func (a *App) fetchPageMarkdown(notebook, section, page string, capture pageLoadCapture) (string, error) {
+	body, _, _, err := a.fetchPageMarkdownContent(notebook, section, page, capture)
+	return body, err
+}
+
+// fetchPageMarkdownContent is the single-read core of fetchPageMarkdown: it
+// returns the served body plus the exact bytes and file path they came from,
+// so single-read callers (the MCP markdown funnel) can arm a basis on the
+// bytes the client actually observed — a second read opens an unguardable
+// window where an edit landing between the reads arms the basis on bytes
+// that were never served.
+func (a *App) fetchPageMarkdownContent(notebook, section, page string, capture pageLoadCapture) (string, []byte, string, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if a.db == nil {
-		return "", fmt.Errorf("vault database not loaded")
+		return "", nil, "", fmt.Errorf("vault database not loaded")
 	}
 	safeNotebook := sanitizePathSegment(notebook)
 	safeSection, secErr := historySection(section)
 	if secErr != nil {
-		return "", invalidNavigationPath(secErr)
+		return "", nil, "", invalidNavigationPath(secErr)
 	}
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
-		return "", fmt.Errorf("invalid path metadata")
+		return "", nil, "", fmt.Errorf("invalid path metadata")
 	}
 	source := a.resolveSourceByName(safeNotebook)
 	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
 	if err != nil {
-		return "", fmt.Errorf("resolve notebook dir: %w", err)
+		return "", nil, "", fmt.Errorf("resolve notebook dir: %w", err)
 	}
 	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
 	if !isPathWithinRoot(filePath, notebookDir) {
-		return "", fmt.Errorf("path escapes notebook root")
+		return "", nil, "", fmt.Errorf("path escapes notebook root")
 	}
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil {
 		if os.IsNotExist(err) && capture == captureEditorLoad {
 			// An absent baseline still matters: an externally created file
-			// must conflict with a later save (#1005).
-			a.capturePageLoadFingerprint(filePath)
-			return "", nil
+			// must conflict with a later save (#1005) — but never at the
+			// cost of a rows-pinned sentinel (see the capture branch below).
+			if !a.hasRowsPinnedSentinel(filePath) {
+				a.capturePageLoadFingerprint(filePath)
+			}
+			return "", nil, "", nil
 		}
-		return "", fmt.Errorf("read page markdown: %w", err)
+		return "", nil, "", fmt.Errorf("read page markdown: %w", err)
 	}
 	if capture == captureEditorLoad {
 		// Anchor the baseline on the bytes actually returned: an external
 		// write landing between this read and a re-reading capture would
 		// baseline bytes the editor does not hold, disarming the gate for
-		// exactly that edit (#1005).
-		a.capturePageLoadFingerprintFromBytes(filePath, contentBytes)
+		// exactly that edit (#1005). A rows-pinned sentinel survives this
+		// load instead: the sentinel says a BLOCK editor on this page holds
+		// rows that drifted from disk, and a Source-mode load re-anchoring
+		// on current disk bytes would disarm it — the block editor's next
+		// save would pass both gates and silently revert the external edit
+		// the sentinel exists to surface. The sentinel keeps this surface's
+		// own saves failing closed until a block-editor reload re-anchors
+		// (same decline-on-sentinel as refreshFingerprintAfterWrite).
+		if !a.hasRowsPinnedSentinel(filePath) {
+			a.capturePageLoadFingerprintFromBytes(filePath, contentBytes)
+		}
 	}
 	_, body := parser.SplitFrontmatter(string(contentBytes))
-	return body, nil
+	return body, contentBytes, filePath, nil
 }
 
 // SavePageMarkdown writes raw markdown body for a page (editable Source mode

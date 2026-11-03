@@ -25,7 +25,12 @@ package main
 // generation (mcpBasisInvalidatedGen) and any echoed generation at or below
 // it refuses. Clients that do not echo (generation 0) keep the legacy
 // contract — marker + fingerprint gates only, honest boundary: their basis
-// is valid until the next fetch of ANY client. A drift refuses WITHOUT
+// is valid until the next fetch of ANY client. Delete/recreate, rename, and
+// vault teardown reset the per-path generation sequence (app_tracked_write
+// owns that lifecycle): a stale pre-delete echo can therefore alias a
+// post-recreate generation once a third-party fetch re-arms the slot — the
+// marker + fingerprint gates still refuse everything the aliasing would let
+// through on the paths that matter. A drift refuses WITHOUT
 // minting a stash (checkMCPClientBasis): the programmatic caller still holds
 // its own payload and its typed external_edit_conflict error already tells
 // it to re-read and retry — a sticky desktop-only stash would wedge exactly
@@ -116,6 +121,28 @@ func (a *App) captureMCPReadBasisForBlocks(filePath, notebook, section, page str
 		return 0
 	}
 	return a.storeMCPReadBasis(core.NormalizeFileLockPath(filePath), pinned)
+}
+
+// captureMCPReadBasisFromBytes arms the markdown funnel's basis on bytes the
+// caller already read and is about to serve — the only way to guarantee
+// basis == observed without an unguardable second read (the match arm of
+// captureMCPReadBasisForBlocks is the blocks-funnel equivalent).
+func (a *App) captureMCPReadBasisFromBytes(filePath string, content []byte) int64 {
+	if a == nil || filePath == "" {
+		return 0
+	}
+	info, err := os.Stat(filePath)
+	if err != nil {
+		// The bytes were just read; a stat failure here is transient at
+		// worst. Keep any prior basis (stale fails closed on drift, absent
+		// is the legacy no-guard contract).
+		return 0
+	}
+	fp := fingerprintFromStat(info)
+	sum := sha256.Sum256(content)
+	fp.SHA256 = hex.EncodeToString(sum[:])
+	fp.stampCaptureTime(time.Now())
+	return a.storeMCPReadBasis(core.NormalizeFileLockPath(filePath), fp)
 }
 
 // captureMCPReadBasisForBlocksByLocator resolves a page locator to its file

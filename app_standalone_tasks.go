@@ -66,6 +66,10 @@ func (a *App) ensureStandaloneTasksFile() (string, error) {
 		scaffold := fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n",
 			strconv.Quote(standaloneTasksNotebook), strconv.Quote(standaloneTasksSection),
 			strconv.Quote(standaloneTasksPage), strconv.Quote(today))
+		// Creation at a re-used path drops the dead page's conflict state
+		// (#1005) — a lingering stash would phantom-refuse tasks.md's next
+		// save — same drop as CreatePage's scaffold.
+		a.dropConflictStateForPath(filePath)
 		// trackedPageWrite (no LockFileWrite here: creation of a known-absent
 		// file cannot race a same-path writer) keeps any existing absent-file
 		// baseline honest — the editor's next save must not false-conflict

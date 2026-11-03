@@ -57,10 +57,18 @@ func (b mcpBridge) FetchPageBlocks(ctx context.Context, notebook, section, page 
 
 func (b mcpBridge) FetchPageMarkdown(ctx context.Context, notebook, section, page string) (string, int64, error) {
 	_ = ctx
-	// Same scoped read-basis + read generation as the blocks fetch (above).
-	gen := b.app.captureMCPReadBasisByLocator(notebook, section, page)
-	md, err := b.app.fetchPageMarkdown(notebook, section, page, captureNone)
-	return md, gen, err
+	// Serve-then-capture on the SAME bytes, mirroring the blocks funnel
+	// above: the basis must anchor on what the client actually observed —
+	// capturing in a second read arms it on bytes that were never served,
+	// and a write in the window then passes the client-basis gate (silent
+	// revert) or false-refuses. A missing page errors before any basis is
+	// armed: unlike the blocks funnel there are no rows to serve, so no
+	// absent basis is wanted.
+	body, content, filePath, err := b.app.fetchPageMarkdownContent(notebook, section, page, captureNone)
+	if err != nil {
+		return "", 0, err
+	}
+	return body, b.app.captureMCPReadBasisFromBytes(filePath, content), nil
 }
 
 func (b mcpBridge) ListNavigation(ctx context.Context) (parser.NavigationTree, error) {

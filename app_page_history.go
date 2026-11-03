@@ -635,6 +635,13 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 			}
 			relocated = true
 		}
+		// Recreating a page at a re-used path must drop any conflict state
+		// the dead page left there: a lingering stash could never resolve
+		// and would phantom-refuse the restored page's first save (#1005),
+		// same drop as CreatePage/DuplicatePage. Only the recreate branch
+		// reaches here — the occupied-target check above refused an existing
+		// destFile, whose conflict state belongs to the LIVE page.
+		a.dropConflictStateForPath(destFile)
 		// Remapped snapshot supplies frontmatter (type/tags/created/…). Skip
 		// capture: there is no live file, and a synthetic prev would evict a
 		// real version at the cap.
