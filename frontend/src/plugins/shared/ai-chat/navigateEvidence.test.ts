@@ -110,7 +110,8 @@ function makeStartupDeps(): {
     openTasksView: vi.fn(),
     handleSwitchVault: vi.fn().mockResolvedValue(undefined),
     handleMenuSave: vi.fn().mockResolvedValue(undefined),
-    handleSearchJump
+    handleSearchJump,
+    openPageOrNotify: vi.fn()
   }
   return { deps, handleSearchJump }
 }

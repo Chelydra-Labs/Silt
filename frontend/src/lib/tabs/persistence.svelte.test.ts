@@ -118,4 +118,85 @@ describe('tab persistence invariants', () => {
     // The view-mode flip is reconciled in place — no tab rebuild / editor remount.
     expect(deps.setTabViewMode).toHaveBeenCalledWith('tab1', 'source')
   })
+
+  // #1005: an external ui.open_tabs edit must not rebuild the tab strip (or
+  // flip a surface-unmounting view mode) while a conflict resolution is in
+  // flight — the deferred diff applies when the busy set drains.
+  describe('conflict-busy gating (#1005)', () => {
+    it('defers the locator-set re-hydrate while a tab is conflict-busy, then applies it on drain', async () => {
+      const busy = new Set<string>(['tab1'])
+      const persistence = createTabPersistence({
+        ...deps,
+        getConflictBusyTabIds: () => busy
+      })
+      persistence.initBaseline([{ notebook: 'nb', section: '', page: 'page1' }])
+      mocks.GetOpenTabs.mockResolvedValue({
+        open_tabs: [{ notebook: 'nb', section: '', page: 'page2' }]
+      })
+      mocks.GetOpenTabs.mockClear()
+
+      // External config edit lands mid-resolution: nothing applies.
+      persistence.handleConfigChangedTabRehydrate({
+        ui: { open_tabs: [{ notebook: 'nb', section: '', page: 'page2' }] }
+      })
+      expect(mocks.GetOpenTabs).not.toHaveBeenCalled()
+      expect(deps.setTabs).not.toHaveBeenCalled()
+      expect(deps.setTabViewMode).not.toHaveBeenCalled()
+
+      // A self-write echo while still busy must NOT clobber the deferred
+      // external diff (it is a no-op against the last-applied baseline).
+      persistence.handleConfigChangedTabRehydrate({
+        ui: { open_tabs: [{ notebook: 'nb', section: '', page: 'page1' }] }
+      })
+      expect(mocks.GetOpenTabs).not.toHaveBeenCalled()
+
+      // The busy set drains → the deferred external diff applies.
+      busy.clear()
+      persistence.applyDeferredTabRehydrate()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(deps.setTabs).toHaveBeenCalledTimes(1)
+      const applied = deps.setTabs.mock.calls[0][0] as TabEntry[]
+      expect(applied).toHaveLength(1)
+      expect(applied[0].page).toBe('page2')
+    })
+
+    it('never flips the view mode of a conflict-busy tab, even after the drain re-run', () => {
+      const busy = new Set<string>(['tab1'])
+      const persistence = createTabPersistence({
+        ...deps,
+        getConflictBusyTabIds: () => busy
+      })
+      persistence.initBaseline([{ notebook: 'nb', section: '', page: 'page1' }])
+      deps.getTabs.mockReturnValue([
+        {
+          id: 'tab1',
+          notebook: 'nb',
+          section: '',
+          page: 'page1',
+          preview: false,
+          lastActivatedAt: 0,
+          viewMode: 'edit'
+        } as TabEntry
+      ])
+
+      // View-mode-only external edit while the tab resolves: deferred whole.
+      persistence.handleConfigChangedTabRehydrate({
+        ui: {
+          open_tabs: [
+            { notebook: 'nb', section: '', page: 'page1', view_mode: 'source' }
+          ]
+        }
+      })
+      expect(deps.setTabViewMode).not.toHaveBeenCalled()
+
+      // Drain while the tab is STILL busy: nothing applies.
+      persistence.applyDeferredTabRehydrate()
+      expect(deps.setTabViewMode).not.toHaveBeenCalled()
+
+      // Fully drained: the deferred reconcile now flips the (settled) tab.
+      busy.clear()
+      persistence.applyDeferredTabRehydrate()
+      expect(deps.setTabViewMode).toHaveBeenCalledWith('tab1', 'source')
+    })
+  })
 })

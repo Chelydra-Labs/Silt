@@ -51,6 +51,9 @@ export interface TabPersistenceDeps {
   setActiveId: (id: string) => void
   syncActiveFromTab: () => void
   setTabViewMode: (id: string, mode: ViewMode) => void
+  /** Tab ids with a conflict resolution IPC in flight (#1005). Optional so
+   *  bare test rigs need not stub it; absence means "nothing busy". */
+  getConflictBusyTabIds?: () => ReadonlySet<string>
 }
 
 /**
@@ -87,6 +90,21 @@ export function createTabPersistence(deps: TabPersistenceDeps) {
   // call's result is applied, so overlapping calls can't race — the later
   // call wins (see module docstring invariant 1).
   let loadTabsSeq = 0
+
+  // Latest external ui.open_tabs config deferred while a tab is
+  // conflict-busy (see handleConfigChangedTabRehydrate). Null = nothing
+  // pending; a newer config:changed overwrites an older deferred one.
+  let deferredRehydrateCfg: TabRehydrateConfig | undefined | null = null
+
+  // #1005 conflict-busy probes. Optional dep: absence (bare test rigs)
+  // means "nothing busy".
+  function busyTabCount(): number {
+    return deps.getConflictBusyTabIds?.().size ?? 0
+  }
+
+  function tabIsBusy(tabId: string): boolean {
+    return deps.getConflictBusyTabIds?.().has(tabId) ?? false
+  }
 
   function schedulePersistTabs(): void {
     if (persistTabsTimer) clearTimeout(persistTabsTimer)
@@ -204,10 +222,64 @@ export function createTabPersistence(deps: TabPersistenceDeps) {
    * reconciles per-tab view_mode in place (no re-hydrate, no editor remount)
    * for external view-mode-only edits. The frontend's own persistTabs writes
    * match the in-memory state, so they produce no diff here.
+   *
+   * While any tab is conflict-busy (#1005) nothing applies: loadPersistedTabs
+   * rebuilds openTabs with fresh ids (every surface unmounts, including one
+   * mid-resolution) and a view_mode flip unmounts the same surface. The
+   * latest config is deferred and applied by applyDeferredTabRehydrate when
+   * the busy set drains.
    */
   function handleConfigChangedTabRehydrate(
     cfg: TabRehydrateConfig | undefined
   ): void {
+    if (busyTabCount() > 0) {
+      // Defer only configs that would actually change something: the
+      // frontend's own persistTabs echo is a no-op against the last-applied
+      // state and must not overwrite a deferred external diff.
+      if (configWouldApplyChanges(cfg)) {
+        deferredRehydrateCfg = cfg
+      }
+      return
+    }
+    applyTabRehydrate(cfg)
+  }
+
+  // Would this config change anything relative to the last-applied state?
+  // Locator-set diff, or an in-place view_mode reconcile.
+  function configWouldApplyChanges(
+    cfg: TabRehydrateConfig | undefined
+  ): boolean {
+    if (tabSetKey(cfg?.ui?.open_tabs) !== prevOpenTabsKey) return true
+    const tabs = deps.getTabs()
+    for (const ref of cfg?.ui?.open_tabs ?? []) {
+      const tab = tabs.find(
+        (t) =>
+          t.notebook === ref.notebook &&
+          t.section === (ref.section ?? '') &&
+          t.page === ref.page
+      )
+      if (!tab) continue
+      if (tab.viewMode !== (ref.view_mode === 'source' ? 'source' : 'edit')) {
+        return true
+      }
+    }
+    return false
+  }
+
+  /**
+   * Apply a rehydrate deferred by handleConfigChangedTabRehydrate, if any,
+   * once no tab is conflict-busy anymore. Called from App's effect on the
+   * busy set draining.
+   */
+  function applyDeferredTabRehydrate(): void {
+    if (deferredRehydrateCfg === null) return
+    if (busyTabCount() > 0) return
+    const cfg = deferredRehydrateCfg
+    deferredRehydrateCfg = null
+    applyTabRehydrate(cfg)
+  }
+
+  function applyTabRehydrate(cfg: TabRehydrateConfig | undefined): void {
     const nextTabsKey = tabSetKey(cfg?.ui?.open_tabs)
     if (nextTabsKey !== prevOpenTabsKey) {
       prevOpenTabsKey = nextTabsKey
@@ -224,6 +296,11 @@ export function createTabPersistence(deps: TabPersistenceDeps) {
             t.page === ref.page
         )
         if (!tab) continue
+        if (tabIsBusy(tab.id)) {
+          // The surface-unmounting toggle waits for the resolution to settle;
+          // the deferred re-run (or the next config:changed) reconciles it.
+          continue
+        }
         const mode: ViewMode = ref.view_mode === 'source' ? 'source' : 'edit'
         if (tab.viewMode !== mode) {
           deps.setTabViewMode(tab.id, mode)
@@ -252,6 +329,7 @@ export function createTabPersistence(deps: TabPersistenceDeps) {
     loadPersistedTabs,
     initBaseline,
     handleConfigChangedTabRehydrate,
+    applyDeferredTabRehydrate,
     flushPendingPersist
   }
 }

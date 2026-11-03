@@ -209,7 +209,7 @@ describe('Sidebar', () => {
         collapsed: true,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -237,7 +237,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -274,7 +274,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -323,7 +323,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -365,7 +365,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -413,7 +413,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -453,7 +453,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -517,7 +517,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -554,7 +554,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -618,7 +618,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {},
         onPageMoved
@@ -647,7 +647,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -683,7 +683,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -710,7 +710,7 @@ describe('Sidebar', () => {
       collapsed: false,
       onSelectNotebook: () => {},
       onSelectSection: () => {},
-      onSelectPage: () => {},
+      onSelectPage: () => true,
       onPinPage: () => {},
       onSelectView: () => {}
     }
@@ -753,7 +753,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -773,7 +773,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -816,7 +816,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -849,7 +849,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -883,7 +883,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -910,7 +910,7 @@ describe('Sidebar', () => {
       collapsed: false,
       onSelectNotebook: () => {},
       onSelectSection: () => {},
-      onSelectPage: () => {},
+      onSelectPage: () => true,
       onPinPage: () => {},
       onSelectView: () => {}
     }
@@ -953,7 +953,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1007,7 +1007,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1058,7 +1058,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1109,7 +1109,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1144,7 +1144,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1179,7 +1179,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1217,7 +1217,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onTypePageTarget,
         onSelectView: () => {}
@@ -1279,7 +1279,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onTypePageTarget,
         onSelectView: () => {}
@@ -1332,7 +1332,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1366,7 +1366,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1398,7 +1398,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1437,7 +1437,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1478,7 +1478,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1542,7 +1542,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1570,7 +1570,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1623,7 +1623,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1724,7 +1724,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1759,7 +1759,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1798,7 +1798,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1834,7 +1834,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1889,7 +1889,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1924,7 +1924,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1965,7 +1965,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -1995,7 +1995,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -2028,7 +2028,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -2058,7 +2058,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }
@@ -2078,7 +2078,7 @@ describe('Sidebar', () => {
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},
-        onSelectPage: () => {},
+        onSelectPage: () => true,
         onPinPage: () => {},
         onSelectView: () => {}
       }

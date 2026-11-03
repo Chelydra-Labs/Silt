@@ -137,6 +137,9 @@ export interface TabManagerController {
       | undefined
   ) => void
   handleConfigChangedTabRehydrate: (cfg: TabRehydrateConfig | undefined) => void
+  /** Apply a config rehydrate deferred while a tab was conflict-busy (#1005);
+   *  App calls this when the busy set drains. No-op when nothing pending. */
+  applyDeferredTabRehydrate: () => void
   flushPendingPersist: () => void
 }
 
@@ -228,7 +231,8 @@ export function createTabManager(deps: TabManagerDeps): TabManagerController {
         id,
         mode
       ).tabs
-    }
+    },
+    getConflictBusyTabIds: deps.getConflictBusyTabIds
   })
   const { schedulePersistTabs, loadPersistedTabs } = tabPersistence
 
@@ -471,6 +475,7 @@ export function createTabManager(deps: TabManagerDeps): TabManagerController {
     initBaseline: tabPersistence.initBaseline,
     handleConfigChangedTabRehydrate:
       tabPersistence.handleConfigChangedTabRehydrate,
+    applyDeferredTabRehydrate: tabPersistence.applyDeferredTabRehydrate,
     flushPendingPersist: tabPersistence.flushPendingPersist
   }
 }

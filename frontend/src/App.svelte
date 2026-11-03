@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte'
+  import { onMount, tick, untrack } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
   import type { SearchModalResult } from './components/SearchModal.svelte'
   import {
@@ -101,7 +101,7 @@
     initStartupUpdateCheck,
     disposeUpdateStore
   } from './updates/store.svelte'
-  import { type OpenPageMode } from './lib/tabs'
+  import { type OpenPageMode, type PageRef } from './lib/tabs'
   import { createTabManager } from './lib/tabs/useTabManager.svelte'
   import { nextView } from './lib/viewCycle'
   import {
@@ -157,6 +157,16 @@
     if (busy) conflictBusyTabs.add(tabId)
     else conflictBusyTabs.delete(tabId)
   }
+
+  // An external ui.open_tabs config edit arriving while a tab resolves is
+  // deferred by the tab-persistence layer (#1005) — re-hydrating would
+  // rebuild openTabs with fresh ids and unmount the resolving surface. Apply
+  // the deferred diff as soon as the last resolution settles.
+  $effect(() => {
+    if (conflictBusyTabs.size === 0) {
+      untrack(() => tabManager.applyDeferredTabRehydrate())
+    }
+  })
 
   // Leaving the notes/backlinks region unmounts EVERY mounted editor surface
   // — gated while any tab resolves so the unmount flush cannot race the
@@ -252,20 +262,34 @@
     activePage = selection.page
   }
 
+  // The refused-open contract (#1005): openPage returns false when every
+  // eviction candidate is mid-conflict-resolution, and the still-active page
+  // keeps its surface. Every openPage follow-through must go through this
+  // helper so the refusal toast is centralized and no caller can silently
+  // drop the boolean again (wrong-page rename focus, dead view flips).
+  function openPageOrNotify(
+    ref: PageRef,
+    mode: OpenPageMode,
+    blockTarget?: { fileDate?: string; blockId?: string }
+  ): boolean {
+    if (!tabManager.openPage(ref, mode, blockTarget)) {
+      pushNotification({
+        kind: 'info',
+        message:
+          "Couldn't open that page — every tab is busy resolving a save conflict. Try again once a tab settles."
+      })
+      return false
+    }
+    return true
+  }
+
   function openFromQuickSwitcher(
     item: NavigationCatalogItem,
     mode: OpenPageMode
   ): void {
     // A refused open (all tabs conflict-busy) must not proceed as-if-opened:
     // the switcher's entry silently no-ops while the active page stays put.
-    if (!tabManager.openPage(item, mode)) {
-      pushNotification({
-        kind: 'info',
-        message:
-          "Couldn't open that page — every tab is busy resolving a save conflict. Try again once a tab settles."
-      })
-      return
-    }
+    if (!openPageOrNotify(item, mode)) return
     activeView = 'notes'
   }
 
@@ -411,7 +435,10 @@
       pushNotification({ kind: 'info', message: target.reason })
       return
     }
-    tabManager.openPage(target.ref, 'preview')
+    // Gate the view flip on the open (#1005): a refused open leaves the
+    // dashboard active; flipping anyway would strand the user in an empty
+    // notes region while the resolving tab keeps its surface.
+    if (!openPageOrNotify(target.ref, 'preview')) return
     activeView = 'notes'
   }
   // Sidebar right-click "Page properties" → open the properties panel + arm
@@ -439,14 +466,7 @@
       // A refused open (all tabs conflict-busy, #1005) must skip the
       // follow-through: opening the properties panel + type menu against the
       // still-active page would arm a wrong-page mutation path.
-      if (!tabManager.openPage(ref, 'pin')) {
-        pushNotification({
-          kind: 'info',
-          message:
-            "Couldn't open that page — every tab is busy resolving a save conflict. Try again once a tab settles."
-        })
-        return
-      }
+      if (!openPageOrNotify(ref, 'pin')) return
       await tick()
     }
     pageType.open()
@@ -642,7 +662,8 @@
     openTasksView,
     handleSwitchVault,
     handleMenuSave,
-    handleSearchJump
+    handleSearchJump,
+    openPageOrNotify
   })
 
   onMount(() => {
@@ -774,11 +795,14 @@
     await handleChangeVault()
   }
 
+  // Returns whether the jump landed on the requested notes page (true →
+  // follow-through like a heading target may safely arm; false → refused or
+  // rerouted, the still-active page must not receive the follow-through).
   function handleSearchJump(
     locator: SourceNavigationRef,
     date: string,
     blockId: string
-  ) {
+  ): boolean {
     const { notebook, section, page } = locator
     // Defense in depth for incomplete locators (#877). Toast lives on the
     // navigate-to-block/page bus edge so we only warn here — no second toast.
@@ -789,7 +813,7 @@
         page,
         blockId
       })
-      return
+      return false
     }
     // Standalone-task routing guard (#374). A `.silt` notebook ref from
     // the search modal routes to the Tasks view; we deliberately do NOT
@@ -805,7 +829,10 @@
     })
     if (target.kind === 'tasks-view') {
       openTasksView(target.blockTarget?.blockId)
-      return
+      // The Tasks view is not the requested page — a heading/block target
+      // armed now would fire against whatever page is active when the user
+      // returns to notes.
+      return false
     }
     // Route through openPage (preview-tab semantics, #142).
     // Use activate-only when the target IS the active page so block
@@ -825,33 +852,36 @@
     // page's view — a same-named heading scrolls the wrong page and a wrong
     // block id burns its scroll budget. Mirrors openFromQuickSwitcher.
     if (
-      !tabManager.openPage(locator, isSamePage ? 'activate-only' : 'preview', {
+      !openPageOrNotify(locator, isSamePage ? 'activate-only' : 'preview', {
         fileDate: date,
         blockId
       })
     ) {
-      pushNotification({
-        kind: 'info',
-        message:
-          "Couldn't open that page — every tab is busy resolving a save conflict. Try again once a tab settles."
-      })
-      return
+      return false
     }
     activeView = 'notes'
     searchTargetBlockId = blockId
     searchTargetHeading = ''
     searchTargetKey = `${date}:${blockId}:${Date.now()}`
+    return true
   }
 
   // Called by the TemplatePicker when a new page is created from a template.
   // Navigates to the freshly-created page (the reactive cascade loads it in
   // the editor) and refreshes the sidebar tree so the new page appears.
   function handleTemplatePageCreated(page: string): void {
-    tabManager.openPage(
-      { notebook: activeNotebook, section: activeSection, page },
-      'preview'
-    )
-    activeView = 'notes'
+    // The page exists on disk either way, so the tree refresh runs even when
+    // the open is refused (all tabs conflict-busy, #1005) — only the view
+    // flip is follow-through and must not strand the user outside notes
+    // looking at a tab that never opened.
+    if (
+      openPageOrNotify(
+        { notebook: activeNotebook, section: activeSection, page },
+        'preview'
+      )
+    ) {
+      activeView = 'notes'
+    }
     window.dispatchEvent(new CustomEvent('refresh-navigation'))
   }
 
@@ -1125,16 +1155,15 @@
             tabManager.selectNotebookContext(nb)
           }}
           onSelectSection={(sec) => (activeSection = sec)}
-          onSelectPage={(nb, sec, pg) => {
+          onSelectPage={(nb, sec, pg) =>
             // Single-click opens in preview mode (industry-standard parity, #142).
-            tabManager.openPage(
+            openPageOrNotify(
               { notebook: nb, section: sec, page: pg },
               'preview'
-            )
-          }}
+            )}
           onPinPage={(nb, sec, pg) => {
             // Double-click / middle-click opens a pinned tab (#142).
-            tabManager.openPage({ notebook: nb, section: sec, page: pg }, 'pin')
+            openPageOrNotify({ notebook: nb, section: sec, page: pg }, 'pin')
           }}
           onTypePageTarget={handleTypePageTarget}
           onSelectView={selectView}
@@ -1205,7 +1234,7 @@
               }}
               onSelectSection={openSectionContext}
               onOpenPage={() =>
-                tabManager.openPage(
+                openPageOrNotify(
                   {
                     notebook: activeNotebook,
                     section: activeSection,

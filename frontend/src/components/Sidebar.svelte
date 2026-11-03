@@ -40,7 +40,9 @@
     sidebarDragging?: boolean
     onSelectNotebook: (notebook: string) => void
     onSelectSection: (section: string) => void
-    onSelectPage: (notebook: string, section: string, page: string) => void
+    // Returns whether the open landed (#1005 refused-open contract): false =
+    // every tab conflict-busy; follow-through must not touch the active page.
+    onSelectPage: (notebook: string, section: string, page: string) => boolean
     onPinPage: (notebook: string, section: string, page: string) => void
     /** Right-click "Page properties" target. Opens the properties panel +
      *  arms its type menu on the chosen page (mirrors the /type slash and

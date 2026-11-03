@@ -101,7 +101,10 @@ export interface UseNavCrudDeps {
   onSelectView: (view: string) => void
   onSelectNotebook: (notebook: string) => void
   onSelectSection: (section: string) => void
-  onSelectPage: (notebook: string, section: string, page: string) => void
+  // onSelectPage opens the page and returns whether the open landed (#1005
+  // refused-open contract): false means every tab is conflict-busy and the
+  // caller must skip follow-through that would act on the still-active page.
+  onSelectPage: (notebook: string, section: string, page: string) => boolean
   getExpandedSections: () => Set<string>
   setExpandedSections: (next: SvelteSet<string>) => void
   toggleSection: (path: string) => void
@@ -341,14 +344,20 @@ export function useNavCrud(deps: UseNavCrudDeps) {
       const active = deps.getActive()
       await CreatePage(active.notebook, sectionName, pageName, '')
       await deps.loadNavigation()
-      deps.setActive({ section: sectionName, page: pageName })
-      deps.onSelectPage(active.notebook, sectionName, pageName)
-      deps.setActiveView('notes')
-      deps.onSelectView('notes')
-      // Signal the editor to focus the title for inline rename.
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('focus-page-title'))
-      }, 100)
+      const opened = deps.onSelectPage(active.notebook, sectionName, pageName)
+      // Gate ALL follow-through on the open (#1005): on a refused open the
+      // old conflict-busy tab stays active, so arming the nav triple,
+      // flipping the view, or dispatching focus-page-title would rename the
+      // WRONG (still-active) page's title.
+      if (opened) {
+        deps.setActive({ section: sectionName, page: pageName })
+        deps.setActiveView('notes')
+        deps.onSelectView('notes')
+        // Signal the editor to focus the title for inline rename.
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('focus-page-title'))
+        }, 100)
+      }
     } catch (e) {
       actionError = navigationActionError(e, 'create')
     } finally {
