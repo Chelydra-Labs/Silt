@@ -90,15 +90,16 @@
       await MutateBlock(uuid, text)
       persistError = ''
     } catch (e) {
-      const msg = coerceIPCError(e).message
+      const { code, message: msg } = coerceIPCError(e)
       // The source block is being edited in another view (focus lock held).
       // Retry shortly instead of silently overwriting or dropping the edit.
       // #478: map on the stable code first (resilient to backend wording
       // changes), with the substring as a legacy fallback for any unmigrated
-      // return site.
+      // return site — guarded on code absence so typed recovery prose that
+      // merely embeds the phrase never enters the retry loop.
       const isBusy =
-        coerceIPCError(e).code === IPCErrorCode.CodeBlockBeingEdited ||
-        msg.includes('being edited')
+        code === IPCErrorCode.CodeBlockBeingEdited ||
+        (code === undefined && msg.includes('being edited'))
       if (isBusy && attempt < 5) {
         saveTimer = setTimeout(() => void persist(text, attempt + 1), 800)
       } else {

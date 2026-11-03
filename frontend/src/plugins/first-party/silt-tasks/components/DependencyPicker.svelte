@@ -135,10 +135,12 @@
       // recovery message embeds the target path, which can itself contain
       // "circular" (a page named Circular imports.md) and must render
       // verbatim. The cycle sentinel is plain prose (no code), so the
-      // friendly cycle copy applies only there.
+      // friendly cycle copy applies only there — matched exactly, because a
+      // codeless OS error echoing such a page path must render verbatim too.
       const { code, message } = coerceIPCError(e)
       errorMsg =
-        code === undefined && /circular/i.test(message)
+        code === undefined &&
+        message === 'adding this dependency would create a circular dependency'
           ? 'Cannot add: would create a circular dependency.'
           : message
     } finally {
