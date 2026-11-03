@@ -209,9 +209,13 @@ func restoreAfterFailure(path, backupPath string, backup verifiedBackup, content
 	vwe := &VerifiedWriteError{Target: path, Err: cause}
 	// Only a page that HAD a previous version wrote a backup in step 1;
 	// naming backupPath for a new page would point at a file that was never
-	// created.
-	if backup.hadPrev {
-		vwe.Backup = backupPath
+	// created. Re-stat before naming: the app-layer orphan sweep deletes
+	// backups whose target vanished, with no lock against this in-flight
+	// write, and Error() must never offer a path that does not exist.
+	if backup.hadPrev && backupPath != "" {
+		if _, statErr := os.Stat(backupPath); !os.IsNotExist(statErr) {
+			vwe.Backup = backupPath
+		}
 	}
 	if p := pendingPath(backupPath); p != "" {
 		if rerr := writeDurableFile(p, content); rerr != nil {
@@ -236,6 +240,11 @@ func restoreAfterFailure(path, backupPath string, backup verifiedBackup, content
 		if backupPath != "" {
 			b, err := os.ReadFile(backupPath)
 			if err != nil {
+				if os.IsNotExist(err) {
+					// Swept between the stat above and this read — the
+					// contract holds: a vanished backup is never named.
+					vwe.Backup = ""
+				}
 				vwe.Err = errors.Join(cause, fmt.Errorf("restore read-back of %s failed: %w", backupPath, err))
 				return vwe
 			}

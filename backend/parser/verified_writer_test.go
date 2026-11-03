@@ -292,6 +292,45 @@ func TestWriteFileAtomicVerified_HardFailureRetainsBackup(t *testing.T) {
 	}
 }
 
+// The app-layer orphan sweep can delete the backup mid-flight (it holds no
+// lock against in-flight writes): Error() must then never name it — the
+// no-phantom-paths contract on VerifiedWriteError's copy fields.
+func TestWriteFileAtomicVerified_SweptBackupNotNamedInError(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "page.md")
+	backup := filepath.Join(dir, ".system", "writebackups", "page.md")
+	if err := os.WriteFile(target, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := VerifiedWriteAfterRenameHook
+	VerifiedWriteAfterRenameHook = func(path string) error {
+		// Simulate the sweep racing the failing write: the backup is gone
+		// before the recovery ladder runs.
+		_ = os.Remove(backup)
+		return errors.New("simulated torn rename")
+	}
+	t.Cleanup(func() { VerifiedWriteAfterRenameHook = orig })
+
+	err := WriteFileAtomicVerified(target, backup, []byte("user's new text"))
+	var vwe *VerifiedWriteError
+	if !errors.As(err, &vwe) {
+		t.Fatalf("want *VerifiedWriteError, got %v", err)
+	}
+	if vwe.Backup != "" {
+		t.Errorf("Backup = %q, want empty — the backup was swept mid-flight and must not be offered as a recovery path", vwe.Backup)
+	}
+	if vwe.Pending == "" {
+		t.Error("Pending = empty, want the incoming bytes retained next to the swept backup")
+	}
+	if got := readOrEmpty(t, backup+".pending"); got != "user's new text" {
+		t.Errorf("pending = %q, want the incoming bytes retained", got)
+	}
+	if strings.Contains(vwe.Error(), "pre-write backup is at") {
+		t.Errorf("error names a backup that no longer exists: %v", vwe)
+	}
+}
+
 // One generation: the next write's backup copy sweeps the previous
 // generation — after write 2 the backup holds write 1's result, not write 0's.
 func TestWriteFileAtomicVerified_BackupOneGenerationSweptByNextWrite(t *testing.T) {
