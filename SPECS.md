@@ -803,7 +803,8 @@ restored from the pre-write bytes. When the restore verifies, the page file
 never presents partial content; a restore that itself cannot be verified can
 leave torn bytes at the target, so the write fails with the typed
 `verified_write_failed` sentinel saying the previous version could not be
-restored. The message is built from the retention state that actually holds
+restored (or, for a new page, that the torn partial file remains at the
+target). The message is built from the retention state that actually holds
 on disk and names only copies that exist — the unsaved text (`.pending`) and
 the pre-write backup are the manual recovery path. The write funnels never
 treat the failed write as landed (no baseline re-adoption; the failure is

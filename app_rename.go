@@ -539,7 +539,10 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 				// so no baseline can key it — conflict-state migration is
 				// owned by renameSingleFile (#1005). writePageStaged still
 				// dispatches per root, so a non-atomic one lands this rewrite
-				// in verified mode (#1009).
+				// in verified mode (#1009). On failure the error aborts
+				// before clearAndReindex, so old-path index entries persist
+				// (fail-safe: saves against them fail closed; the next scan
+				// reconciles).
 				return a.writePageStaged(newFile, []byte(content))
 			},
 			rewriteInbound: func(heldPaths map[string]bool) {
@@ -641,7 +644,11 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 						// .pending). Returning aborts before clearAndReindex
 						// so they are never indexed and the typed error's
 						// recovery prose surfaces — the failure mode
-						// RenamePage already uses.
+						// RenamePage already uses. The old-path index entries
+						// this skips stay until the next scan reconciles them:
+						// deliberate fail-safe — saves against the phantom
+						// fail closed on the moved file, and index cleanup
+						// must not run downstream of untrusted bytes.
 						return err
 					}
 					// Plain staged-write failure: the atomic writer leaves
