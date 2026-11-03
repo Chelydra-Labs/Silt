@@ -497,13 +497,27 @@ crash). Reconnect re-indexes on the next fsnotify event (the watch survives a
 temporary mount drop). Linking a folder that is offline at link time registers
 the link and indexes best-effort (logged); the user can re-link once it's back.
 
-Sync-conflict caveat. Silt's atomic write is temp-file + `os.Rename`. On a
-network filesystem (SMB/WebDAV) `os.Rename` may not be atomic the way it is on a
-local FS, but the `WriteTracker` self-write suppression and the editor focus
-lock still hold, so external (non-Silt) edits to the same file are reconciled
-by the existing diff/lease machinery once both sides land. A vault index must
-stay on a local disk regardless (WAL does not work on NFS/SMB — §3), so only
-the markdown crosses the mount.
+Sync-conflict caveat (handled case). Silt's atomic write is temp-file +
+`os.Rename`. On a network filesystem (SMB/WebDAV) `os.Rename` may not be
+atomic the way it is on a local FS, so roots are probed once per session
+(`db.IsNetworkFS`, cached per root at open/link) and page writes on a
+detected mount route through the verified staged writer (#1009): a pre-write
+backup lands on the same mount (`<root>/.system/writebackups/<relPath>`, one
+generation, swept by the next write, invisible to indexing), the usual staged
+sequence runs unchanged, and a post-rename read-back (size + SHA-256)
+confirms the bytes. A torn destination is retried once, then restored from
+the backup — the page file is never left presenting a partial write — and a
+still-unverifiable write fails with the typed `verified_write_failed`
+sentinel naming the retained backup and pending-content copies. The
+verification read runs inside the same `LockFileWrite` transaction as the
+write and re-baselines the load fingerprint through the `trackedPageWrite`
+choke point (it is Silt's own write, never an external edit), and the
+degraded crash-safety is surfaced once per root as a dismissible notice. The
+`WriteTracker` self-write suppression and the editor focus lock still hold,
+so external (non-Silt) edits to the same file are reconciled by the existing
+diff/lease machinery once both sides land. A vault index must stay on a local
+disk regardless (WAL does not work on NFS/SMB — §3), so only the markdown
+crosses the mount.
 
 External-edit conflict detection (#1005). Atomic staging also does not stop a
 whole-page editor save from *semantically* clobbering an external edit: the

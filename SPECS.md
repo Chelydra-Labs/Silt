@@ -789,6 +789,21 @@ leaves a partial file visible at the target path. A crash during steps 1–3
 leaves the existing file untouched; a crash during step 4 leaves either the
 old or the new content, never a mixture.
 
+That guarantee is conditional on the rename actually being atomic — which
+local filesystems promise and network mounts (NFS/SMB/FUSE) may not. Silt
+probes each writable root (the vault and every linked notebook) once per
+session; on a detected non-atomic mount, page writes switch to a *verified*
+mode instead of pretending the guarantee holds: the same staged sequence,
+wrapped with a pre-write backup at `<root>/.system/writebackups/<relPath>`
+(one generation, swept by the next write) and a post-rename read-back
+(size + SHA-256 vs the written bytes). A torn result is retried once and then
+restored from the backup, so the page file never presents partial content; a
+write that still cannot be verified fails with the typed `verified_write_failed`
+sentinel naming the retained backup and pending-content copies. The
+degradation is surfaced once per root as a dismissible notice. Backups live
+under `.system/` and never surface as pages. Local filesystems keep the plain
+staged protocol above, unchanged.
+
 7.1.1 Recovery and destructive operations (Tier 0)
 
 Atomic staging protects against torn writes. It does not protect against a
