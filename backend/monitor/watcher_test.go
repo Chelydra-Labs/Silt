@@ -1112,3 +1112,64 @@ func TestPageChangedHandler_ReindexAndClear(t *testing.T) {
 	}
 	mu.Unlock()
 }
+
+// TestDirectoryWatcher_NormalizationWriteFiresHook pins the #1005 baseline
+// contract: the watcher's own normalization rewrite (minted id comments) must
+// report the written bytes through OnPageNormalized so the app can re-
+// baseline live editor fingerprints — otherwise Silt's own write reads as an
+// external edit and the next editor save refuses + stashes a conflict Silt
+// itself created.
+func TestDirectoryWatcher_NormalizationWriteFiresHook(t *testing.T) {
+	vaultPath := t.TempDir()
+
+	dm, err := db.NewDatabaseManager("")
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	t.Cleanup(func() { _ = dm.Close() })
+
+	coord := core.NewExecutionCoordinator(dm.SQLDB())
+	tracker := NewWriteTracker()
+	t.Cleanup(tracker.Stop)
+
+	dw, err := NewDirectoryWatcher(vaultPath, dm, tracker, coord, 4)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher: %v", err)
+	}
+
+	var hookPath string
+	var hookPrior, hookContent []byte
+	dw.OnPageNormalized = func(p string, prior, c []byte) { hookPath, hookPrior, hookContent = p, prior, c }
+
+	// Id-less content forces the normalization rewrite (the parse mints id
+	// comments and writes them back).
+	filePath := filepath.Join(vaultPath, "Work", "Journal", "Daily", "2026-06-14.md")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filePath, []byte("# Title\n\n- [ ] no id yet\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	dw.reindexFile(filePath)
+
+	if hookPath != filePath {
+		t.Fatalf("normalization write must fire the hook for its path, got %q", hookPath)
+	}
+	onDisk, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read after reindex: %v", err)
+	}
+	if string(hookContent) != string(onDisk) {
+		t.Fatalf("hook must observe the bytes actually written:\n hook: %q\n disk: %q", hookContent, onDisk)
+	}
+	if !strings.Contains(string(onDisk), "<!-- id:") {
+		t.Fatalf("expected the normalization to mint id comments, got %q", onDisk)
+	}
+	// The PRE-write bytes are what the app-side refresh compares the stored
+	// baseline against (#1005): they must be exactly what the file held
+	// before the normalization write.
+	if string(hookPrior) != "# Title\n\n- [ ] no id yet\n" {
+		t.Fatalf("hook must observe the pre-write bytes, got %q", hookPrior)
+	}
+}

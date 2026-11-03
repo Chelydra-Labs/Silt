@@ -138,8 +138,7 @@ func (a *App) mutateTaskBlock(blockID, label, reason string, mutate func(*parser
 			}
 			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
 			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), reason)
-			a.tracker.RegisterWrite(filePath)
-			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+			if err := a.trackedPageWrite(filePath, []byte(newContent)); err != nil {
 				writeErr = err
 				return
 			}
@@ -414,8 +413,7 @@ func (a *App) setTaskOrders(ids []string, orders []int, reason string) error {
 				}
 				newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
 				a.maybeCapturePageVersion(historyLoc(first.loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), reason)
-				a.tracker.RegisterWrite(filePath)
-				if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+				if err := a.trackedPageWrite(filePath, []byte(newContent)); err != nil {
 					writeErr = err
 					return
 				}

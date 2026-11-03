@@ -200,6 +200,56 @@ func TestPluginMoveBlock_CrossPageInsertsInTarget(t *testing.T) {
 	}
 }
 
+// PluginMoveBlock cross-page rewrites the SOURCE page under its file lock and
+// refreshes its fingerprint. The refreshed baseline means an editor still open
+// on the source page would pass the gate with its stale buffer and silently
+// re-insert the moved block — so the op must emit a whole-page block:changed
+// for the source page (the recapture signal), not just the target (#1005).
+func TestPluginMoveBlock_CrossPageEmitsWholePageSignalForSource(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section := "Work", "Journal"
+	srcPage, dstPage := "SigSrc", "SigDst"
+	srcPath := filepath.Join(app.vaultPath, notebook, section, srcPage+".md")
+	dstPath := filepath.Join(app.vaultPath, notebook, section, dstPage+".md")
+
+	blockA := "44444444-4444-4444-4444-444444444444"
+	srcContent := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"SigSrc\"\ndate: \"2026-06-13\"\ntags: []\n---\n" +
+		"- [ ] alpha <!-- id: " + blockA + " -->\n"
+	writeAndIndexFile(t, app, srcPath, srcContent, notebook, section, srcPage)
+	dstContent := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"SigDst\"\ndate: \"2026-06-13\"\ntags: []\n---\n"
+	writeAndIndexFile(t, app, dstPath, dstContent, notebook, section, dstPage)
+
+	// The editor-open precondition: a load that captures the baseline the
+	// source rewrite is about to invalidate.
+	if _, err := app.FetchPageBlocks(notebook, section, srcPage); err != nil {
+		t.Fatalf("FetchPageBlocks source: %v", err)
+	}
+
+	var pageScoped []parser.BlockChangedEvent
+	app.eventEmit = func(name string, data ...any) {
+		if name != string(EventBlockChanged) || len(data) == 0 {
+			return
+		}
+		if ev, ok := data[0].(parser.BlockChangedEvent); ok && ev.ID == "" {
+			pageScoped = append(pageScoped, ev)
+		}
+	}
+	t.Cleanup(func() { app.eventEmit = nil })
+
+	token := registerTestSession(t, app, "silt-tasks")
+	if err := app.PluginMoveBlock("silt-tasks", token, blockA, "", notebook, section, dstPage); err != nil {
+		t.Fatalf("PluginMoveBlock cross-page: %v", err)
+	}
+
+	for _, ev := range pageScoped {
+		if ev.Notebook == notebook && ev.Section == section && ev.Page == srcPage {
+			return // pass — the source page got its whole-page recapture signal
+		}
+	}
+	t.Fatalf("cross-page move must emit a page-scoped block:changed for the source page %s, got %+v",
+		srcPage, pageScoped)
+}
+
 // PluginCreateBlock rejects an invalid block type.
 func TestPluginCreateBlock_RejectsInvalidType(t *testing.T) {
 	app := newTestApp(t)

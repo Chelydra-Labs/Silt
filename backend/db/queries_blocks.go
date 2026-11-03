@@ -155,7 +155,8 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 		SELECT b.id, b.parent_id, b.depth, b.type, b.raw_content, b.clean_content, b.line_number,
 		       b.file_date,
 		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0),
-		       t.created_at, t.completed_at, t.manual_order, t.modified_at, t.estimate_minutes
+		       t.created_at, t.completed_at, t.manual_order, t.modified_at,
+		       COALESCE(t.progress, 0), t.recur
 		FROM blocks b
 		LEFT JOIN tasks t ON b.id = t.block_id
 		WHERE b.source = ? AND b.notebook = ? AND b.section = ? AND b.page = ?
@@ -174,9 +175,10 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 		var status, owner, start, due string
 		var priority int
 		var createdAt, completedAt, modifiedAt sql.NullString
-		var manualOrder, estimateMinutes sql.NullInt64
+		var manualOrder sql.NullInt64
+		var recur sql.NullString
 
-		if err := rows.Scan(&b.ID, &parentID, &b.Depth, &bType, &b.RawText, &b.CleanText, &b.LineNumber, &fileDate, &status, &owner, &start, &due, &priority, &createdAt, &completedAt, &manualOrder, &modifiedAt, &estimateMinutes); err != nil {
+		if err := rows.Scan(&b.ID, &parentID, &b.Depth, &bType, &b.RawText, &b.CleanText, &b.LineNumber, &fileDate, &status, &owner, &start, &due, &priority, &createdAt, &completedAt, &manualOrder, &modifiedAt, &b.Progress, &recur); err != nil {
 			return nil, err
 		}
 		if parentID.Valid {
@@ -202,13 +204,39 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 		if manualOrder.Valid {
 			b.ManualOrder = int(manualOrder.Int64)
 		}
-		// [modified::] / [estimate::] (#439/#440): minutes are the cache;
-		// FormatEstimateMinutes is best-effort for re-render from DB.
 		if modifiedAt.Valid {
 			b.ModifiedAt = modifiedAt.String
 		}
-		if estimateMinutes.Valid {
-			b.Estimate = parser.FormatEstimateMinutes(int(estimateMinutes.Int64))
+		// [recur::]/[progress::] (#296): file-resident user intent cached on
+		// the task row (schema calls them the same values the parser
+		// round-trips). They MUST hydrate here: rows-echo saves (global
+		// replace) re-render served rows through RenderFileContent, and a
+		// row without them strips the tokens from the file (#1005). MCP
+		// update_blocks is NOT covered by that re-render protection — its
+		// tool boundary (blockIn) carries id/type/text only, so those
+		// fields are dropped client-side regardless of this hydration; for
+		// it the hydration matters only as the like-with-like side of the
+		// rows-anchored read-basis comparison. The interactive editor is
+		// not such a consumer either — it saves docToBlocks(editor.getJSON()),
+		// a payload this hydration cannot reach.
+		if recur.Valid && recur.String != "" {
+			b.Recurrence = recur.String
+		}
+		// [estimate::] (#439) plus [pin::]/[blocked_by::]/unknown
+		// [key:: value] tokens (#1005): render-emitted fields whose only
+		// storage is the raw line this query already loaded, so re-derive
+		// them through the canonical parser (estimate_minutes cannot
+		// reproduce the raw token; the pin/blocked_by/unknown columns either
+		// don't exist or aren't selected here). A dropped field is stripped
+		// from the file on the next rows-echo save and blinds the
+		// rows-anchored load baseline comparison (blocksContentMatchesRows).
+		if b.Type == parser.BlockTask {
+			if pb, _, _ := parser.ParseLine(b.RawText, 0, 0); pb.Type == parser.BlockTask {
+				b.Estimate = pb.Estimate
+				b.Pinned = pb.Pinned
+				b.BlockedBy = pb.BlockedBy
+				b.ExtraTokens = pb.ExtraTokens
+			}
 		}
 		blocks = append(blocks, b)
 	}

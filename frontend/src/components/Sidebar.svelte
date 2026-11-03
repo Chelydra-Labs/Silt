@@ -38,10 +38,18 @@
     collapsed: boolean
     sidebarWidth?: number
     sidebarDragging?: boolean
-    onSelectNotebook: (notebook: string) => void
+    // Returns whether the switch landed (#1005 refused-open contract):
+    // false = a resolution is in flight; the caller must not move the nav
+    // triple (displayedTabs filters by notebook — switching unmounts the
+    // resolving tab's surface).
+    onSelectNotebook: (notebook: string) => boolean
     onSelectSection: (section: string) => void
-    onSelectPage: (notebook: string, section: string, page: string) => void
-    onPinPage: (notebook: string, section: string, page: string) => void
+    // Returns whether the open landed (#1005 refused-open contract): false =
+    // every tab conflict-busy; follow-through must not touch the active page.
+    onSelectPage: (notebook: string, section: string, page: string) => boolean
+    // Same refused-open contract for the pin path (double/middle click):
+    // pinning opens the page and can be refused the same way.
+    onPinPage: (notebook: string, section: string, page: string) => boolean
     /** Right-click "Page properties" target. Opens the properties panel +
      *  arms its type menu on the chosen page (mirrors the /type slash and
      *  the header pill's untyped affordance). Vault pages proceed; linked
@@ -213,11 +221,15 @@
   })
 
   function handleSelectNotebook(nb: string) {
+    // Same refused-open contract as the page legs: the bindable writes
+    // below propagate to the host before its conflict guard could refuse,
+    // which would empty displayedTabs and unmount the resolving tab's
+    // surface mid-resolution (#1005). Apply the switch only when it lands.
+    if (!onSelectNotebook(nb)) return
     activeNotebook = nb
     activeSection = ''
     activePage = ''
     showNotebookDropdown = false
-    onSelectNotebook(nb)
     // Expand the first section if present, for orientation.
     const nbObj = loader.tree.notebooks.find((n) => n.name === nb)
     loader.setExpandedSections(

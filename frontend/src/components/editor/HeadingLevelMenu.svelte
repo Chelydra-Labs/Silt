@@ -20,6 +20,25 @@
 
   let menuOpen = $state(false)
 
+  // Conflict-hold tick (#1005): the silt:change-block-type receiver refuses
+  // a non-editable editor, and the trigger itself must show that state
+  // instead of opening a menu of silent no-ops.
+  let editableTick = $state(0)
+  $effect(() => {
+    if (!editor) return
+    const bump = (): void => {
+      editableTick++
+    }
+    editor.on('update', bump)
+    return () => {
+      editor.off('update', bump)
+    }
+  })
+  let formatBlocked = $derived.by(() => {
+    void editableTick
+    return !editor || !editor.isEditable
+  })
+
   $effect(() => {
     onMenuOpenChange?.(menuOpen)
   })
@@ -149,6 +168,7 @@
     aria-label="Block type"
     data-tb
     tabindex={toolbarTabIndex}
+    disabled={formatBlocked}
     onclick={() => (menuOpen = !menuOpen)}
     onfocus={() => onToolbarFocus?.()}
   >
@@ -205,6 +225,11 @@
     transition:
       background 0.1s,
       color 0.1s;
+  }
+
+  .heading-trigger:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
   }
 
   .heading-trigger:hover {

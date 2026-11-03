@@ -132,6 +132,7 @@ describe('DateGlance', () => {
     const chain = vi.fn(() => ({ focus, insertContent, run }))
     dateGlance.insertEditor = {
       isDestroyed: false,
+      isEditable: true,
       chain
     } as never
 
@@ -203,7 +204,11 @@ describe('DateGlance', () => {
     const insertContent = vi.fn(() => ({ run }))
     const focus = vi.fn(() => ({ insertContent, run }))
     const chain = vi.fn(() => ({ focus, insertContent, run }))
-    dateGlance.insertEditor = { isDestroyed: false, chain } as never
+    dateGlance.insertEditor = {
+      isDestroyed: false,
+      isEditable: true,
+      chain
+    } as never
 
     render(DateGlance)
     await clickFirstDayCell()
@@ -221,7 +226,11 @@ describe('DateGlance', () => {
     const insertContent = vi.fn(() => ({ run }))
     const focus = vi.fn(() => ({ insertContent, run }))
     const chain = vi.fn(() => ({ focus, insertContent, run }))
-    dateGlance.insertEditor = { isDestroyed: false, chain } as never
+    dateGlance.insertEditor = {
+      isDestroyed: false,
+      isEditable: true,
+      chain
+    } as never
 
     render(DateGlance)
     await clickFirstDayCell()
@@ -442,5 +451,29 @@ describe('DateGlance', () => {
 
     hidden.remove()
     visible.remove()
+  })
+})
+
+// #1005: a conflict-held editor is setEditable(false) — the date insert
+// would render into the buffer the armed reload destroys, so pickDay must
+// fall back to clipboard.
+describe('DateGlance conflict hold (#1005)', () => {
+  it('falls back to clipboard on a non-editable insert target', async () => {
+    const run = vi.fn(() => true)
+    const insertContent = vi.fn(() => ({ run }))
+    const focus = vi.fn(() => ({ insertContent, run }))
+    const chain = vi.fn(() => ({ focus, insertContent, run }))
+    dateGlance.insertEditor = {
+      isDestroyed: false,
+      isEditable: false,
+      chain
+    } as never
+
+    render(DateGlance)
+    await clickFirstDayCell()
+
+    expect(chain).not.toHaveBeenCalled()
+    expect(copyTextMock).toHaveBeenCalledOnce()
+    expect(dateGlance.open).toBe(false)
   })
 })

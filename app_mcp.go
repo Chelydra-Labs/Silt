@@ -33,14 +33,42 @@ func (b mcpBridge) SearchBlocksPaged(ctx context.Context, query string, offset, 
 	return b.app.SearchBlocksPaged(query, offset, limit, filters)
 }
 
-func (b mcpBridge) FetchPageBlocks(ctx context.Context, notebook, section, page string) ([]parser.ParsedBlock, error) {
+func (b mcpBridge) FetchPageBlocks(ctx context.Context, notebook, section, page string) ([]parser.ParsedBlock, int64, error) {
 	_ = ctx
-	return b.app.FetchPageBlocks(notebook, section, page)
+	// captureNone: an MCP client reading a page must not re-baseline the
+	// external-edit fingerprint — the editor's baseline tracks the bytes the
+	// editor holds, and re-baselining here would let the editor's next save
+	// clobber an external edit the client just read (#1005). The client's
+	// OWN read is guarded separately: the rows-anchored read-basis below is
+	// re-checked by update_blocks (app_mcp_rmw.go), so an RMW still refuses
+	// on drift. It must be captured from the rows ACTUALLY served — a
+	// byte-anchored basis would pass an update built from rows that are
+	// still pre-external during the watcher's re-index debounce. The return
+	// value is the fetch's read generation: the client echoes it back in
+	// update_blocks (read_generation) so a stale pre-commit fetch refuses
+	// even after a newer fetch re-armed the shared basis slot.
+	rows, err := b.app.fetchPageBlocks(notebook, section, page, captureNone)
+	if err != nil {
+		return nil, 0, err
+	}
+	gen := b.app.captureMCPReadBasisForBlocksByLocator(notebook, section, page, rows)
+	return rows, gen, nil
 }
 
-func (b mcpBridge) FetchPageMarkdown(ctx context.Context, notebook, section, page string) (string, error) {
+func (b mcpBridge) FetchPageMarkdown(ctx context.Context, notebook, section, page string) (string, int64, error) {
 	_ = ctx
-	return b.app.FetchPageMarkdown(notebook, section, page)
+	// Serve-then-capture on the SAME bytes, mirroring the blocks funnel
+	// above: the basis must anchor on what the client actually observed —
+	// capturing in a second read arms it on bytes that were never served,
+	// and a write in the window then passes the client-basis gate (silent
+	// revert) or false-refuses. A missing page errors before any basis is
+	// armed: unlike the blocks funnel there are no rows to serve, so no
+	// absent basis is wanted.
+	body, content, filePath, err := b.app.fetchPageMarkdownContent(notebook, section, page, captureNone)
+	if err != nil {
+		return "", 0, err
+	}
+	return body, b.app.captureMCPReadBasisFromBytes(filePath, content), nil
 }
 
 func (b mcpBridge) ListNavigation(ctx context.Context) (parser.NavigationTree, error) {
@@ -53,9 +81,9 @@ func (b mcpBridge) CreatePage(ctx context.Context, notebook, section, page, date
 	return b.app.CreatePage(notebook, section, page, dateStr)
 }
 
-func (b mcpBridge) UpdateBlocks(ctx context.Context, notebook, section, page string, blocks []parser.ParsedBlock) error {
+func (b mcpBridge) UpdateBlocks(ctx context.Context, notebook, section, page string, blocks []parser.ParsedBlock, readGeneration int64) error {
 	_ = ctx
-	return b.app.saveFileBlocksWithSource(notebook, section, page, blocks, historyReasonMCP)
+	return b.app.saveFileBlocksMCP(notebook, section, page, blocks, historyReasonMCP, readGeneration)
 }
 
 func (b mcpBridge) PageExists(ctx context.Context, notebook, section, page string) (bool, error) {

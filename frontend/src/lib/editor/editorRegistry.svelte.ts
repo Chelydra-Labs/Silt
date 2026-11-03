@@ -29,10 +29,21 @@ export interface EditorHandle {
   flush: () => Promise<boolean>
   /** Force the editor to reload from its blocks prop on the next external
    *  block update, bypassing the focused-edit guard. Only safe right after a
-   *  flush synced the editor to disk, so there is nothing unsaved to clobber. */
-  forceExternalReload: () => void
-  /** Drop a pending forceExternalReload if the out-of-band write failed. */
-  clearExternalReload: () => void
+   *  flush synced the editor to disk, so there is nothing unsaved to clobber.
+   *  `conflictHold: true` grades the write hold as conflict-grade (#1005) —
+   *  used when a cross-surface conflict resolution made the buffer stale and
+   *  discardable, so a keystroke cannot void the armed reload. */
+  forceExternalReload: (opts?: { conflictHold?: boolean }) => void
+  /** Drop a pending forceExternalReload if the out-of-band write failed.
+   *  `conflict: true` is reserved for the resolution-failure path that
+   *  armed a conflict-grade hold — the plain clear deliberately cannot
+   *  strip one (#1005). */
+  clearExternalReload: (opts?: { conflict?: boolean }) => void
+  /** Move focus into the owning editor surface (ProseMirror or the Source
+   *  textarea). Returns false when the surface has nothing focusable, so
+   *  callers can fall back (#1005: post-resolution focus must land in the
+   *  editor that owns the buffer, not the page chrome). */
+  focusEditor?: () => boolean
   /** Show an in-editor proposed-edit preview over a selection range (#543).
    *  No-op if the editor has no selection / is not mounted. Returns true if
    *  the preview was set. */
@@ -55,6 +66,14 @@ export interface EditorHandle {
    *  Guards against stale PM positions when the user edits during AI
    *  streaming (#543 review fix). */
   verifySelectionText: (from: number, to: number, expected: string) => boolean
+  /** Resolve an external-edit save refusal (#1005): keep_mine / keep_theirs /
+   *  keep_both. Rejects if the resolution IPC fails — the caller's banner
+   *  keeps offering the actions. Resolves to the created conflict copy's
+   *  page name for the success announcement (void when unavailable). Optional
+   *  so non-editor surfaces can register without it. */
+  resolveExternalConflict?: (
+    resolution: 'keep_mine' | 'keep_theirs' | 'keep_both'
+  ) => Promise<string | void>
 }
 
 // Imperative handle registry — not UI-reactive state.
@@ -73,7 +92,18 @@ export function editorKey(
   return `${notebook}\x00${section}\x00${page}`
 }
 
-/** Register a mounted editor. Returns an unregister function. */
+/** Register a mounted editor. Returns an unregister function.
+ *
+ *  Keyed by locator only (not tabId + locator, #345): with two tabs open on
+ *  the same page the second registration replaces the first, so LOCATOR
+ *  lookups address "the page" through the LAST-registered tab's editor.
+ *  That is fine for out-of-band writers that target the page itself (global
+ *  replace's flush/arm, the Go-side restore reload): the un-addressed tab
+ *  re-refuses once and converges on its next reload. Conflict RESOLUTION is
+ *  not routed through this registry's locator lookup anymore — the latching
+ *  container routes through its own surface's handle (reported via
+ *  onHandleRegistered), so a resolution can never settle the sibling tab's
+ *  editor while the latching tab's stale buffer stays savable (#1005). */
 export function registerEditor(handle: EditorHandle): () => void {
   editors.set(handle.key, handle)
   return () => {

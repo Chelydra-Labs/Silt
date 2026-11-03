@@ -61,6 +61,10 @@ export function createTemplateInsert(deps: TemplateInsertDeps) {
   ): void {
     const editorInstance = getEditor()
     if (!editorInstance || editorInstance.isDestroyed) return
+    // A conflict-held editor is non-editable (#1005): the picker can stay
+    // open across the hold arming, and the insert would render into the
+    // buffer the armed reload destroys.
+    if (!editorInstance.isEditable) return
     const doc = blocksToDoc(blocks)
     if (mode === 'append') {
       const end = editorInstance.state.doc.content.size

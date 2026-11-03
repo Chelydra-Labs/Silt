@@ -26,6 +26,10 @@
   )
 
   function cycleStatus() {
+    // A conflict-held editor is non-editable (#1005): updateAttributes
+    // dispatches regardless, and the visible flip would be destroyed by the
+    // armed reload.
+    if (editor && !editor.isEditable) return
     const s = status.toUpperCase()
     const next = s === 'TODO' ? 'DOING' : s === 'DOING' ? 'DONE' : 'TODO'
     updateAttributes({ status: next })

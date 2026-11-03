@@ -251,6 +251,8 @@ func (a *App) rewritePageReservedProps(loc db.TypedPageLocator, renames []types.
 	}
 
 	// Atomic write + self-write arm + reindex (blocks + projections).
+	// Direct write: one-shot schema migration that runs at vault open,
+	// before any editor load can capture a baseline to refresh (#1005).
 	if a.tracker != nil {
 		a.tracker.RegisterWrite(filePath)
 	}

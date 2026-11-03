@@ -48,8 +48,12 @@
     menu: SidebarContextMenu
     dnd: DragDropManager
     onSelectSection: (section: string) => void
-    onSelectPage: (notebook: string, section: string, page: string) => void
-    onPinPage: (notebook: string, section: string, page: string) => void
+    // Returns whether the open landed (#1005): the host refuses while a
+    // conflict resolution blocks it, and the caller must not move the nav
+    // selection to a page that never opened.
+    onSelectPage: (notebook: string, section: string, page: string) => boolean
+    // Same refused-open contract for the pin path.
+    onPinPage: (notebook: string, section: string, page: string) => boolean
     /** Host-owned hybrid handler (writes active props + expansion); also a
      *  CRUD dep, so it stays in the host and is threaded back in. */
     handleSelectNotebook: (notebook: string) => void
@@ -300,28 +304,45 @@
   }
 
   function handleSelectPage(section: string, page: string) {
-    activeSection = section
-    activePage = page
-    onSelectPage(activeNotebook, section, page)
+    // Apply the nav triple only when the open landed: setting it before the
+    // host handler runs leaves the sidebar pointing at a refused page while
+    // the active tab keeps the old surface (#1005).
+    if (onSelectPage(activeNotebook, section, page)) {
+      activeSection = section
+      activePage = page
+    }
   }
 
   function handleQuickPage(ref: NavigationPageRef) {
-    activeNotebook = ref.notebook
-    loader.setExpandedSections(
-      new SvelteSet(
-        expandActiveAncestors(
-          expandedPathsForNotebook(loader.preferences, ref.notebook),
-          ref.section
+    // Same refused-open contract as handleSelectPage, including the
+    // notebook leg of the triple (handleSelectPage would pass the OLD
+    // activeNotebook for a cross-notebook jump). The expansion swap rides
+    // the same gate — applying the target notebook's paths while its tree
+    // stays hidden behind the refusal would collapse/expand the wrong
+    // notebook's sections.
+    if (onSelectPage(ref.notebook, ref.section, ref.page)) {
+      activeNotebook = ref.notebook
+      activeSection = ref.section
+      activePage = ref.page
+      loader.setExpandedSections(
+        new SvelteSet(
+          expandActiveAncestors(
+            expandedPathsForNotebook(loader.preferences, ref.notebook),
+            ref.section
+          )
         )
       )
-    )
-    handleSelectPage(ref.section, ref.page)
+    }
   }
 
   function handlePinPage(section: string, page: string) {
-    activeSection = section
-    activePage = page
-    onPinPage(activeNotebook, section, page)
+    // Same refused-open contract as handleSelectPage: pinning opens (or
+    // promotes) the page and can be refused at capacity with every eviction
+    // candidate busy — the triple must not move to a page that never opened.
+    if (onPinPage(activeNotebook, section, page)) {
+      activeSection = section
+      activePage = page
+    }
   }
 
   // DnD handlers delegate to the manager. Start/Leave/Drop/DragEnd are bound

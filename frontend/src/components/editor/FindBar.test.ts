@@ -171,3 +171,42 @@ describe('FindBar', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 })
+
+// #1005: a conflict-held editor is setEditable(false) — replace dispatches
+// through commands, which isEditable never gates; the edit would render and
+// the armed reload would destroy it.
+describe('FindBar conflict hold (#1005)', () => {
+  afterEach(() => cleanup())
+
+  it('refuses replace and replace-all on a non-editable editor', async () => {
+    const replaceNextInPage = vi.fn()
+    const replaceAllInPage = vi.fn()
+    const editor = {
+      isEditable: false,
+      on: vi.fn(),
+      off: vi.fn(),
+      commands: {
+        setSearchQuery: vi.fn(),
+        findNextInPage: vi.fn(),
+        findPrevInPage: vi.fn(),
+        replaceNextInPage,
+        replaceAllInPage
+      }
+    } as never
+
+    const { getByLabelText } = render(FindBar, {
+      props: { editor, onClose: vi.fn() }
+    })
+
+    // Alt+Enter → replace-all is refused…
+    const replaceInput = getByLabelText('Replace with')
+    replaceInput.focus()
+    await fireEvent.keyDown(replaceInput, { key: 'Enter', altKey: true })
+    expect(replaceAllInPage).not.toHaveBeenCalled()
+    // …and so are the Replace / Replace-all buttons.
+    await fireEvent.click(getByLabelText('Replace selected match'))
+    expect(replaceNextInPage).not.toHaveBeenCalled()
+    await fireEvent.click(getByLabelText('Replace all matches'))
+    expect(replaceAllInPage).not.toHaveBeenCalled()
+  })
+})

@@ -138,6 +138,8 @@
     icon: string
     run: () => void
   }
+  // Insert affordances dispatch directly (no event-bus receiver that already
+  // checks isEditable), so each run() refuses a conflict-held editor itself.
   const INSERT_BUTTONS: InsertButton[] = [
     {
       id: 'quote',
@@ -171,6 +173,12 @@
     }
   ]
 
+  /** Every Insert item needs only a live editor — the dispatch-level
+   *  isEditable refusal lives in canInsert(). */
+  function canInsert(): boolean {
+    return !formatBlocked()
+  }
+
   // Tick so can() / align reflect the live selection.
   let selTick = $state(0)
   $effect(() => {
@@ -180,14 +188,26 @@
     }
     editor.on('selectionUpdate', bump)
     editor.on('transaction', bump)
+    // 'update' also fires on setEditable — that is how the conflict hold
+    // (#1005) re-evaluates the disabled state: a non-editable editor must
+    // show every format affordance disabled, not just refuse the dispatch.
+    editor.on('update', bump)
     return () => {
       editor.off('selectionUpdate', bump)
       editor.off('transaction', bump)
+      editor.off('update', bump)
     }
   })
 
-  function canToggleMark(mark: string): boolean {
+  /** Format affordances refuse a conflict-held (non-editable) editor: the
+   *  command would render, then the armed reload destroys it (#1005). */
+  function formatBlocked(): boolean {
     void selTick
+    return !editor || !editor.isEditable
+  }
+
+  function canToggleMark(mark: string): boolean {
+    if (formatBlocked()) return false
     if (!editor) return false
     try {
       const can = editor.can() as {
@@ -208,6 +228,7 @@
 
   function canLink(): boolean {
     void selTick
+    if (formatBlocked()) return false
     if (!editor) return false
     if (editor.isActive('link')) return true
     return !editor.state.selection.empty
@@ -224,11 +245,13 @@
   }
 
   function handleClear(): void {
+    if (formatBlocked()) return
     if (!editor) return
     editor.chain().focus().unsetAllMarks().run()
   }
 
   function handleAlign(align: string): void {
+    if (formatBlocked()) return
     if (!editor) return
     window.dispatchEvent(
       new CustomEvent('silt:set-block-align', { detail: align })
@@ -402,6 +425,7 @@
 
   function canToggleList(): boolean {
     void selTick
+    if (formatBlocked()) return false
     if (!editor || editor.isDestroyed) return false
     try {
       if (
@@ -680,6 +704,7 @@
               role="menuitemradio"
               aria-checked={currentAlign() === btn.id}
               aria-label={btn.label}
+              disabled={formatBlocked()}
               title={hk(btn.hotkey)
                 ? `${btn.label} (${hk(btn.hotkey)})`
                 : btn.label}
@@ -728,7 +753,9 @@
               class="menu-item"
               role="menuitem"
               aria-label={btn.label}
+              disabled={!canInsert()}
               onclick={() => {
+                if (!canInsert()) return
                 btn.run()
                 insertOpen = false
               }}
@@ -775,6 +802,7 @@
       aria-label="Clear formatting"
       data-tb
       data-clear
+      disabled={formatBlocked()}
       tabindex={rovingIdx === clearIdx ? 0 : -1}
       onclick={handleClear}
       onfocus={() => onTbFocus(clearIdx)}

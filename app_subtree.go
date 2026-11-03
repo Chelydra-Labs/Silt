@@ -217,8 +217,7 @@ func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock, r
 			}
 			newContent := parser.RenderFileContent(merged, body, frontmatter, a.spacesPerTab)
 			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), reason)
-			a.tracker.RegisterWrite(filePath)
-			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+			if err := a.trackedPageWrite(filePath, []byte(newContent)); err != nil {
 				writeErr = err
 				return
 			}
@@ -479,8 +478,7 @@ func (a *App) appendTaskComment(taskID, text, author, ts, parentCommentID, reaso
 			}
 			newContent := parser.RenderFileContent(merged, body, frontmatter, a.spacesPerTab)
 			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), reason)
-			a.tracker.RegisterWrite(filePath)
-			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+			if err := a.trackedPageWrite(filePath, []byte(newContent)); err != nil {
 				writeErr = err
 				return
 			}

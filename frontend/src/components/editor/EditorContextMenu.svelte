@@ -57,6 +57,15 @@
   )
   let menuEl = $state<HTMLDivElement | null>(null)
 
+  // Conflict-held (non-editable) editor (#1005): clipboard and block
+  // mutations dispatch through commands that are NOT gated on isEditable —
+  // the visible edit would render and then the armed reload destroys it.
+  // Read per render (the menu is short-lived) + refused per handler; the
+  // read-only actions (Copy*) stay available.
+  function surfaceBlocked(): boolean {
+    return !editor.isEditable
+  }
+
   // Close the menu: focus the editor first (while still mounted) then signal
   // the host to drop its open state. Matches the original closeContextMenu.
   function close(): void {
@@ -73,6 +82,7 @@
   }
 
   function handleCut(): void {
+    if (surfaceBlocked()) return
     cutSelection(clipboardDeps())
     close()
   }
@@ -83,6 +93,7 @@
   }
 
   async function handlePaste(): Promise<void> {
+    if (surfaceBlocked()) return
     await pasteFromClipboard(clipboardDeps())
     close()
   }
@@ -108,11 +119,13 @@
   }
 
   function handleDuplicateBlock(): void {
+    if (surfaceBlocked()) return
     duplicateBlock(clipboardDeps())
     close()
   }
 
   function handleDeleteBlock(): void {
+    if (surfaceBlocked()) return
     deleteBlock(clipboardDeps())
     close()
   }
@@ -131,6 +144,7 @@
   }
 
   function handleClearFormatting(): void {
+    if (surfaceBlocked()) return
     editor.chain().focus().unsetAllMarks().run()
     close()
   }
@@ -231,7 +245,7 @@
       class="context-menu-item justify-between"
       role="menuitem"
       onclick={handleCut}
-      disabled={selectionEmpty}
+      disabled={surfaceBlocked() || selectionEmpty}
     >
       <span class="flex items-center gap-2">
         <span class="material-symbols-outlined text-icon-md">content_cut</span>
@@ -261,6 +275,7 @@
       class="context-menu-item justify-between"
       role="menuitem"
       onclick={handlePaste}
+      disabled={surfaceBlocked()}
     >
       <span class="flex items-center gap-2">
         <span class="material-symbols-outlined text-icon-md">content_paste</span
@@ -334,6 +349,7 @@
         class="context-menu-item"
         role="menuitem"
         onclick={handleDuplicateBlock}
+        disabled={surfaceBlocked()}
       >
         <span class="material-symbols-outlined text-icon-md">difference</span>
         Duplicate Block
@@ -343,7 +359,7 @@
         class="context-menu-item text-status-danger"
         role="menuitem"
         onclick={handleDeleteBlock}
-        disabled={isLastBlock}
+        disabled={surfaceBlocked() || isLastBlock}
       >
         <span class="material-symbols-outlined text-icon-md">delete</span>
         Delete Block
@@ -356,6 +372,7 @@
       class="context-menu-item"
       role="menuitem"
       onclick={handleClearFormatting}
+      disabled={surfaceBlocked()}
     >
       <span class="material-symbols-outlined text-icon-md">format_clear</span>
       Clear Formatting

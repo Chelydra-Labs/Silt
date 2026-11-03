@@ -13,7 +13,7 @@
   import { renderKatex } from '../../lib/editor/useKatex'
   import { settings } from '../../settings/store.svelte'
 
-  let { node, updateAttributes }: NodeViewProps = $props()
+  let { node, editor, updateAttributes }: NodeViewProps = $props()
   const latex = $derived((node.attrs.latex as string) || '')
   const displayMode = $derived(node.type.name === 'blockMathNode')
   // Per-vault opt-out (#191): when math is disabled, render the raw source as
@@ -61,7 +61,12 @@
           latex,
           displayMode,
           coords,
-          onCommit: (next: string) => updateAttributes({ latex: next })
+          // Conflict-held editor (#1005): the popover can outlive the hold
+          // that armed it, so the commit itself refuses to dispatch.
+          onCommit: (next: string) => {
+            if (editor && !editor.isEditable) return
+            updateAttributes({ latex: next })
+          }
         }
       })
     )

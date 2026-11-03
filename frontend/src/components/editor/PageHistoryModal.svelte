@@ -10,7 +10,7 @@
   import { trapFocus } from '../../lib/focusTrap'
   import { settings } from '../../settings/store.svelte'
   import { getEditorForLocator } from '../../lib/editor/editorRegistry.svelte'
-  import { fetchPageMarkdown } from '../../lib/editor/pageMarkdown'
+  import { fetchPageMarkdownProgrammatic } from '../../lib/editor/pageMarkdown'
   import {
     diffPageBodies,
     type DiffHunk,
@@ -424,7 +424,9 @@
     try {
       const editor = getEditorForLocator(notebook, section, page)
       const dirty = editor?.isDirty() === true
-      const body = await fetchPageMarkdown(notebook, section, page)
+      // Non-capturing: the compare pane only renders the body — it must not
+      // re-baseline the editor's conflict gate (#1005).
+      const body = await fetchPageMarkdownProgrammatic(notebook, section, page)
       if (gen !== compareGen) return
       liveBody = body
       liveReady = true

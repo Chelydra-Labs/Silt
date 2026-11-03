@@ -70,9 +70,46 @@ type App struct {
 	// snapshotted the prior epoch aborts instead of reverting disk.
 	pageWriteEpoch   map[string]uint64
 	pageWriteEpochMu sync.Mutex
-	vaultPath        string
-	spacesPerTab     int
-	wg               sync.WaitGroup
+	// pageLoadFingerprints holds the external-edit baseline per page file
+	// (#1005), keyed by NormalizeFileLockPath like pageWriteEpoch. Captured
+	// ONLY by editor-facing loads (see pageLoadCapture in app_blocks.go:
+	// the webview fetches adopt bytes into an editor buffer; MCP/plugin
+	// readers must not re-baseline), re-checked inside LockFileWrite by the
+	// whole-page save funnels, and refreshed by Silt's own writes: every
+	// in-lock page writer goes through trackedPageWrite (the single
+	// register→write→re-baseline choke point in app_tracked_write.go), so
+	// only a real external edit can drift the baseline. Rename/delete/
+	// vault-teardown own the stash+baseline lifecycle there too. See
+	// app_conflict_fingerprint.go.
+	pageLoadFingerprints   map[string]FileFingerprint
+	pageLoadFingerprintsMu sync.RWMutex
+	// mcpReadBaselines holds the read-basis each MCP page fetch captured
+	// (#1005): an MCP client's read-modify-write gets no editor load
+	// baseline (captureNone must not disarm the editor's gate), so its
+	// UpdateBlocks is gated against THIS map instead — the bytes the client
+	// read, re-checked inside LockFileWrite. Keyed by NormalizeFileLockPath;
+	// lifecycle (rename/delete/teardown) mirrors the fingerprints above in
+	// app_tracked_write.go. See app_mcp_rmw.go.
+	mcpReadBaselines   map[string]FileFingerprint
+	mcpReadBaselinesMu sync.RWMutex
+	// mcpFetchGen is the per-path monotonic generation stamped onto each
+	// MCP fetch's read-basis (#1005 strict RMW): fetch N+1 must invalidate
+	// every update_blocks built from fetch <= N even after a later fetch
+	// re-armed the shared mcpReadBaselines slot. mcpBasisInvalidatedGen
+	// records the newest generation at the last committed Silt page write
+	// (trackedPageWrite choke point); an echoed generation at or below it
+	// refuses. Guarded by mcpReadBaselinesMu; lifecycle mirrors the baselines.
+	mcpFetchGen            map[string]int64
+	mcpBasisInvalidatedGen map[string]int64
+	// refusedWrites stashes the editor save each external-edit refusal
+	// rejected (#1005), for ResolveExternalConflict to replay. Keyed by
+	// NormalizeFileLockPath; funnel-tagged (see refusedWriteFunnel) so a
+	// programmatic refusal can never evict an editor-owned stash.
+	refusedWrites   map[string]refusedPageWrite
+	refusedWritesMu sync.Mutex
+	vaultPath       string
+	spacesPerTab    int
+	wg              sync.WaitGroup
 
 	// cfg is the parsed .system/config.yaml, the single source of truth for
 	// non-vault-path settings. configMu guards it; it is replaced wholesale on

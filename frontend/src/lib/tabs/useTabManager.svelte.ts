@@ -65,7 +65,14 @@ export interface TabManagerDeps {
    *  draft. Returns true when the switch may proceed. */
   confirmTemplateTransition: () => boolean
   /** Route a `.silt` standalone-task locator to the Tasks view. */
-  openTasksView: (blockId: string | undefined) => void
+  // Refused-open contract (#1005): false = the notes region is busy and the
+  // view never switched; openPage forwards it so callers skip follow-through.
+  openTasksView: (blockId: string | undefined) => boolean
+  /** Live read of the tab ids mid-conflict-resolution (#1005). Busy tabs are
+   *  never evicted for capacity and never retargeted as the preview slot —
+   *  both destroy a resolving surface. Optional (empty when omitted) so
+   *  embedders without the conflict machinery keep today's behavior. */
+  getConflictBusyTabIds?: () => ReadonlySet<string>
 }
 
 export interface PageRenamedDetail {
@@ -80,19 +87,25 @@ export interface TabManagerController {
   get openTabs(): TabEntry[]
   get activeTabId(): string
   get displayedTabs(): TabEntry[]
-  // Handlers (bound to TabStrip props + navigation funnels).
+  // Handlers (bound to TabStrip props + navigation funnels). openPage
+  // returns false when the pure layer refused the open (at capacity with
+  // every eviction candidate conflict-busy, #1005) so callers can skip
+  // follow-through that would otherwise target the currently-active page.
   openPage: (
     ref: PageRef,
     mode: OpenPageMode,
     blockTarget?: { fileDate?: string; blockId?: string }
-  ) => void
+  ) => boolean
   handleSelectTab: (id: string) => void
   handleCloseTab: (id: string) => void
   handlePromoteTab: (id: string) => void
   handleReorderTab: (fromId: string, toId: string, before: boolean) => void
   handleCycleTab: (dir: 1 | -1) => void
   handleToggleViewMode: (tabId: string) => void
-  selectNotebookContext: (notebook: string) => void
+  // Refused-open contract (#1005): false = the user declined to leave an
+  // unsaved templates draft, so nothing switched and callers must not apply
+  // their nav writes (displayedTabs would desync from activeTabId).
+  selectNotebookContext: (notebook: string) => boolean
   syncActiveFromTab: () => void
   pageRenamed: (detail: PageRenamedDetail) => void
   /** Repoint a page's section across the open tabs (sidebar drag, #177). */
@@ -129,6 +142,13 @@ export interface TabManagerController {
       | undefined
   ) => void
   handleConfigChangedTabRehydrate: (cfg: TabRehydrateConfig | undefined) => void
+  /** Apply a config rehydrate deferred while a tab was conflict-busy (#1005);
+   *  App calls this when the busy set drains. No-op when nothing pending. */
+  applyDeferredTabRehydrate: () => void
+  /** Drop a pending deferred rehydrate (#1005): its config belongs to the
+   *  vault being left; replaying it against the next vault's tabs would
+   *  leak view modes to same-named pages. */
+  resetDeferredRehydrate: () => void
   flushPendingPersist: () => void
 }
 
@@ -220,7 +240,8 @@ export function createTabManager(deps: TabManagerDeps): TabManagerController {
         id,
         mode
       ).tabs
-    }
+    },
+    getConflictBusyTabIds: deps.getConflictBusyTabIds
   })
   const { schedulePersistTabs, loadPersistedTabs } = tabPersistence
 
@@ -228,30 +249,44 @@ export function createTabManager(deps: TabManagerDeps): TabManagerController {
     ref: PageRef,
     mode: OpenPageMode,
     blockTarget: { fileDate?: string; blockId?: string } | undefined = undefined
-  ): void {
+  ): boolean {
     // Standalone-task routing (#374): a `.silt` locator delegates to the Tasks
     // view instead of opening a raw `.silt` tab.
     const target = routeJumpTarget({ ...ref, blockTarget })
     if (target.kind === 'tasks-view') {
-      deps.openTasksView(target.blockTarget?.blockId)
-      return
+      return deps.openTasksView(target.blockTarget?.blockId)
     }
     const cfg = deps.getSettings()
     const enablePreviewTabs = cfg.ui?.enable_preview_tabs !== false
     const maxOpenTabs = cfg.ui?.max_open_tabs ?? 8
     const defaultViewMode: ViewMode =
       cfg.editor?.default_view_mode === 'source' ? 'source' : 'edit'
-    const result = openPageState(
-      { tabs: openTabs, activeId: activeTabId },
-      ref,
-      mode,
-      { enablePreviewTabs, maxOpenTabs, blockTarget, defaultViewMode }
-    )
+    const input = { tabs: openTabs, activeId: activeTabId }
+    const result = openPageState(input, ref, mode, {
+      enablePreviewTabs,
+      maxOpenTabs,
+      blockTarget,
+      defaultViewMode,
+      busyTabIds: deps.getConflictBusyTabIds?.()
+    })
+    if (result === input) {
+      // Refused: at capacity with only conflict-busy eviction candidates
+      // (#1005). Loud on purpose — the resolving surfaces stay mounted and
+      // the user must close a settled tab first. The boolean lets callers
+      // skip follow-through (menus, panels, view switches) that would
+      // otherwise act on the still-active page.
+      console.warn(
+        '[silt] refusing to open a tab: every eviction candidate is mid-conflict-resolution. ',
+        'Close a settled tab first.'
+      )
+      return false
+    }
     openTabs = result.tabs
     activeTabId = result.activeId
     syncActiveFromTab()
     schedulePersistTabs()
     recordRecentActivation(ref)
+    return true
   }
 
   function handleToggleViewMode(tabId: string): void {
@@ -266,8 +301,8 @@ export function createTabManager(deps: TabManagerDeps): TabManagerController {
     schedulePersistTabs()
   }
 
-  function selectNotebookContext(notebook: string): void {
-    if (!deps.confirmTemplateTransition()) return
+  function selectNotebookContext(notebook: string): boolean {
+    if (!deps.confirmTemplateTransition()) return false
     deps.setActiveNotebook(notebook)
     const notebookTabs = openTabs
       .filter((tab) => tab.notebook === notebook)
@@ -278,6 +313,7 @@ export function createTabManager(deps: TabManagerDeps): TabManagerController {
       deps.setActiveSection('')
       deps.setActivePage('')
     }
+    return true
   }
 
   function handleSelectTab(id: string): void {
@@ -448,6 +484,8 @@ export function createTabManager(deps: TabManagerDeps): TabManagerController {
     initBaseline: tabPersistence.initBaseline,
     handleConfigChangedTabRehydrate:
       tabPersistence.handleConfigChangedTabRehydrate,
+    applyDeferredTabRehydrate: tabPersistence.applyDeferredTabRehydrate,
+    resetDeferredRehydrate: tabPersistence.resetDeferredRehydrate,
     flushPendingPersist: tabPersistence.flushPendingPersist
   }
 }

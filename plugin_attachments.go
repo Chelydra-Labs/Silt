@@ -144,6 +144,8 @@ func (a *App) AddAttachment(srcPath, notebook string) (string, error) {
 	var writeErr error
 	a.coordinator.LockFileWrite(dest, func() {
 		a.tracker.RegisterWrite(dest)
+		// Direct write: binary attachment, never page content the
+		// external-edit gate keys (#1005).
 		writeErr = parser.WriteFileAtomic(dest, srcBytes)
 	})
 	if writeErr != nil {

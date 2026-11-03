@@ -95,11 +95,20 @@ export interface StartupEventsDeps {
   openTasksView: (blockId: string | undefined) => void
   handleSwitchVault: () => Promise<void>
   handleMenuSave: () => Promise<void>
+  // handleSearchJump returns whether the jump landed on the requested notes
+  // page (#1005): follow-through (the navigate-to-page heading target) must
+  // not arm against the still-active page when the open was refused.
   handleSearchJump: (
     locator: SourceNavigationRef,
     date: string,
     blockId: string
-  ) => void
+  ) => boolean
+  // openPageOrNotify is the centralized refused-open funnel (#1005): toasts
+  // on refusal, returns the open result.
+  openPageOrNotify: (
+    ref: { notebook: string; section: string; page: string },
+    mode: 'preview' | 'pin' | 'activate-only'
+  ) => boolean
 }
 
 export interface StartupEventsController {
@@ -358,8 +367,11 @@ export function createStartupEvents(
         section: d.section ?? '',
         page: d.page
       })
-      deps.handleSearchJump(ref, d.date ?? '', d.blockId ?? '')
-      if (d.heading) {
+      const opened = deps.handleSearchJump(ref, d.date ?? '', d.blockId ?? '')
+      // Arm the heading target only when the page open landed (#1005): on a
+      // refused open (all tabs conflict-busy) the still-active page would
+      // otherwise scroll a same-named heading on the WRONG page.
+      if (d.heading && opened) {
         deps.setSearchTargetHeading(d.heading)
         deps.setSearchTargetKey(`heading:${d.heading}:${Date.now()}`)
       }
@@ -441,6 +453,10 @@ export function createStartupEvents(
         deps.setActiveSection('')
         deps.setActivePage('')
         deps.tabManager.resetTabs()
+        // A deferred rehydrate from the old vault must not replay against
+        // the new vault's tabs (#1005) — same-named pages would leak the
+        // old vault's view modes.
+        deps.tabManager.resetDeferredRehydrate()
         deps.setActiveView('notes')
         clearSelectionFocus()
         clearAllEditors()
@@ -488,7 +504,13 @@ export function createStartupEvents(
       Events.On(EventName.EventIndexReMintWarning, (ev) => {
         const w: ReMintWarning = ev.data
         if (!w) return
-        pushNotification(reMintToast(w, deps.tabManager.openPage))
+        // Route the CTA through the centralized refused-open funnel (#1005)
+        // so a conflict-busy refusal toasts instead of silently no-opping.
+        pushNotification(
+          reMintToast(w, (ref, mode) => {
+            deps.openPageOrNotify(ref, mode)
+          })
+        )
       })
     )
     off.push(

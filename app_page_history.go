@@ -307,6 +307,16 @@ func (a *App) RestorePageVersion(notebook, section, page, versionID string) erro
 				writeErr = historyFileError(err)
 				return
 			}
+			// Deliberate exemption from the external-edit gate (#1005): an
+			// explicit restore is a user-endorsed overwrite — the whole
+			// point is to replace whatever is on disk, external edit
+			// included. A save STARTING after the restore is not refused
+			// because trackedPageWrite refreshes the baseline to the restored
+			// bytes and the EventPageExternalReload emit below makes the
+			// editor recapture; the epoch bump only converts IN-FLIGHT saves
+			// (they acquire the lock after the bump, i.e. before their
+			// in-lock epoch/fingerprint checks run) into page_write_stale
+			// reload-and-retry.
 			result, writeErr = a.writePageMarkdownLocked(filePath, source, safeNotebook, safeSection, safePage, notebook, section, page, contentBytes, restoreBody, historyReasonRestore, false)
 			if writeErr == nil {
 				a.bumpPageWriteEpoch(safeNotebook, safeSection, safePage)
@@ -366,8 +376,7 @@ func (a *App) writePageMarkdownLocked(filePath, source, notebook, section, page,
 	}
 	newContent += body
 
-	a.tracker.RegisterWrite(filePath)
-	if err := atomicPageWrite(filePath, []byte(newContent)); err != nil {
+	if err := a.trackedPageWrite(filePath, []byte(newContent)); err != nil {
 		log.Printf("page write: atomic write failed for %s/%s/%s: %v", notebook, section, page, err)
 		return nil, historyWriteError(err)
 	}
@@ -626,6 +635,13 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 			}
 			relocated = true
 		}
+		// Recreating a page at a re-used path must drop any conflict state
+		// the dead page left there: a lingering stash could never resolve
+		// and would phantom-refuse the restored page's first save (#1005),
+		// same drop as CreatePage/DuplicatePage. Only the recreate branch
+		// reaches here — the occupied-target check above refused an existing
+		// destFile, whose conflict state belongs to the LIVE page.
+		a.dropConflictStateForPath(destFile)
 		// Remapped snapshot supplies frontmatter (type/tags/created/…). Skip
 		// capture: there is no live file, and a synthetic prev would evict a
 		// real version at the cap.

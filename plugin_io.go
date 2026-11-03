@@ -141,6 +141,10 @@ func (a *App) PluginWriteFile(pluginID, sessionToken, notebook, relPath string, 
 			}
 		}
 		a.tracker.RegisterWrite(abs)
+		// Direct write: plugin-supplied raw bytes, not a page-content
+		// derivation — refreshing a page baseline here would mask a real
+		// concurrent write; the external-edit gate is deliberately not
+		// consulted for plugin raw IO (#1005).
 		writeErr = parser.WriteFileAtomic(abs, data)
 	})
 	return writeErr

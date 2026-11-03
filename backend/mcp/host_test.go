@@ -28,6 +28,11 @@ type fakeBridge struct {
 	search  parser.SearchResult
 	writes  int
 	createN int
+	// gen is the read_generation both fetch funnels serve (0 keeps the
+	// legacy no-echo semantics for older tests); lastReadGen records what
+	// UpdateBlocks received so tests can pin the echo plumbing end-to-end.
+	gen         int64
+	lastReadGen int64
 	// Typed-notes surface (Phase 7): canned metadata + injectable errors +
 	// call counters so tool tests can assert grant/deny/error paths without a
 	// real App behind the bridge.
@@ -96,23 +101,23 @@ func (f *fakeBridge) SearchBlocksPaged(ctx context.Context, query string, offset
 	return f.search, nil
 }
 
-func (f *fakeBridge) FetchPageBlocks(ctx context.Context, notebook, section, page string) ([]parser.ParsedBlock, error) {
+func (f *fakeBridge) FetchPageBlocks(ctx context.Context, notebook, section, page string) ([]parser.ParsedBlock, int64, error) {
 	_ = ctx
 	key := notebook + "\x00" + section + "\x00" + page
-	return f.pages[key], nil
+	return f.pages[key], f.gen, nil
 }
 
-func (f *fakeBridge) FetchPageMarkdown(ctx context.Context, notebook, section, page string) (string, error) {
-	blocks, err := f.FetchPageBlocks(ctx, notebook, section, page)
+func (f *fakeBridge) FetchPageMarkdown(ctx context.Context, notebook, section, page string) (string, int64, error) {
+	blocks, gen, err := f.FetchPageBlocks(ctx, notebook, section, page)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	var b strings.Builder
 	for _, bl := range blocks {
 		b.WriteString(bl.RawText)
 		b.WriteByte('\n')
 	}
-	return b.String(), nil
+	return b.String(), gen, nil
 }
 
 func (f *fakeBridge) ListNavigation(ctx context.Context) (parser.NavigationTree, error) {
@@ -131,8 +136,9 @@ func (f *fakeBridge) CreatePage(ctx context.Context, notebook, section, page, da
 	return key, nil
 }
 
-func (f *fakeBridge) UpdateBlocks(ctx context.Context, notebook, section, page string, blocks []parser.ParsedBlock) error {
+func (f *fakeBridge) UpdateBlocks(ctx context.Context, notebook, section, page string, blocks []parser.ParsedBlock, readGeneration int64) error {
 	_ = ctx
+	f.lastReadGen = readGeneration
 	f.writes++
 	key := notebook + "\x00" + section + "\x00" + page
 	if f.pages == nil {
@@ -626,6 +632,78 @@ func TestTools_ReadHappyPath(t *testing.T) {
 	}
 	if res.IsError {
 		t.Fatalf("list: %s", toolText(t, res))
+	}
+}
+
+// TestTools_ReadGenerationPlumbing pins the read_generation tool-layer
+// contract end-to-end (#1005): every read tool must surface the bridge's
+// fetch generation, and update_blocks must forward the client's echoed
+// generation to the bridge. The plumbing is pure JSON→schema→bridge wiring
+// with no App behind this bridge — neutering any leg (dropping the output
+// field or the input forwarding) must fail here instead of silently
+// disabling strict RMW for echoing clients.
+func TestTools_ReadGenerationPlumbing(t *testing.T) {
+	const gen int64 = 4242
+	bridge := &fakeBridge{
+		path: t.TempDir(),
+		pages: map[string][]parser.ParsedBlock{
+			"Work\x00\x00Home": {
+				{ID: "b1", Type: parser.BlockNote, RawText: "hello vault", CleanText: "hello vault"},
+			},
+		},
+		gen: gen,
+	}
+	cs, _ := connectTools(t, bridge, Config{Enabled: true, WriteEnabled: true})
+	ctx := context.Background()
+
+	readGenOf := func(name string, args map[string]any) int64 {
+		t.Helper()
+		res, err := cs.CallTool(ctx, &mcpsdk.CallToolParams{Name: name, Arguments: args})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if res.IsError {
+			t.Fatalf("%s: %s", name, toolText(t, res))
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(toolText(t, res)), &payload); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		g, ok := payload["read_generation"].(float64)
+		if !ok {
+			t.Fatalf("%s: missing read_generation: %v", name, payload)
+		}
+		return int64(g)
+	}
+
+	if g := readGenOf("read_page", map[string]any{"notebook": "Work", "section": "", "page": "Home"}); g != gen {
+		t.Fatalf("read_page read_generation = %d, want %d", g, gen)
+	}
+	if g := readGenOf("read_page", map[string]any{"notebook": "Work", "section": "", "page": "Home", "markdown": true}); g != gen {
+		t.Fatalf("read_page (markdown) read_generation = %d, want %d", g, gen)
+	}
+	if g := readGenOf("read_blocks", map[string]any{"notebook": "Work", "section": "", "page": "Home"}); g != gen {
+		t.Fatalf("read_blocks read_generation = %d, want %d", g, gen)
+	}
+
+	res, err := cs.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "update_blocks",
+		Arguments: map[string]any{
+			"notebook":        "Work",
+			"section":         "",
+			"page":            "Home",
+			"blocks":          []map[string]any{{"id": "b1", "type": "NOTE", "text": "edited"}},
+			"read_generation": gen,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("update_blocks: %s", toolText(t, res))
+	}
+	if bridge.lastReadGen != gen {
+		t.Fatalf("update_blocks forwarded read_generation %d, want %d", bridge.lastReadGen, gen)
 	}
 }
 

@@ -174,6 +174,55 @@ describe('useTabManager — pageMoved / renameTab / setTabSaveState (#768)', () 
   })
 })
 
+describe('useTabManager — conflict-busy open gating (#1005)', () => {
+  it('refuses an open at capacity when every eviction candidate is busy, warning loudly', () => {
+    const busy = new Set<string>()
+    let tabs: TabManagerController | undefined
+    const destroy = $effect.root(() => {
+      tabs = createTabManager({
+        ...makeDeps(),
+        getSettings: () => ({
+          ui: { enable_preview_tabs: false, max_open_tabs: 2 },
+          editor: {}
+        }),
+        getConflictBusyTabIds: () => busy
+      })
+      tabs.openPage(
+        { notebook: 'Work', section: 'Inbox', page: 'Alpha' },
+        'pin'
+      )
+      tabs.openPage({ notebook: 'Work', section: 'Inbox', page: 'Beta' }, 'pin')
+    })
+    const t = tabs!
+    try {
+      busy.add(t.openTabs[0]!.id)
+      busy.add(t.openTabs[1]!.id)
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      // The refusal is REPORTED to the caller: follow-through (type menus,
+      // view switches) must be able to skip acting on the still-active page.
+      expect(
+        t.openPage({ notebook: 'Work', section: 'Inbox', page: 'Gamma' }, 'pin')
+      ).toBe(false)
+      // Refused: the resolving surfaces stay mounted, nothing is evicted,
+      // and the cap is not silently exceeded.
+      expect(t.openTabs).toHaveLength(2)
+      expect(t.openTabs.every((x) => x.page !== 'Gamma')).toBe(true)
+      expect(warn).toHaveBeenCalledOnce()
+      warn.mockRestore()
+
+      // Once a tab settles, the same open succeeds — and says so.
+      busy.delete(t.openTabs[0]!.id)
+      expect(
+        t.openPage({ notebook: 'Work', section: 'Inbox', page: 'Gamma' }, 'pin')
+      ).toBe(true)
+      expect(t.openTabs).toHaveLength(2)
+      expect(t.openTabs.some((x) => x.page === 'Gamma')).toBe(true)
+    } finally {
+      destroy?.()
+    }
+  })
+})
+
 describe('useTabManager — pageRenamed + displayedTabs scoping', () => {
   let destroy: (() => void) | undefined
   let tabs: TabManagerController
@@ -215,6 +264,92 @@ describe('useTabManager — pageRenamed + displayedTabs scoping', () => {
     expect(tabs.displayedTabs.map((t) => t.page)).toEqual(['Diary'])
     // Switching notebook context re-derives the visible set.
     tabs.selectNotebookContext('Work')
+    expect(tabs.displayedTabs.map((t) => t.page)).toEqual(['Alpha'])
+  })
+})
+
+describe('useTabManager — tasks-view routing refused-open contract (#1005)', () => {
+  let destroy: (() => void) | undefined
+
+  afterEach(() => {
+    destroy?.()
+    destroy = undefined
+  })
+
+  function makeTabs(openResult: boolean): {
+    deps: TabManagerDeps
+    tabs: TabManagerController
+  } {
+    const deps = makeDeps()
+    deps.openTasksView = vi.fn().mockReturnValue(openResult)
+    let tabs!: TabManagerController
+    destroy = $effect.root(() => {
+      tabs = createTabManager(deps)
+    })
+    return { deps, tabs }
+  }
+
+  it('.silt locators report the tasks-view switch verbatim', () => {
+    for (const openResult of [false, true]) {
+      const { deps, tabs } = makeTabs(openResult)
+      const landed = tabs.openPage(
+        { notebook: '.silt', section: '', page: 'tasks' },
+        'preview'
+      )
+      // openPage is the refused-open contract: a busy tasks switch must
+      // report false so callers (quick switcher, menus) skip follow-through.
+      expect(landed).toBe(openResult)
+      expect(deps.openTasksView).toHaveBeenCalledWith(undefined)
+      // The Tasks view is a single-mount surface — never a tab.
+      expect(tabs.openTabs).toHaveLength(0)
+      destroy?.()
+      destroy = undefined
+    }
+  })
+})
+
+describe('useTabManager — selectNotebookContext refused-open contract (#1005)', () => {
+  let destroy: (() => void) | undefined
+
+  afterEach(() => {
+    destroy?.()
+    destroy = undefined
+  })
+
+  function makeTabs(confirm: boolean): {
+    deps: TabManagerDeps
+    tabs: TabManagerController
+  } {
+    const deps = makeDeps()
+    deps.confirmTemplateTransition = () => confirm
+    let tabs!: TabManagerController
+    destroy = $effect.root(() => {
+      tabs = createTabManager(deps)
+    })
+    return { deps, tabs }
+  }
+
+  it('reports false and keeps the context when the template confirm declines', () => {
+    const { deps, tabs } = makeTabs(false)
+    tabs.openPage({ notebook: 'Work', section: 'Inbox', page: 'Alpha' }, 'pin')
+    const landed = tabs.selectNotebookContext('Personal')
+    // A declined confirm must read as a refused switch, not a landing —
+    // sidebar callers gate their nav writes on this boolean.
+    expect(landed).toBe(false)
+    expect(deps.getActiveNotebook()).toBe('Work')
+    expect(tabs.displayedTabs.map((t) => t.page)).toEqual(['Alpha'])
+  })
+
+  it('reports true and switches context when the template confirm allows it', () => {
+    const { deps, tabs } = makeTabs(true)
+    tabs.openPage({ notebook: 'Work', section: 'Inbox', page: 'Alpha' }, 'pin')
+    tabs.openPage(
+      { notebook: 'Personal', section: 'Day', page: 'Diary' },
+      'pin'
+    )
+    const landed = tabs.selectNotebookContext('Work')
+    expect(landed).toBe(true)
+    expect(deps.getActiveNotebook()).toBe('Work')
     expect(tabs.displayedTabs.map((t) => t.page)).toEqual(['Alpha'])
   })
 })

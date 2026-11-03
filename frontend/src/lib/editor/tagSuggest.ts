@@ -139,6 +139,10 @@ export function filterTags(
 }
 
 export function applyTagSuggestion(editor: Editor, path: string): boolean {
+  // Conflict-held editor (#1005): suggestions dispatch through
+  // view.dispatch, which isEditable never gates.
+  if (!editor.isEditable) return false
+
   const ctx = getTagContext(editor.state)
   if (!ctx || !isValidTagPath(path)) return false
 

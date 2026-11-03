@@ -15,6 +15,7 @@ import { tick } from 'svelte'
 import { waitFor } from '@testing-library/dom'
 import EmptyStub from './components/EmptyStub.stub.svelte'
 import OverlayMarkerStub from './components/OverlayMarkerStub.stub.svelte'
+import VscConflictBusyStub from './components/VirtualScrollContainer.stub.svelte'
 import {
   notificationsState,
   _resetForTests as resetNotifications
@@ -43,6 +44,15 @@ const bindings = vi.hoisted(() => ({
   ),
   RecordRecentPage: vi.fn(async () => undefined)
 }))
+
+// Statically-typed page for the stubbed page-type controller (see the mock
+// below): drives the pill's "View all Book" caret without any fetch.
+const TYPED_PAGE_INFO = {
+  isSet: true,
+  typeId: 'book',
+  type: { id: 'book', name: 'Book', icon: '', properties: [] },
+  rawType: ''
+}
 
 // Spies for leaf modules the dispatch fans out to.
 const spies = vi.hoisted(() => ({
@@ -87,13 +97,74 @@ vi.mock('$silt-app', () => {
     MarkFrontendReady: vi.fn(noop),
     GetStartupEvents: bindings.GetStartupEvents,
     RecordRecentPage: bindings.RecordRecentPage,
-    UpdateAIFeatures: vi.fn(noop)
+    UpdateAIFeatures: vi.fn(noop),
+    // The initialized-shell region the toggle-busy gate test mounts also
+    // renders the notes sidebar / type pill — their best-effort loads hit
+    // these bindings and must not throw on a missing export.
+    ListTypes: vi.fn(async () => []),
+    SetNavigationSectionExpanded: vi.fn(noop),
+    GetNavigationTree: vi.fn(async () => ({ notebooks: [] })),
+    // Green path of the View-all gate test: the dashboard branch mounts the
+    // real TypeDashboard when idle.
+    QueryPagesByType: vi.fn(async () => []),
+    ReloadTypes: vi.fn(async () => undefined),
+    GetTypesReprojectionStatus: vi.fn(async () => ({
+      active: false,
+      processed: 0,
+      total: 0
+    }))
   })
 })
 
+// Stub the page-type controller instead of mocking its IPC round-trip: the
+// real controller's refresh() writes state that App's locator $effect tracks
+// through refresh's synchronous prologue, so a completing fetch re-arms the
+// effect every cycle — a runaway refresh loop under instantly-resolving
+// mocks (and a latent production spin; flagged separately, out of scope
+// here). The stub statically reports a typed active page so the pill's
+// "View all" caret renders without any fetch.
+vi.mock('./properties/pageTypeState.svelte', () => ({
+  createPageTypeController: () => ({
+    info: TYPED_PAGE_INFO,
+    values: [],
+    mismatched: [],
+    error: '',
+    loading: false,
+    types: [],
+    typesLoading: false,
+    typeLoadErrors: [],
+    panelOpen: false,
+    modalOpen: false,
+    heroValue: '',
+    core: { notebook: '', section: '', page: '' },
+    typeMenuRequest: 0,
+    refresh: () => Promise.resolve(),
+    open: () => {},
+    close: () => {},
+    toggle: () => {},
+    openModal: () => {},
+    closeModal: () => {},
+    requestTypeMenu: () => {},
+    setMismatched: () => {},
+    setError: () => {},
+    commitCore: () => Promise.resolve(),
+    attach: () => () => {}
+  })
+}))
+
+// Runtime Events.On callbacks captured by name (mirrors App.menu-save.test)
+// so a test can fire a registered Wails handler — e.g. vault:moved, which
+// drives the tab teardown that must release the conflict-busy map.
+const eventHandlers = new Map<string, (...args: unknown[]) => void>()
+
 vi.mock('@wailsio/runtime', () => ({
   Events: {
-    On: vi.fn(() => () => {}),
+    On: vi.fn((name: string, cb: (...args: unknown[]) => void) => {
+      eventHandlers.set(name, cb)
+      return () => {
+        eventHandlers.delete(name)
+      }
+    }),
     Off: vi.fn()
   },
   Call: { ByID: vi.fn(), ByName: vi.fn() },
@@ -215,6 +286,12 @@ vi.mock('./plugins/first-party/silt-tasks/components/QuickAddTask.svelte', () =>
   marker('quick-add')
 )
 vi.mock('./components/DateGlance.svelte', () => ({ default: EmptyStub }))
+// #1005 toggle-busy gate harness: the stub exposes the conflict-busy
+// reporting + view-mode props as DOM so the App-level guards are testable
+// without a full editor mount (see the toggle_view_mode gate test below).
+vi.mock('./components/VirtualScrollContainer.svelte', () => ({
+  default: VscConflictBusyStub
+}))
 vi.mock('./components/settings/SettingsPanel.svelte', () => ({
   default: EmptyStub
 }))
@@ -371,6 +448,35 @@ describe('global hotkey dispatch table (golden master)', () => {
     await waitFor(() => expect(spies.toggleDateGlance).toHaveBeenCalledTimes(1))
   })
 
+  // #1005: a conflict-held editor is setEditable(false) — the glance may open
+  // (copy mode), but a held editor must never become its insert target.
+  it('opens the date glance without an insert target while the editor is conflict-held', async () => {
+    const dom = document.createElement('div')
+    document.body.appendChild(dom)
+    Object.defineProperty(dom, 'offsetParent', {
+      configurable: true,
+      value: document.body
+    })
+    const heldEditor = {
+      isDestroyed: false,
+      isEditable: false,
+      view: { dom },
+      chain: vi.fn()
+    }
+    spies.getActiveEditor.mockReturnValue(heldEditor as never)
+
+    bindings.IsVaultInitialized.mockResolvedValue(true)
+    await mountApp()
+    press(C.open_date_glance)
+    await waitFor(() =>
+      expect(spies.toggleDateGlance).toHaveBeenCalledWith(null)
+    )
+
+    document.body.removeChild(dom)
+    spies.getActiveEditor.mockReset()
+    spies.getActiveEditor.mockReturnValue(null as never)
+  })
+
   // --- view/navigation actions (observe via DOM state) ---
   // These assert on activity-bar / sidebar affordances that only render in the
   // main shell, so the vault must report as initialized.
@@ -494,6 +600,218 @@ describe('global hotkey dispatch table (golden master)', () => {
     expect(tabs[0].view_mode).toBe('source')
   })
 
+  // #1005: a view toggle mid-resolution unmounts a surface and fires its
+  // unmount handoff against the settle in flight — both App-level guards
+  // (the hotkey dispatch and the per-tab onToggleViewMode callback) must be
+  // inert while the active tab reports conflict-busy, and live again once
+  // it settles. The VSC stub surfaces the busy callbacks + view mode as DOM.
+  it('gates toggle_view_mode on both App paths while the active tab is conflict-busy', async () => {
+    // The editor region (and with it the VSC stub) only mounts in the
+    // initialized shell.
+    bindings.IsVaultInitialized.mockResolvedValue(true)
+    await mountWithTabs()
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="vsc-stub"]')).toBeTruthy()
+    )
+    const stub = () =>
+      document.querySelector<HTMLElement>('[data-testid="vsc-stub"]')!
+    const click = (id: string) =>
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.click()
+    bindings.SetOpenTabs.mockClear()
+
+    // Busy: the hotkey path is gated…
+    click('vsc-report-busy')
+    press(C.toggle_view_mode)
+    await new Promise((r) => setTimeout(r, 400))
+    expect(stub().dataset.viewmode).toBe('edit')
+    expect(bindings.SetOpenTabs).not.toHaveBeenCalled()
+    // …and so is the per-tab callback path (the tab strip / VSC button).
+    click('vsc-toggle')
+    await new Promise((r) => setTimeout(r, 400))
+    expect(stub().dataset.viewmode).toBe('edit')
+    expect(bindings.SetOpenTabs).not.toHaveBeenCalled()
+
+    // Settled: both paths toggle again.
+    click('vsc-report-idle')
+    press(C.toggle_view_mode)
+    await waitFor(() => expect(stub().dataset.viewmode).toBe('source'))
+
+    click('vsc-report-busy')
+    press(C.toggle_view_mode)
+    await new Promise((r) => setTimeout(r, 400))
+    expect(stub().dataset.viewmode).toBe('source')
+  })
+
+  // #1005: navigation that destroys editor surfaces mid-resolution — the
+  // close_tab hotkey, the cycle_view_layout hotkey, and the tab-strip close
+  // click — must be inert while any tab reports conflict-busy (the busy set
+  // is keyed per tab, so a background tab's resolution gates shell-wide
+  // surface destruction too), and live again once it settles.
+  it('gates close_tab and cycle_view_layout while a tab is conflict-busy', async () => {
+    bindings.IsVaultInitialized.mockResolvedValue(true)
+    await mountWithTabs()
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="vsc-stub"]')).toBeTruthy()
+    )
+    const click = (id: string) =>
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.click()
+    bindings.SetOpenTabs.mockClear()
+
+    // Busy: closing the resolving tab is refused…
+    click('vsc-report-busy')
+    press(C.close_tab)
+    await new Promise((r) => setTimeout(r, 400))
+    expect(bindings.SetOpenTabs).not.toHaveBeenCalled()
+    // …and so is cycling out of the notes view (it unmounts every surface).
+    const notesPressed = () =>
+      document
+        .querySelector('[aria-label="Notes"]')
+        ?.getAttribute('aria-pressed')
+    press(C.cycle_view_layout)
+    await new Promise((r) => setTimeout(r, 100))
+    expect(notesPressed()).toBe('true')
+    // The tab-strip close affordance routes through the same gate.
+    document.querySelector<HTMLElement>('[aria-label="Close tab"]')!.click()
+    await new Promise((r) => setTimeout(r, 400))
+    expect(bindings.SetOpenTabs).not.toHaveBeenCalled()
+
+    // Settled: both navigation paths work again.
+    click('vsc-report-idle')
+    press(C.close_tab)
+    await waitFor(() => expect(bindings.SetOpenTabs).toHaveBeenCalled())
+    const [tabs] = bindings.SetOpenTabs.mock.calls.at(-1)!
+    expect(tabs).toHaveLength(1)
+  })
+
+  // #1005: the tab-bar's own close click (not just the hotkey) must not
+  // destroy a resolving tab — pin it separately so the funnel wrapper cannot
+  // regress independently of the dispatch table.
+  it('gates the tab-strip close click on a conflict-busy tab', async () => {
+    bindings.IsVaultInitialized.mockResolvedValue(true)
+    await mountWithTabs()
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="vsc-stub"]')).toBeTruthy()
+    )
+    const click = (id: string) =>
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.click()
+    bindings.SetOpenTabs.mockClear()
+
+    click('vsc-report-busy')
+    document.querySelector<HTMLElement>('[aria-label="Close tab"]')!.click()
+    await new Promise((r) => setTimeout(r, 400))
+    expect(bindings.SetOpenTabs).not.toHaveBeenCalled()
+
+    click('vsc-report-idle')
+    document.querySelector<HTMLElement>('[aria-label="Close tab"]')!.click()
+    await waitFor(() => expect(bindings.SetOpenTabs).toHaveBeenCalled())
+  })
+
+  // #1005: plugin-driven view switches (window 'switch-view' /
+  // 'navigate-to-tag' events) call the setActiveView dep directly, bypassing
+  // selectView's gate — both must respect the notes-region busy window.
+  it('gates plugin switch-view and navigate-to-tag while a tab is conflict-busy', async () => {
+    bindings.IsVaultInitialized.mockResolvedValue(true)
+    await mountWithTabs()
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="vsc-stub"]')).toBeTruthy()
+    )
+    const click = (id: string) =>
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.click()
+    const notesPressed = () =>
+      document
+        .querySelector('[aria-label="Notes"]')
+        ?.getAttribute('aria-pressed')
+
+    click('vsc-report-busy')
+    window.dispatchEvent(new CustomEvent('switch-view', { detail: 'tags' }))
+    await new Promise((r) => setTimeout(r, 100))
+    expect(notesPressed()).toBe('true')
+    window.dispatchEvent(
+      new CustomEvent('navigate-to-tag', { detail: 'Area/Tag' })
+    )
+    await new Promise((r) => setTimeout(r, 100))
+    expect(notesPressed()).toBe('true')
+
+    // Settled: the same plugin event may leave the notes region again.
+    click('vsc-report-idle')
+    window.dispatchEvent(new CustomEvent('switch-view', { detail: 'tags' }))
+    await new Promise((r) => setTimeout(r, 100))
+    expect(notesPressed()).toBe('false')
+  })
+
+  // #1005: the busy map's release-on-unmount is load-bearing — a non-gated
+  // teardown (vault move → resetTabs) destroys a resolving surface, and its
+  // effect teardown must release the tab's busy id or every notes-region exit
+  // stays gated forever. Pin the wedge-free lifecycle at the App level.
+  it('releases the shell nav gates when a busy surface unmounts (vault move)', async () => {
+    bindings.IsVaultInitialized.mockResolvedValue(true)
+    await mountWithTabs()
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="vsc-stub"]')).toBeTruthy()
+    )
+    const click = (id: string) =>
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.click()
+    const notesPressed = () =>
+      document
+        .querySelector('[aria-label="Notes"]')
+        ?.getAttribute('aria-pressed')
+
+    // Busy: cycling out of the notes region is refused.
+    click('vsc-report-busy')
+    press(C.cycle_view_layout)
+    await new Promise((r) => setTimeout(r, 100))
+    expect(notesPressed()).toBe('true')
+
+    // vault:moved tears every tab down without consulting the gates — the
+    // surface's unmount must still release its busy id.
+    const vaultMoved = eventHandlers.get('vault:moved')
+    expect(vaultMoved).toBeTruthy()
+    vaultMoved!({ data: {} })
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="vsc-stub"]')).toBeNull()
+    )
+
+    // Settled by teardown alone (no idle report): navigation is live again.
+    press(C.cycle_view_layout)
+    await new Promise((r) => setTimeout(r, 100))
+    expect(notesPressed()).toBe('false')
+  })
+
+  // #1005: the type pill's always-visible "View all" caret jumps to the
+  // dashboard branch, unmounting every editor surface — gated during the
+  // busy window like the rest of the region exits.
+  it("gates the type pill's View all while a tab is conflict-busy", async () => {
+    bindings.IsVaultInitialized.mockResolvedValue(true)
+    await mountWithTabs()
+    const viewAll = await waitFor(() => {
+      const btn = document.querySelector<HTMLElement>(
+        '[aria-label="View all Book"]'
+      )
+      expect(btn).toBeTruthy()
+      return btn!
+    })
+    const click = (id: string) =>
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.click()
+
+    // Busy: the notes region (and its surfaces) must survive the click.
+    click('vsc-report-busy')
+    viewAll.click()
+    await new Promise((r) => setTimeout(r, 100))
+    expect(document.querySelector('[data-testid="vsc-stub"]')).toBeTruthy()
+    expect(
+      document
+        .querySelector('[aria-label="Notes"]')
+        ?.getAttribute('aria-pressed')
+    ).toBe('true')
+
+    // Settled: the dashboard opens and unmounts the notes region.
+    click('vsc-report-idle')
+    viewAll.click()
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="vsc-stub"]')).toBeNull()
+    )
+  })
+
   // --- format_bold (App-level applyFormatBold closure wiring) ---
   // The pure shouldApplyFormatBold predicate is covered by globalHotkeys.test
   // (#768). This pins the App-level closure that the resolver hands off to:
@@ -531,6 +849,8 @@ describe('global hotkey dispatch table (golden master)', () => {
     spies.boldRun.mockReset()
     const editor = {
       isDestroyed: false,
+      // Editable (no conflict hold) so the format chain is allowed (#1005).
+      isEditable: true,
       view: { dom },
       chain: spies.boldChain
     }

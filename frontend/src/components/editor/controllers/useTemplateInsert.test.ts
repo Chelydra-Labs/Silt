@@ -14,6 +14,7 @@ vi.mock('../../../lib/editor', () => ({
 
 interface MockEditor {
   isDestroyed: boolean
+  isEditable: boolean
   state: {
     doc: {
       textContent: string
@@ -36,11 +37,14 @@ function makeEditor(
     fromPos?: number
     docSize?: number
     destroyed?: boolean
+    nonEditable?: boolean
   } = {}
 ): MockEditor {
   const blockCount = opts.blockCount ?? 1
   return {
     isDestroyed: opts.destroyed ?? false,
+    // Editable by default; the #1005 conflict-hold case flips it to false.
+    isEditable: !opts.nonEditable,
     state: {
       doc: {
         textContent: opts.text ?? '',
@@ -185,5 +189,32 @@ describe('createTemplateInsert', () => {
 
     expect(editor.commands.insertContent).not.toHaveBeenCalled()
     expect(editor.commands.insertContentAt).not.toHaveBeenCalled()
+  })
+})
+
+// #1005: a conflict-held editor is setEditable(false) — a template insert
+// would render into the buffer the armed reload destroys, so the picker's
+// insert paths must refuse.
+describe('createTemplateInsert conflict hold (#1005)', () => {
+  it('refuses to insert on a non-editable editor', () => {
+    const editor = makeEditor({
+      text: 'content',
+      fromPos: 5,
+      docSize: 100,
+      nonEditable: true
+    })
+    const harness = createTemplateInsertHarness(
+      () => editor as unknown as Editor
+    )
+    const ctrl = harness.controller
+
+    ctrl.handleTemplateInsert([])
+    ctrl.handleTemplateInsert([])
+    ctrl.confirmTemplateAtCursor()
+    ctrl.confirmTemplateAppend()
+
+    expect(editor.commands.insertContent).not.toHaveBeenCalled()
+    expect(editor.commands.insertContentAt).not.toHaveBeenCalled()
+    harness.destroy()
   })
 })

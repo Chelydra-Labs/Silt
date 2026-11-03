@@ -17,7 +17,7 @@
   // it at identical font metrics, supplying the coloured tokens. Both layers
   // share the editor's mono font / size / line-height / padding, so the
   // coloured tokens line up exactly with the (invisible) raw characters.
-  let { node, updateAttributes, selected }: NodeViewProps = $props()
+  let { node, editor, updateAttributes, selected }: NodeViewProps = $props()
 
   let language = $derived((node.attrs.language as string) || '')
   // node.textContent reacts to transactions; it is the source the Shiki layer
@@ -130,6 +130,9 @@
   }
 
   function onLanguageChange(e: Event): void {
+    // A conflict-held editor is non-editable (#1005): the attribute update
+    // would render and the armed reload would destroy it.
+    if (editor && !editor.isEditable) return
     const value = (e.currentTarget as HTMLSelectElement).value
     updateAttributes({ language: value })
   }

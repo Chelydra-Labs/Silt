@@ -505,6 +505,76 @@ by the existing diff/lease machinery once both sides land. A vault index must
 stay on a local disk regardless (WAL does not work on NFS/SMB — §3), so only
 the markdown crosses the mount.
 
+External-edit conflict detection (#1005). Atomic staging also does not stop a
+whole-page editor save from *semantically* clobbering an external edit: the
+save funnels (`SaveFileBlocks`, `SavePageMarkdown`) render the editor's buffer
+over whatever base the page had when loaded, so an external rewrite in between
+would be silently discarded. The editor-facing load points (the webview's
+`FetchPageBlocks`, `FetchPageMarkdown`) snapshot a per-file fingerprint —
+`{size, mtime, ctime, sha256}` of the RAW file bytes, keyed by normalized path
+— and the funnels re-check it inside `LockFileWrite` before writing: a stat
+match passes (one `os.Stat`, no hash on the happy path); stat drift re-reads +
+hashes, where a hash match passes and refreshes the stat (sync-client "touch"
+tolerance) and a mismatch refuses the save with the typed
+`external_edit_conflict` sentinel. Programmatic readers (MCP `read_page`,
+plugin block ops, in-app non-editor surfaces like global replace / template
+seeding via the `Fetch*Programmatic` IPC variants) fetch through the same
+code paths but must NOT re-baseline: only a load that adopts bytes into an
+editor buffer may advance the baseline, so a client reading externally
+edited bytes cannot disarm the editor's gate.
+The backend, not the UI latch, is authoritative about conflict state: a
+refused save stashes its payload keyed by path, and while that stash is live
+the funnels keep refusing — even after a later load re-captured the
+fingerprint — re-stashing same-funnel newest-wins, never replacing a stash
+from the other editor funnel, and never letting a programmatic (MCP/plugin/
+batch) refusal evict an editor-owned stash, until the user resolves. A
+refusal that fired because the file state could not be verified (stat/read
+failure) is the exception: it refuses without stashing, so a transient
+error cannot mint a phantom conflict that outlives it. The stash is
+funnel-tagged for exactly that policy. The fingerprint never derives
+from parsed block IDs, so block-ID rewrites inside files cannot invalidate it
+(and an external ID-only rewrite is still detected). Every successful Silt
+page write re-baselines the fingerprint in the same lock: in-lock page
+writers go through one choke point (`trackedPageWrite` in
+`app_tracked_write.go` — register with the write tracker, atomic write,
+re-baseline), so a writer family cannot forget the re-baseline at its call
+site; the few direct atomic writes that remain carry an inline justification.
+The stash and baselines have a lifecycle: rename/move re-keys a pending
+stash to the page's new path and drops the old-path baseline (and any
+foreign stash already keyed at the new path), page/section/
+notebook delete drops both at the deleted paths, and vault teardown clears
+them — a stale stash must never dead-end resolution or hijack a page later
+recreated at the same path. Resolution is refuse-first and keeps both
+versions: `ResolveExternalConflict` writes the losing version to a sibling
+`<page>.conflict-<YYYYMMDD-HHMMSS>.md` (registered with the `WriteTracker`
+and explicitly indexed, so it surfaces as a real page rather than a watcher
+ghost; when a sibling write reports a durability error after its rename
+committed, the resolution indexes the landed copy itself) and settles the
+winner per the user's keep-mine / keep-theirs / keep-both choice. The
+rename/move path (`renameWriteFileAtomic`) bypasses the gate by design: moves
+are not content rewrites. Known caveats: `LockFileWrite` serializes only
+Silt's own writers — an external write landing between the in-lock stat check
+and the atomic rename is still clobbered; closing that micro-race requires
+cross-process file locking, which is out of scope (and under the
+stash-authoritative gate, any false refusal — e.g. the same ms-race on the
+capture side — creates a sticky stash the user must resolve; the refresh
+choke point is what keeps Silt's own writes from ever minting one). Stat matches are also
+distrusted for ~3s after a baseline capture (git's "racily clean" rule), so
+same-size rewrites on coarse-timestamp filesystems (FAT/SMB) fall through to
+the hash arbiter; on NFS, attribute caching (default `actimeo` 3–60s) can
+serve stale stat past that window — mount vault-bearing roots with `noac` or
+a low `actimeo`. Plugin whole-page saves split by shape: the MCP/plugin
+`UpdateBlocks` whole-page render and in-app batch surfaces (global replace's
+`SaveFileBlocksProgrammatic`) run the full gate (a refusal stashes with the
+programmatic funnel so it can never evict or replace an editor-owned stash),
+while the plugin block-ops read-modify-write is exempt from the
+load-baseline half by design — its block base is re-derived from CURRENT
+disk bytes inside the file lock (the DB snapshot is only the lock/validation
+input, never the rendered content) and the rewrite re-anchors on disk inside
+the lock — but a pending refused-write stash still refuses it, on both
+halves of a cross-page move (the source-page rewrite consults the stash and
+reads-modify-writes from current disk bytes, never from the DB snapshot).
+
 Destructive-operation asymmetry (Tier 0 obligation). Page/section delete inside
 a linked notebook removes the file in place and Silt never copies linked content
 into the vault trash — there is no recovery net for those roots, unlike vault
@@ -512,7 +582,8 @@ deletes. Combined with the non-atomic rename caveat above, this makes recovery
 and no-silent-overwrite release gates for linked roots (SPECS §1.3, Tier 0):
 a destructive operation there must either be recoverable or explicitly
 confirmed, and an externally changed file must never be overwritten without
-surfacing the conflict. Richer conflict-resolution UX is Tier 2.
+surfacing the conflict — now enforced by the conflict-detection mechanism
+above rather than deferred. Richer conflict-resolution UX is Tier 2.
 
 Co-located per-notebook config. Per the storage-of-truth model, data
 attached to a notebook travels with the notebook. For a linked (external)

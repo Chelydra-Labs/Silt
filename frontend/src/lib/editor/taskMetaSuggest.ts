@@ -164,6 +164,10 @@ export function buildInsertPlan(key: string): InsertPlan {
 // Replace the active `%query` with the key's snippet and position the caret.
 // Returns false (and changes nothing) when no suggest context is active.
 export function applyMetaSuggestion(editor: Editor, key: string): boolean {
+  // Conflict-held editor (#1005): suggestions dispatch through
+  // view.dispatch, which isEditable never gates.
+  if (!editor.isEditable) return false
+
   const ctx = getSuggestContext(editor.state)
   if (!ctx) return false
 

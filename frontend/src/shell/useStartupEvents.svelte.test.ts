@@ -83,6 +83,7 @@ function makeDeps(): {
     initBaseline: vi.fn(),
     handleConfigChangedTabRehydrate: vi.fn(),
     resetTabs: vi.fn(),
+    resetDeferredRehydrate: vi.fn(),
     invalidateRecentPages: vi.fn(),
     pageRenamed: vi.fn(),
     openPage: vi.fn()
@@ -124,7 +125,8 @@ function makeDeps(): {
     openTasksView: vi.fn(),
     handleSwitchVault: vi.fn().mockResolvedValue(undefined),
     handleMenuSave: vi.fn().mockResolvedValue(undefined),
-    handleSearchJump: vi.fn()
+    handleSearchJump: vi.fn().mockReturnValue(true),
+    openPageOrNotify: vi.fn().mockReturnValue(true)
   }
   return { deps, settingsDialogs, tabManager }
 }
@@ -182,6 +184,20 @@ describe('useStartupEvents (#768)', () => {
 
     bus.handlers.get(EventName.EventMenuSave)!({ data: undefined })
     expect(deps.handleMenuSave).toHaveBeenCalledOnce()
+  })
+
+  it('a live vault:moved emit resets tabs and drops any deferred rehydrate', () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    const { deps, tabManager } = makeDeps()
+    controller = createStartupEvents(deps)
+    controller.attach()
+
+    bus.handlers.get(EventName.EventVaultMoved)!({ data: {} })
+    expect(tabManager.resetTabs).toHaveBeenCalledOnce()
+    // A deferred rehydrate belongs to the vault being left; replaying it
+    // against the new vault's tabs would leak view modes (#1005).
+    expect(tabManager.resetDeferredRehydrate).toHaveBeenCalledOnce()
   })
 
   it('replays a queued settings-mismatch event through the same handler', async () => {
@@ -471,6 +487,61 @@ describe('useStartupEvents (#768)', () => {
       ''
     )
     expect(mocks.pushNotification).not.toHaveBeenCalled()
+  })
+
+  // #1005 refused-open contract: the heading target must arm only when the
+  // page open landed — on a refusal (all tabs conflict-busy) the still-active
+  // page's scroll effect would otherwise chase a same-named heading on the
+  // WRONG page.
+  it('navigate-to-page with heading arms the heading target when the open lands', () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    const { deps } = makeDeps()
+    controller = createStartupEvents(deps)
+    controller.attach()
+
+    window.dispatchEvent(
+      new CustomEvent('navigate-to-page', {
+        detail: {
+          notebook: 'Work',
+          section: 'Notes',
+          page: 'Plan',
+          heading: 'Results'
+        }
+      })
+    )
+
+    expect(deps.handleSearchJump).toHaveBeenCalledTimes(1)
+    expect(deps.setSearchTargetHeading).toHaveBeenCalledWith('Results')
+    expect(deps.setSearchTargetKey).toHaveBeenCalledWith(
+      expect.stringContaining('heading:Results:')
+    )
+  })
+
+  it('navigate-to-page with heading does not arm the target when the open is refused', () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    const { deps } = makeDeps()
+    // openPage refused (all tabs conflict-busy): handleSearchJump returns
+    // false and its own toast already fired.
+    deps.handleSearchJump = vi.fn().mockReturnValue(false)
+    controller = createStartupEvents(deps)
+    controller.attach()
+
+    window.dispatchEvent(
+      new CustomEvent('navigate-to-page', {
+        detail: {
+          notebook: 'Work',
+          section: 'Notes',
+          page: 'Plan',
+          heading: 'Results'
+        }
+      })
+    )
+
+    expect(deps.handleSearchJump).toHaveBeenCalledTimes(1)
+    expect(deps.setSearchTargetHeading).not.toHaveBeenCalled()
+    expect(deps.setSearchTargetKey).not.toHaveBeenCalled()
   })
 
   it('navigate-to-page missing notebook/page does not jump and toasts', () => {

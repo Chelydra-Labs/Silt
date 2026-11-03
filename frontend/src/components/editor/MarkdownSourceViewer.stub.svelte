@@ -6,7 +6,9 @@
     section: _section,
     page: _page,
     onBlocksSaved: _onBlocksSaved,
-    editable: _editable
+    editable: _editable,
+    conflictActive = false,
+    onSaveRefused
   }: {
     blocks: unknown[]
     filePath: string
@@ -15,7 +17,21 @@
     page?: string
     onBlocksSaved?: (blocks: unknown[]) => void
     editable?: boolean
+    conflictActive?: boolean
+    onSaveRefused?: () => void
   } = $props()
 </script>
 
-<div data-testid="markdown-source-stub" data-file={filePath}></div>
+<div
+  data-testid="markdown-source-stub"
+  data-file={filePath}
+  data-conflict-active={conflictActive ? 'true' : 'false'}
+>
+  <button
+    type="button"
+    data-testid="msv-stub-emit-refused"
+    onclick={() => onSaveRefused?.()}
+  >
+    emit refused
+  </button>
+</div>

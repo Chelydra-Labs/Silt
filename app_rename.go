@@ -330,8 +330,7 @@ func (a *App) rollbackRename(
 	// Caller already holds LockPathsWrite on these paths (and descendants); do
 	// not re-enter LockFileWrite (#691 non-reentrant).
 	for path, entry := range linkJournal {
-		a.tracker.RegisterWrite(path)
-		if err := parser.WriteFileAtomic(path, entry.content); err != nil {
+		if err := a.trackedPageWrite(path, entry.content); err != nil {
 			rollbackErrs = append(rollbackErrs, fmt.Errorf("restore inbound links %s: %w", path, err))
 			continue
 		}
@@ -345,8 +344,7 @@ func (a *App) rollbackRename(
 	// Caller holds structural file locks for the forward op (#691).
 	for _, file := range files {
 		path := filepath.Join(newDir, file.relPath)
-		a.tracker.RegisterWrite(path)
-		if err := parser.WriteFileAtomic(path, file.oldContent); err != nil {
+		if err := a.trackedPageWrite(path, file.oldContent); err != nil {
 			rollbackErrs = append(rollbackErrs, fmt.Errorf("restore %s: %w", file.relPath, err))
 		}
 	}
@@ -529,6 +527,9 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 				}
 				content := updateFrontmatterField(string(contentBytes), "page", safeNewPage)
 				a.tracker.RegisterWrite(newFile)
+				// Direct write: brand-new path (rename refused an existing
+				// target), so no baseline can key it — conflict-state
+				// migration is owned by renameSingleFile (#1005).
 				return parser.WriteFileAtomic(newFile, []byte(content))
 			},
 			rewriteInbound: func(heldPaths map[string]bool) {
@@ -622,6 +623,7 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 				// moved) and fall through so the old index entries are cleaned.
 				content := updateFrontmatterField(string(contentBytes), "section", safeTo)
 				a.tracker.RegisterWrite(newFile)
+				// Direct write: brand-new path (see RenamePage's renameStep).
 				if err := parser.WriteFileAtomic(newFile, []byte(content)); err != nil {
 					log.Printf("MovePage: WriteFileAtomic failed at %s (file already moved): %v", newFile, err)
 				}
@@ -993,6 +995,11 @@ func (a *App) DeletePage(notebook, section, page string) error {
 	if runErr != nil {
 		return runErr
 	}
+	// The page is gone from this path: its pending conflict stash could never
+	// resolve (every resolution reads the original file) and would
+	// phantom-refuse whatever page is later created here — drop it with the
+	// baseline (#1005).
+	a.dropConflictStateForPath(filePath)
 	// Notify plugins (AI vector index) so orphan embeddings are dropped (#850).
 	a.emitBlockChanged("", safeNotebook, safeSection, safePage, "")
 	return a.reconcileNavigationPage(safeNotebook, safeSection, safePage, safePage, true)
@@ -1104,6 +1111,11 @@ func (a *App) DeleteSection(notebook, section string) error {
 		if runErr != nil {
 			return runErr
 		}
+		// Every deleted page's conflict state dies with its path (#1005) —
+		// see DeletePage.
+		for _, pg := range pages {
+			a.dropConflictStateForPath(pg.path)
+		}
 		// Notify plugins per deleted page so vector rows are dropped (#850).
 		for _, pg := range pages {
 			a.emitBlockChanged("", safeNotebook, pg.section, pg.page, "")
@@ -1204,6 +1216,11 @@ func (a *App) DeleteNotebook(notebook string) error {
 		}
 		if runErr != nil {
 			return runErr
+		}
+		// Every deleted page's conflict state dies with its path (#1005) —
+		// see DeletePage.
+		for _, pg := range pages {
+			a.dropConflictStateForPath(pg.path)
 		}
 		// Notify plugins per deleted page so vector rows are dropped (#850).
 		for _, pg := range pages {

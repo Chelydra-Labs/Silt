@@ -159,14 +159,17 @@ func (a *App) rewriteStaleInboundAfterRename(oldNB, oldSec, oldPage, newNB, newS
 			if total == 0 {
 				return
 			}
-			a.tracker.RegisterWrite(filePath)
-			if err := parser.WriteFileAtomic(filePath, []byte(content)); err != nil {
+			if err := a.trackedPageWrite(filePath, []byte(content)); err != nil {
 				return
 			}
 			writeOK = true
 		})
 		if writeOK {
 			a.reindexFile(filePath, k.nb, k.sec, k.page)
+			// Whole-page signal so an editor open on this linking page
+			// recaptures its baseline and buffer instead of false-conflicting
+			// (or clobbering the rewrite) on its next autosave (#1005).
+			a.emitBlockChanged("", k.nb, k.sec, k.page, "")
 			rewritten++
 		}
 	}
@@ -297,7 +300,6 @@ func (a *App) rewriteInboundPageLinksWithJournal(oldSource, oldNB, oldSec, oldPa
 			if total == 0 {
 				return
 			}
-			a.tracker.RegisterWrite(filePath)
 			if journal != nil {
 				if _, exists := journal[filePath]; !exists {
 					journal[filePath] = renameLinkJournalEntry{
@@ -306,7 +308,7 @@ func (a *App) rewriteInboundPageLinksWithJournal(oldSource, oldNB, oldSec, oldPa
 					}
 				}
 			}
-			if err := parser.WriteFileAtomic(filePath, []byte(content)); err != nil {
+			if err := a.trackedPageWrite(filePath, []byte(content)); err != nil {
 				log.Printf("rewriteInboundPageLinks: write %s: %v", filePath, err)
 				return
 			}
@@ -325,6 +327,10 @@ func (a *App) rewriteInboundPageLinksWithJournal(oldSource, oldNB, oldSec, oldPa
 			continue
 		}
 		a.reindexFile(filePath, k.nb, k.sec, k.page)
+		// Whole-page signal: an open editor on this linking page must
+		// recapture baseline + buffer rather than false-conflict on its next
+		// autosave (#1005).
+		a.emitBlockChanged("", k.nb, k.sec, k.page, "")
 		rewritten++
 	}
 	if rewritten > 0 || failed > 0 {

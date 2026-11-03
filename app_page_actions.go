@@ -171,8 +171,15 @@ func (a *App) DuplicatePage(notebook, section, page, targetName string) error {
 		duplicate := parser.RenderFileContent(blocks, body, frontmatter, a.spacesPerTab)
 
 		duplicatePageBeforeWrite()
-		a.tracker.RegisterWrite(targetPath)
-		if writeErr := parser.WriteFileAtomic(targetPath, []byte(duplicate)); writeErr != nil {
+		// Conflict state keyed at this path belongs to a page that no longer
+		// exists (target-absent checked above): a lingering refused-write
+		// stash could never resolve and would phantom-refuse the duplicate's
+		// first save with the dead page's foreign conflict (#1005) — same
+		// drop as CreatePage's scaffold.
+		a.dropConflictStateForPath(targetPath)
+		// trackedPageWrite: creation keeps an absent-file baseline honest
+		// (#1005), same as CreatePage's scaffold.
+		if writeErr := a.trackedPageWrite(targetPath, []byte(duplicate)); writeErr != nil {
 			runErr = pageActionError(CodeNavigationDuplicate, "duplicate page cannot be written", writeErr)
 			return
 		}
@@ -212,6 +219,10 @@ func rollbackDuplicateTarget(a *App, targetPath, source, notebook, section, page
 	if removeErr != nil && !os.IsNotExist(removeErr) {
 		return pageActionError(CodeNavigationDuplicate, "duplicate failed and rollback could not remove the target", fmt.Errorf("%v; original failure: %w", removeErr, cause))
 	}
+	// The target file is gone (removed or never landed); any conflict state
+	// keyed at its path dies with it, same as a delete (#1005) — a stale
+	// stash there would phantom-refuse a future page at the same name.
+	a.dropConflictStateForPath(targetPath)
 	if clearErr != nil {
 		return pageActionError(CodeNavigationDuplicate, "duplicate failed and rollback could not clean the index", fmt.Errorf("%v; original failure: %w", clearErr, cause))
 	}

@@ -67,6 +67,10 @@ export function applyBlockRefSuggestion(
   editor: Editor,
   blockId: string
 ): boolean {
+  // Conflict-held editor (#1005): suggestions dispatch through
+  // view.dispatch, which isEditable never gates.
+  if (!editor.isEditable) return false
+
   const ctx = getBlkRefContext(editor.state)
   const nodeType = editor.schema.nodes.blockReferenceNode
   if (!ctx || !nodeType || !blockId) return false

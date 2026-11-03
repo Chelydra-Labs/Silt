@@ -129,6 +129,11 @@ export function createSlashMenu(opts: SlashMenuOptions) {
     slashMenuDismissed = false
     const editor = opts.getEditor()
     if (!editor || editor.isDestroyed) return
+    // A conflict-held editor is non-editable (#1005): the menu can outlive
+    // the hold that armed it, and its selections dispatch commands that
+    // ProseMirror's editable gate never sees — refuse the whole branch,
+    // including the trigger-text deletion below.
+    if (!editor.isEditable) return
 
     const sel = editor.state.selection
     const from = sel.$from.start()
@@ -196,7 +201,9 @@ export function createSlashMenu(opts: SlashMenuOptions) {
             coords: { left: c.left, top: c.bottom },
             onCommit: (l: string) => {
               const e = opts.getEditor()
-              if (e) insertBlockMath(e, l)
+              // Conflict-held editor: refuse the math insert (#1005) — the
+              // popover can outlive the hold that armed it.
+              if (e && !e.isDestroyed && e.isEditable) insertBlockMath(e, l)
             }
           })
         } catch {

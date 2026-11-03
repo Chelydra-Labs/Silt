@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte'
+  import { onMount, tick, untrack } from 'svelte'
+  import { SvelteSet } from 'svelte/reactivity'
   import type { SearchModalResult } from './components/SearchModal.svelte'
   import {
     resolveBreadcrumbSectionSelection,
@@ -100,7 +101,7 @@
     initStartupUpdateCheck,
     disposeUpdateStore
   } from './updates/store.svelte'
-  import { type OpenPageMode } from './lib/tabs'
+  import { type OpenPageMode, type PageRef } from './lib/tabs'
   import { createTabManager } from './lib/tabs/useTabManager.svelte'
   import { nextView } from './lib/viewCycle'
   import {
@@ -130,7 +131,10 @@
     setActivePage: (pg) => (activePage = pg),
     getSettings: () => settings.config ?? {},
     confirmTemplateTransition,
-    openTasksView
+    openTasksView,
+    // Conflict-busy tabs survive capacity eviction and preview-slot reuse
+    // (#1005) — declared below, read lazily on every openPage.
+    getConflictBusyTabIds: () => conflictBusyTabs
   })
 
   // Navigation state (3-level: notebook > section > page). Kept in sync with
@@ -139,6 +143,50 @@
   let activeNotebook = $state('')
   let activeSection = $state('')
   let activePage = $state('')
+  // Tabs with a conflict resolution IPC in flight (#1005), reported by each
+  // tab's VirtualScrollContainer keyed by tab id. Per-tab (not one boolean):
+  // a single flag is last-writer-wins across siblings, so switching back to a
+  // still-resolving tab would disarm the shell's guards mid-resolution. The
+  // set drives every surface-destroying navigation gate — a tab close, a view
+  // switch, or a notebook switch unmounts a resolving surface and fires its
+  // unmount handoff against the settle in flight.
+  const conflictBusyTabs = new SvelteSet<string>()
+  const anyTabConflictBusy = $derived(conflictBusyTabs.size > 0)
+
+  function setTabConflictBusy(tabId: string, busy: boolean): void {
+    if (busy) conflictBusyTabs.add(tabId)
+    else conflictBusyTabs.delete(tabId)
+  }
+
+  // An external ui.open_tabs config edit arriving while a tab resolves is
+  // deferred by the tab-persistence layer (#1005) — re-hydrating would
+  // rebuild openTabs with fresh ids and unmount the resolving surface. Apply
+  // the deferred diff as soon as the last resolution settles.
+  $effect(() => {
+    if (conflictBusyTabs.size === 0) {
+      untrack(() => tabManager.applyDeferredTabRehydrate())
+    }
+  })
+
+  // Leaving the notes/backlinks region unmounts EVERY mounted editor surface
+  // — gated while any tab resolves so the unmount flush cannot race the
+  // settle (#1005). Transitions that stay inside the region (notes ↔
+  // backlinks) keep every surface mounted.
+  function notesSurfacesBusy(view: string): boolean {
+    return (
+      anyTabConflictBusy &&
+      (activeView === 'notes' || activeView === 'backlinks') &&
+      view !== 'notes' &&
+      view !== 'backlinks'
+    )
+  }
+
+  function handleCloseTab(tabId: string): void {
+    // Closing a resolving tab destroys its surface mid-resolution (#1005);
+    // every other tab close is unaffected.
+    if (conflictBusyTabs.has(tabId)) return
+    tabManager.handleCloseTab(tabId)
+  }
   let activeView = $state('notes')
   const views = [
     { id: 'notes', label: 'Notes', icon: 'description' },
@@ -193,6 +241,7 @@
   }
 
   function selectView(view: string): void {
+    if (notesSurfacesBusy(view)) return
     if (view !== activeView && !confirmTemplateTransition()) return
     activeView = view
   }
@@ -213,11 +262,40 @@
     activePage = selection.page
   }
 
+  // The refused-open contract (#1005): openPage returns false when every
+  // eviction candidate is mid-conflict-resolution, and the still-active page
+  // keeps its surface. Every openPage follow-through must go through this
+  // helper so the refusal toast is centralized and no caller can silently
+  // drop the boolean again (wrong-page rename focus, dead view flips).
+  function openPageOrNotify(
+    ref: PageRef,
+    mode: OpenPageMode,
+    blockTarget?: { fileDate?: string; blockId?: string }
+  ): boolean {
+    if (!tabManager.openPage(ref, mode, blockTarget)) {
+      // A `.silt` locator routes to the Tasks view, whose only refusal arm
+      // is the notes-region conflict guard — not the tab-capacity refusal
+      // the page copy describes.
+      const tasksTarget =
+        routeJumpTarget({ ...ref, blockTarget }).kind === 'tasks-view'
+      pushNotification({
+        kind: 'info',
+        message: tasksTarget
+          ? "Can't leave the notes region while a save conflict is being resolved — try again once the tab settles."
+          : "Couldn't open that page — every tab is busy resolving a save conflict. Try again once a tab settles."
+      })
+      return false
+    }
+    return true
+  }
+
   function openFromQuickSwitcher(
     item: NavigationCatalogItem,
     mode: OpenPageMode
   ): void {
-    tabManager.openPage(item, mode)
+    // A refused open (all tabs conflict-busy) must not proceed as-if-opened:
+    // the switcher's entry silently no-ops while the active page stays put.
+    if (!openPageOrNotify(item, mode)) return
     activeView = 'notes'
   }
 
@@ -303,6 +381,10 @@
   let dashboardType = $state('')
   function openTypeDashboard(typeId: string): void {
     if (!typeId) return
+    // The dashboard branch unmounts the notes region — same busy gate as
+    // every other region exit (#1005); the always-visible pill made this the
+    // cheapest one-click surface destruction during a resolution.
+    if (notesSurfacesBusy('dashboard')) return
     dashboardType = typeId
     activeView = 'dashboard'
   }
@@ -359,7 +441,10 @@
       pushNotification({ kind: 'info', message: target.reason })
       return
     }
-    tabManager.openPage(target.ref, 'preview')
+    // Gate the view flip on the open (#1005): a refused open leaves the
+    // dashboard active; flipping anyway would strand the user in an empty
+    // notes region while the resolving tab keeps its surface.
+    if (!openPageOrNotify(target.ref, 'preview')) return
     activeView = 'notes'
   }
   // Sidebar right-click "Page properties" → open the properties panel + arm
@@ -384,7 +469,10 @@
       activeSection === ref.section &&
       activePage === ref.page
     if (!isActive) {
-      tabManager.openPage(ref, 'pin')
+      // A refused open (all tabs conflict-busy, #1005) must skip the
+      // follow-through: opening the properties panel + type menu against the
+      // still-active page would arm a wrong-page mutation path.
+      if (!openPageOrNotify(ref, 'pin')) return
       await tick()
     }
     pageType.open()
@@ -425,7 +513,12 @@
   // into view and gets a transient highlight. No `.silt` page tab is
   // ever created — the Tasks view is a single-mount surface (the
   // activity-bar entry is the single source of view identity for it).
-  function openTasksView(blockId: string | undefined): void {
+  // Returns whether the view switch landed (#1005 refused-open contract):
+  // false = the notes region is mid-resolution; callers must skip
+  // follow-through that would act on a view that never opened.
+  function openTasksView(blockId: string | undefined): boolean {
+    // Leaving the notes region unmounts resolving surfaces (#1005).
+    if (notesSurfacesBusy('tasks')) return false
     activeView = 'tasks'
     tasksFocusBlockId = blockId ?? ''
     // Monotonic key so the Tasks view's focus effect re-fires on each
@@ -439,6 +532,7 @@
     if (!manuallyCollapsed) {
       sidebarCollapsed = false
     }
+    return true
   }
 
   // Global-hotkey dispatch (#768). Owns the window 'keydown' listener that
@@ -461,7 +555,15 @@
       manuallyCollapsed = collapsed
     },
     toggleShortcutHelp: () => toggleShortcutHelp(),
-    toggleDateGlance: () => toggleDateGlance(getActiveEditor()),
+    toggleDateGlance: () => {
+      // A conflict-held editor is non-editable (#1005, same refusal as
+      // applyFormatBold): the glance still opens, but in copy mode — never
+      // as an insert target for a buffer the armed reload would destroy.
+      const editor = getActiveEditor()
+      toggleDateGlance(
+        editor && !editor.isDestroyed && editor.isEditable ? editor : null
+      )
+    },
     openFind: () => findBarState.openFind(),
     openReplace: () => findBarState.openReplace(),
     cycleView: () => cycleView(),
@@ -471,13 +573,19 @@
     },
     requestNavigationCreation: (kind) => void requestNavigationCreation(kind),
     openSettings: () => openSettings(),
-    toggleViewMode: (tabId) => tabManager.handleToggleViewMode(tabId),
+    toggleViewMode: (tabId) => {
+      // A view toggle unmounts a surface mid-resolution, firing its unmount
+      // handoff against the settle in flight (#1005) — gated while the
+      // target tab's resolution IPC is pending.
+      if (conflictBusyTabs.has(tabId)) return
+      tabManager.handleToggleViewMode(tabId)
+    },
     togglePropertiesPanel: () => pageType.toggle(),
     // Mirrors the {#if} that mounts <PropertiesPanel> (the editor-tab view);
     // see useGlobalHotkeyDispatch — toggling anywhere else is a silent no-op.
     isPropertiesPanelAvailable: () =>
       activeView === 'notes' || activeView === 'backlinks',
-    closeTab: (tabId) => tabManager.handleCloseTab(tabId),
+    closeTab: (tabId) => handleCloseTab(tabId),
     cycleTab: (dir) => tabManager.handleCycleTab(dir),
     // Ctrl+B is bold everywhere an editor is the relevant surface. The resolver
     // suppressed this when the editor was focused (ProseMirror owns the in-editor
@@ -500,6 +608,11 @@
     applyFormatBold: () => {
       const editor = getActiveEditor() ?? getLastActiveEditor()
       if (!editor || editor.isDestroyed) return
+      // A conflict-held editor is non-editable (#1005): commands still
+      // dispatch (TipTap does not gate them on isEditable), the mutation
+      // would render, then the armed reload destroys it — a visibly applied
+      // edit silently lost. Refuse instead.
+      if (!editor.isEditable) return
       const dom = editor.view?.dom as HTMLElement | null
       const isAnyDialogOpen = !!document.activeElement?.closest(
         'dialog, [role="dialog"]'
@@ -528,7 +641,15 @@
     setActiveNotebook: (nb) => (activeNotebook = nb),
     setActiveSection: (sec) => (activeSection = sec),
     setActivePage: (pg) => (activePage = pg),
-    setActiveView: (view) => (activeView = view),
+    setActiveView: (view) => {
+      // Plugin-event view switches (navigate-to-tag → 'tags', switch-view →
+      // arbitrary) bypass selectView; funneled through the same busy gate so
+      // a plugin embed cannot unmount a resolving notes surface (#1005).
+      // Region-entering targets ('notes') never trip the predicate, so the
+      // vault-moved reset path is unaffected.
+      if (notesSurfacesBusy(view)) return
+      activeView = view
+    },
     getSettings: () => settings.config,
     setSettingsSection: (id) => (settingsSection = id),
     setShowSearch: (v) => (showSearch = v),
@@ -551,7 +672,8 @@
     openTasksView,
     handleSwitchVault,
     handleMenuSave,
-    handleSearchJump
+    handleSearchJump,
+    openPageOrNotify
   })
 
   onMount(() => {
@@ -668,8 +790,12 @@
       activeSection = ''
       activePage = ''
       activeView = 'notes'
-      // Clear the tab strip (#142).
+      // Clear the tab strip (#142). The deferred-rehydrate pieces must go
+      // too — same rationale as vault:moved: same-named pages across vaults
+      // must not leak view modes (guarded today only by the empty-strip
+      // locator check).
       tabManager.resetTabs()
+      tabManager.resetDeferredRehydrate()
     } catch (e) {
       console.error('Failed to close vault:', e)
     }
@@ -683,11 +809,14 @@
     await handleChangeVault()
   }
 
+  // Returns whether the jump landed on the requested notes page (true →
+  // follow-through like a heading target may safely arm; false → refused or
+  // rerouted, the still-active page must not receive the follow-through).
   function handleSearchJump(
     locator: SourceNavigationRef,
     date: string,
     blockId: string
-  ) {
+  ): boolean {
     const { notebook, section, page } = locator
     // Defense in depth for incomplete locators (#877). Toast lives on the
     // navigate-to-block/page bus edge so we only warn here — no second toast.
@@ -698,7 +827,7 @@
         page,
         blockId
       })
-      return
+      return false
     }
     // Standalone-task routing guard (#374). A `.silt` notebook ref from
     // the search modal routes to the Tasks view; we deliberately do NOT
@@ -714,7 +843,10 @@
     })
     if (target.kind === 'tasks-view') {
       openTasksView(target.blockTarget?.blockId)
-      return
+      // The Tasks view is not the requested page — a heading/block target
+      // armed now would fire against whatever page is active when the user
+      // returns to notes.
+      return false
     }
     // Route through openPage (preview-tab semantics, #142).
     // Use activate-only when the target IS the active page so block
@@ -729,25 +861,41 @@
       activeTab.notebook === notebook &&
       activeTab.section === section &&
       activeTab.page === page
-    tabManager.openPage(locator, isSamePage ? 'activate-only' : 'preview', {
-      fileDate: date,
-      blockId
-    })
+    // A refused open (all tabs conflict-busy, #1005) must stop the
+    // follow-through: the search targets below would feed the STILL-active
+    // page's view — a same-named heading scrolls the wrong page and a wrong
+    // block id burns its scroll budget. Mirrors openFromQuickSwitcher.
+    if (
+      !openPageOrNotify(locator, isSamePage ? 'activate-only' : 'preview', {
+        fileDate: date,
+        blockId
+      })
+    ) {
+      return false
+    }
     activeView = 'notes'
     searchTargetBlockId = blockId
     searchTargetHeading = ''
     searchTargetKey = `${date}:${blockId}:${Date.now()}`
+    return true
   }
 
   // Called by the TemplatePicker when a new page is created from a template.
   // Navigates to the freshly-created page (the reactive cascade loads it in
   // the editor) and refreshes the sidebar tree so the new page appears.
   function handleTemplatePageCreated(page: string): void {
-    tabManager.openPage(
-      { notebook: activeNotebook, section: activeSection, page },
-      'preview'
-    )
-    activeView = 'notes'
+    // The page exists on disk either way, so the tree refresh runs even when
+    // the open is refused (all tabs conflict-busy, #1005) — only the view
+    // flip is follow-through and must not strand the user outside notes
+    // looking at a tab that never opened.
+    if (
+      openPageOrNotify(
+        { notebook: activeNotebook, section: activeSection, page },
+        'preview'
+      )
+    ) {
+      activeView = 'notes'
+    }
     window.dispatchEvent(new CustomEvent('refresh-navigation'))
   }
 
@@ -810,6 +958,9 @@
   // their page when they leave Settings. The section persists across opens so
   // re-entering Settings returns the user to the panel they last visited.
   function openSettings(section: string = 'general') {
+    // Settings replaces the notes region and unmounts resolving surfaces
+    // (#1005) — gated exactly like every other view exit.
+    if (notesSurfacesBusy('settings')) return
     if (
       activeView === 'settings' &&
       settingsSection === 'templates' &&
@@ -865,7 +1016,11 @@
   // If the current view is not in the list (e.g. a plugin view), jump to
   // 'notes' as the anchor.
   function cycleView() {
-    activeView = nextView(activeView)
+    const next = nextView(activeView)
+    // Cycling out of the notes region unmounts every editor surface —
+    // gated while any tab's resolution IPC is in flight (#1005).
+    if (notesSurfacesBusy(next)) return
+    activeView = next
   }
 </script>
 
@@ -893,7 +1048,7 @@
           tabs={tabManager.displayedTabs}
           activeTabId={tabManager.activeTabId}
           onSelectTab={tabManager.handleSelectTab}
-          onCloseTab={tabManager.handleCloseTab}
+          onCloseTab={handleCloseTab}
           onPromoteTab={tabManager.handlePromoteTab}
           onReorderTab={tabManager.handleReorderTab}
           showDirtyIndicators={settings.config?.ui
@@ -1006,19 +1161,25 @@
           bind:collapsed={sidebarCollapsed}
           {sidebarWidth}
           {sidebarDragging}
-          onSelectNotebook={tabManager.selectNotebookContext}
+          onSelectNotebook={(nb) => {
+            // Switching notebooks unmounts the previous notebook's tab
+            // surfaces (displayedTabs filters by notebook) — gated while any
+            // resolution is in flight (#1005). The boolean feeds the
+            // sidebar's refused-open contract.
+            if (anyTabConflictBusy) return false
+            return tabManager.selectNotebookContext(nb)
+          }}
           onSelectSection={(sec) => (activeSection = sec)}
-          onSelectPage={(nb, sec, pg) => {
+          onSelectPage={(nb, sec, pg) =>
             // Single-click opens in preview mode (industry-standard parity, #142).
-            tabManager.openPage(
+            openPageOrNotify(
               { notebook: nb, section: sec, page: pg },
               'preview'
-            )
-          }}
-          onPinPage={(nb, sec, pg) => {
-            // Double-click / middle-click opens a pinned tab (#142).
-            tabManager.openPage({ notebook: nb, section: sec, page: pg }, 'pin')
-          }}
+            )}
+          onPinPage={(nb, sec, pg) =>
+            // Double-click / middle-click opens a pinned tab (#142); returns
+            // whether it landed for the sidebar's refused-open contract.
+            openPageOrNotify({ notebook: nb, section: sec, page: pg }, 'pin')}
           onTypePageTarget={handleTypePageTarget}
           onSelectView={selectView}
           onNavigationLoaded={(tree) => {
@@ -1079,10 +1240,16 @@
               {activeView}
               linked={activeNotebookMetadata?.linked ?? false}
               disconnected={activeNotebookMetadata?.disconnected ?? false}
-              onSelectNotebook={tabManager.selectNotebookContext}
+              onSelectNotebook={(nb) => {
+                // Notebook switch unmounts the previous notebook's tab
+                // surfaces — gated while any resolution is in flight
+                // (#1005), same as the sidebar path.
+                if (anyTabConflictBusy) return
+                tabManager.selectNotebookContext(nb)
+              }}
               onSelectSection={openSectionContext}
               onOpenPage={() =>
-                tabManager.openPage(
+                openPageOrNotify(
                   {
                     notebook: activeNotebook,
                     section: activeSection,
@@ -1123,9 +1290,15 @@
                       section={tab.section}
                       page={tab.page}
                       viewMode={tab.viewMode}
-                      onToggleViewMode={() =>
-                        tabManager.handleToggleViewMode(tab.id)}
+                      onToggleViewMode={() => {
+                        // Same gate as the hotkey path above (#1005).
+                        if (conflictBusyTabs.has(tab.id)) return
+                        tabManager.handleToggleViewMode(tab.id)
+                      }}
                       isActive={tab.id === tabManager.activeTabId}
+                      onConflictBusyChange={(busy) => {
+                        setTabConflictBusy(tab.id, busy)
+                      }}
                       targetBlockId={tab.id === tabManager.activeTabId
                         ? searchTargetBlockId
                         : ''}

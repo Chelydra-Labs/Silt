@@ -1,15 +1,22 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render, fireEvent } from '@testing-library/svelte'
 import ColorPickerMenu from './ColorPickerMenu.svelte'
 
-function makeMockEditor() {
+function makeMockEditor(opts: { editable?: boolean } = {}) {
+  const dispatch = vi.fn()
   return {
+    // Editable by default; the #1005 conflict-hold case flips it to false.
+    isEditable: opts.editable !== false,
+    on: vi.fn(),
+    off: vi.fn(),
     chain: () => ({
       focus: () => ({
-        setMark: () => ({ run: () => {} }),
-        unsetMark: () => ({ run: () => {} })
+        setMark: () => ({ run: dispatch }),
+        unsetMark: () => ({ run: dispatch }),
+        run: dispatch
       })
-    })
+    }),
+    _dispatch: dispatch
   }
 }
 
@@ -55,5 +62,22 @@ describe('ColorPickerMenu', () => {
       expect(trigger?.getAttribute('title')).toBe(label)
       expect(trigger?.getAttribute('aria-label')).toBe(label)
     }
+  })
+})
+
+// #1005: a conflict-held editor is setEditable(false) — color marks must not
+// dispatch into the buffer the armed reload would destroy.
+describe('ColorPickerMenu conflict hold (#1005)', () => {
+  it('disables the trigger and refuses mark dispatch on a non-editable editor', () => {
+    const editor = makeMockEditor({ editable: false })
+    const { container } = render(ColorPickerMenu, {
+      props: { editor: editor as never, markType: 'textColor', isDark: false }
+    })
+    const trigger = container.querySelector('button') as HTMLButtonElement
+    expect(trigger.disabled).toBe(true)
+    // Even if a dispatch is forced past the disabled affordance, the
+    // apply-level refusal holds.
+    trigger.click()
+    expect(editor._dispatch).not.toHaveBeenCalled()
   })
 })

@@ -219,7 +219,7 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "read_page",
-		Description: "Read a page as structured blocks (default) or raw markdown. Cite notebook/section/page when answering.",
+		Description: "Read a page as structured blocks (default) or raw markdown. Cite notebook/section/page when answering. The response's read_generation must be echoed in update_blocks' read_generation so concurrent edits to the page are refused instead of silently overwritten.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in readPageIn) (*mcp.CallToolResult, any, error) {
 		args := map[string]any{"notebook": in.Notebook, "section": in.Section, "page": in.Page}
 		if env.bridge == nil {
@@ -231,7 +231,7 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 			return toolErr("notebook and page are required")
 		}
 		if in.Markdown {
-			md, err := env.bridge.FetchPageMarkdown(ctx, in.Notebook, in.Section, in.Page)
+			md, gen, err := env.bridge.FetchPageMarkdown(ctx, in.Notebook, in.Section, in.Page)
 			if err != nil {
 				env.record("read_page", "error", err.Error(), args)
 				return toolErr(err.Error())
@@ -242,9 +242,9 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 				md = string(runes[:MaxBlockTextRunes*4]) + "\n…[truncated]"
 			}
 			env.record("read_page", "ok", "", args)
-			return toolJSON(map[string]any{"notebook": in.Notebook, "section": in.Section, "page": in.Page, "markdown": md})
+			return toolJSON(map[string]any{"notebook": in.Notebook, "section": in.Section, "page": in.Page, "markdown": md, "read_generation": gen})
 		}
-		blocks, err := env.bridge.FetchPageBlocks(ctx, in.Notebook, in.Section, in.Page)
+		blocks, gen, err := env.bridge.FetchPageBlocks(ctx, in.Notebook, in.Section, in.Page)
 		if err != nil {
 			env.record("read_page", "error", err.Error(), args)
 			return toolErr(err.Error())
@@ -254,11 +254,12 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 		}
 		env.record("read_page", "ok", "", args)
 		return toolJSON(map[string]any{
-			"notebook": in.Notebook,
-			"section":  in.Section,
-			"page":     in.Page,
-			"blocks":   blocks,
-			"count":    len(blocks),
+			"notebook":        in.Notebook,
+			"section":         in.Section,
+			"page":            in.Page,
+			"blocks":          blocks,
+			"count":           len(blocks),
+			"read_generation": gen,
 		})
 	})
 
@@ -278,7 +279,7 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 			env.record("read_blocks", "error", "no vault", args)
 			return toolErr("no vault open")
 		}
-		blocks, err := env.bridge.FetchPageBlocks(ctx, in.Notebook, in.Section, in.Page)
+		blocks, gen, err := env.bridge.FetchPageBlocks(ctx, in.Notebook, in.Section, in.Page)
 		if err != nil {
 			env.record("read_blocks", "error", err.Error(), args)
 			return toolErr(err.Error())
@@ -304,8 +305,11 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 		}
 		slice := blocks[off:end]
 		env.record("read_blocks", "ok", "", args)
+		// read_generation is from the LAST page read — an update_blocks built
+		// from this (paginated) view must still echo the newest fetch.
 		return toolJSON(map[string]any{
 			"blocks": slice, "total": total, "offset": off, "limit": limit, "has_more": end < total,
+			"read_generation": gen,
 		})
 	})
 
@@ -364,10 +368,16 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 		Section  string    `json:"section"`
 		Page     string    `json:"page"`
 		Blocks   []blockIn `json:"blocks" jsonschema:"full replacement block list for the page"`
+		// ReadGeneration is the read_generation echoed from the client's last
+		// read of this page: any Silt write committed after that fetch (an
+		// update_blocks, an editor save, a plugin op) refuses instead of
+		// silently reverting it, even when a newer fetch has since re-anchored
+		// the file state (#1005).
+		ReadGeneration int64 `json:"read_generation,omitempty" jsonschema:"read_generation value from your last read_page/read_blocks of this page; omit only if you never read it"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "update_blocks",
-		Description: "Identity-preserving full-page block replace. Prefer append_to_page or insert_under_heading for single-block adds. Keep existing block ids. Fails if the page does not exist — use create_page first. Requires write grant. Confirm before edits. No delete/move/bulk tools exist.",
+		Description: "Identity-preserving full-page block replace. Prefer append_to_page or insert_under_heading for single-block adds. Keep existing block ids. Echo the read_generation from your last read of the page so a concurrent write is refused (external_edit_conflict: re-read and retry) instead of silently overwritten. Fails if the page does not exist — use create_page first. Requires write grant. Confirm before edits. No delete/move/bulk tools exist.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in updateBlocksIn) (*mcp.CallToolResult, any, error) {
 		blockIDs := make([]string, 0, len(in.Blocks))
 		for _, b := range in.Blocks {
@@ -381,6 +391,9 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 			"page":      in.Page,
 			"blocks":    make([]any, len(in.Blocks)),
 			"block_ids": blockIDs,
+		}
+		if in.ReadGeneration > 0 {
+			args["read_generation"] = in.ReadGeneration
 		}
 		if !env.writeOK() {
 			env.record("update_blocks", "denied", "write not granted", args)
@@ -435,7 +448,7 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 		if typeDefaulted > 0 {
 			args["type_defaulted_count"] = typeDefaulted
 		}
-		if err := env.bridge.UpdateBlocks(ctx, in.Notebook, in.Section, in.Page, parsed); err != nil {
+		if err := env.bridge.UpdateBlocks(ctx, in.Notebook, in.Section, in.Page, parsed, in.ReadGeneration); err != nil {
 			env.record("update_blocks", "error", err.Error(), args)
 			return toolErr(err.Error())
 		}
@@ -669,7 +682,10 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 			env.record("insert_under_heading", "error", "page does not exist", args)
 			return toolErr("page does not exist; use create_page first")
 		}
-		blocks, err := env.bridge.FetchPageBlocks(ctx, in.Notebook, in.Section, in.Page)
+		// Position-scouting fetch only — the insert writes through the
+		// block-op funnel, not update_blocks, so the read generation is
+		// irrelevant here (the fetch still arms the shared basis).
+		blocks, _, err := env.bridge.FetchPageBlocks(ctx, in.Notebook, in.Section, in.Page)
 		if err != nil {
 			env.record("insert_under_heading", "error", err.Error(), args)
 			return toolErr(err.Error())

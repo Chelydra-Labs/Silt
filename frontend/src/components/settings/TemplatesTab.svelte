@@ -4,7 +4,7 @@
   import { EventName } from '../../generated/enums'
   import {
     DeleteUserTemplate,
-    FetchPageMarkdown,
+    FetchPageMarkdownProgrammatic,
     GetTemplate,
     SaveUserTemplate
   } from '../../../bindings/silt/app.js'
@@ -209,7 +209,10 @@
     loadingBody = true
     error = ''
     try {
-      const body = await FetchPageMarkdown(
+      // Non-capturing fetch: template seeding only reads the body — it must
+      // not re-baseline the editor's conflict gate while Settings is open
+      // (#1005).
+      const body = await FetchPageMarkdownProgrammatic(
         activeNotebook,
         activeSection,
         activePage
