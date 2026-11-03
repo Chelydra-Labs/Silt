@@ -210,11 +210,15 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 		// [recur::]/[progress::] (#296): file-resident user intent cached on
 		// the task row (schema calls them the same values the parser
 		// round-trips). They MUST hydrate here: rows-echo saves (global
-		// replace, MCP update_blocks) re-render served rows through
-		// RenderFileContent, and a row without them strips the tokens from
-		// the file (#1005). The interactive editor is not such a consumer —
-		// it saves docToBlocks(editor.getJSON()), a payload this hydration
-		// cannot reach.
+		// replace) re-render served rows through RenderFileContent, and a
+		// row without them strips the tokens from the file (#1005). MCP
+		// update_blocks is NOT covered by that re-render protection — its
+		// tool boundary (blockIn) carries id/type/text only, so those
+		// fields are dropped client-side regardless of this hydration; for
+		// it the hydration matters only as the like-with-like side of the
+		// rows-anchored read-basis comparison. The interactive editor is
+		// not such a consumer either — it saves docToBlocks(editor.getJSON()),
+		// a payload this hydration cannot reach.
 		if recur.Valid && recur.String != "" {
 			b.Recurrence = recur.String
 		}
