@@ -19,6 +19,7 @@
 
 import type { PluginContext } from '../../../sdk'
 import { asString } from '../../../../lib/asString'
+import { coerceIPCError } from '../../../../lib/ipcError'
 import { auditWrite, isValidYMD } from './_util'
 import type { ToolResult } from '../tool-registry'
 
@@ -249,7 +250,7 @@ async function applyMetadata(
     try {
       await run()
     } catch (e: unknown) {
-      failed.push(`${field}: ${e instanceof Error ? e.message : String(e)}`)
+      failed.push(`${field}: ${coerceIPCError(e).message}`)
     }
   }
   return failed

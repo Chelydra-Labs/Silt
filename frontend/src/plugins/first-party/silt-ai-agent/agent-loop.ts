@@ -52,6 +52,7 @@ import {
   type AgentWritesMode
 } from './write-policy'
 import { formatAIError } from '../../shared/formatAIError'
+import { coerceIPCError } from '../../../lib/ipcError'
 
 export const MAX_ITERATIONS = 8
 /** Max non-duplicate search_notes dispatches per turn before forced synthesis. */
@@ -708,7 +709,9 @@ async function materializeToolMessage(
     }
     const message = e instanceof Error ? e.message : String(e)
     opts.onStagingOutcome?.(token, 'failed')
-    return `Error: staged operation could not be applied (${message}).`
+    // The commit runs a mutator tool that writes page bytes; a typed
+    // failure's recovery prose must not stay buried in the JSON envelope.
+    return `Error: staged operation could not be applied (${coerceIPCError(e).message || message}).`
   }
 }
 

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { PluginContext, SearchHit } from '../../../sdk'
+  import { friendlyCaughtError } from '../errors'
   import Popover from '../../../../components/Popover.svelte'
 
   /**
@@ -157,7 +158,7 @@
       onMetaChanged?.()
     } catch (e) {
       deps = prev
-      errorMsg = e instanceof Error ? e.message : String(e)
+      errorMsg = friendlyCaughtError(e)
     } finally {
       pending = false
     }

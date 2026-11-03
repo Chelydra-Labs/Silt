@@ -25,6 +25,7 @@
   import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
   import TaskMetadataSidebar from './TaskMetadataSidebar.svelte'
   import { motionDuration } from '../motion'
+  import { friendlyCaughtError } from '../errors'
   import type { TaskDetail } from '../types'
   import { fetchTaskDetail } from '../query'
 
@@ -230,7 +231,7 @@
         unsavedChanges = false
         saveError = ''
       } catch (e) {
-        saveError = e instanceof Error ? e.message : String(e)
+        saveError = friendlyCaughtError(e)
       } finally {
         saving = false
         if (saveRequested && pendingSnapshot) {
@@ -244,7 +245,7 @@
               unsavedChanges = false
               saveError = ''
             } catch (e) {
-              saveError = e instanceof Error ? e.message : String(e)
+              saveError = friendlyCaughtError(e)
             } finally {
               saving = false
             }

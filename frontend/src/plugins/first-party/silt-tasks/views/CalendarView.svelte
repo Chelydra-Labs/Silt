@@ -37,6 +37,7 @@
     type CalendarSubMode
   } from '../state.svelte'
   import { buildQuery } from '../query'
+  import { friendlyCaughtError } from '../errors'
   import { loadCalendarSubMode, persistCalendarSubMode } from '../settings'
   import { useBlockChangedReload } from '../shared.svelte'
   import {
@@ -630,8 +631,10 @@
           ? `Rescheduled to ${newDate}`
           : 'Cleared due date'
     } catch (e) {
-      rescheduleAnnouncement =
-        e instanceof Error ? e.message : 'Reschedule failed'
+      // Friendly coercion: the due-date write can fail verification on a
+      // non-atomic root and the typed error's recovery prose must not be
+      // buried in the JSON envelope.
+      rescheduleAnnouncement = friendlyCaughtError(e) || 'Reschedule failed'
     }
   }
 

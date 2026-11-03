@@ -10,6 +10,7 @@
     ListNavigation
   } from '../../bindings/silt/app.js'
   import { getActiveLocation } from '../plugins/location.svelte'
+  import { coerceIPCError } from '../lib/ipcError'
 
   interface Props {
     target: string
@@ -231,7 +232,9 @@
       showHover = false
       navigateTo(notebook, section, page)
     } catch (e) {
-      fail(e instanceof Error ? e.message : String(e))
+      // Typed IPC errors cross the bridge as a JSON envelope on e.message
+      // (a verified-write failure names the retained recovery copies).
+      fail(coerceIPCError(e).message)
     } finally {
       creating = false
     }

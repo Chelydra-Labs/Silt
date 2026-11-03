@@ -22,6 +22,7 @@ import type { TaskDetail } from '../../types'
 import type { useBlockedDoneGuard } from '../../shared.svelte'
 import { groupByDispatch, unionTags } from '../../groupByDispatch'
 import { nextManualOrder } from '../manualOrder'
+import { friendlyCaughtError } from '../../errors'
 
 // A rendered Board lane. `value` is the dimension value a drop/quick-add
 // dispatches with — '' routes to the dimension's "clear" path (Unassigned
@@ -42,10 +43,12 @@ export interface BoardDndContext {
   toCol: Lane
 }
 
-// Coerce a caught value to its message string. Raw extraction (no friendly
-// mapping) so the rendered error text matches the pre-refactor behavior.
+// Coerce a caught value to its message string. Friendly coercion (envelope
+// unwrapping + focus-lock mapping) so a typed write failure's recovery prose
+// renders instead of the raw JSON envelope; unknown errors keep their raw
+// detail (fail-loudly).
 export function errMsg(e: unknown): string {
-  return e instanceof Error ? e.message : String(e)
+  return friendlyCaughtError(e)
 }
 
 export interface BoardDndDeps {

@@ -90,7 +90,7 @@
       await MutateBlock(uuid, text)
       persistError = ''
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = coerceIPCError(e).message
       // The source block is being edited in another view (focus lock held).
       // Retry shortly instead of silently overwriting or dropping the edit.
       // #478: map on the stable code first (resilient to backend wording

@@ -3,6 +3,7 @@
 
 import type { PluginContext } from '../../../sdk'
 import type { Proposal } from '../types'
+import { coerceIPCError } from '../../../../lib/ipcError'
 
 export type ApplyResult =
   { ok: true; detail?: string } | { ok: false; error: string }
@@ -36,8 +37,9 @@ export async function applyProposal(
         }
     }
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    return { ok: false, error: msg }
+    // Apply paths write page bytes; a typed failure's recovery prose must
+    // not stay buried in the JSON envelope.
+    return { ok: false, error: coerceIPCError(e).message }
   }
 }
 
@@ -122,7 +124,7 @@ async function applyTasks(
       }
       applied++
     } catch (e) {
-      errors.push(e instanceof Error ? e.message : String(e))
+      errors.push(coerceIPCError(e).message)
     }
   }
   if (applied === 0) {

@@ -16,6 +16,7 @@
 
 import type { PluginContext, TaskStatus } from '../../../sdk'
 import { asString } from '../../../../lib/asString'
+import { coerceIPCError } from '../../../../lib/ipcError'
 import { auditWrite, isValidYMD } from './_util'
 import type { ToolResult } from '../tool-registry'
 
@@ -244,7 +245,7 @@ export async function handleUpdateTask(
       const res = await ctx.updateBlockState(taskId, status)
       spawnedId = res?.spawnedId ?? ''
     } catch (e: unknown) {
-      failed.push(`status: ${e instanceof Error ? e.message : String(e)}`)
+      failed.push(`status: ${coerceIPCError(e).message}`)
       status = null
     }
     if (status === 'DONE' && effectiveRecur) {
@@ -361,7 +362,7 @@ async function runSetter(
   try {
     await fn()
   } catch (e: unknown) {
-    failed.push(`${field}: ${e instanceof Error ? e.message : String(e)}`)
+    failed.push(`${field}: ${coerceIPCError(e).message}`)
   }
 }
 

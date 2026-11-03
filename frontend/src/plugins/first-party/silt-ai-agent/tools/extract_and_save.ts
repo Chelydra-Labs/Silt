@@ -16,6 +16,7 @@
 import type { PluginAIChatMessage, PluginContext } from '../../../sdk'
 import { AIErrorKind } from '../../../../generated/enums'
 import { asString } from '../../../../lib/asString'
+import { coerceIPCError } from '../../../../lib/ipcError'
 import { auditWrite } from './_util'
 import type { ToolResult } from '../tool-registry'
 import { stageOperation } from '../staging'
@@ -474,7 +475,12 @@ export async function commitExtractAndSave(
     }
     const msg = e instanceof Error ? e.message : asString(e)
     auditWrite(ctx, 'extract_and_save', 'error')
-    return { content: '', error: `extract commit failed: ${msg}` }
+    // The commit writes page bytes through the plugin write path; a typed
+    // failure's recovery prose must not stay buried in the JSON envelope.
+    return {
+      content: '',
+      error: `extract commit failed: ${coerceIPCError(e).message || msg}`
+    }
   }
 
   if (signal?.aborted) {
