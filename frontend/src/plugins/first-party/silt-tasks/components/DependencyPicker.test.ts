@@ -1,6 +1,12 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { tick } from 'svelte'
-import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  waitFor
+} from '@testing-library/svelte'
 
 // Hoisted mocks: searchTasks is the ctx method the typeahead calls (wrapping
 // the SearchBlocks binding); sqliteQuery resolves dep-label lookups so chips
@@ -248,6 +254,52 @@ describe('DependencyPicker (#303)', () => {
     expect(
       await screen.findByText(/Cannot add: would create a circular dependency/)
     ).toBeInTheDocument()
+  })
+
+  // #1009: adding a dependency writes through the same verified funnel as
+  // removing one; a typed verified_write_failed rejection must render its
+  // recovery prose (where the .pending copy lives) in the aria-live region,
+  // not the raw JSON envelope e.message carries.
+  it('renders typed add-dependency recovery prose, not the raw JSON envelope', async () => {
+    mocks.searchTasks.mockResolvedValue([
+      {
+        id: 'dep-torn',
+        clean_content: 'Torn write',
+        notebook: 'W',
+        section: '',
+        page: 'P'
+      }
+    ])
+    mocks.setTaskBlockedBy.mockRejectedValueOnce(
+      new Error(
+        JSON.stringify({
+          code: 'verified_write_failed',
+          message:
+            'Note.md could not be written safely and the previous version was restored. Your unsaved text is kept at /vault/.system/writebackups/Note.md.pending'
+        })
+      )
+    )
+    render(DependencyPicker, {
+      cardId: 'task-1',
+      blockedBy: [],
+      ctx: makeCtx()
+    })
+    await flush()
+
+    const input = screen.getByLabelText('Search tasks to add as dependencies')
+    await fireEvent.input(input, { target: { value: 'torn' } })
+    await new Promise((r) => setTimeout(r, 220))
+    await flush()
+    await fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(
+      await screen.findByText(/Your unsaved text is kept at/)
+    ).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('{"code"')
+    // The optimistic add was reverted.
+    await waitFor(() =>
+      expect(screen.getByText('No prerequisites.')).toBeInTheDocument()
+    )
   })
 
   it('portals the results listbox out of the scroll container so it is not clipped (#376)', async () => {

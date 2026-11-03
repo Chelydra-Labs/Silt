@@ -130,12 +130,13 @@
       // Revert the optimistic add. The cycle-rejection error reads as a
       // user-facing message in the aria-live region.
       deps = prev
-      errorMsg =
-        e instanceof Error && /circular/i.test(e.message)
-          ? 'Cannot add: would create a circular dependency.'
-          : e instanceof Error
-            ? e.message
-            : String(e)
+      // Coerce before mapping: typed write failures arrive as a JSON
+      // envelope whose recovery prose must render, while the plain-prose
+      // cycle sentinel survives coercion for the friendly-copy mapping.
+      const msg = friendlyCaughtError(e)
+      errorMsg = /circular/i.test(msg)
+        ? 'Cannot add: would create a circular dependency.'
+        : msg
     } finally {
       pending = false
       // Clearing results unmounts the focused result button; restore focus to
