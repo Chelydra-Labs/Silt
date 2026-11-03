@@ -146,6 +146,12 @@ func (a *App) writePageStaged(filePath string, content []byte) error {
 	err := parser.WriteFileAtomicVerified(filePath, backupPath, content)
 	var vwe *parser.VerifiedWriteError
 	if errors.As(err, &vwe) {
+		// The user-facing prose deliberately omits the OS-level cause, and
+		// the IPC error carries only the prose — this boundary is the last
+		// place the diagnostic exists, so log it: a field report of a
+		// failed save on a mount must be diagnosable (#1009).
+		log.Printf("verified-write failed for %s (restored=%v): %v (retention: %v)",
+			vwe.Target, vwe.Restored, vwe.Err, vwe.RetentionErr)
 		return verifiedWriteFailedError(vwe)
 	}
 	return err
