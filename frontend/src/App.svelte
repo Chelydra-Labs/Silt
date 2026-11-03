@@ -273,10 +273,16 @@
     blockTarget?: { fileDate?: string; blockId?: string }
   ): boolean {
     if (!tabManager.openPage(ref, mode, blockTarget)) {
+      // A `.silt` locator routes to the Tasks view, whose only refusal arm
+      // is the notes-region conflict guard — not the tab-capacity refusal
+      // the page copy describes.
+      const tasksTarget =
+        routeJumpTarget({ ...ref, blockTarget }).kind === 'tasks-view'
       pushNotification({
         kind: 'info',
-        message:
-          "Couldn't open that page — every tab is busy resolving a save conflict. Try again once a tab settles."
+        message: tasksTarget
+          ? "Can't leave the notes region while a save conflict is being resolved — try again once the tab settles."
+          : "Couldn't open that page — every tab is busy resolving a save conflict. Try again once a tab settles."
       })
       return false
     }
