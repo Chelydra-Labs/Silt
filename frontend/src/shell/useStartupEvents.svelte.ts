@@ -239,7 +239,8 @@ export function createStartupEvents(
     const tipID = d.tip_id
     pushNotification({
       kind: 'info',
-      message: `Writes to ${d.root} use verified mode; crash safety is reduced on network mounts. Every write is backed up and verified.`,
+      message:
+        'This folder is on a network drive, so Silt now double-checks every save. If Silt is interrupted mid-save, a note could be damaged — a backup of the previous version is kept automatically. No action needed.',
       autoDismissMs: 0,
       action: {
         label: "Don't show again",

@@ -334,12 +334,14 @@ describe('startup events (golden master)', () => {
     await waitFor(() =>
       expect(
         hasNotification((m) =>
-          /Writes to \/mnt\/nas\/vault use verified mode/.test(m)
+          /This folder is on a network drive, so Silt now double-checks every save/.test(
+            m
+          )
         )
       ).toBe(true)
     )
     const tip = notificationsState.items.find((n) =>
-      /use verified mode/.test(n.message)
+      /double-checks every save/.test(n.message)
     )
     expect(tip).toBeDefined()
     // Sticky: the notice must outlive the default 5s so an in-flight save
@@ -363,7 +365,9 @@ describe('startup events (golden master)', () => {
     await waitFor(() =>
       expect(
         hasNotification((m) =>
-          /Writes to \/mnt\/share use verified mode/.test(m)
+          /This folder is on a network drive, so Silt now double-checks every save/.test(
+            m
+          )
         )
       ).toBe(true)
     )
