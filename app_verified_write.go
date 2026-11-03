@@ -14,6 +14,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -26,8 +27,29 @@ import (
 
 // rootNetworkFSCheck is the per-root network-filesystem probe. Package-level
 // so tests can swap it to simulate a network mount (which a CI temp dir cannot
-// reproduce), mirroring vault.networkFSCheck (#1009). Defaults to db.IsNetworkFS.
-var rootNetworkFSCheck = db.IsNetworkFS
+// reproduce), mirroring vault.networkFSCheck (#1009). The default is the
+// fail-safe wrapper below, not db.IsNetworkFS directly.
+var rootNetworkFSCheck = probeRootNetworkFS
+
+// errStorageProbeUnavailable marks a root that could not be probed at all
+// (offline/unmounted at open or link time) — distinct from a probe that
+// classified the root either way.
+var errStorageProbeUnavailable = errors.New("storage probe unavailable")
+
+// probeRootNetworkFS fails safe where db.IsNetworkFS stays silent: IsNetworkFS
+// returns nil not only for local filesystems but also when it cannot classify
+// the root (stat/statfs/GetVolumeInformation failure on an offline mount, or
+// a platform without a detector — #1020 tracks detector coverage). Recording
+// nil for an unprobeable root would drop the verified-write safety net for a
+// mount that may come back non-atomic mid-session, so a root that cannot
+// even be stat'd is treated as non-atomic: verified mode is strictly additive
+// (the same staged write wrapped in backup + read-back).
+func probeRootNetworkFS(path string) error {
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("%w: %s: %v", errStorageProbeUnavailable, path, err)
+	}
+	return db.IsNetworkFS(path)
+}
 
 // writeBackupDirName is the root-relative directory holding verified-write
 // backups: <root>/.system/writebackups/<relPath>. Same mount as the target —
@@ -64,10 +86,14 @@ func (a *App) detectVerifiedWriteRoots() {
 
 // detectVerifiedWriteRoot probes one root and records the outcome. Idempotent
 // per session (each root is probed at most once, at open or link). A probe
-// error records the root as NETWORK: verified mode is strictly additive (the
-// same staged write wrapped in backup + read-back), so an unprobeable root
-// keeps writing AND keeps the safety net rather than silently losing it
-// (warn-and-continue, #1009).
+// that returns an error — a detected network mount, or a root that cannot be
+// probed at all (offline at open/link; see probeRootNetworkFS) — records the
+// root as NETWORK: verified mode is strictly additive (the same staged write
+// wrapped in backup + read-back), so an unprobeable root keeps writing AND
+// keeps the safety net rather than silently losing it (warn-and-continue,
+// #1009). What stays LOCAL is a root the detector positively classifies as
+// local — including statable-but-unrecognized mounts (Linux FUSE, macOS),
+// the detection-coverage gap tracked as #1020.
 func (a *App) detectVerifiedWriteRoot(root string) {
 	if root == "" {
 		return
@@ -81,15 +107,37 @@ func (a *App) detectVerifiedWriteRoot(root string) {
 		a.verifiedRootsMu.Unlock()
 		return
 	}
-	err := rootNetworkFSCheck(key)
-	// db.IsNetworkFS signals a network mount by returning a non-nil error
-	// (its sentinel on platforms with a detector); nil means local.
-	network := err != nil
-	a.rootStorageProbes[key] = network
 	a.verifiedRootsMu.Unlock()
-	if network {
-		log.Printf("verified-write: %s is on a non-atomic filesystem; page writes use backup+verify mode (reduced crash safety)", key)
+
+	// Probe OUTSIDE the lock: on a dead hard mount the statfs can block up
+	// to the mount timeout, and every verifiedWriteScope (RLock) would queue
+	// behind it, stalling page writes across all roots for the probe.
+	err := rootNetworkFSCheck(key)
+	// A non-nil result means NETWORK: either the detector recognized a
+	// network mount or the probe could not classify the root at all.
+	network := err != nil
+
+	recorded := false
+	a.verifiedRootsMu.Lock()
+	// Re-check after the unlocked window: a concurrent probe (or a teardown
+	// clearing the map) may have recorded while this one ran; first record
+	// wins, keeping the once-per-session idempotence.
+	if a.rootStorageProbes == nil {
+		a.rootStorageProbes = make(map[string]bool)
 	}
+	if _, probed := a.rootStorageProbes[key]; !probed {
+		a.rootStorageProbes[key] = network
+		recorded = true
+	}
+	a.verifiedRootsMu.Unlock()
+	if !recorded || !network {
+		return
+	}
+	if errors.Is(err, errStorageProbeUnavailable) {
+		log.Printf("verified-write: %s could not be probed (offline or unmounted); treating it as non-atomic so page writes keep the backup+verify safety net until the next open/re-link", key)
+		return
+	}
+	log.Printf("verified-write: %s is on a non-atomic filesystem; page writes use backup+verify mode (reduced crash safety)", key)
 }
 
 // verifiedWriteScope returns the detected non-atomic root containing filePath,

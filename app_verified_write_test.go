@@ -341,6 +341,66 @@ func TestVerifiedWrite_NestedRootsResolveDeterministically(t *testing.T) {
 	}
 }
 
+// F3 (iter-2): a root that cannot be probed at all (offline/unmounted at
+// open or link) must fail safe — recorded NETWORK, so the safety net survives
+// the mount coming back mid-session — while a statable local root stays
+// LOCAL. On the pre-fix code db.IsNetworkFS swallowed the stat failure
+// (returned nil) and the root silently lost the safety net.
+func TestVerifiedWrite_UnprobeableRootFailsSafe(t *testing.T) {
+	app := newTestApp(t)
+	gone := filepath.Join(app.vaultPath, "OfflineNB")
+	app.detectVerifiedWriteRoot(gone) // default seam: stat fails → probe error
+	app.verifiedRootsMu.RLock()
+	goneNetwork := app.rootStorageProbes[filepath.Clean(gone)]
+	vaultNetwork := app.rootStorageProbes[filepath.Clean(app.vaultPath)]
+	app.verifiedRootsMu.RUnlock()
+	if !goneNetwork {
+		t.Errorf("unprobeable root recorded LOCAL — the safety net is silently lost if the mount returns non-atomic")
+	}
+	if vaultNetwork {
+		t.Errorf("statable local vault root recorded NETWORK")
+	}
+}
+
+// The 200-probe test above pins innermost determinism; these cases pin the
+// two load-bearing behaviors it does not cover: a file under the OUTER root
+// while an inner root exists, and a string-prefix-but-not-component sibling
+// (/vault vs /vault-x). Both guard against a future "simplification" to
+// naive prefix matching.
+func TestVerifiedWrite_NestedRootsResolutionCases(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+	inner := filepath.Clean(filepath.Join(app.vaultPath, "LinkedNB"))
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	forceNetworkRoot(t, app, inner)
+	sibling := filepath.Clean(app.vaultPath + "-x")
+	forceNetworkRoot(t, app, sibling)
+
+	cases := []struct {
+		name     string
+		file     string
+		wantRoot string
+		wantRel  string
+	}{
+		{"file under outer root beside inner", filepath.Join(app.vaultPath, "Top.md"), filepath.Clean(app.vaultPath), "Top.md"},
+		{"file inside inner root", filepath.Join(inner, "Deep.md"), inner, "Deep.md"},
+		{"string-prefix sibling is not a parent", filepath.Join(sibling, "Page.md"), sibling, "Page.md"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for i := 0; i < 20; i++ {
+				root, rel, ok := app.verifiedWriteScope(tc.file)
+				if !ok || root != tc.wantRoot || rel != tc.wantRel {
+					t.Fatalf("scope(%s) = (%q, %q, %v), want (%q, %q, true)",
+						tc.file, root, rel, ok, tc.wantRoot, tc.wantRel)
+				}
+			}
+		})
+	}
+}
+
 // Detection at link time + forget at unlink.
 func TestVerifiedWrite_LinkDetectionLifecycle(t *testing.T) {
 	app := newTestApp(t)
