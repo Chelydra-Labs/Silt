@@ -267,3 +267,43 @@ describe('useTabManager — pageRenamed + displayedTabs scoping', () => {
     expect(tabs.displayedTabs.map((t) => t.page)).toEqual(['Alpha'])
   })
 })
+
+describe('useTabManager — tasks-view routing refused-open contract (#1005)', () => {
+  let destroy: (() => void) | undefined
+
+  afterEach(() => {
+    destroy?.()
+    destroy = undefined
+  })
+
+  function makeTabs(openResult: boolean): {
+    deps: TabManagerDeps
+    tabs: TabManagerController
+  } {
+    const deps = makeDeps()
+    deps.openTasksView = vi.fn().mockReturnValue(openResult)
+    let tabs!: TabManagerController
+    destroy = $effect.root(() => {
+      tabs = createTabManager(deps)
+    })
+    return { deps, tabs }
+  }
+
+  it('.silt locators report the tasks-view switch verbatim', () => {
+    for (const openResult of [false, true]) {
+      const { deps, tabs } = makeTabs(openResult)
+      const landed = tabs.openPage(
+        { notebook: '.silt', section: '', page: 'tasks' },
+        'preview'
+      )
+      // openPage is the refused-open contract: a busy tasks switch must
+      // report false so callers (quick switcher, menus) skip follow-through.
+      expect(landed).toBe(openResult)
+      expect(deps.openTasksView).toHaveBeenCalledWith(undefined)
+      // The Tasks view is a single-mount surface — never a tab.
+      expect(tabs.openTabs).toHaveLength(0)
+      destroy?.()
+      destroy = undefined
+    }
+  })
+})

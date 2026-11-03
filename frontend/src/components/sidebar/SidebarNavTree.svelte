@@ -314,21 +314,24 @@
   }
 
   function handleQuickPage(ref: NavigationPageRef) {
-    loader.setExpandedSections(
-      new SvelteSet(
-        expandActiveAncestors(
-          expandedPathsForNotebook(loader.preferences, ref.notebook),
-          ref.section
-        )
-      )
-    )
     // Same refused-open contract as handleSelectPage, including the
     // notebook leg of the triple (handleSelectPage would pass the OLD
-    // activeNotebook for a cross-notebook jump).
+    // activeNotebook for a cross-notebook jump). The expansion swap rides
+    // the same gate — applying the target notebook's paths while its tree
+    // stays hidden behind the refusal would collapse/expand the wrong
+    // notebook's sections.
     if (onSelectPage(ref.notebook, ref.section, ref.page)) {
       activeNotebook = ref.notebook
       activeSection = ref.section
       activePage = ref.page
+      loader.setExpandedSections(
+        new SvelteSet(
+          expandActiveAncestors(
+            expandedPathsForNotebook(loader.preferences, ref.notebook),
+            ref.section
+          )
+        )
+      )
     }
   }
 

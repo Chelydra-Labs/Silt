@@ -507,9 +507,12 @@
   // into view and gets a transient highlight. No `.silt` page tab is
   // ever created — the Tasks view is a single-mount surface (the
   // activity-bar entry is the single source of view identity for it).
-  function openTasksView(blockId: string | undefined): void {
+  // Returns whether the view switch landed (#1005 refused-open contract):
+  // false = the notes region is mid-resolution; callers must skip
+  // follow-through that would act on a view that never opened.
+  function openTasksView(blockId: string | undefined): boolean {
     // Leaving the notes region unmounts resolving surfaces (#1005).
-    if (notesSurfacesBusy('tasks')) return
+    if (notesSurfacesBusy('tasks')) return false
     activeView = 'tasks'
     tasksFocusBlockId = blockId ?? ''
     // Monotonic key so the Tasks view's focus effect re-fires on each
@@ -523,6 +526,7 @@
     if (!manuallyCollapsed) {
       sidebarCollapsed = false
     }
+    return true
   }
 
   // Global-hotkey dispatch (#768). Owns the window 'keydown' listener that
@@ -780,8 +784,12 @@
       activeSection = ''
       activePage = ''
       activeView = 'notes'
-      // Clear the tab strip (#142).
+      // Clear the tab strip (#142). The deferred-rehydrate pieces must go
+      // too — same rationale as vault:moved: same-named pages across vaults
+      // must not leak view modes (guarded today only by the empty-strip
+      // locator check).
       tabManager.resetTabs()
+      tabManager.resetDeferredRehydrate()
     } catch (e) {
       console.error('Failed to close vault:', e)
     }
@@ -1150,9 +1158,11 @@
           onSelectNotebook={(nb) => {
             // Switching notebooks unmounts the previous notebook's tab
             // surfaces (displayedTabs filters by notebook) — gated while any
-            // resolution is in flight (#1005).
-            if (anyTabConflictBusy) return
+            // resolution is in flight (#1005). The boolean feeds the
+            // sidebar's refused-open contract.
+            if (anyTabConflictBusy) return false
             tabManager.selectNotebookContext(nb)
+            return true
           }}
           onSelectSection={(sec) => (activeSection = sec)}
           onSelectPage={(nb, sec, pg) =>

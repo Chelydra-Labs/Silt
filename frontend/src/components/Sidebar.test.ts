@@ -207,7 +207,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'notes',
         collapsed: true,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -235,7 +235,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -272,7 +272,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -321,7 +321,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -363,7 +363,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -411,7 +411,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -451,7 +451,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -515,7 +515,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -552,7 +552,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -616,7 +616,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -645,7 +645,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'tags',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -681,7 +681,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'tasks',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -708,7 +708,7 @@ describe('Sidebar', () => {
       activeSection: '',
       activePage: '',
       collapsed: false,
-      onSelectNotebook: () => {},
+      onSelectNotebook: () => true,
       onSelectSection: () => {},
       onSelectPage: () => true,
       onPinPage: () => true,
@@ -751,7 +751,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -771,7 +771,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'settings',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -814,7 +814,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'tasks',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -847,7 +847,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -881,7 +881,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -908,7 +908,7 @@ describe('Sidebar', () => {
       activePage: '',
       activeView: 'notes',
       collapsed: false,
-      onSelectNotebook: () => {},
+      onSelectNotebook: () => true,
       onSelectSection: () => {},
       onSelectPage: () => true,
       onPinPage: () => true,
@@ -951,7 +951,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1005,7 +1005,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1056,7 +1056,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1107,7 +1107,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1142,7 +1142,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1177,7 +1177,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1215,7 +1215,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1277,7 +1277,7 @@ describe('Sidebar', () => {
         activePage: 'Plan',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1330,7 +1330,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1364,7 +1364,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1396,7 +1396,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1435,7 +1435,7 @@ describe('Sidebar', () => {
         activePage: 'Plan',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1476,7 +1476,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1507,7 +1507,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage,
         onPinPage: () => true,
@@ -1540,7 +1540,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1568,7 +1568,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1621,7 +1621,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1678,7 +1678,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage,
         onPinPage: () => true,
@@ -1722,7 +1722,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1757,7 +1757,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1796,7 +1796,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1832,7 +1832,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1887,7 +1887,7 @@ describe('Sidebar', () => {
         activePage: 'Plan',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1922,7 +1922,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1963,7 +1963,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -1993,7 +1993,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -2026,7 +2026,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -2056,7 +2056,7 @@ describe('Sidebar', () => {
         activePage: 'Daily',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -2076,7 +2076,7 @@ describe('Sidebar', () => {
         activePage: '',
         activeView: 'notes',
         collapsed: false,
-        onSelectNotebook: () => {},
+        onSelectNotebook: () => true,
         onSelectSection: () => {},
         onSelectPage: () => true,
         onPinPage: () => true,
@@ -2105,5 +2105,215 @@ describe('Sidebar', () => {
     await flush()
     expect(document.activeElement).toBe(journal)
     window.removeEventListener('keydown', globalKeydown)
+  })
+
+  // --- refused-open contract (#1005) ------------------------------------
+  // Host handlers return whether the open landed; a refused open (every
+  // tab conflict-busy, or a resolution in flight for the notebook leg)
+  // must not move the sidebar's nav triple. The refused arms are pinned
+  // here — reverting the `if (onX(...))` gating to write-then-call fails
+  // every test in this block.
+
+  it('keeps the active page when a tree selection is refused', async () => {
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [
+        { notebook: 'Work', path: 'Journal' },
+        { notebook: 'Work', path: 'Meetings' }
+      ],
+      recent_pages: [],
+      favorites: []
+    })
+    const onSelectPage = vi.fn().mockReturnValue(false)
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => true,
+        onSelectSection: () => {},
+        onSelectPage,
+        onPinPage: () => true,
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    const standup = screen.getByRole('treeitem', { name: 'Standup' })
+    await fireEvent.click(standup)
+    await flush()
+    expect(onSelectPage).toHaveBeenCalledWith('Work', 'Meetings', 'Standup')
+    // Refused: the triple must not move to a page that never opened.
+    expect(standup).toHaveAttribute('aria-selected', 'false')
+    expect(screen.getByRole('treeitem', { name: 'Daily' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+
+    // Landing arm: the same interaction with an open that lands moves it.
+    onSelectPage.mockReturnValue(true)
+    await fireEvent.click(standup)
+    await flush()
+    expect(standup).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('treeitem', { name: 'Daily' })).toHaveAttribute(
+      'aria-selected',
+      'false'
+    )
+  })
+
+  it('keeps the active page when a pin open is refused', async () => {
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [
+        { notebook: 'Work', path: 'Journal' },
+        { notebook: 'Work', path: 'Meetings' }
+      ],
+      recent_pages: [],
+      favorites: []
+    })
+    const onPinPage = vi.fn().mockReturnValue(false)
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => true,
+        onSelectSection: () => {},
+        onSelectPage: () => true,
+        onPinPage,
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    const standup = screen.getByRole('treeitem', { name: 'Standup' })
+    await fireEvent.dblClick(standup)
+    await flush()
+    expect(onPinPage).toHaveBeenCalledWith('Work', 'Meetings', 'Standup')
+    // Pin refused at capacity with busy eviction candidates: the triple
+    // stays on the still-open page.
+    expect(standup).toHaveAttribute('aria-selected', 'false')
+    expect(screen.getByRole('treeitem', { name: 'Daily' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+
+    onPinPage.mockReturnValue(true)
+    await fireEvent.dblClick(standup)
+    await flush()
+    expect(standup).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('keeps the active notebook when a cross-notebook quick-access jump is refused', async () => {
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
+      recent_pages: [
+        {
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          opened_at: 10
+        },
+        {
+          notebook: 'Personal',
+          section: 'Ideas',
+          page: 'Notes',
+          opened_at: 20
+        }
+      ],
+      favorites: [],
+      sidebar_view: 'tree'
+    })
+    const onSelectPage = vi.fn().mockReturnValue(false)
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => true,
+        onSelectSection: () => {},
+        onSelectPage,
+        onPinPage: () => true,
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByRole('tab', { name: /Quick access bookmarks and recents/i })
+    )
+    await flush()
+    const workRow = screen.getByRole('button', {
+      name: /Work \/ Journal \/ Daily/
+    })
+    const personalRow = screen.getByRole('button', {
+      name: /Personal \/ Ideas \/ Notes/
+    })
+    expect(workRow).toHaveClass('active')
+
+    await fireEvent.click(personalRow)
+    await flush()
+    expect(onSelectPage).toHaveBeenCalledWith('Personal', 'Ideas', 'Notes')
+    // Refused: the whole triple — notebook included — must stay put.
+    expect(workRow).toHaveClass('active')
+    expect(personalRow).not.toHaveClass('active')
+
+    onSelectPage.mockReturnValue(true)
+    await fireEvent.click(personalRow)
+    await flush()
+    expect(personalRow).toHaveClass('active')
+    expect(workRow).not.toHaveClass('active')
+  })
+
+  it('keeps the active notebook when a notebook switch is refused', async () => {
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
+      recent_pages: [],
+      favorites: []
+    })
+    const onSelectNotebook = vi.fn().mockReturnValue(false)
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook,
+        onSelectSection: () => {},
+        onSelectPage: () => true,
+        onPinPage: () => true,
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Active notebook: Work' })
+    )
+    await flush()
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Personal/ }))
+    await flush()
+    expect(onSelectNotebook).toHaveBeenCalledWith('Personal')
+    // displayedTabs filters open tabs by notebook — moving the bindable
+    // on a refused switch unmounts the resolving tab's surface. The tree
+    // must still show the refused notebook's pages.
+    expect(screen.getByRole('tree', { name: 'Work pages' })).toBeInTheDocument()
+    expect(screen.queryByRole('tree', { name: 'Personal pages' })).toBeNull()
+    // Nothing happened: the switcher stays open for a retry.
+    expect(screen.getByRole('menu', { name: 'Notebooks' })).toBeInTheDocument()
+
+    // Landing arm: an accepted switch moves the tree to the new notebook.
+    onSelectNotebook.mockReturnValue(true)
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Personal/ }))
+    await flush()
+    expect(
+      screen.getByRole('tree', { name: 'Personal pages' })
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('tree', { name: 'Work pages' })).toBeNull()
   })
 })

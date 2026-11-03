@@ -65,7 +65,9 @@ export interface TabManagerDeps {
    *  draft. Returns true when the switch may proceed. */
   confirmTemplateTransition: () => boolean
   /** Route a `.silt` standalone-task locator to the Tasks view. */
-  openTasksView: (blockId: string | undefined) => void
+  // Refused-open contract (#1005): false = the notes region is busy and the
+  // view never switched; openPage forwards it so callers skip follow-through.
+  openTasksView: (blockId: string | undefined) => boolean
   /** Live read of the tab ids mid-conflict-resolution (#1005). Busy tabs are
    *  never evicted for capacity and never retargeted as the preview slot —
    *  both destroy a resolving surface. Optional (empty when omitted) so
@@ -249,8 +251,7 @@ export function createTabManager(deps: TabManagerDeps): TabManagerController {
     // view instead of opening a raw `.silt` tab.
     const target = routeJumpTarget({ ...ref, blockTarget })
     if (target.kind === 'tasks-view') {
-      deps.openTasksView(target.blockTarget?.blockId)
-      return true
+      return deps.openTasksView(target.blockTarget?.blockId)
     }
     const cfg = deps.getSettings()
     const enablePreviewTabs = cfg.ui?.enable_preview_tabs !== false
