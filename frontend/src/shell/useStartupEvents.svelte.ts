@@ -453,6 +453,10 @@ export function createStartupEvents(
         deps.setActiveSection('')
         deps.setActivePage('')
         deps.tabManager.resetTabs()
+        // A deferred rehydrate from the old vault must not replay against
+        // the new vault's tabs (#1005) — same-named pages would leak the
+        // old vault's view modes.
+        deps.tabManager.resetDeferredRehydrate()
         deps.setActiveView('notes')
         clearSelectionFocus()
         clearAllEditors()

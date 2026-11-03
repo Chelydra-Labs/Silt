@@ -318,5 +318,128 @@ describe('tab persistence invariants', () => {
       expect(mocks.GetOpenTabs).not.toHaveBeenCalled()
       expect(deps.setTabs).not.toHaveBeenCalled()
     })
+
+    // The locator half of the same protection (#1005): a tab the user
+    // closed (or opened/promoted) inside the busy window is newer than the
+    // deferred snapshot — a drain rebuild from the deferred decision would
+    // revert their action with fresh tab ids (every surface remounts).
+    it('does not rebuild the tab strip when the user changed it inside the busy window', async () => {
+      const busy = new Set<string>(['tabA'])
+      const tabs: TabEntry[] = [
+        {
+          id: 'tabA',
+          notebook: 'nb',
+          section: '',
+          page: 'p1',
+          preview: false,
+          lastActivatedAt: 1,
+          viewMode: 'edit'
+        },
+        {
+          id: 'tabB',
+          notebook: 'nb',
+          section: '',
+          page: 'p2',
+          preview: false,
+          lastActivatedAt: 0,
+          viewMode: 'edit'
+        }
+      ]
+      const persistence = createTabPersistence({
+        ...deps,
+        getTabs: vi.fn(() => tabs),
+        getConflictBusyTabIds: () => busy
+      })
+      persistence.initBaseline([{ notebook: 'nb', section: '', page: 'p1' }])
+
+      // External edit drops p1 from the config while tabA resolves →
+      // deferred with the window-open locator snapshot [p1, p2].
+      persistence.handleConfigChangedTabRehydrate({
+        ui: { open_tabs: [{ notebook: 'nb', section: '', page: 'p2' }] }
+      })
+      expect(mocks.GetOpenTabs).not.toHaveBeenCalled()
+
+      // The user closes tabB mid-window (permitted: busy gating is per-tab)
+      // and that choice persists through their own schedulePersistTabs.
+      tabs.splice(1, 1)
+
+      // Drain: the user's newer set wins; no rebuild fires.
+      busy.clear()
+      persistence.applyDeferredTabRehydrate()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(mocks.GetOpenTabs).not.toHaveBeenCalled()
+      expect(deps.setTabs).not.toHaveBeenCalled()
+      expect(tabs).toHaveLength(1)
+    })
+
+    // The drain's rebuild is async (a GetOpenTabs round trip); a resolution
+    // starting inside that window must not have its surface unmounted by
+    // the continuation — the deferral re-arms and the next drain applies.
+    it('re-gates the rebuild after the fetch round trip and re-defers while busy again', async () => {
+      const busy = new Set<string>(['tabA'])
+      const persistence = createTabPersistence({
+        ...deps,
+        getConflictBusyTabIds: () => busy
+      })
+      persistence.initBaseline([])
+      const payload: PersistedTabsPayload = {
+        open_tabs: [{ notebook: 'nb', section: '', page: 'p2' }]
+      }
+      const gate = deferred<PersistedTabsPayload>()
+      let n = 0
+      mocks.GetOpenTabs.mockImplementation(() =>
+        n++ === 0 ? gate.promise : Promise.resolve(payload)
+      )
+
+      // External locator diff deferred while busy; drain starts the fetch.
+      persistence.handleConfigChangedTabRehydrate({
+        ui: { open_tabs: [{ notebook: 'nb', section: '', page: 'p2' }] }
+      })
+      busy.clear()
+      persistence.applyDeferredTabRehydrate()
+
+      // A resolution starts DURING the round trip; the fetched result must
+      // not rebuild the tab strip under it.
+      busy.add('tabA')
+      gate.resolve(payload)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(deps.setTabs).not.toHaveBeenCalled()
+
+      // The next drain applies the re-deferred state.
+      busy.clear()
+      persistence.applyDeferredTabRehydrate()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(deps.setTabs).toHaveBeenCalledTimes(1)
+      expect(deps.setTabs.mock.calls[0][0]).toHaveLength(1)
+    })
+
+    // A deferred config belongs to the vault it was deferred in (#1005):
+    // a vault switch must drop it instead of replaying the old vault's
+    // view modes against same-named pages in the new vault.
+    it('drops a pending deferral on vault switch instead of replaying it cross-vault', async () => {
+      const busy = new Set<string>(['tabA'])
+      const persistence = createTabPersistence({
+        ...deps,
+        getConflictBusyTabIds: () => busy
+      })
+      persistence.initBaseline([])
+
+      persistence.handleConfigChangedTabRehydrate({
+        ui: {
+          open_tabs: [
+            { notebook: 'nb', section: '', page: 'p1', view_mode: 'source' }
+          ]
+        }
+      })
+
+      // The vault moves (busy tab destroyed by resetTabs → drain would
+      // fire); the reset drops the stale cfg first.
+      persistence.resetDeferredRehydrate()
+      busy.clear()
+      persistence.applyDeferredTabRehydrate()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(mocks.GetOpenTabs).not.toHaveBeenCalled()
+      expect(deps.setTabViewMode).not.toHaveBeenCalled()
+    })
   })
 })

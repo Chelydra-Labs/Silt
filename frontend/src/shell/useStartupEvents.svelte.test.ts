@@ -83,6 +83,7 @@ function makeDeps(): {
     initBaseline: vi.fn(),
     handleConfigChangedTabRehydrate: vi.fn(),
     resetTabs: vi.fn(),
+    resetDeferredRehydrate: vi.fn(),
     invalidateRecentPages: vi.fn(),
     pageRenamed: vi.fn(),
     openPage: vi.fn()
@@ -183,6 +184,20 @@ describe('useStartupEvents (#768)', () => {
 
     bus.handlers.get(EventName.EventMenuSave)!({ data: undefined })
     expect(deps.handleMenuSave).toHaveBeenCalledOnce()
+  })
+
+  it('a live vault:moved emit resets tabs and drops any deferred rehydrate', () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    const { deps, tabManager } = makeDeps()
+    controller = createStartupEvents(deps)
+    controller.attach()
+
+    bus.handlers.get(EventName.EventVaultMoved)!({ data: {} })
+    expect(tabManager.resetTabs).toHaveBeenCalledOnce()
+    // A deferred rehydrate belongs to the vault being left; replaying it
+    // against the new vault's tabs would leak view modes (#1005).
+    expect(tabManager.resetDeferredRehydrate).toHaveBeenCalledOnce()
   })
 
   it('replays a queued settings-mismatch event through the same handler', async () => {

@@ -140,6 +140,10 @@ export interface TabManagerController {
   /** Apply a config rehydrate deferred while a tab was conflict-busy (#1005);
    *  App calls this when the busy set drains. No-op when nothing pending. */
   applyDeferredTabRehydrate: () => void
+  /** Drop a pending deferred rehydrate (#1005): its config belongs to the
+   *  vault being left; replaying it against the next vault's tabs would
+   *  leak view modes to same-named pages. */
+  resetDeferredRehydrate: () => void
   flushPendingPersist: () => void
 }
 
@@ -476,6 +480,7 @@ export function createTabManager(deps: TabManagerDeps): TabManagerController {
     handleConfigChangedTabRehydrate:
       tabPersistence.handleConfigChangedTabRehydrate,
     applyDeferredTabRehydrate: tabPersistence.applyDeferredTabRehydrate,
+    resetDeferredRehydrate: tabPersistence.resetDeferredRehydrate,
     flushPendingPersist: tabPersistence.flushPendingPersist
   }
 }
