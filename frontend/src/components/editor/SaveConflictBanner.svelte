@@ -39,11 +39,14 @@
     separate page in the same folder when a copy still exists.
   </p>
   <!-- Own alert semantics: inserted only on failure, so the announcement
-       fires at the moment something actually went wrong. -->
+       fires at the moment something actually went wrong. The error detail
+       is rendered verbatim (the container passes the coerced message): a
+       typed verified-write failure's prose states what was retained and
+       where — a fixed "both versions are safe" line would overpromise
+       exactly when retention failed. -->
   {#if error}
     <p class="text-type-sm" role="alert">
-      Couldn't resolve the conflict. Nothing was written — both versions are
-      safe. Try again.
+      Couldn't resolve the conflict. {error}
     </p>
   {/if}
   <div

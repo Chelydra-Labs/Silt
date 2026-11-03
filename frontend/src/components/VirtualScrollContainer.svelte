@@ -2,6 +2,8 @@
   import { SvelteSet } from 'svelte/reactivity'
   import { onDestroy, tick, untrack } from 'svelte'
   import { FetchPageBlocks, RenamePage } from '../../bindings/silt/app.js'
+  import { coerceIPCError } from '../lib/ipcError'
+  import { pushNotification } from '../notifications/store.svelte'
   import { Events } from '@wailsio/runtime'
   import { EventName } from '../generated/enums'
   import TipTapEditor from './TipTapEditor.svelte'
@@ -313,7 +315,10 @@
         titleEl?.focus()
       }
     } catch (e) {
-      conflictError = e instanceof Error ? e.message : String(e)
+      // Typed IPC errors cross the bridge as a JSON envelope on e.message;
+      // the recovery prose (a verified-write failure names the retained
+      // copies) lives in coerced.message.
+      conflictError = coerceIPCError(e).message
       // The failed resolution must not dump keyboard focus (#1005 a11y):
       // `busy` disabled the clicked button (the browser moves focus to
       // <body>) and the banner stays mounted offering the actions. The
@@ -669,7 +674,15 @@
       onPageRenamed?.(newName)
       window.dispatchEvent(new CustomEvent('refresh-navigation'))
     } catch (e) {
+      // A rename's frontmatter rewrite can fail verification on a
+      // non-atomic root; the typed error names the retained recovery
+      // copies. That prose must reach the user — console-only plus a silent
+      // title revert would hide the manual recovery path.
       console.error('RenamePage failed:', e)
+      pushNotification({
+        kind: 'error',
+        message: `Rename failed: ${coerceIPCError(e).message}`
+      })
       displayTitle = page
       // eslint-disable-next-line svelte/no-dom-manipulating -- imperative title sync avoids full re-render thrash during virtual scroll
       if (titleEl) titleEl.textContent = page

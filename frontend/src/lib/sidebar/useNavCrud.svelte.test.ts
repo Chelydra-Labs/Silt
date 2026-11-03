@@ -6,11 +6,13 @@ import type { ActiveTriple } from './useNavLoader.svelte'
 // Canonical IPC-boundary mock (AGENTS.md): the Wails bindings are stubbed so
 // the inline-create flow runs without real IPC.
 const mocks = vi.hoisted(() => ({
-  CreatePage: vi.fn().mockResolvedValue('vault://Work/Notes/Untitled.md')
+  CreatePage: vi.fn().mockResolvedValue('vault://Work/Notes/Untitled.md'),
+  RenamePage: vi.fn().mockResolvedValue(undefined)
 }))
 vi.mock('$silt-app', () =>
   createAppIpcMocks({
-    CreatePage: mocks.CreatePage
+    CreatePage: mocks.CreatePage,
+    RenamePage: mocks.RenamePage
   })
 )
 
@@ -124,18 +126,20 @@ describe('navigationActionError prose passthrough', () => {
   const typedError = (code: string, message: string) =>
     new Error(JSON.stringify({ code, message }))
 
-  it('passes a navigation_duplicate message through instead of the fixed string', () => {
+  it('maps a generic navigation_duplicate wrap to the fixed string (no Go errno prose)', () => {
     const deps = makeDeps(true)
     const { navigationActionError } = useNavCrud(deps)
     const msg = navigationActionError(
       typedError(
         'navigation_duplicate',
-        'Copy.md could not be written safely and the previous version was restored. Your unsaved text is kept at /vault/.system/writebackups/Copy.md.pending'
+        'duplicate page cannot be written: open /vault/Work/Copy.md: permission denied'
       ),
       'duplicate'
     )
-    expect(msg).toContain('Your unsaved text is kept at')
-    expect(msg).not.toBe('The page could not be duplicated.')
+    // The generic wrap embeds raw Go error prose (paths, errno) that carries
+    // no recovery information — the dialog keeps the calm fixed string.
+    expect(msg).toBe('The page could not be duplicated.')
+    expect(msg).not.toContain('permission denied')
   })
 
   it('keeps the fixed duplicate string as the empty-message floor', () => {
@@ -161,5 +165,40 @@ describe('navigationActionError prose passthrough', () => {
     expect(msg).toBe(
       'Note.md could not be written safely and its previous version could not be restored'
     )
+  })
+})
+
+// #1009: the rename dialog must render a typed failure's recovery prose —
+// the raw e.message is the JSON envelope, which buries the named recovery
+// copies.
+describe('handleCreate rename typed-error prose (#1009)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('shows coerced recovery prose, not the JSON envelope, when RenamePage fails', async () => {
+    mocks.RenamePage.mockRejectedValueOnce(
+      new Error(
+        JSON.stringify({
+          code: 'verified_write_failed',
+          message:
+            'Note.md could not be written safely and the previous version was restored. Your unsaved text is kept at /vault/.system/writebackups/Note.md.pending'
+        })
+      )
+    )
+    const deps = makeDeps(true)
+    const crud = useNavCrud(deps)
+    crud.openRename('page', 'Work', 'Notes', 'Note', 'Note')
+
+    await crud.handleCreate('Renamed')
+
+    expect(mocks.RenamePage).toHaveBeenCalledWith(
+      'Work',
+      'Notes',
+      'Note',
+      'Renamed'
+    )
+    expect(crud.createError).toContain('Your unsaved text is kept at')
+    expect(crud.createError).not.toContain('{"code"')
   })
 })
