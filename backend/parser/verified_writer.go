@@ -65,6 +65,10 @@ type VerifiedWriteError struct {
 	// write never started, so the target was not modified by this write and
 	// no recovery copy exists.
 	PreWriteFailed bool
+	// newPage records that the target had no previous version (the pre-write
+	// state is "absent"): a successful restore removed the torn file rather
+	// than re-writing a previous version, and Error() must not claim one.
+	newPage bool
 	// Err is the underlying step failure (rename, read-back, restore), if any.
 	Err error
 	// RetentionErr is set when the incoming bytes could NOT be retained
@@ -83,6 +87,10 @@ func (e *VerifiedWriteError) Error() string {
 	switch {
 	case e.PreWriteFailed:
 		msg = fmt.Sprintf("%s could not be written safely and was not modified", name)
+	case e.Restored && e.newPage:
+		// A new page's pre-write state is "absent": the restore removed the
+		// torn file — there was no previous version to restore.
+		msg = fmt.Sprintf("%s could not be written safely and the partial file was removed", name)
 	case e.Restored:
 		msg = fmt.Sprintf("%s could not be written safely and the previous version was restored", name)
 	default:
@@ -98,6 +106,11 @@ func (e *VerifiedWriteError) Error() string {
 		msg += fmt.Sprintf(". The pre-write backup is at %s (the unsaved text could not be retained on disk: %v)", e.Backup, e.RetentionErr)
 	default:
 		msg += ". Neither a backup nor an unsaved copy could be retained on disk"
+		// Same diagnosis aid as the branch above: without the cause, a
+		// "my text is gone" field report has only the server log to go on.
+		if e.RetentionErr != nil {
+			msg += fmt.Sprintf(": %v", e.RetentionErr)
+		}
 	}
 	return msg
 }
@@ -225,6 +238,7 @@ func restoreAfterFailure(path, backupPath string, prev []byte, hadPrev bool, con
 
 	// New page: the pre-write state is "absent". Remove the torn target so no
 	// partial file is presented as the page.
+	vwe.newPage = true
 	if rerr := os.Remove(path); rerr != nil && !os.IsNotExist(rerr) {
 		vwe.Err = errors.Join(cause, fmt.Errorf("removing torn new page failed: %w", rerr))
 		return vwe

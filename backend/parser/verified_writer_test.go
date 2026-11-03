@@ -351,4 +351,50 @@ func TestWriteFileAtomicVerified_NewPageFailureNamesNoPhantomBackup(t *testing.T
 	if strings.Contains(msg, backup) && !strings.Contains(msg, backup+".pending") {
 		t.Errorf("prose names the phantom backup path: %q", msg)
 	}
+	// A new page has no previous version: the restored state is "absent", so
+	// the lead must say the torn partial file was removed, not point the user
+	// at a pre-existing version that never existed.
+	if !strings.Contains(msg, "the partial file was removed") {
+		t.Errorf("new-page lead must say the partial file was removed: %q", msg)
+	}
+	if strings.Contains(msg, "previous version was restored") {
+		t.Errorf("new-page lead claims a previous version existed: %q", msg)
+	}
+}
+
+// New-page failure with failed retention: neither copy exists, so the default
+// prose branch runs — it must carry the retention cause (the OS error exists
+// nowhere else for the user; Unwrap exposes only the step error).
+func TestWriteFileAtomicVerified_NewPageRetentionFailureNamesCause(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "page.md")
+	backup := filepath.Join(dir, "b.md")
+	// A DIRECTORY at the pending path fails the retention copy while the
+	// new-page removal still lands (absent state restored).
+	if err := os.MkdirAll(backup+".pending", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	swapAfterRenameHook(t, 2) // write + retry torn
+
+	err := WriteFileAtomicVerified(target, backup, []byte("first"))
+	var vwe *VerifiedWriteError
+	if !errors.As(err, &vwe) {
+		t.Fatalf("want *VerifiedWriteError, got %v", err)
+	}
+	if !vwe.Restored {
+		t.Errorf("Restored = false, want true (the torn new page was removed)")
+	}
+	if vwe.RetentionErr == nil {
+		t.Fatalf("RetentionErr = nil, want the retention failure recorded")
+	}
+	msg := vwe.Error()
+	if !strings.Contains(msg, "Neither a backup nor an unsaved copy could be retained on disk") {
+		t.Errorf("prose must state no copy exists: %q", msg)
+	}
+	if !strings.Contains(msg, vwe.RetentionErr.Error()) {
+		t.Errorf("default branch must carry the retention cause (else it is server-log-only): %q", msg)
+	}
+	if got := readOrEmpty(t, target); got != "" {
+		t.Errorf("target = %q, want the torn file removed", got)
+	}
 }
