@@ -159,6 +159,15 @@ func TestVerifiedWrite_TornDestinationRestoresOriginal(t *testing.T) {
 	if !strings.Contains(ipc.Message, ".system") || !strings.Contains(ipc.Message, "writebackups") {
 		t.Errorf("error must name where the retained copies live: %q", ipc.Message)
 	}
+
+	// Hazard 1c self-heal: the failed save skipped the fingerprint refresh,
+	// and the restore put the exact baseline bytes back — the next save must
+	// pass through the hash arbiter despite the stat drift from the torn
+	// writes + restore, not mint a phantom conflict.
+	retry := seedBlocksFrom(t, app, notebook, section, page, "retry body")
+	if err := app.SaveFileBlocks(notebook, section, page, retry); err != nil {
+		t.Fatalf("post-restore next save must self-heal, got %v", err)
+	}
 }
 
 // 3. Hard failure (restore also torn) → typed error, backup + pending both
