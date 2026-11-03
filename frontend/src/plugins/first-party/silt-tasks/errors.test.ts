@@ -21,6 +21,19 @@ describe('friendlyTaskError', () => {
     )
   })
 
+  // A typed envelope's prose is authoritative: it can embed a target path
+  // that happens to contain the phrase, so the legacy substring must never
+  // rewrite a message that already carries a code.
+  it('keeps typed prose verbatim even when it contains the legacy substring', () => {
+    const prose =
+      'notes on being edited.md could not be written safely and the previous version was restored. Your unsaved text is kept at /vault/.system/writebackups/notes on being edited.md.pending'
+    expect(
+      friendlyTaskError(
+        JSON.stringify({ code: 'verified_write_failed', message: prose })
+      )
+    ).toBe(prose)
+  })
+
   it('passes through unknown codes unchanged (fail-loudly)', () => {
     expect(
       friendlyTaskError(

@@ -23,9 +23,11 @@ export function friendlyTaskError(raw: string): string {
     return 'This task is open in the editor — save or close it first.'
   }
   // Legacy fallback: until every focus-lock return site carries the code, a
-  // plain-prose error still matches on the substring. Safe to remove once the
-  // last unmigrated sentinel adopts the contract.
-  if (message.includes('being edited')) {
+  // codeless plain-prose error still matches on the substring. Guarded on
+  // !code: a typed envelope's message is authoritative — its recovery prose
+  // can embed a path that happens to contain the phrase. Safe to remove
+  // once the last unmigrated sentinel adopts the contract.
+  if (!code && message.includes('being edited')) {
     return 'This task is open in the editor — save or close it first.'
   }
   return message
