@@ -115,3 +115,51 @@ describe('useNavCrud handleCreatePageInline refused-open gating (#1005)', () => 
     expect(focusSpy).toHaveBeenCalledOnce()
   })
 })
+
+// #1009: navigationActionError must pass load-bearing prose through — a
+// duplicate whose write failed verification carries the manual recovery path
+// (where the retained copies live) in its message; a fixed string would drop
+// it, and the raw JSON envelope would bury it.
+describe('navigationActionError prose passthrough', () => {
+  const typedError = (code: string, message: string) =>
+    new Error(JSON.stringify({ code, message }))
+
+  it('passes a navigation_duplicate message through instead of the fixed string', () => {
+    const deps = makeDeps(true)
+    const { navigationActionError } = useNavCrud(deps)
+    const msg = navigationActionError(
+      typedError(
+        'navigation_duplicate',
+        'Copy.md could not be written safely and the previous version was restored. Your unsaved text is kept at /vault/.system/writebackups/Copy.md.pending'
+      ),
+      'duplicate'
+    )
+    expect(msg).toContain('Your unsaved text is kept at')
+    expect(msg).not.toBe('The page could not be duplicated.')
+  })
+
+  it('keeps the fixed duplicate string as the empty-message floor', () => {
+    const deps = makeDeps(true)
+    const { navigationActionError } = useNavCrud(deps)
+    const msg = navigationActionError(
+      typedError('navigation_duplicate', ''),
+      'duplicate'
+    )
+    expect(msg).toBe('The page could not be duplicated.')
+  })
+
+  it('renders verified_write_failed prose via the default branch', () => {
+    const deps = makeDeps(true)
+    const { navigationActionError } = useNavCrud(deps)
+    const msg = navigationActionError(
+      typedError(
+        'verified_write_failed',
+        'Note.md could not be written safely and its previous version could not be restored'
+      ),
+      'duplicate'
+    )
+    expect(msg).toBe(
+      'Note.md could not be written safely and its previous version could not be restored'
+    )
+  })
+})

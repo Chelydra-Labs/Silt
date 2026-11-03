@@ -321,6 +321,30 @@ describe('DragDropManager', () => {
     )
   })
 
+  // #1009: a MovePage whose post-move rewrite fails verification now fails
+  // the whole move with the typed error; the drag surface must render the
+  // recovery prose, not the JSON envelope the typed error arrives in.
+  it('handleDrop renders a typed MovePage failure as recovery prose', async () => {
+    const { MovePage } = await import('$silt-app')
+    const prose =
+      'Roadmap.md could not be written safely and the previous version was restored. Your unsaved text is kept at /vault/.system/writebackups/Projects/Roadmap.md.pending'
+    vi.mocked(MovePage).mockRejectedValueOnce(
+      new Error(
+        JSON.stringify({ code: 'verified_write_failed', message: prose })
+      )
+    )
+    const deps = makeDeps()
+    const dnd = new DragDropManager(deps)
+    const e = makeDragEvent()
+
+    dnd.handleDragStart(e, 'page', 'Roadmap', 'Projects')
+    dnd.handleDragOver(e, 'section', 'Journal')
+    await dnd.handleDrop(e, 'section', 'Journal', 'Work', 'Journal')
+
+    expect(deps.onError).toHaveBeenCalledWith(prose)
+    expect(deps.onMoved).not.toHaveBeenCalled()
+  })
+
   it('handleDrop same-section page→section is a no-op', async () => {
     const { MovePage } = await import('$silt-app')
     const deps = makeDeps()

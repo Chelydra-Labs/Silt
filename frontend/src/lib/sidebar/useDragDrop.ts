@@ -1,4 +1,5 @@
 import { MovePage } from '../../../bindings/silt/app.js'
+import { coerceIPCError } from '../ipcError'
 import { sortByName, type NavOrderManager } from './navOrder'
 import type { NavSection } from './types'
 import { findSection } from './navTree'
@@ -146,9 +147,10 @@ export class DragDropManager {
           this.dragItem.name
         )
       } catch (err) {
-        this.deps.onError(
-          err instanceof Error ? err.message : 'Failed to move page'
-        )
+        // Typed IPC errors arrive as a JSON envelope on the raw message;
+        // coerced.message carries the recovery prose (a verified-write
+        // failure names the retained copies).
+        this.deps.onError(coerceIPCError(err).message || 'Failed to move page')
       }
     } else if (isPageToSection && section !== undefined) {
       // Page dropped onto a section header → cross-section move (#177).
@@ -173,9 +175,7 @@ export class DragDropManager {
           this.dragItem.name
         )
       } catch (err) {
-        this.deps.onError(
-          err instanceof Error ? err.message : 'Failed to move page'
-        )
+        this.deps.onError(coerceIPCError(err).message || 'Failed to move page')
       }
     } else if (level === 'section' && notebook) {
       const parentPath = targetName.split('/').slice(0, -1).join('/')

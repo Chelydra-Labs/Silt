@@ -471,7 +471,10 @@
         onSaveRefused?.()
         return false
       }
-      saveError = e instanceof Error ? e.message : String(e)
+      // Typed IPC errors arrive as a JSON envelope on e.message; the
+      // recovery prose (verified-write failures name the retained copies)
+      // lives in coerced.message.
+      saveError = coerced.message
       savePhase = 'error'
       return false
     }
@@ -1144,10 +1147,11 @@
         // nowhere else — fail loud instead of a console-only drop.
         const coerced = coerceIPCError(e)
         if (coerced.code !== IPCErrorCode.CodeExternalEditConflict) {
-          const msg = e instanceof Error ? e.message : String(e)
+          // coerced.message carries the recovery prose for typed failures
+          // (a raw e.message here would bury it in the JSON envelope).
           pushNotification({
             kind: 'error',
-            message: `Couldn't hand off your unsaved source edits for ${page}.md — keep this tab open and retry saving. (${msg})`
+            message: `Couldn't hand off your unsaved source edits for ${page}.md — keep this tab open and retry saving. (${coerced.message})`
           })
         }
       })

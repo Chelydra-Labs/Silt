@@ -81,7 +81,10 @@ export function navigationActionError(
     case IPCErrorCode.CodeNavigationReveal:
       return 'The item could not be revealed in the file manager.'
     case IPCErrorCode.CodeNavigationDuplicate:
-      return 'The page could not be duplicated.'
+      // The backend passes a write error's own prose through when it is
+      // load-bearing (a verified-write failure names the retained recovery
+      // copies); the fixed string is only the empty-message floor.
+      return parsed.message || 'The page could not be duplicated.'
     default:
       return (
         parsed.message ||
