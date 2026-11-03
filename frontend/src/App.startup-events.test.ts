@@ -334,7 +334,7 @@ describe('startup events (golden master)', () => {
     await waitFor(() =>
       expect(
         hasNotification((m) =>
-          /Silt is using extra-safe saves for \/mnt\/nas\/vault because it's on a network drive/.test(
+          /Silt is using extra-safe saves for \/mnt\/nas\/vault because Silt can't guarantee crash-safe saves/.test(
             m
           )
         )
@@ -365,7 +365,7 @@ describe('startup events (golden master)', () => {
     await waitFor(() =>
       expect(
         hasNotification((m) =>
-          /Silt is using extra-safe saves for \/mnt\/share because it's on a network drive/.test(
+          /Silt is using extra-safe saves for \/mnt\/share because Silt can't guarantee crash-safe saves/.test(
             m
           )
         )
