@@ -540,3 +540,203 @@ func TestVerifiedWrite_WatcherNormalizationWriteVerifiedOnNetworkRoot(t *testing
 		t.Fatalf("external content not restored after torn normalization write:\n got: %q\nwant: %q", string(onDisk), string(original))
 	}
 }
+
+// 8. Conflict resolution × torn verified replay failure (keep_mine, blocks
+// funnel): the landed-detection heuristic reads target bytes ≠ theirs as
+// "mine landed", but a torn verified failure also produces that — partial
+// bytes. The resolution must fail loud, keep theirs in the sibling, and not
+// re-baseline to the torn content.
+func TestResolveConflict_TornVerifiedReplayFailsLoud(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	notebook, section, page := "ResVW", "", "TornReplay"
+	blockID := "22222222-3333-4444-8555-666666666666"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "original body")
+	mine := editBlocks(blocks, blockID, "my unsaved line")
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	filePath := conflictPagePath(app, notebook, section, page)
+	external := "---\nnotebook: \"ResVW\"\nsection: \"\"\npage: \"TornReplay\"\ndate: \"2026-01-01\"\ntags: []\n---\nexternal line <!-- id: 99999999-aaaa-4bbb-8ccc-666666666666 -->\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page, mine))
+
+	// Tear every rename on the ORIGINAL path: replay write, retry, and
+	// restore all land torn (VerifiedWriteError with Restored=false). The
+	// archive copy to the sibling stays clean.
+	origHook := parser.VerifiedWriteAfterRenameHook
+	parser.VerifiedWriteAfterRenameHook = func(path string) error {
+		if path == filePath {
+			return os.WriteFile(path, []byte("TORN-PARTIAL"), 0o644)
+		}
+		return nil
+	}
+	t.Cleanup(func() { parser.VerifiedWriteAfterRenameHook = origHook })
+
+	copyPage, rerr := app.ResolveExternalConflict(notebook, section, page, "keep_mine")
+	var ipc *IPCError
+	if !errors.As(rerr, &ipc) || ipc.Code != CodeVerifiedWriteFailed {
+		t.Fatalf("resolution must fail with the typed verified error, got copy=%q err=%v", copyPage, rerr)
+	}
+
+	// theirs survives in the sibling — the funnel must not delete it just
+	// because the torn bytes differ from theirs.
+	sibling := findConflictSibling(t, app, notebook, section, page)
+	sibBytes, err := os.ReadFile(sibling)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(sibBytes), "external line") {
+		t.Fatalf("sibling must keep theirs, got %q", string(sibBytes))
+	}
+
+	// The torn bytes must not have been adopted: no re-baseline to partial
+	// content — the next save still refuses against the torn disk state.
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page, mine))
+}
+
+// 9. Same torn replay through the markdown funnel: the typed code must
+// survive historyWriteError's generic write-error mapping, or the funnel
+// cannot tell a torn verified failure from an ordinary failed write.
+func TestResolveConflict_TornVerifiedReplayFailsLoud_MarkdownFunnel(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	notebook, section, page := "ResVW", "", "TornReplayMd"
+	blockID := "33333333-4444-4555-8666-777777777777"
+	seedConflictPage(t, app, notebook, section, page, blockID, "original body")
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	filePath := conflictPagePath(app, notebook, section, page)
+	external := "---\nnotebook: \"ResVW\"\nsection: \"\"\npage: \"TornReplayMd\"\ndate: \"2026-01-01\"\ntags: []\n---\nexternal line <!-- id: 88888888-aaaa-4bbb-8ccc-777777777777 -->\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := app.SavePageMarkdown(notebook, section, page, "my markdown body\n")
+	requireConflict(t, err)
+
+	origHook := parser.VerifiedWriteAfterRenameHook
+	parser.VerifiedWriteAfterRenameHook = func(path string) error {
+		if path == filePath {
+			return os.WriteFile(path, []byte("TORN-PARTIAL"), 0o644)
+		}
+		return nil
+	}
+	t.Cleanup(func() { parser.VerifiedWriteAfterRenameHook = origHook })
+
+	copyPage, rerr := app.ResolveExternalConflict(notebook, section, page, "keep_mine")
+	var ipc *IPCError
+	if !errors.As(rerr, &ipc) || ipc.Code != CodeVerifiedWriteFailed {
+		t.Fatalf("resolution must fail with the typed verified error, got copy=%q err=%v", copyPage, rerr)
+	}
+
+	sibling := findConflictSibling(t, app, notebook, section, page)
+	sibBytes, err := os.ReadFile(sibling)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(sibBytes), "external line") {
+		t.Fatalf("sibling must keep theirs, got %q", string(sibBytes))
+	}
+}
+
+// 10. Torn verified failure on the archive copy (keep_mine): the stat-only
+// landed check sees the torn sibling file, but its bytes are partial — the
+// resolution must fail rather than index torn bytes as theirs' copy and
+// replay mine over theirs' only complete version.
+func TestResolveConflict_TornVerifiedConflictCopyFailsLoud(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	notebook, section, page := "ResVW", "", "TornCopy"
+	blockID := "44444444-5555-4666-8777-888888888888"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "original body")
+	mine := editBlocks(blocks, blockID, "my unsaved line")
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	filePath := conflictPagePath(app, notebook, section, page)
+	external := "---\nnotebook: \"ResVW\"\nsection: \"\"\npage: \"TornCopy\"\ndate: \"2026-01-01\"\ntags: []\n---\nexternal line <!-- id: 77777777-aaaa-4bbb-8ccc-888888888888 -->\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page, mine))
+
+	// Simulate a torn NEW sibling page whose cleanup also fails: every
+	// rename onto the sibling leaves un-removable garbage, so the verified
+	// writer ends with Restored=false and a stat-able (garbage) sibling —
+	// the one sibling shape the stat-only landed check misreads.
+	origHook := parser.VerifiedWriteAfterRenameHook
+	parser.VerifiedWriteAfterRenameHook = func(path string) error {
+		if path == filePath {
+			return nil
+		}
+		_ = os.RemoveAll(path)
+		return os.MkdirAll(filepath.Join(path, "torn"), 0o700)
+	}
+	t.Cleanup(func() { parser.VerifiedWriteAfterRenameHook = origHook })
+
+	copyPage, rerr := app.ResolveExternalConflict(notebook, section, page, "keep_mine")
+	var ipc *IPCError
+	if !errors.As(rerr, &ipc) || ipc.Code != CodeVerifiedWriteFailed {
+		t.Fatalf("resolution must fail with the typed verified error, got copy=%q err=%v", copyPage, rerr)
+	}
+
+	// The replay never ran: theirs still holds the original path.
+	origBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(origBytes), "external line") {
+		t.Fatalf("theirs must stay on the original path, got %q", string(origBytes))
+	}
+}
+
+// 11. keep_theirs with a torn sibling copy: same stat-only family — the copy
+// of my stashed version tore; it must not be indexed as the conflict page,
+// and the resolution must fail rather than settle theirs and report success.
+func TestResolveConflict_KeepTheirs_TornVerifiedSiblingCopyFailsLoud(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	notebook, section, page := "ResVW", "", "TornKeepTheirs"
+	blockID := "55555555-6666-4777-8888-999999999999"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "original body")
+	mine := editBlocks(blocks, blockID, "my unsaved line")
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	filePath := conflictPagePath(app, notebook, section, page)
+	external := "---\nnotebook: \"ResVW\"\nsection: \"\"\npage: \"TornKeepTheirs\"\ndate: \"2026-01-01\"\ntags: []\n---\nexternal line <!-- id: 66666666-aaaa-4bbb-8ccc-999999999999 -->\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page, mine))
+
+	origHook := parser.VerifiedWriteAfterRenameHook
+	parser.VerifiedWriteAfterRenameHook = func(path string) error {
+		if path == filePath {
+			return nil
+		}
+		_ = os.RemoveAll(path)
+		return os.MkdirAll(filepath.Join(path, "torn"), 0o700)
+	}
+	t.Cleanup(func() { parser.VerifiedWriteAfterRenameHook = origHook })
+
+	copyPage, rerr := app.ResolveExternalConflict(notebook, section, page, "keep_theirs")
+	var ipc *IPCError
+	if !errors.As(rerr, &ipc) || ipc.Code != CodeVerifiedWriteFailed {
+		t.Fatalf("resolution must fail with the typed verified error, got copy=%q err=%v", copyPage, rerr)
+	}
+
+	// The garbage sibling must not be indexed as a page by the funnel.
+	sibling := findConflictSibling(t, app, notebook, section, page)
+	siblingPage := strings.TrimSuffix(filepath.Base(sibling), ".md")
+	if idx, ferr := app.FetchPageBlocks(notebook, section, siblingPage); ferr == nil && len(idx) > 0 {
+		t.Fatalf("torn sibling copy must not be indexed as a page, got %d blocks", len(idx))
+	}
+}

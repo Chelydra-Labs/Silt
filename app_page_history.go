@@ -138,6 +138,14 @@ func historyWriteError(err error) error {
 	if os.IsNotExist(err) {
 		return NewIPCError(CodeNavigationNotFound, "page not found")
 	}
+	// A hard verified-write failure must keep its typed code and recovery
+	// prose (where the retained copies live): the user's manual recovery
+	// path would be erased by the generic mapping, and the conflict
+	// resolution funnel reads the code to keep a torn failure from being
+	// adopted as a landed write.
+	if verifiedWriteFailed(err) {
+		return err
+	}
 	log.Printf("page history: page write failed: %v", err)
 	return NewIPCError(CodeNavigationUnavailable, "could not write the page")
 }

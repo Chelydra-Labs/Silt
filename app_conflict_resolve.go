@@ -23,6 +23,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -217,6 +218,18 @@ func uniqueConflictSibling(dir, page string, now time.Time) (string, error) {
 	}
 }
 
+// verifiedWriteFailed reports whether err is a hard verified-write failure
+// (typed verified_write_failed; the writePageStaged dispatch attaches the
+// code at the write boundary). Both of its shapes — restored (target back at
+// the exact pre-write bytes) and torn (target holds partial content) — mean
+// the on-disk bytes are untrusted, so the landed-detection heuristics in
+// this funnel, sound only for post-rename durability errors on complete
+// bytes, must never read the disk state as a committed write.
+func verifiedWriteFailed(err error) bool {
+	var ipc *IPCError
+	return errors.As(err, &ipc) && ipc.Code == CodeVerifiedWriteFailed
+}
+
 // conflictSiblingLanded reports whether a conflict-sibling write that
 // reported an error nevertheless committed: the atomic writer swaps
 // content in via a single rename, so an existing file at the sibling path
@@ -257,7 +270,7 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 			_, werr := a.writePageMarkdownLocked(sibling, rw.source, rw.notebook, rw.section, conflictPage,
 				rw.notebook, rw.section, conflictPage, nil, rw.markdown, rw.reason, false)
 			if werr != nil {
-				if !conflictSiblingLanded(sibling) {
+				if !conflictSiblingLanded(sibling) || verifiedWriteFailed(werr) {
 					return "", werr
 				}
 				a.indexLandedConflictSiblingLocked(sibling, rw.source, rw.notebook, rw.section)
@@ -265,7 +278,7 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 		} else {
 			werr := a.writePageFileLocked(sibling, rw.source, rw.notebook, rw.section, conflictPage, rw.blocks, rw.reason)
 			if werr != nil {
-				if !conflictSiblingLanded(sibling) {
+				if !conflictSiblingLanded(sibling) || verifiedWriteFailed(werr) {
 					return "", werr
 				}
 				a.indexLandedConflictSiblingLocked(sibling, rw.source, rw.notebook, rw.section)
@@ -285,7 +298,7 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 	// my stashed save onto the original path.
 	archived := []byte(conflictCopyContent(theirs, conflictPage, rw.notebook, rw.section))
 	if err := a.writeConflictCopyLocked(sibling, rw.source, rw.notebook, rw.section, archived); err != nil {
-		if !conflictSiblingLanded(sibling) {
+		if !conflictSiblingLanded(sibling) || verifiedWriteFailed(err) {
 			return "", err
 		}
 		a.indexLandedConflictSiblingLocked(sibling, rw.source, rw.notebook, rw.section)
@@ -298,22 +311,31 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 		// lock the replay is the only writer, so a re-read that no longer
 		// equals theirs proves mine landed and the resolution actually
 		// succeeded — rolling back then would delete theirs for good (#1005).
+		// A verified-write failure voids that proof: a restored failure reads
+		// back equal to theirs (the restore put the pre-write bytes back),
+		// a torn one reads back as partial bytes — neither re-read may be
+		// adopted as a landed write, and a torn one must not delete the
+		// sibling either (theirs' only surviving copy).
+		verified := verifiedWriteFailed(err)
 		current, readErr := conflictReadCurrentVersion(filePath)
 		switch {
-		case readErr == nil && !bytes.Equal(current, theirs):
+		case !verified && readErr == nil && !bytes.Equal(current, theirs):
 			// Landed despite the reported error: adopt the on-disk bytes
 			// (index + re-baseline — the funnel's post-write steps were
 			// skipped) and report success; theirs survives in the sibling.
 			a.adoptOriginalBytesLocked(filePath, rw.source, rw.notebook, rw.section, rw.page, current)
 			return conflictPage, nil
-		case readErr == nil:
-			// Still theirs — the replay never landed; remove the ghost copy.
+		case readErr == nil && bytes.Equal(current, theirs):
+			// Still theirs — the replay never landed (a restored verified
+			// failure also reads back as theirs); remove the ghost copy.
 			a.rollbackConflictCopyLocked(sibling, rw.source, rw.notebook, rw.section)
 			return "", err
 		default:
-			// Unreadable: cannot prove the replay did not land — never delete
-			// theirs' only copy on a guess. Keep the sibling (a retry may
-			// mint a duplicate, never a loss) and surface the original error.
+			// Unreadable, or a torn verified failure left partial bytes that
+			// merely differ from theirs: cannot prove the replay did not
+			// land — never delete theirs' only copy on a guess. Keep the
+			// sibling (a retry may mint a duplicate, never a loss) and
+			// surface the original error.
 			return "", err
 		}
 	}
