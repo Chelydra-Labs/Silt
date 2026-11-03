@@ -101,6 +101,66 @@ describe('applyProposal', () => {
     expect(setTaskTags).toHaveBeenCalledWith('task-1', ['old/tag', 'new/tag'])
   })
 
+  // #1009: the structured tag write goes through the verified funnel, so a
+  // typed verified_write_failed rejection is reachable here. Its recovery
+  // prose must surface as a failure — silently degrading to the hashtag
+  // insert would report "applied" over a hard write failure.
+  it('propagates a typed setTaskTags failure instead of masking it with the hashtag fallback', async () => {
+    const recovery =
+      'Task.md could not be written safely and the previous version was restored. Your unsaved text is kept at /vault/.system/writebackups/Task.md.pending'
+    const setTaskTags = vi.fn(async () => {
+      throw new Error(
+        JSON.stringify({ code: 'verified_write_failed', message: recovery })
+      )
+    })
+    const createBlock = vi.fn(async () => 'new-id')
+    const sqliteQuery = vi.fn(async () => ({ rows: [], truncated: false }))
+    const ctx = {
+      ...v2CtxStubs,
+      setTaskTags,
+      createBlock,
+      sqliteQuery
+    } as unknown as PluginContext
+    const p = createProposal({
+      actionId: 'suggest-tags',
+      kind: 'apply-tags',
+      scope: scope({ targetBlockId: 'task-1' }),
+      tags: [{ tag: 'new/tag', existing: false }],
+      status: 'ready'
+    })
+    const res = await applyProposal(ctx, p)
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.error).toBe(recovery)
+    // No hashtag-insert fallback after a typed failure.
+    expect(createBlock).not.toHaveBeenCalled()
+  })
+
+  it('still falls back to the hashtag insert when the structured tag write fails plain-prose', async () => {
+    const setTaskTags = vi.fn(async () => {
+      throw new Error('block is not a task')
+    })
+    const createBlock = vi.fn(async () => 'new-id')
+    const sqliteQuery = vi.fn(async () => ({ rows: [], truncated: false }))
+    const ctx = {
+      ...v2CtxStubs,
+      setTaskTags,
+      createBlock,
+      sqliteQuery
+    } as unknown as PluginContext
+    const p = createProposal({
+      actionId: 'suggest-tags',
+      kind: 'apply-tags',
+      scope: scope({ targetBlockId: 'block-1' }),
+      tags: [{ tag: 'new/tag', existing: false }],
+      status: 'ready'
+    })
+    const res = await applyProposal(ctx, p)
+    expect(res.ok).toBe(true)
+    expect(createBlock).toHaveBeenCalledWith(
+      expect.objectContaining({ text: '#new/tag' })
+    )
+  })
+
   it('inserts related links on accept', async () => {
     const createBlock = vi.fn(async () => 'new-id')
     const ctx = { ...v2CtxStubs, createBlock } as unknown as PluginContext
