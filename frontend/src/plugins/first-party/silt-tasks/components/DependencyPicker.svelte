@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { PluginContext, SearchHit } from '../../../sdk'
   import { friendlyCaughtError } from '../errors'
+  import { coerceIPCError } from '../../../../lib/ipcError'
   import Popover from '../../../../components/Popover.svelte'
 
   /**
@@ -130,13 +131,16 @@
       // Revert the optimistic add. The cycle-rejection error reads as a
       // user-facing message in the aria-live region.
       deps = prev
-      // Coerce before mapping: typed write failures arrive as a JSON
-      // envelope whose recovery prose must render, while the plain-prose
-      // cycle sentinel survives coercion for the friendly-copy mapping.
-      const msg = friendlyCaughtError(e)
-      errorMsg = /circular/i.test(msg)
-        ? 'Cannot add: would create a circular dependency.'
-        : msg
+      // Discriminate on the typed code, not the prose: a typed envelope's
+      // recovery message embeds the target path, which can itself contain
+      // "circular" (a page named Circular imports.md) and must render
+      // verbatim. The cycle sentinel is plain prose (no code), so the
+      // friendly cycle copy applies only there.
+      const { code, message } = coerceIPCError(e)
+      errorMsg =
+        code === undefined && /circular/i.test(message)
+          ? 'Cannot add: would create a circular dependency.'
+          : message
     } finally {
       pending = false
       // Clearing results unmounts the focused result button; restore focus to

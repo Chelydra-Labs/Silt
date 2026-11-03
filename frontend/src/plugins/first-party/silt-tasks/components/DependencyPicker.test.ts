@@ -302,6 +302,51 @@ describe('DependencyPicker (#303)', () => {
     )
   })
 
+  // The typed envelope's recovery prose embeds the target page name, so a
+  // page named "Circular imports.md" makes the prose match the cycle regex.
+  // The mapping must discriminate on the typed code, not the prose: a typed
+  // envelope renders verbatim; only the plain-prose cycle sentinel (no code)
+  // gets the friendly cycle copy.
+  it('renders typed recovery prose verbatim even when the page name contains "circular"', async () => {
+    mocks.searchTasks.mockResolvedValue([
+      {
+        id: 'dep-circ',
+        clean_content: 'Circular dep',
+        notebook: 'W',
+        section: '',
+        page: 'P'
+      }
+    ])
+    mocks.setTaskBlockedBy.mockRejectedValueOnce(
+      new Error(
+        JSON.stringify({
+          code: 'verified_write_failed',
+          message:
+            'Circular imports.md could not be written safely and the previous version was restored. Your unsaved text is kept at /vault/.system/writebackups/Circular imports.md.pending'
+        })
+      )
+    )
+    render(DependencyPicker, {
+      cardId: 'task-1',
+      blockedBy: [],
+      ctx: makeCtx()
+    })
+    await flush()
+
+    const input = screen.getByLabelText('Search tasks to add as dependencies')
+    await fireEvent.input(input, { target: { value: 'circ' } })
+    await new Promise((r) => setTimeout(r, 220))
+    await flush()
+    await fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(
+      await screen.findByText(/Your unsaved text is kept at/)
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/Cannot add: would create a circular dependency/)
+    ).toBeNull()
+  })
+
   it('portals the results listbox out of the scroll container so it is not clipped (#376)', async () => {
     mocks.searchTasks.mockResolvedValue([
       {
