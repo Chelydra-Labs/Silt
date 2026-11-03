@@ -6,6 +6,7 @@ package parser
 // temp dir cannot reproduce a non-atomic rename for real).
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -44,6 +45,107 @@ func readOrEmpty(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(b)
+}
+
+// pseudoRandomBytes generates deterministic non-repetitive content — hashing
+// must distinguish every region, so a run-length or patterned filler would
+// make a digest bug (e.g. hashing only a prefix) invisible.
+func pseudoRandomBytes(n int) []byte {
+	b := make([]byte, n)
+	state := uint32(0x12345678)
+	for i := range b {
+		state = state*1664525 + 1013904223
+		b[i] = byte(state >> 16)
+	}
+	return b
+}
+
+// #1019: with a backup location, the pre-write bytes must NOT be buffered in
+// memory — only their digest is kept (the restore reads the durable copy back
+// on the rare failure path). The old implementation returned the full slice,
+// which tripled resident memory on plugin-scale writes.
+func TestBackupTarget_WithBackupLocationDoesNotBufferPrev(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "page.md")
+	backup := filepath.Join(dir, ".system", "writebackups", "page.md")
+	content := pseudoRandomBytes(256 * 1024)
+	if err := os.WriteFile(target, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := backupTarget(target, backup)
+	if err != nil {
+		t.Fatalf("backupTarget: %v", err)
+	}
+	if !b.hadPrev {
+		t.Fatal("hadPrev = false, want true (target existed)")
+	}
+	if b.prev != nil {
+		t.Errorf("prev bytes buffered in memory (len=%d) — the backup path must stream, keeping only the digest", len(b.prev))
+	}
+	if b.digest.size != int64(len(content)) {
+		t.Errorf("digest.size = %d, want %d", b.digest.size, len(content))
+	}
+	if b.digest.sum != digestOf(content).sum {
+		t.Error("digest does not match the pre-write bytes")
+	}
+	got, err := os.ReadFile(backup)
+	if err != nil {
+		t.Fatalf("read backup: %v", err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Error("backup file content does not match the pre-write bytes")
+	}
+}
+
+// #1019: end-to-end over the streaming paths with plugin-scale-ish content:
+// the digest-based read-back must verify multi-hundred-KB writes, and the
+// recovery ladder must restore the original from the on-disk backup (never
+// from resident pre-write bytes — there are none).
+func TestWriteFileAtomicVerified_LargeContentStreamsAndRestores(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "nb", "big.md")
+	backup := filepath.Join(dir, ".system", "writebackups", "nb", "big.md")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := pseudoRandomBytes(3 * 1024 * 1024)
+	if err := os.WriteFile(target, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Success path: streaming read-back verifies a large replacement.
+	replacement := pseudoRandomBytes(3*1024*1024 + 7)
+	if err := WriteFileAtomicVerified(target, backup, replacement); err != nil {
+		t.Fatalf("verified write of large content: %v", err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, replacement) {
+		t.Error("target does not hold the large replacement bytes")
+	}
+
+	// Failure path: torn twice → restore must come from the on-disk backup
+	// (the pre-write bytes of THIS write — replacement — were never held in
+	// memory; the original generation was swept by this write's step 1).
+	swapAfterRenameHook(t, 2)
+	err = WriteFileAtomicVerified(target, backup, pseudoRandomBytes(1024*1024))
+	var vwe *VerifiedWriteError
+	if !errors.As(err, &vwe) {
+		t.Fatalf("want *VerifiedWriteError, got %v", err)
+	}
+	if !vwe.Restored {
+		t.Fatalf("Restored = false, want true: %v", vwe)
+	}
+	got, err = os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, replacement) {
+		t.Error("restore did not reproduce the pre-write bytes from the backup")
+	}
 }
 
 // Happy path: target replaced, pre-write backup retained as the single

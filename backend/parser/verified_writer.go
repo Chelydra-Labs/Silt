@@ -1,9 +1,11 @@
 package parser
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -135,9 +137,15 @@ func IsVerifiedWriteError(err error) bool {
 // and pending retention (read-back verification and in-memory restore still
 // run — a caller without a backup location keeps verification, just not the
 // cross-restart recovery copies).
+//
+// Memory: every step streams. With a backup location, neither the pre-write
+// backup nor the read-back is ever buffered whole, so resident memory stays
+// O(content) — the incoming bytes the caller already holds (#1019: a
+// plugin-scale write of up to 500 MB must not transiently triple it on
+// exactly the low-RAM machines network mounts tend to be).
 func WriteFileAtomicVerified(path, backupPath string, content []byte) error {
 	// 1. Pre-write backup (same mount); bytes retained in memory for restore.
-	prev, hadPrev, err := backupTarget(path, backupPath)
+	backup, err := backupTarget(path, backupPath)
 	if err != nil {
 		// Nothing has been written yet — the target is untouched. Fail loud:
 		// proceeding without the promised backup would silently downgrade the
@@ -152,9 +160,10 @@ func WriteFileAtomicVerified(path, backupPath string, content []byte) error {
 	// 2+3. Staged write, then read-back verify. A failed/torn first pass is
 	// retried exactly once (a fresh staged write — the first attempt's temp
 	// was consumed by its rename) before the recovery ladder takes over.
-	if err := verifiedStagedPass(path, content); err != nil {
-		if retryErr := verifiedStagedPass(path, content); retryErr != nil {
-			return restoreAfterFailure(path, backupPath, prev, hadPrev, content, errors.Join(err, retryErr))
+	want := digestOf(content)
+	if err := verifiedStagedPass(path, want, content); err != nil {
+		if retryErr := verifiedStagedPass(path, want, content); retryErr != nil {
+			return restoreAfterFailure(path, backupPath, backup, content, errors.Join(err, retryErr))
 		}
 	}
 
@@ -174,7 +183,7 @@ func WriteFileAtomicVerified(path, backupPath string, content []byte) error {
 
 // verifiedStagedPass runs one staged write and verifies the target's bytes.
 // It returns nil only when the read-back size+hash matches content exactly.
-func verifiedStagedPass(path string, content []byte) error {
+func verifiedStagedPass(path string, want contentDigest, content []byte) error {
 	if err := WriteFileAtomic(path, content); err != nil {
 		return fmt.Errorf("staged write failed: %w", err)
 	}
@@ -183,7 +192,7 @@ func verifiedStagedPass(path string, content []byte) error {
 			return fmt.Errorf("post-rename hook failed: %w", err)
 		}
 	}
-	ok, err := verifyTargetBytes(path, content)
+	ok, err := verifyTarget(path, want)
 	if err != nil {
 		return fmt.Errorf("read-back verification failed: %w", err)
 	}
@@ -196,12 +205,12 @@ func verifiedStagedPass(path string, content []byte) error {
 // restoreAfterFailure is the recovery ladder once the (retried) staged write
 // could not be verified: retain the incoming bytes, put the target back to its
 // pre-write state, and always return a hard *VerifiedWriteError.
-func restoreAfterFailure(path, backupPath string, prev []byte, hadPrev bool, content []byte, cause error) error {
+func restoreAfterFailure(path, backupPath string, backup verifiedBackup, content []byte, cause error) error {
 	vwe := &VerifiedWriteError{Target: path, Err: cause}
 	// Only a page that HAD a previous version wrote a backup in step 1;
 	// naming backupPath for a new page would point at a file that was never
 	// created.
-	if hadPrev {
+	if backup.hadPrev {
 		vwe.Backup = backupPath
 	}
 	if p := pendingPath(backupPath); p != "" {
@@ -215,11 +224,27 @@ func restoreAfterFailure(path, backupPath string, prev []byte, hadPrev bool, con
 		}
 	}
 
-	if hadPrev {
+	if backup.hadPrev {
+		// Restore source: the durable on-disk backup when one exists (the
+		// success path holds no copy of the previous file in memory), the
+		// retained bytes only in backupless mode. This rare recovery path
+		// may transiently hold the pre-write bytes; the verification below
+		// still compares against the digest captured while the backup was
+		// streamed, so a torn backup read-back fails loud instead of
+		// restoring corrupt bytes.
+		restore := backup.prev
+		if backupPath != "" {
+			b, err := os.ReadFile(backupPath)
+			if err != nil {
+				vwe.Err = errors.Join(cause, fmt.Errorf("restore read-back of %s failed: %w", backupPath, err))
+				return vwe
+			}
+			restore = b
+		}
 		// Restore = one more staged write of the exact pre-write bytes, then
 		// re-verify. The restore is NOT retried: two consecutive torn results
 		// mean the mount cannot be trusted to land anything.
-		if rerr := WriteFileAtomic(path, prev); rerr != nil {
+		if rerr := WriteFileAtomic(path, restore); rerr != nil {
 			vwe.Err = errors.Join(cause, fmt.Errorf("restore write failed: %w", rerr))
 			return vwe
 		}
@@ -229,7 +254,7 @@ func restoreAfterFailure(path, backupPath string, prev []byte, hadPrev bool, con
 				return vwe
 			}
 		}
-		ok, verr := verifyTargetBytes(path, prev)
+		ok, verr := verifyTarget(path, backup.digest)
 		if verr != nil || !ok {
 			if verr != nil {
 				verr = fmt.Errorf("restore read-back failed: %w", verr)
@@ -254,68 +279,130 @@ func restoreAfterFailure(path, backupPath string, prev []byte, hadPrev bool, con
 	return vwe
 }
 
-// verifyTargetBytes reports whether path's bytes are exactly want, by length
-// and sha256 — the cheapest sound equality check for the sizes involved.
-func verifyTargetBytes(path string, want []byte) (bool, error) {
-	got, err := os.ReadFile(path)
+// contentDigest identifies exact bytes by size + SHA-256 without holding
+// them. The verified writer compares content by digest everywhere the bytes
+// do not already live in the caller's slice, so a plugin-scale file is never
+// buffered whole just to be compared (#1019).
+type contentDigest struct {
+	size int64
+	sum  [sha256.Size]byte
+}
+
+// digestOf hashes bytes the caller already holds (no extra copy).
+func digestOf(data []byte) contentDigest {
+	return contentDigest{size: int64(len(data)), sum: sha256.Sum256(data)}
+}
+
+// verifyTarget reports whether path's bytes are exactly want, by length and
+// sha256. The size is checked via Stat first (a torn file of the wrong length
+// exits without a read), then the file is streamed through the hasher — the
+// target can be plugin-scale, so the read-back must not buffer a copy.
+func verifyTarget(path string, want contentDigest) (bool, error) {
+	st, err := os.Stat(path)
 	if err != nil {
 		return false, err
 	}
-	if len(got) != len(want) {
+	if st.Size() != want.size {
 		return false, nil
 	}
-	gotSum, wantSum := sha256.Sum256(got), sha256.Sum256(want)
-	return gotSum == wantSum, nil
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	h := sha256.New()
+	n, err := io.Copy(h, f)
+	if err != nil {
+		return false, err
+	}
+	if n != want.size {
+		return false, nil
+	}
+	return bytes.Equal(h.Sum(nil), want.sum[:]), nil
+}
+
+// verifiedBackup is the pre-write state step 1 captures: whether the target
+// had a previous version, and its digest for verifying the restore.
+type verifiedBackup struct {
+	hadPrev bool
+	digest  contentDigest
+	// prev holds the pre-write bytes ONLY in backupless mode (empty
+	// backupPath): with no on-disk copy there is nothing to restore from but
+	// memory. When a backup location exists the bytes are streamed to it and
+	// restored from disk, so the success path never holds the previous file
+	// resident (#1019).
+	prev []byte
 }
 
 // backupTarget copies the current target (if it exists) to backupPath and
-// returns its bytes. When backupPath is empty or the target is absent, no
-// backup is written; the bytes are still read when present so the caller can
+// records its digest. When backupPath is empty or the target is absent, no
+// backup is written; backupless mode still reads the bytes so the caller can
 // restore from memory.
-func backupTarget(path, backupPath string) (prev []byte, hadPrev bool, err error) {
-	prev, err = os.ReadFile(path)
+func backupTarget(path, backupPath string) (verifiedBackup, error) {
+	src, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, false, nil
+			return verifiedBackup{}, nil
 		}
-		return nil, false, err
+		return verifiedBackup{}, err
 	}
+	defer src.Close()
 	if backupPath == "" {
-		return prev, true, nil
+		prev, err := io.ReadAll(src)
+		if err != nil {
+			return verifiedBackup{}, err
+		}
+		return verifiedBackup{hadPrev: true, digest: digestOf(prev), prev: prev}, nil
 	}
-	if err := writeDurableFile(backupPath, prev); err != nil {
-		return nil, true, fmt.Errorf("backup copy to %s failed: %w", backupPath, err)
+	// Stream the copy while hashing: the backup is written with io.Copy's
+	// small buffer and the digest is computed on the same bytes via the tee,
+	// so neither the previous file nor its hash input is ever fully resident.
+	h := sha256.New()
+	written, err := writeDurableFileFromReader(backupPath, io.TeeReader(src, h))
+	if err != nil {
+		return verifiedBackup{}, fmt.Errorf("backup copy to %s failed: %w", backupPath, err)
 	}
-	return prev, true, nil
+	var sum [sha256.Size]byte
+	copy(sum[:], h.Sum(nil))
+	return verifiedBackup{hadPrev: true, digest: contentDigest{size: written, sum: sum}}, nil
 }
 
-// writeDurableFile durably writes data to dest: MkdirAll, create/truncate,
-// write, fsync, close, then fsync the parent directory so the copy's
-// directory entry is as durable as its content — the backup/.pending files
-// are the crash-recovery contract, and file-content fsync alone does not
-// guarantee the entry survives power loss. A plain copy (not a staged
-// rename) — backup and retained-copy files are private recovery state that
-// is never swapped into a page path.
+// writeDurableFile durably writes data to dest. See writeDurableFileFromReader
+// for the durability contract.
 func writeDurableFile(dest string, data []byte) error {
+	_, err := writeDurableFileFromReader(dest, bytes.NewReader(data))
+	return err
+}
+
+// writeDurableFileFromReader durably streams src to dest: MkdirAll,
+// create/truncate, copy, fsync, close, then fsync the parent directory so the
+// copy's directory entry is as durable as its content — the backup/.pending
+// files are the crash-recovery contract, and file-content fsync alone does
+// not guarantee the entry survives power loss. A plain copy (not a staged
+// rename) — backup and retained-copy files are private recovery state that
+// is never swapped into a page path. Streaming (not a []byte write) so the
+// previous file's content is never buffered whole (#1019).
+func writeDurableFileFromReader(dest string, src io.Reader) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
-		return err
+		return 0, err
 	}
 	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if _, err := f.Write(data); err != nil {
+	n, err := io.Copy(f, src)
+	if err != nil {
 		_ = f.Close()
-		return err
+		return 0, err
 	}
 	if err := f.Sync(); err != nil {
 		_ = f.Close()
-		return err
+		return 0, err
 	}
 	if err := f.Close(); err != nil {
-		return err
+		return 0, err
 	}
-	return syncDirEntry(filepath.Dir(dest))
+	return n, syncDirEntry(filepath.Dir(dest))
 }
 
 // pendingPath names the retained copy of the incoming bytes for a hard
