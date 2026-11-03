@@ -735,21 +735,12 @@ const (
 // saveFileBlocksMCP is the update_blocks save for MCP clients (#1005): the
 // programmatic stash policy of saveFileBlocksProgrammatic, plus the client's
 // read-basis gate (see app_mcp_rmw.go) so a read-modify-write refuses when
-// the file drifted since the fetch. On success the basis is recaptured under
-// the file lock, so a follow-up update_blocks without an intervening fetch
-// stays guarded against edits landing after this write.
+// the file drifted since the fetch. On success the basis is invalidated
+// in-lock (strict RMW): a follow-up update_blocks must be built from a fresh
+// fetch — refreshing the basis from the written bytes would let a second
+// client's stale fetch gate basis==disk and silently revert this write.
 func (a *App) saveFileBlocksMCP(notebook, section, page string, blocks []parser.ParsedBlock, reason string) error {
-	if err := a.saveFileBlocksWithGate(notebook, section, page, blocks, reason, gateMCPReadBasis, funnelProgrammatic, nil); err != nil {
-		return err
-	}
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if filePath, ok := a.resolvePageFilePath(a.resolveSourceByName(sanitizePathSegment(notebook)), notebook, section, page); ok {
-		a.coordinator.LockFileWrite(filePath, func() {
-			a.captureMCPReadBasis(filePath)
-		})
-	}
-	return nil
+	return a.saveFileBlocksWithGate(notebook, section, page, blocks, reason, gateMCPReadBasis, funnelProgrammatic, nil)
 }
 
 // captureMCPReadBasisByLocator resolves a page locator to its file path the
@@ -873,28 +864,39 @@ func (a *App) saveFileBlocksWithGate(notebook, section, page string, blocks []pa
 				return
 			}
 			// Whole-page save funnel: refuse to clobber an external edit
-			// (#1005). gateLoadBaseline (editor/batch renders) and
-			// gateMCPReadBasis (the MCP RMW funnel) also compare their
-			// baselines; the stash half runs in every mode.
+			// (#1005). gateLoadBaseline (editor/batch renders) compares the
+			// editor baseline; gateMCPReadBasis (the MCP RMW funnel) runs
+			// that same checkExternalEditConflict (pending stash + editor
+			// baseline) and then the client's own read-basis on top; the
+			// stash half runs in every mode.
 			// Stash the refused payload so the resolution IPC can replay it
 			// after preserving the on-disk version — except in gateStashOnly,
 			// where a plugin payload must not evict the user's stashed
-			// editor buffer, and except when the refusal fired because the
-			// file's state could not be verified (stat/read failure): an
-			// unverifiable conflict must not mint a stash that outlives a
-			// transient error and forces manual resolution. The funnel tags
-			// the stash so a programmatic (MCP/batch) refusal can never
-			// displace an editor-owned one.
+			// editor buffer, when the refusal fired because the file's state
+			// could not be verified (stat/read failure): an unverifiable
+			// conflict must not mint a stash that outlives a transient error
+			// and forces manual resolution, and when ONLY the MCP client
+			// basis refused: the programmatic caller holds its payload and
+			// its typed error already says re-read + retry, so a sticky
+			// desktop-only stash would wedge that recovery (F4, #1005). The
+			// funnel tags the stash so a programmatic (MCP/batch) refusal
+			// can never displace an editor-owned one.
 			var gateErr error
+			clientBasisRefused := false
 			if gate == gateLoadBaseline {
 				gateErr = a.checkExternalEditConflict(filePath)
 			} else if gate == gateMCPReadBasis {
-				gateErr = a.checkMCPReadBasis(filePath)
+				gateErr = a.checkExternalEditConflict(filePath)
+				if gateErr == nil {
+					gateErr = a.checkMCPClientBasis(filePath)
+					clientBasisRefused = gateErr != nil
+				}
 			} else {
 				gateErr = a.externalEditStashRefusalKey(core.NormalizeFileLockPath(filePath), filePath)
 			}
 			if gateErr != nil {
 				if isExternalEditConflict(gateErr) &&
+					!clientBasisRefused &&
 					!errors.Is(gateErr, errExternalEditUnverified) &&
 					gate != gateStashOnly {
 					a.storeRefusedWrite(core.NormalizeFileLockPath(filePath), refusedPageWrite{
@@ -933,6 +935,15 @@ func (a *App) saveFileBlocksWithGate(notebook, section, page string, blocks []pa
 				}
 			}
 			writeErr = a.writePageFileLocked(filePath, source, safeNotebook, safeSection, safePage, blocks, reason)
+			if writeErr == nil && gate == gateMCPReadBasis {
+				// Strict RMW (#1005): the committed write invalidates every
+				// prior fetch's basis — in this lock session, from the write
+				// itself. A recapture re-reading disk in a SECOND lock
+				// session could adopt interleaved bytes the client never
+				// observed (fail-open), and refreshing to the written bytes
+				// would green-light another client's stale fetch.
+				a.invalidateMCPReadBasis(filePath)
+			}
 		})
 	}) // LockBlocksWrite
 

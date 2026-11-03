@@ -39,10 +39,17 @@ func (b mcpBridge) FetchPageBlocks(ctx context.Context, notebook, section, page 
 	// external-edit fingerprint — the editor's baseline tracks the bytes the
 	// editor holds, and re-baselining here would let the editor's next save
 	// clobber an external edit the client just read (#1005). The client's
-	// OWN read is guarded separately: the read-basis below is re-checked by
-	// update_blocks (app_mcp_rmw.go), so an RMW still refuses on drift.
-	b.app.captureMCPReadBasisByLocator(notebook, section, page)
-	return b.app.fetchPageBlocks(notebook, section, page, captureNone)
+	// OWN read is guarded separately: the rows-anchored read-basis below is
+	// re-checked by update_blocks (app_mcp_rmw.go), so an RMW still refuses
+	// on drift. It must be captured from the rows ACTUALLY served — a
+	// byte-anchored basis would pass an update built from rows that are
+	// still pre-external during the watcher's re-index debounce.
+	rows, err := b.app.fetchPageBlocks(notebook, section, page, captureNone)
+	if err != nil {
+		return nil, err
+	}
+	b.app.captureMCPReadBasisForBlocksByLocator(notebook, section, page, rows)
+	return rows, nil
 }
 
 func (b mcpBridge) FetchPageMarkdown(ctx context.Context, notebook, section, page string) (string, error) {

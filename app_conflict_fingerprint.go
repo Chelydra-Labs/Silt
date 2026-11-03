@@ -257,6 +257,27 @@ func (a *App) capturePageLoadFingerprintFromBytes(filePath string, content []byt
 // missing-file branch is never confused with a rows-pinned baseline.
 const rowBasisSentinelSize int64 = -2
 
+// rowsPinnedFingerprint builds the baseline that refuses every write until a
+// re-fetch re-anchors on re-indexed rows: stat half poisoned to the sentinel
+// (the fast path can never match), hash pinned to a canonical encoding of
+// the rows. Shared by every rows-anchored capture (editor load baseline,
+// MCP read basis) so the pin encoding stays single-sourced.
+func rowsPinnedFingerprint(rows []parser.ParsedBlock) (FileFingerprint, bool) {
+	canonical, err := json.Marshal(rows)
+	if err != nil {
+		// ParsedBlock marshals unconditionally; keep the guard honest.
+		return FileFingerprint{}, false
+	}
+	sum := sha256.Sum256(canonical)
+	fp := FileFingerprint{
+		Size:     rowBasisSentinelSize,
+		MtimeSec: 0, MtimeNsec: 0, CtimeSec: 0, CtimeNsec: 0,
+		SHA256: hex.EncodeToString(sum[:]),
+	}
+	fp.stampCaptureTime(time.Now())
+	return fp, true
+}
+
 // hydratableBlockFields returns b reduced to the fields the block funnel's DB
 // projection (db.FetchPageBlocks) hydrates. The load-baseline comparison uses
 // it on both sides so a projection that cannot carry a field (author, extra
@@ -329,20 +350,12 @@ func (a *App) capturePageLoadFingerprintForBlocks(filePath, notebook, section, p
 		a.capturePageLoadFingerprintFromBytes(filePath, contentBytes)
 		return
 	}
-	canonical, merr := json.Marshal(rows)
-	if merr != nil {
-		// ParsedBlock marshals unconditionally; keep the guard honest.
+	pinned, ok := rowsPinnedFingerprint(rows)
+	if !ok {
 		a.capturePageLoadFingerprintFromBytes(filePath, contentBytes)
 		return
 	}
-	sum := sha256.Sum256(canonical)
-	fp := FileFingerprint{
-		Size:     rowBasisSentinelSize,
-		MtimeSec: 0, MtimeNsec: 0, CtimeSec: 0, CtimeNsec: 0,
-		SHA256: hex.EncodeToString(sum[:]),
-	}
-	fp.stampCaptureTime(time.Now())
-	a.storePageLoadFingerprint(core.NormalizeFileLockPath(filePath), fp)
+	a.storePageLoadFingerprint(core.NormalizeFileLockPath(filePath), pinned)
 }
 
 func (a *App) storePageLoadFingerprint(key string, fp FileFingerprint) {
