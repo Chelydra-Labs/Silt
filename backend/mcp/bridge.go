@@ -13,14 +13,22 @@ import (
 // errors when no vault is open or the vault is switching).
 type Bridge interface {
 	SearchBlocksPaged(ctx context.Context, query string, offset, limit int, filters db.SearchFilters) (parser.SearchResult, error)
-	FetchPageBlocks(ctx context.Context, notebook, section, page string) ([]parser.ParsedBlock, error)
-	FetchPageMarkdown(ctx context.Context, notebook, section, page string) (string, error)
+	// The int64 returns on the fetch methods are the read generation: a
+	// monotonic per-page token the client echoes back in UpdateBlocks
+	// (read_generation) so a stale pre-commit read-modify-write refuses even
+	// after a newer fetch re-armed the shared basis slot (#1005). 0 means no
+	// basis was armed; clients may omit the echo and fall back to the
+	// marker+fingerprint gates.
+	FetchPageBlocks(ctx context.Context, notebook, section, page string) ([]parser.ParsedBlock, int64, error)
+	FetchPageMarkdown(ctx context.Context, notebook, section, page string) (string, int64, error)
 	ListNavigation(ctx context.Context) (parser.NavigationTree, error)
 	CreatePage(ctx context.Context, notebook, section, page, dateStr string) (string, error)
 	// UpdateBlocks identity-preserving: replaces page body while keeping block
 	// IDs when the client supplies them (SaveFileBlocks path). Page must already
-	// exist — callers should not use this to create pages.
-	UpdateBlocks(ctx context.Context, notebook, section, page string, blocks []parser.ParsedBlock) error
+	// exist — callers should not use this to create pages. readGeneration is
+	// the read_generation echoed from the client's last fetch of the page
+	// (0 when the client did not send one).
+	UpdateBlocks(ctx context.Context, notebook, section, page string, blocks []parser.ParsedBlock, readGeneration int64) error
 	// PageExists reports whether the notebook/section/page file is on disk.
 	PageExists(ctx context.Context, notebook, section, page string) (bool, error)
 	// GetPageMetadata returns a page's resolved type, schema-merged properties,

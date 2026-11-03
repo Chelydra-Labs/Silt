@@ -33,7 +33,7 @@ func (b mcpBridge) SearchBlocksPaged(ctx context.Context, query string, offset, 
 	return b.app.SearchBlocksPaged(query, offset, limit, filters)
 }
 
-func (b mcpBridge) FetchPageBlocks(ctx context.Context, notebook, section, page string) ([]parser.ParsedBlock, error) {
+func (b mcpBridge) FetchPageBlocks(ctx context.Context, notebook, section, page string) ([]parser.ParsedBlock, int64, error) {
 	_ = ctx
 	// captureNone: an MCP client reading a page must not re-baseline the
 	// external-edit fingerprint — the editor's baseline tracks the bytes the
@@ -43,20 +43,24 @@ func (b mcpBridge) FetchPageBlocks(ctx context.Context, notebook, section, page 
 	// re-checked by update_blocks (app_mcp_rmw.go), so an RMW still refuses
 	// on drift. It must be captured from the rows ACTUALLY served — a
 	// byte-anchored basis would pass an update built from rows that are
-	// still pre-external during the watcher's re-index debounce.
+	// still pre-external during the watcher's re-index debounce. The return
+	// value is the fetch's read generation: the client echoes it back in
+	// update_blocks (read_generation) so a stale pre-commit fetch refuses
+	// even after a newer fetch re-armed the shared basis slot.
 	rows, err := b.app.fetchPageBlocks(notebook, section, page, captureNone)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	b.app.captureMCPReadBasisForBlocksByLocator(notebook, section, page, rows)
-	return rows, nil
+	gen := b.app.captureMCPReadBasisForBlocksByLocator(notebook, section, page, rows)
+	return rows, gen, nil
 }
 
-func (b mcpBridge) FetchPageMarkdown(ctx context.Context, notebook, section, page string) (string, error) {
+func (b mcpBridge) FetchPageMarkdown(ctx context.Context, notebook, section, page string) (string, int64, error) {
 	_ = ctx
-	// Same scoped read-basis as the blocks fetch (see above).
-	b.app.captureMCPReadBasisByLocator(notebook, section, page)
-	return b.app.fetchPageMarkdown(notebook, section, page, captureNone)
+	// Same scoped read-basis + read generation as the blocks fetch (above).
+	gen := b.app.captureMCPReadBasisByLocator(notebook, section, page)
+	md, err := b.app.fetchPageMarkdown(notebook, section, page, captureNone)
+	return md, gen, err
 }
 
 func (b mcpBridge) ListNavigation(ctx context.Context) (parser.NavigationTree, error) {
@@ -69,9 +73,9 @@ func (b mcpBridge) CreatePage(ctx context.Context, notebook, section, page, date
 	return b.app.CreatePage(notebook, section, page, dateStr)
 }
 
-func (b mcpBridge) UpdateBlocks(ctx context.Context, notebook, section, page string, blocks []parser.ParsedBlock) error {
+func (b mcpBridge) UpdateBlocks(ctx context.Context, notebook, section, page string, blocks []parser.ParsedBlock, readGeneration int64) error {
 	_ = ctx
-	return b.app.saveFileBlocksMCP(notebook, section, page, blocks, historyReasonMCP)
+	return b.app.saveFileBlocksMCP(notebook, section, page, blocks, historyReasonMCP, readGeneration)
 }
 
 func (b mcpBridge) PageExists(ctx context.Context, notebook, section, page string) (bool, error) {

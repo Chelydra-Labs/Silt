@@ -76,7 +76,7 @@ automatically, so no client-side version configuration is needed.
 | Tool | Mode | Notes |
 |------|------|--------|
 | `search_blocks` / `search_notes` | read | FTS, bounded page size |
-| `read_page` / `read_blocks` | read | Structured blocks or markdown |
+| `read_page` / `read_blocks` | read | Structured blocks or markdown; response carries `read_generation` |
 | `list_notebooks` | read | Navigation tree |
 | `get_backlinks` | read | Inbound page-links, block-refs, and embeds for a page (paged, default/max 50) |
 | `get_block` | read | Resolve block UUID → text/type/location; `embedded` if any inbound embed; missing → `exists=false` (not an error) |
@@ -86,7 +86,7 @@ automatically, so no client-side version configuration is needed.
 | `append_to_page` | write grant | Append one block to an existing page end (prefer over `update_blocks` for single adds) |
 | `insert_under_heading` | write grant | Insert one block after a unique HEADER; bare leaf or `A::B` path; ambiguous/not-found → candidates |
 | `create_task` | write grant | Standalone TASK (`.silt/tasks.md`) or page override; optional due/owner/tags/status |
-| `update_blocks` | write grant | Identity-preserving full-page replace (prefer surgical tools for single-block adds) |
+| `update_blocks` | write grant | Identity-preserving full-page replace (prefer surgical tools for single-block adds); echo `read_generation` from your last read |
 | `get_page_metadata` | read | Page type, schema-merged properties, raw frontmatter |
 | `set_page_property` | write grant | Single typed property; schema-validated — invalid values rejected before any file I/O |
 | `set_page_type` | write grant | Assign or clear (empty type) a page's note type; mismatches kept on disk and returned as flagged (no rejection) |
@@ -99,6 +99,19 @@ Prefer these over `update_blocks` when adding a single block:
 - **`append_to_page`** — end of page; `type` defaults to `NOTE` (`TASK` / `HEADER` allowed).
 - **`insert_under_heading`** — immediately after a HEADER. Use `Meeting::Notes` when leaf names collide. Ambiguous or missing headings return structured `candidates` paths.
 - **`create_task`** — default store `.silt/tasks.md`; pass `notebook`+`page` for a page-scoped TASK. `status` is `TODO`|`DOING`|`DONE` on both paths; page path applies non-TODO status after mint. Meta failures return `{id, failed_field}` so clients do not re-create.
+
+### Read-modify-write safety (`read_generation`)
+
+`read_page` / `read_blocks` stamp every fetch of a page with a monotonic
+`read_generation`. Echo it back in `update_blocks`' optional
+`read_generation` input: if another `update_blocks` committed since your
+read — even if further fetches by other clients re-anchored the file state in
+between — your write refuses with `external_edit_conflict` instead of
+silently reverting the committed edit. Recovery is always re-read + retry
+with the new generation. Omitting `read_generation` (legacy clients) keeps a
+weaker contract: the write is still checked against the page's bytes and
+refused while a committed write's invalidation marker is armed, but that
+protection ends at the next fetch of any client.
 
 ### Typed-properties tools
 

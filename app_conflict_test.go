@@ -452,6 +452,106 @@ func TestNormalizationHook_PreservesRowsPinnedBaseline(t *testing.T) {
 	requireConflict(t, app.SaveFileBlocks(notebook, section, page, blocks))
 }
 
+// 6b. A plugin block-op write (gateStashOnly, rebased on CURRENT disk bytes)
+// must not erase a rows-pinned sentinel either: refreshFingerprintAfterWrite
+// runs for every trackedPageWrite caller, and re-baselining over the sentinel
+// would let the editor's pre-external save pass both gates and silently
+// revert the external edit (#1005).
+func TestPluginWrite_DoesNotEraseRowsPinnedSentinel(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "SentinelNB", "", "SentinelPage"
+	blockID := "bbbbbb6b-4bbb-4bbb-8bbb-bbbbbbbbbbbb"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "sentinel body")
+	filePath := conflictPagePath(app, notebook, section, page)
+	key := core.NormalizeFileLockPath(filePath)
+
+	// External edit while the debounce is pending, then the editor loads:
+	// the baseline pins to the pre-external rows.
+	external := "---\nnotebook: \"SentinelNB\"\npage: \"SentinelPage\"\ntags: []\n---\nexternal body\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	app.pageLoadFingerprintsMu.RLock()
+	pinnedSize := app.pageLoadFingerprints[key].Size
+	app.pageLoadFingerprintsMu.RUnlock()
+	if pinnedSize != rowBasisSentinelSize {
+		t.Fatalf("expected a rows-pinned baseline, got size %d", pinnedSize)
+	}
+
+	// A plugin block-op write lands (rebase passthrough: the funnel re-reads
+	// disk inside the lock, so the rendered list is the external bytes).
+	passthrough := func(b []parser.ParsedBlock) []parser.ParsedBlock { return b }
+	if err := app.saveFileBlocksWithGate(notebook, section, page, blocks,
+		historyReasonPlugin, gateStashOnly, funnelProgrammatic, passthrough, 0); err != nil {
+		t.Fatalf("plugin write: %v", err)
+	}
+
+	app.pageLoadFingerprintsMu.RLock()
+	pinnedSize = app.pageLoadFingerprints[key].Size
+	app.pageLoadFingerprintsMu.RUnlock()
+	if pinnedSize != rowBasisSentinelSize {
+		t.Fatalf("plugin write must preserve the rows-pinned baseline, got size %d", pinnedSize)
+	}
+	// The editor's pending save (built from the pre-external rows) still
+	// refuses instead of silently reverting the external edit.
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page, blocks))
+}
+
+// 6c. Creating a page at a path whose old page left a refused-write stash
+// must drop that stash: it can never resolve (its "current version" read
+// targets a file that no longer exists) and would phantom-refuse the new
+// page's first save with a foreign conflict (#1005).
+func TestCreatePage_DropsLingeringRefusedWriteStash(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "RecreateNB", "", "RecreatePage"
+	blockID := "bbbbbb7b-4bbb-4bbb-8bbb-bbbbbbbbbbbb"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "old body")
+	filePath := conflictPagePath(app, notebook, section, page)
+
+	// Editor load: captures the baseline the refusing save is gated against.
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+
+	// The old page's save refuses → stash minted.
+	external := "---\nnotebook: \"RecreateNB\"\npage: \"RecreatePage\"\ntags: []\n---\nexternal old\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page,
+		editBlocks(blocks, blockID, "my unsaved old text")))
+	app.refusedWritesMu.Lock()
+	stashed := len(app.refusedWrites)
+	app.refusedWritesMu.Unlock()
+	if stashed != 1 {
+		t.Fatalf("expected the refused save to stash, got %d", stashed)
+	}
+
+	// The page is deleted EXTERNALLY (no Silt delete hook fires) and a new
+	// page is created at the same path.
+	if err := os.Remove(filePath); err != nil {
+		t.Fatalf("external remove: %v", err)
+	}
+	if _, err := app.CreatePage(notebook, section, page, "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage: %v", err)
+	}
+	app.refusedWritesMu.Lock()
+	stashed = len(app.refusedWrites)
+	app.refusedWritesMu.Unlock()
+	if stashed != 0 {
+		t.Fatalf("CreatePage must drop the foreign stash at the reused path, got %d", stashed)
+	}
+
+	// The new page's first save must not phantom-refuse on the old conflict.
+	if err := app.SaveFileBlocks(notebook, section, page,
+		editBlocks(blocks, blockID, "fresh new page text")); err != nil {
+		t.Fatalf("new page's first save must pass, got: %v", err)
+	}
+}
+
 // 6. Race: an external edit landing between the save's epoch snapshot and the
 // file-lock acquisition is still caught — the fingerprint check runs inside
 // the lock, against post-acquisition disk state.
@@ -1347,14 +1447,14 @@ func TestExternalEdit_NonEditorReaderDoesNotRebaseline(t *testing.T) {
 	// The MCP bridge routes read_page here; it must serve the read without
 	// moving the editor's baseline.
 	bridge := mcpBridge{app: app}
-	if _, err := bridge.FetchPageBlocks(t.Context(), notebook, section, page); err != nil {
+	if _, _, err := bridge.FetchPageBlocks(t.Context(), notebook, section, page); err != nil {
 		t.Fatalf("bridge FetchPageBlocks: %v", err)
 	}
 	requireConflict(t, app.SaveFileBlocks(notebook, section, page,
 		editBlocks(blocks, blockID, "my unsaved text")))
 
 	// Same contract for the markdown reader plugins/MCP use.
-	if _, err := bridge.FetchPageMarkdown(t.Context(), notebook, section, page); err != nil {
+	if _, _, err := bridge.FetchPageMarkdown(t.Context(), notebook, section, page); err != nil {
 		t.Fatalf("bridge FetchPageMarkdown: %v", err)
 	}
 	_, err := app.SavePageMarkdown(notebook, section, page, "my source body\n")
@@ -1386,7 +1486,7 @@ func TestExternalEdit_PluginRMWSaveRefusesWhileStashPending(t *testing.T) {
 	// The plugin RMW funnel (gateStashOnly): refused while the stash is
 	// live, without replacing it.
 	requireConflict(t, app.saveFileBlocksWithGate(notebook, section, page,
-		editBlocks(blocks, blockID, "plugin mutation"), historyReasonPlugin, gateStashOnly, funnelProgrammatic, nil))
+		editBlocks(blocks, blockID, "plugin mutation"), historyReasonPlugin, gateStashOnly, funnelProgrammatic, nil, 0))
 
 	// keep_mine still replays the EDITOR's refused buffer — the plugin
 	// payload never evicted it.

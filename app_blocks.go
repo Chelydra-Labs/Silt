@@ -735,23 +735,26 @@ const (
 // saveFileBlocksMCP is the update_blocks save for MCP clients (#1005): the
 // programmatic stash policy of saveFileBlocksProgrammatic, plus the client's
 // read-basis gate (see app_mcp_rmw.go) so a read-modify-write refuses when
-// the file drifted since the fetch. On success the basis is invalidated
-// in-lock (strict RMW): a follow-up update_blocks must be built from a fresh
-// fetch — refreshing the basis from the written bytes would let a second
-// client's stale fetch gate basis==disk and silently revert this write.
-func (a *App) saveFileBlocksMCP(notebook, section, page string, blocks []parser.ParsedBlock, reason string) error {
-	return a.saveFileBlocksWithGate(notebook, section, page, blocks, reason, gateMCPReadBasis, funnelProgrammatic, nil)
+// the file drifted since the fetch. clientReadGen is the read_generation the
+// client echoed from its fetch (0 when the client did not echo one). On
+// success the basis is invalidated in-lock (strict RMW): a follow-up
+// update_blocks must be built from a fresh fetch — refreshing the basis from
+// the written bytes would let a second client's stale fetch gate basis==disk
+// and silently revert this write.
+func (a *App) saveFileBlocksMCP(notebook, section, page string, blocks []parser.ParsedBlock, reason string, clientReadGen int64) error {
+	return a.saveFileBlocksWithGate(notebook, section, page, blocks, reason, gateMCPReadBasis, funnelProgrammatic, nil, clientReadGen)
 }
 
 // captureMCPReadBasisByLocator resolves a page locator to its file path the
 // same way the save funnels do and snapshots the read-basis. Called by the
-// MCP bridge on every page fetch.
-func (a *App) captureMCPReadBasisByLocator(notebook, section, page string) {
+// MCP bridge on every page fetch; returns the fetch generation.
+func (a *App) captureMCPReadBasisByLocator(notebook, section, page string) int64 {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if filePath, ok := a.resolvePageFilePath(a.resolveSourceByName(sanitizePathSegment(notebook)), notebook, section, page); ok {
-		a.captureMCPReadBasis(filePath)
+		return a.captureMCPReadBasis(filePath)
 	}
+	return 0
 }
 
 func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.ParsedBlock) error {
@@ -759,7 +762,7 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 }
 
 func (a *App) saveFileBlocksWithSource(notebook, section, page string, blocks []parser.ParsedBlock, reason string) error {
-	return a.saveFileBlocksWithGate(notebook, section, page, blocks, reason, gateLoadBaseline, funnelEditorBlocks, nil)
+	return a.saveFileBlocksWithGate(notebook, section, page, blocks, reason, gateLoadBaseline, funnelEditorBlocks, nil, 0)
 }
 
 // saveFileBlocksProgrammatic is the whole-page blocks save for non-editor
@@ -768,7 +771,7 @@ func (a *App) saveFileBlocksWithSource(notebook, section, page string, blocks []
 // buffer over the loaded base), but a refusal stashes with the programmatic
 // funnel so it can never evict an editor-owned stash (see refusedWriteFunnel).
 func (a *App) saveFileBlocksProgrammatic(notebook, section, page string, blocks []parser.ParsedBlock, reason string) error {
-	return a.saveFileBlocksWithGate(notebook, section, page, blocks, reason, gateLoadBaseline, funnelProgrammatic, nil)
+	return a.saveFileBlocksWithGate(notebook, section, page, blocks, reason, gateLoadBaseline, funnelProgrammatic, nil, 0)
 }
 
 // SaveFileBlocksProgrammatic is the whole-page blocks save for in-app batch
@@ -786,8 +789,10 @@ func (a *App) SaveFileBlocksProgrammatic(notebook, section, page string, blocks 
 // disk bytes inside the file lock — the DB-derived `blocks` argument then
 // serves only lock/validation input, and pre-edit DB rows can never render
 // over an external edit the watcher has not re-indexed (#1005). It must not
-// touch the DB or take locks: it runs under LockFileWrite.
-func (a *App) saveFileBlocksWithGate(notebook, section, page string, blocks []parser.ParsedBlock, reason string, gate externalEditGateMode, funnel refusedWriteFunnel, rebaseOnDisk func([]parser.ParsedBlock) []parser.ParsedBlock) error {
+// touch the DB or take locks: it runs under LockFileWrite. clientReadGen is
+// the MCP client's echoed read_generation; only the gateMCPReadBasis mode
+// consults it (0 elsewhere — no MCP fetch behind the save).
+func (a *App) saveFileBlocksWithGate(notebook, section, page string, blocks []parser.ParsedBlock, reason string, gate externalEditGateMode, funnel refusedWriteFunnel, rebaseOnDisk func([]parser.ParsedBlock) []parser.ParsedBlock, clientReadGen int64) error {
 	if err := validateTaskBlockPriorities(blocks); err != nil {
 		return err
 	}
@@ -888,7 +893,7 @@ func (a *App) saveFileBlocksWithGate(notebook, section, page string, blocks []pa
 			} else if gate == gateMCPReadBasis {
 				gateErr = a.checkExternalEditConflict(filePath)
 				if gateErr == nil {
-					gateErr = a.checkMCPClientBasis(filePath)
+					gateErr = a.checkMCPClientBasis(filePath, clientReadGen)
 					clientBasisRefused = gateErr != nil
 				}
 			} else {

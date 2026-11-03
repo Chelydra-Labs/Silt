@@ -70,9 +70,17 @@ func (a *App) migrateConflictStateAcrossRename(oldPath, newPath string) {
 	a.pageLoadFingerprintsMu.Unlock()
 	// The MCP read-basis dies with the old path too: it snapshots bytes the
 	// client read at the OLD name; the renamed page's next fetch recaptures.
+	// The fetch/invalidation generations die with it — the new path's fetches
+	// start from a fresh sequence.
 	a.mcpReadBaselinesMu.Lock()
 	if a.mcpReadBaselines != nil {
 		delete(a.mcpReadBaselines, oldKey)
+	}
+	if a.mcpFetchGen != nil {
+		delete(a.mcpFetchGen, oldKey)
+	}
+	if a.mcpBasisInvalidatedGen != nil {
+		delete(a.mcpBasisInvalidatedGen, oldKey)
 	}
 	a.mcpReadBaselinesMu.Unlock()
 }
@@ -102,6 +110,12 @@ func (a *App) dropConflictStateForPath(filePath string) {
 	if a.mcpReadBaselines != nil {
 		delete(a.mcpReadBaselines, key)
 	}
+	if a.mcpFetchGen != nil {
+		delete(a.mcpFetchGen, key)
+	}
+	if a.mcpBasisInvalidatedGen != nil {
+		delete(a.mcpBasisInvalidatedGen, key)
+	}
 	a.mcpReadBaselinesMu.Unlock()
 }
 
@@ -119,5 +133,7 @@ func (a *App) clearConflictState() {
 	a.pageLoadFingerprintsMu.Unlock()
 	a.mcpReadBaselinesMu.Lock()
 	a.mcpReadBaselines = nil
+	a.mcpFetchGen = nil
+	a.mcpBasisInvalidatedGen = nil
 	a.mcpReadBaselinesMu.Unlock()
 }

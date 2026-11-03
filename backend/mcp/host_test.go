@@ -96,23 +96,23 @@ func (f *fakeBridge) SearchBlocksPaged(ctx context.Context, query string, offset
 	return f.search, nil
 }
 
-func (f *fakeBridge) FetchPageBlocks(ctx context.Context, notebook, section, page string) ([]parser.ParsedBlock, error) {
+func (f *fakeBridge) FetchPageBlocks(ctx context.Context, notebook, section, page string) ([]parser.ParsedBlock, int64, error) {
 	_ = ctx
 	key := notebook + "\x00" + section + "\x00" + page
-	return f.pages[key], nil
+	return f.pages[key], 0, nil
 }
 
-func (f *fakeBridge) FetchPageMarkdown(ctx context.Context, notebook, section, page string) (string, error) {
-	blocks, err := f.FetchPageBlocks(ctx, notebook, section, page)
+func (f *fakeBridge) FetchPageMarkdown(ctx context.Context, notebook, section, page string) (string, int64, error) {
+	blocks, _, err := f.FetchPageBlocks(ctx, notebook, section, page)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	var b strings.Builder
 	for _, bl := range blocks {
 		b.WriteString(bl.RawText)
 		b.WriteByte('\n')
 	}
-	return b.String(), nil
+	return b.String(), 0, nil
 }
 
 func (f *fakeBridge) ListNavigation(ctx context.Context) (parser.NavigationTree, error) {
@@ -131,8 +131,8 @@ func (f *fakeBridge) CreatePage(ctx context.Context, notebook, section, page, da
 	return key, nil
 }
 
-func (f *fakeBridge) UpdateBlocks(ctx context.Context, notebook, section, page string, blocks []parser.ParsedBlock) error {
-	_ = ctx
+func (f *fakeBridge) UpdateBlocks(ctx context.Context, notebook, section, page string, blocks []parser.ParsedBlock, readGeneration int64) error {
+	_, _ = ctx, readGeneration
 	f.writes++
 	key := notebook + "\x00" + section + "\x00" + page
 	if f.pages == nil {

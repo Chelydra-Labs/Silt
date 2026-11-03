@@ -409,7 +409,7 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 			}
 			return mutated
 		}
-		if err := a.saveFileBlocksWithGate(first.notebook, first.section, first.page, applyPageOps(blocks), reason, gateStashOnly, funnelProgrammatic, applyPageOps); err != nil {
+		if err := a.saveFileBlocksWithGate(first.notebook, first.section, first.page, applyPageOps(blocks), reason, gateStashOnly, funnelProgrammatic, applyPageOps, 0); err != nil {
 			return fmt.Errorf("save page %s/%s/%s: %w", first.notebook, first.section, first.page, err)
 		}
 		// For cross-page moves, remove the block from its source page.

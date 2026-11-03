@@ -92,6 +92,15 @@ type App struct {
 	// app_tracked_write.go. See app_mcp_rmw.go.
 	mcpReadBaselines   map[string]FileFingerprint
 	mcpReadBaselinesMu sync.RWMutex
+	// mcpFetchGen is the per-path monotonic generation stamped onto each
+	// MCP fetch's read-basis (#1005 strict RMW): fetch N+1 must invalidate
+	// every update_blocks built from fetch <= N even after a later fetch
+	// re-armed the shared mcpReadBaselines slot. mcpBasisInvalidatedGen
+	// records the newest generation at the last committed update_blocks;
+	// an echoed generation at or below it refuses. Guarded by
+	// mcpReadBaselinesMu; lifecycle mirrors the baselines.
+	mcpFetchGen            map[string]int64
+	mcpBasisInvalidatedGen map[string]int64
 	// refusedWrites stashes the editor save each external-edit refusal
 	// rejected (#1005), for ResolveExternalConflict to replay. Keyed by
 	// NormalizeFileLockPath; funnel-tagged (see refusedWriteFunnel) so a

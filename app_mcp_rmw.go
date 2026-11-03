@@ -13,12 +13,24 @@ package main
 // MCP save funnel re-checks that basis inside LockFileWrite. A committed
 // update_blocks INVALIDATES the basis (strict read-modify-write: every
 // write consumes the fetch it was built from, so overlapping clients each
-// re-read before writing again). A drift refuses WITHOUT minting a stash
-// (checkMCPClientBasis): the programmatic caller still holds its own payload
-// and its typed external_edit_conflict error already tells it to re-read and
-// retry — a sticky desktop-only stash would wedge exactly that recovery. The
-// pending-stash and editor-baseline halves of the gate run separately via
-// checkExternalEditConflict and keep their stashing semantics.
+// re-read before writing again).
+//
+// The basis slot is one per path and last-writer-wins, so the marker alone
+// cannot outlive a newer fetch: after client A commits and re-reads (the
+// normal RMW loop), the fresh basis would green-light client B's stale
+// pre-commit update. Each fetch therefore stamps a monotonic per-path
+// generation (mcpFetchGen), returned to the client as read_generation and
+// echoed back in update_blocks; a committed write records the newest issued
+// generation (mcpBasisInvalidatedGen) and any echoed generation at or below
+// it refuses. Clients that do not echo (generation 0) keep the legacy
+// contract — marker + fingerprint gates only, honest boundary: their basis
+// is valid until the next fetch of ANY client. A drift refuses WITHOUT
+// minting a stash (checkMCPClientBasis): the programmatic caller still holds
+// its own payload and its typed external_edit_conflict error already tells
+// it to re-read and retry — a sticky desktop-only stash would wedge exactly
+// that recovery. The pending-stash and editor-baseline halves of the gate
+// run separately via checkExternalEditConflict and keep their stashing
+// semantics.
 
 import (
 	"crypto/sha256"
@@ -33,18 +45,20 @@ import (
 )
 
 // captureMCPReadBasis snapshots the bytes an MCP fetch observed for filePath
-// (stat + hash of the raw file). Missing-file errors keep the absent-baseline
-// semantics of captureFileFingerprint; other errors skip the capture (the
-// write gate simply has nothing to compare — legacy behavior).
-func (a *App) captureMCPReadBasis(filePath string) {
+// (stat + hash of the raw file) and returns the fetch generation stamped onto
+// that basis — the value the client echoes back in update_blocks
+// (read_generation). Missing-file errors keep the absent-baseline semantics
+// of captureFileFingerprint; other errors skip the capture (the write gate
+// simply has nothing to compare — legacy behavior; generation 0 = unechoed).
+func (a *App) captureMCPReadBasis(filePath string) int64 {
 	if a == nil || filePath == "" {
-		return
+		return 0
 	}
 	fp, err := captureFileFingerprint(filePath)
 	if err != nil {
-		return
+		return 0
 	}
-	a.storeMCPReadBasis(core.NormalizeFileLockPath(filePath), fp)
+	return a.storeMCPReadBasis(core.NormalizeFileLockPath(filePath), fp)
 }
 
 // captureMCPReadBasisForBlocks is the blocks-fetch variant of
@@ -55,21 +69,32 @@ func (a *App) captureMCPReadBasis(filePath string) {
 // holds the edit — a byte-anchored basis would pass a client update built
 // from those rows and silently revert the external managed edit. On drift
 // the basis is pinned to the rows so update_blocks refuses until a
-// post-reindex re-fetch re-anchors on the settled bytes.
-func (a *App) captureMCPReadBasisForBlocks(filePath, notebook, section, page string, rows []parser.ParsedBlock) {
+// post-reindex re-fetch re-anchors on the settled bytes. Returns the fetch
+// generation the client must echo in update_blocks (0 when no basis armed).
+func (a *App) captureMCPReadBasisForBlocks(filePath, notebook, section, page string, rows []parser.ParsedBlock) int64 {
 	if a == nil || filePath == "" {
-		return
+		return 0
 	}
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			// Fail closed (#1005): rows were served for a file that is gone.
+			// Arm an absent basis so a later update_blocks refuses until a
+			// re-fetch re-anchors — without it the absent basis reads as the
+			// legacy no-guard contract and an update built from the stale
+			// rows would write over whatever recreates the file inside this
+			// window. Mirrors captureFileFingerprint's absent semantics.
+			return a.storeMCPReadBasis(core.NormalizeFileLockPath(filePath),
+				FileFingerprint{Size: absentFileSize})
+		}
 		// Keep the previous basis (if any): a stale basis fails closed on
 		// drift, and an absent one is the legacy no-guard contract.
-		return
+		return 0
 	}
 	diskBlocks, _, _, _, perr := parser.ParseFileContent(string(contentBytes),
 		notebook, section, page, fileOrDefaultDate(filePath), a.spacesPerTab)
 	if perr != nil {
-		return
+		return 0
 	}
 	if blocksContentMatchesRows(diskBlocks, rows) {
 		// Anchor on the bytes those rows were served FROM: stat + hash of
@@ -77,32 +102,32 @@ func (a *App) captureMCPReadBasisForBlocks(filePath, notebook, section, page str
 		// capturePageLoadFingerprintFromBytes).
 		info, serr := os.Stat(filePath)
 		if serr != nil {
-			return
+			return 0
 		}
 		fp := fingerprintFromStat(info)
 		sum := sha256.Sum256(contentBytes)
 		fp.SHA256 = hex.EncodeToString(sum[:])
 		fp.stampCaptureTime(time.Now())
-		a.storeMCPReadBasis(core.NormalizeFileLockPath(filePath), fp)
-		return
+		return a.storeMCPReadBasis(core.NormalizeFileLockPath(filePath), fp)
 	}
 	pinned, ok := rowsPinnedFingerprint(rows)
 	if !ok {
-		return
+		return 0
 	}
-	a.storeMCPReadBasis(core.NormalizeFileLockPath(filePath), pinned)
+	return a.storeMCPReadBasis(core.NormalizeFileLockPath(filePath), pinned)
 }
 
 // captureMCPReadBasisForBlocksByLocator resolves a page locator to its file
 // path the same way the save funnels do and snapshots the rows-anchored
 // read-basis (see captureMCPReadBasisForBlocks). Called by the MCP bridge
 // after a blocks fetch, with the rows it just served.
-func (a *App) captureMCPReadBasisForBlocksByLocator(notebook, section, page string, rows []parser.ParsedBlock) {
+func (a *App) captureMCPReadBasisForBlocksByLocator(notebook, section, page string, rows []parser.ParsedBlock) int64 {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if filePath, ok := a.resolvePageFilePath(a.resolveSourceByName(sanitizePathSegment(notebook)), notebook, section, page); ok {
-		a.captureMCPReadBasisForBlocks(filePath, notebook, section, page, rows)
+		return a.captureMCPReadBasisForBlocks(filePath, notebook, section, page, rows)
 	}
+	return 0
 }
 
 // mcpBasisInvalidatedSize marks a read-basis invalidated by a committed
@@ -119,28 +144,48 @@ const mcpBasisInvalidatedSize int64 = -3
 // pre-write fetch — gate basis==disk and silently revert this write
 // (cross-client clobber amplifier); and a post-write disk recapture can
 // adopt interleaved bytes the client never observed. Invalidation is the
-// only state that fails closed for every stale fetcher at once.
+// only state that fails closed for every stale fetcher at once. It also
+// records the newest issued fetch generation: the marker alone dies the
+// moment ANY later fetch (including the committing client's own re-read)
+// re-arms the shared slot, so the echoed-generation check in
+// checkMCPClientBasis keeps refusing pre-commit generations after that.
 func (a *App) invalidateMCPReadBasis(filePath string) {
 	if a == nil || filePath == "" {
 		return
 	}
-	a.storeMCPReadBasis(core.NormalizeFileLockPath(filePath), FileFingerprint{
-		Size: mcpBasisInvalidatedSize,
-	})
+	key := core.NormalizeFileLockPath(filePath)
+	a.mcpReadBaselinesMu.Lock()
+	defer a.mcpReadBaselinesMu.Unlock()
+	if a.mcpReadBaselines == nil {
+		a.mcpReadBaselines = make(map[string]FileFingerprint)
+	}
+	a.mcpReadBaselines[key] = FileFingerprint{Size: mcpBasisInvalidatedSize}
+	if a.mcpFetchGen == nil {
+		a.mcpFetchGen = make(map[string]int64)
+	}
+	if a.mcpBasisInvalidatedGen == nil {
+		a.mcpBasisInvalidatedGen = make(map[string]int64)
+	}
+	// The newest generation issued so far — every fetch at or below it
+	// predates this commit.
+	a.mcpBasisInvalidatedGen[key] = a.mcpFetchGen[key]
 }
 
 // checkMCPClientBasis is the MCP save funnel's client-basis gate: the bytes
 // the client's fetch observed must still be the bytes on disk (the caller
-// MUST hold LockFileWrite for filePath). Refusals here are deliberately NOT
-// stash-eligible (see saveFileBlocksWithGate): the programmatic caller holds
+// MUST hold LockFileWrite for filePath). clientGen is the read_generation
+// the client echoed from its fetch (0 = legacy client that did not echo:
+// only the marker + fingerprint gates apply). Refusals here are deliberately
+// NOT stash-eligible (see saveFileBlocksMCP): the programmatic caller holds
 // its own payload and its typed error already told it to re-read; a sticky
 // stash would wedge the documented re-fetch+retry recovery until a desktop
 // UI resolved it. The pending-stash + editor-baseline halves run separately
 // via checkExternalEditConflict.
-func (a *App) checkMCPClientBasis(filePath string) error {
+func (a *App) checkMCPClientBasis(filePath string, clientGen int64) error {
 	key := core.NormalizeFileLockPath(filePath)
 	a.mcpReadBaselinesMu.RLock()
 	basis, ok := a.mcpReadBaselines[key]
+	invalidated := a.mcpBasisInvalidatedGen[key]
 	a.mcpReadBaselinesMu.RUnlock()
 	if !ok {
 		// No MCP read this session — nothing this funnel added to guard.
@@ -154,18 +199,46 @@ func (a *App) checkMCPClientBasis(filePath string) error {
 				errExternalEditConflict.Error(), filepath.Base(filePath)),
 			errExternalEditConflict)
 	}
+	if clientGen > 0 && clientGen <= invalidated {
+		// A committed update_blocks landed after the fetch this update was
+		// built from. The shared slot has since been re-armed by some newer
+		// fetch (basis==disk again), so only the echoed generation still
+		// identifies this client's fetch as predating the commit — without
+		// it the stale update would silently revert the committed write.
+		return wrapSentinelAsIPCError(CodeExternalEditConflict,
+			fmt.Sprintf("%s since it was last read — read it again before writing: %s",
+				errExternalEditConflict.Error(), filepath.Base(filePath)),
+			errExternalEditConflict)
+	}
 	return a.fingerprintGate(filePath, basis, func(fp FileFingerprint) {
-		a.storeMCPReadBasis(key, fp)
+		// Stat refresh of the SAME read (sync-client touch tolerance) —
+		// must not mint a new generation, so bypass storeMCPReadBasis.
+		a.mcpReadBaselinesMu.Lock()
+		if a.mcpReadBaselines != nil {
+			a.mcpReadBaselines[key] = fp
+		}
+		a.mcpReadBaselinesMu.Unlock()
 	})
 }
 
-func (a *App) storeMCPReadBasis(key string, fp FileFingerprint) {
+// storeMCPReadBasis stores a fetch-captured basis, stamping a fresh monotonic
+// per-path generation onto it, and returns that generation. The stat-refresh
+// store inside fingerprintGate must NOT mint a generation — that is the same
+// read, re-anchored — so it assigns the map slot directly instead of calling
+// here.
+func (a *App) storeMCPReadBasis(key string, fp FileFingerprint) int64 {
 	a.mcpReadBaselinesMu.Lock()
 	defer a.mcpReadBaselinesMu.Unlock()
 	if a.mcpReadBaselines == nil {
 		a.mcpReadBaselines = make(map[string]FileFingerprint)
 	}
+	if a.mcpFetchGen == nil {
+		a.mcpFetchGen = make(map[string]int64)
+	}
+	a.mcpFetchGen[key]++
+	gen := a.mcpFetchGen[key]
 	a.mcpReadBaselines[key] = fp
+	return gen
 }
 
 // fingerprintGate is the stat fast-path + hash arbiter shared by the

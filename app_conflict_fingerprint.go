@@ -280,19 +280,23 @@ func rowsPinnedFingerprint(rows []parser.ParsedBlock) (FileFingerprint, bool) {
 
 // hydratableBlockFields returns b reduced to the fields the block funnel's DB
 // projection (db.FetchPageBlocks) hydrates. The load-baseline comparison uses
-// it on both sides so a projection that cannot carry a field (author, extra
-// tokens, pinned, language…) never reads as drift — and, on the disk-parse
-// side, so parse-derived context (ParentID, LineNumber, FileDate) is ignored
-// for the same reason the cross-page drift gate ignores it.
+// it on both sides so a projection that cannot carry a field never reads as
+// drift — and, on the disk-parse side, so parse-derived context (ParentID,
+// LineNumber, FileDate) is ignored for the same reason the cross-page drift
+// gate ignores it. [pin::]/[blocked_by::]/unknown tokens hydrate from the raw
+// line (queries_blocks.go), so they are carried like-with-like. Known blind
+// spot: a region block's Language (code-fence info string) and FileDate have
+// NO storage anywhere on the row and stay zeroed — a fence-info-only external
+// edit inside the re-index debounce compares equal and can be reverted by the
+// next save instead of surfacing as a conflict. Closing that needs a schema
+// column for region language; do not widen this whitelist past what the
+// projection actually hydrates.
 func hydratableBlockFields(b parser.ParsedBlock) parser.ParsedBlock {
 	b.ParentID = ""
 	b.LineNumber = 0
 	b.FileDate = ""
 	b.Author = ""
 	b.Timestamp = ""
-	b.ExtraTokens = nil
-	b.BlockedBy = nil
-	b.Pinned = nil
 	b.Language = ""
 	return b
 }
@@ -384,8 +388,19 @@ func (a *App) refreshFingerprintAfterWrite(filePath string, written []byte) {
 		return
 	}
 	key := core.NormalizeFileLockPath(filePath)
-	if _, ok := a.loadPageFingerprint(key); !ok {
+	baseline, ok := a.loadPageFingerprint(key)
+	if !ok {
 		// Page never loaded this session — nothing to re-baseline.
+		return
+	}
+	if baseline.Size == rowBasisSentinelSize {
+		// Rows-pinned sentinel (#1005): the editor holds rows that drifted
+		// from disk, and only a reload re-anchors. This writer runs for every
+		// trackedPageWrite caller — including plugin block ops rebased on
+		// CURRENT disk bytes — and re-baselining here would disarm the pin,
+		// letting the editor's pending save pass both gates and silently
+		// revert the external edit the sentinel exists to surface. Same
+		// decline-on-sentinel as refreshFingerprintAfterNormalization.
 		return
 	}
 	a.rebaselineToFingerprintFromWrite(key, filePath, written)

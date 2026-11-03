@@ -338,6 +338,10 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 			)
 			return
 		}
+		// Same conflict-state drop as CreatePage: a stash from a page that
+		// lived at this path before must not phantom-refuse the new page's
+		// first save (#1005).
+		a.dropConflictStateForPath(filePath)
 		// trackedPageWrite: creation keeps an absent-file baseline honest
 		// (#1005), same as CreatePage's scaffold.
 		if err := a.trackedPageWrite(filePath, []byte(content)); err != nil {

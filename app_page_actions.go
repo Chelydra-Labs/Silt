@@ -213,6 +213,10 @@ func rollbackDuplicateTarget(a *App, targetPath, source, notebook, section, page
 	if removeErr != nil && !os.IsNotExist(removeErr) {
 		return pageActionError(CodeNavigationDuplicate, "duplicate failed and rollback could not remove the target", fmt.Errorf("%v; original failure: %w", removeErr, cause))
 	}
+	// The target file is gone (removed or never landed); any conflict state
+	// keyed at its path dies with it, same as a delete (#1005) — a stale
+	// stash there would phantom-refuse a future page at the same name.
+	a.dropConflictStateForPath(targetPath)
 	if clearErr != nil {
 		return pageActionError(CodeNavigationDuplicate, "duplicate failed and rollback could not clean the index", fmt.Errorf("%v; original failure: %w", clearErr, cause))
 	}

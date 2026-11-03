@@ -250,6 +250,13 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 			writeErr = fmt.Errorf("failed to check page target: %w", statErr)
 			return
 		}
+		// Conflict state keyed at this path belongs to a page that no longer
+		// exists: a lingering refused-write stash could never resolve (its
+		// "current version" read targets the deleted file) and would
+		// phantom-refuse the new page's first save with a foreign conflict
+		// (#1005). Rename/delete drop conflict state for their paths —
+		// creation at a re-used path must too.
+		a.dropConflictStateForPath(filePath)
 		// trackedPageWrite keeps an absent-file baseline honest when the
 		// editor visited the not-yet-existing name: the creation write is
 		// Silt's own, so the next save must not phantom-refuse (#1005).

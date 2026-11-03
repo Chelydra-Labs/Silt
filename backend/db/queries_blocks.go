@@ -209,21 +209,29 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 		}
 		// [recur::]/[progress::] (#296): file-resident user intent cached on
 		// the task row (schema calls them the same values the parser
-		// round-trips). They MUST hydrate here: the block editor re-renders
-		// served rows through RenderFileContent on save, and a row without
-		// them strips the tokens from the file (#1005).
+		// round-trips). They MUST hydrate here: rows-echo saves (global
+		// replace, MCP update_blocks) re-render served rows through
+		// RenderFileContent, and a row without them strips the tokens from
+		// the file (#1005). The interactive editor is not such a consumer —
+		// it saves docToBlocks(editor.getJSON()), a payload this hydration
+		// cannot reach.
 		if recur.Valid && recur.String != "" {
 			b.Recurrence = recur.String
 		}
-		// [estimate::] (#439): the raw token string is the source of truth
-		// (models.go) — estimate_minutes cannot reproduce it (90 → "1.5h"
-		// loses "90m"), so re-derive it from the raw line this query already
-		// loaded, through the canonical parser. A lossy estimate here would
-		// reformat the token on every editor save and false-drift the
-		// rows-anchored load baseline (#1005).
+		// [estimate::] (#439) plus [pin::]/[blocked_by::]/unknown
+		// [key:: value] tokens (#1005): render-emitted fields whose only
+		// storage is the raw line this query already loaded, so re-derive
+		// them through the canonical parser (estimate_minutes cannot
+		// reproduce the raw token; the pin/blocked_by/unknown columns either
+		// don't exist or aren't selected here). A dropped field is stripped
+		// from the file on the next rows-echo save and blinds the
+		// rows-anchored load baseline comparison (blocksContentMatchesRows).
 		if b.Type == parser.BlockTask {
 			if pb, _, _ := parser.ParseLine(b.RawText, 0, 0); pb.Type == parser.BlockTask {
 				b.Estimate = pb.Estimate
+				b.Pinned = pb.Pinned
+				b.BlockedBy = pb.BlockedBy
+				b.ExtraTokens = pb.ExtraTokens
 			}
 		}
 		blocks = append(blocks, b)
