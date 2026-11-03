@@ -16,8 +16,8 @@ import (
 // for a torn write); instead the staged sequence is wrapped with recovery:
 //
 //  1. Pre-write backup: the current target, if any, is copied to backupPath on
-//     the SAME mount and fsync'd. One generation only — the next write's copy
-//     sweeps (replaces) it.
+//     the SAME mount, fsync'd (content and directory entry). One generation
+//     only — the next write's copy sweeps (replaces) it.
 //  2. The staged sequence itself (WriteFileAtomic), unchanged.
 //  3. Post-rename read-back: size + sha256 of the target vs the written bytes.
 //     Pass → done (and a stale .pending copy from an earlier hard failure is
@@ -25,7 +25,8 @@ import (
 //  4. Torn result → the staged write is retried once. Still torn → the target
 //     is restored from the pre-write bytes (or removed, for a new page), the
 //     incoming bytes are retained next to the backup, and a *VerifiedWriteError
-//     is returned: a page file must never present partial content as the page.
+//     is returned: the target's bytes are untrusted and must never be indexed
+//     or adopted as the page.
 //
 // The caller runs this inside its file write transaction, so steps 3–4 race
 // no other Silt writer; the app layer re-baselines its load fingerprint from
@@ -43,18 +44,27 @@ var VerifiedWriteAfterRenameHook func(path string) error
 // It is the fail-loud terminal state of the recovery ladder: the caller must
 // surface it (never retry silently), and Error() names the retained copies so
 // the user has a manual recovery path even across a process restart.
+//
+// The copy fields are populated ONLY when the copy actually landed on disk —
+// a path that does not exist must never be offered as a recovery path.
 type VerifiedWriteError struct {
 	// Target is the page path the write was attempting.
 	Target string
-	// Backup is the pre-write backup path ("" when no backup was requested or
-	// the page was new). Retained on disk.
+	// Backup is the pre-write backup path, set only when the backup copy was
+	// actually written ("" when no backup was requested, the page was new, or
+	// the pre-write step failed before any copy existed).
 	Backup string
 	// Pending is where the incoming bytes were retained (backupPath +
-	// ".pending"; "" when retention itself failed — see RetentionErr).
+	// ".pending"; "" when retention itself failed — see RetentionErr — or no
+	// backup location was configured).
 	Pending string
 	// Restored reports whether the target was verified back at its exact
 	// pre-write state (for a new page: absent again).
 	Restored bool
+	// PreWriteFailed marks a failure in the pre-write backup step: the staged
+	// write never started, so the target was not modified by this write and
+	// no recovery copy exists.
+	PreWriteFailed bool
 	// Err is the underlying step failure (rename, read-back, restore), if any.
 	Err error
 	// RetentionErr is set when the incoming bytes could NOT be retained
@@ -63,13 +73,33 @@ type VerifiedWriteError struct {
 	RetentionErr error
 }
 
+// Error is the single source of the recovery message: every consumer (the
+// IPC conversion boundary, logs, tests) renders it verbatim, so the prose
+// cannot fork between surfaces. It states only what the fields prove —
+// which recovery copies exist on disk and whether the target was restored.
 func (e *VerifiedWriteError) Error() string {
-	if e.Restored {
-		return fmt.Sprintf("verified write of %s failed; the previous version was restored from backup (backup: %s, unsaved copy: %s)",
-			e.Target, e.Backup, e.Pending)
+	name := filepath.Base(e.Target)
+	var msg string
+	switch {
+	case e.PreWriteFailed:
+		msg = fmt.Sprintf("%s could not be written safely and was not modified", name)
+	case e.Restored:
+		msg = fmt.Sprintf("%s could not be written safely and the previous version was restored", name)
+	default:
+		msg = fmt.Sprintf("%s could not be written safely and its previous version could not be restored", name)
 	}
-	return fmt.Sprintf("verified write of %s failed and the file could not be restored (backup: %s, unsaved copy: %s)",
-		e.Target, e.Backup, e.Pending)
+	switch {
+	case e.Pending != "":
+		msg += fmt.Sprintf(". Your unsaved text is kept at %s", e.Pending)
+		if e.Backup != "" {
+			msg += fmt.Sprintf(" and the pre-write backup is at %s", e.Backup)
+		}
+	case e.Backup != "":
+		msg += fmt.Sprintf(". The pre-write backup is at %s (the unsaved text could not be retained on disk: %v)", e.Backup, e.RetentionErr)
+	default:
+		msg += ". Neither a backup nor an unsaved copy could be retained on disk"
+	}
+	return msg
 }
 
 func (e *VerifiedWriteError) Unwrap() error { return e.Err }
@@ -91,9 +121,11 @@ func WriteFileAtomicVerified(path, backupPath string, content []byte) error {
 	if err != nil {
 		// Nothing has been written yet — the target is untouched. Fail loud:
 		// proceeding without the promised backup would silently downgrade the
-		// verified contract.
+		// verified contract. The backup copy did not land and retention never
+		// ran, so both copy fields stay empty — the error must not name
+		// recovery paths that do not exist.
 		return &VerifiedWriteError{
-			Target: path, Backup: backupPath, Pending: pendingPath(backupPath), Err: err,
+			Target: path, Err: err, PreWriteFailed: true,
 		}
 	}
 
@@ -145,15 +177,22 @@ func verifiedStagedPass(path string, content []byte) error {
 // could not be verified: retain the incoming bytes, put the target back to its
 // pre-write state, and always return a hard *VerifiedWriteError.
 func restoreAfterFailure(path, backupPath string, prev []byte, hadPrev bool, content []byte, cause error) error {
-	vwe := &VerifiedWriteError{
-		Target: path, Backup: backupPath, Pending: pendingPath(backupPath), Err: cause,
+	vwe := &VerifiedWriteError{Target: path, Err: cause}
+	// Only a page that HAD a previous version wrote a backup in step 1;
+	// naming backupPath for a new page would point at a file that was never
+	// created.
+	if hadPrev {
+		vwe.Backup = backupPath
 	}
-	if p := pendingPath(backupPath); p == "" {
-		vwe.Pending = ""
-	} else if rerr := writeDurableFile(p, content); rerr != nil {
-		// Retention failing must not block the restore; record it so the
-		// surfaced error can say the new text was NOT retained on disk.
-		vwe.RetentionErr = rerr
+	if p := pendingPath(backupPath); p != "" {
+		if rerr := writeDurableFile(p, content); rerr != nil {
+			// Retention failing must not block the restore; record it so the
+			// surfaced error can say the new text was NOT retained on disk.
+			// Pending stays empty: the path was never written.
+			vwe.RetentionErr = rerr
+		} else {
+			vwe.Pending = p
+		}
 	}
 
 	if hadPrev {
@@ -230,9 +269,12 @@ func backupTarget(path, backupPath string) (prev []byte, hadPrev bool, err error
 }
 
 // writeDurableFile durably writes data to dest: MkdirAll, create/truncate,
-// write, fsync, close. A plain copy (not a staged rename) — backup and
-// retained-copy files are private recovery state that is never swapped into a
-// page path.
+// write, fsync, close, then fsync the parent directory so the copy's
+// directory entry is as durable as its content — the backup/.pending files
+// are the crash-recovery contract, and file-content fsync alone does not
+// guarantee the entry survives power loss. A plain copy (not a staged
+// rename) — backup and retained-copy files are private recovery state that
+// is never swapped into a page path.
 func writeDurableFile(dest string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 		return err
@@ -249,7 +291,10 @@ func writeDurableFile(dest string, data []byte) error {
 		_ = f.Close()
 		return err
 	}
-	return f.Close()
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return syncDirEntry(filepath.Dir(dest))
 }
 
 // pendingPath names the retained copy of the incoming bytes for a hard

@@ -65,27 +65,12 @@ var errExternalEditUnverified = fmt.Errorf("page state could not be verified")
 
 // verifiedWriteFailedError surfaces a hard verified-write failure (#1009):
 // the write could not be landed durably even after retry + restore. Fail
-// loud, and name every retained copy — the message is the user's manual
-// recovery path (the pre-write backup and the unsaved new text).
+// loud. The recovery prose is single-sourced in VerifiedWriteError.Error(),
+// built from the retention state that actually holds on disk — this boundary
+// only attaches the typed code and passes the message through verbatim; a
+// second wording here could drift from what the fields prove.
 func verifiedWriteFailedError(vwe *parser.VerifiedWriteError) *IPCError {
-	target := filepath.Base(vwe.Target)
-	var msg string
-	if vwe.Restored {
-		msg = fmt.Sprintf("%s could not be written safely and the previous version was restored", target)
-	} else {
-		msg = fmt.Sprintf("%s could not be written safely and its previous version could not be restored", target)
-	}
-	if vwe.Pending != "" {
-		msg += fmt.Sprintf(". Your unsaved text is kept at %s", vwe.Pending)
-		if vwe.Backup != "" {
-			msg += fmt.Sprintf(" and the pre-write backup is at %s", vwe.Backup)
-		}
-	} else if vwe.Backup != "" {
-		msg += fmt.Sprintf(". The pre-write backup is at %s (the unsaved text could not be retained on disk: %v)", vwe.Backup, vwe.RetentionErr)
-	} else {
-		msg += ". Neither a backup nor an unsaved copy could be retained on disk"
-	}
-	return NewIPCError(CodeVerifiedWriteFailed, msg)
+	return NewIPCError(CodeVerifiedWriteFailed, vwe.Error())
 }
 
 // IPCErrorCode is the stable, serialized error code crossing the Wails
@@ -140,8 +125,12 @@ const (
 	CodeExternalEditConflict IPCErrorCode = "external_edit_conflict"
 	// CodeVerifiedWriteFailed: a page write on a detected non-atomic
 	// filesystem could not be verified after backup + retry + restore (#1009).
-	// The message names the retained backup and pending-content copies; the
-	// page file itself is never left presenting partial content.
+	// The message is single-sourced from the actual retention state and names
+	// only recovery copies that exist on disk. When the restore itself could
+	// not be verified (Restored=false), the target may still hold torn bytes —
+	// the message says so, the named .pending/backup copies are the manual
+	// recovery path, and consumers must never index or adopt the target's
+	// bytes after this code.
 	CodeVerifiedWriteFailed IPCErrorCode = "verified_write_failed"
 )
 

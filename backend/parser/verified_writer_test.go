@@ -237,3 +237,118 @@ func TestWriteFileAtomicVerified_EmptyBackupPathStillVerifies(t *testing.T) {
 		t.Errorf("Pending = %q, want empty for backupless mode", vwe.Pending)
 	}
 }
+
+// Pre-write backup failure: nothing was written and no copy exists — the
+// error must say the file was not modified and must NOT name a phantom
+// backup/pending path (the user would be sent to files that do not exist).
+func TestWriteFileAtomicVerified_BackupFailureNamesNoPhantomCopies(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "page.md")
+	backup := filepath.Join(dir, ".system", "writebackups", "page.md")
+	if err := os.WriteFile(target, []byte("untouched"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A regular FILE where the backup directory must go fails the backup
+	// copy (MkdirAll cannot traverse it) without touching the target.
+	if err := os.MkdirAll(filepath.Join(dir, ".system"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".system", "writebackups"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := WriteFileAtomicVerified(target, backup, []byte("new text"))
+	var vwe *VerifiedWriteError
+	if !errors.As(err, &vwe) {
+		t.Fatalf("want *VerifiedWriteError, got %v", err)
+	}
+	if !vwe.PreWriteFailed {
+		t.Errorf("PreWriteFailed = false, want true (the backup step failed)")
+	}
+	if vwe.Backup != "" || vwe.Pending != "" {
+		t.Errorf("phantom copy paths (Backup=%q, Pending=%q): the prose must not name files that do not exist", vwe.Backup, vwe.Pending)
+	}
+	if got := readOrEmpty(t, target); got != "untouched" {
+		t.Errorf("target = %q, want the untouched original", got)
+	}
+	msg := vwe.Error()
+	if !strings.Contains(msg, "was not modified") || !strings.Contains(msg, "Neither a backup nor an unsaved copy") {
+		t.Errorf("prose must state the file was not modified and no copy exists: %q", msg)
+	}
+	if strings.Contains(msg, backup) {
+		t.Errorf("prose names the never-written backup path: %q", msg)
+	}
+}
+
+// Retention failure: the pending copy is NOT named — the prose points only
+// at the backup that did land and says the unsaved text was not retained.
+// This is the branch that makes the RetentionErr truth reachable.
+func TestWriteFileAtomicVerified_RetentionFailureNamesNoPhantomPending(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "page.md")
+	backup := filepath.Join(dir, "b.md")
+	if err := os.WriteFile(target, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A DIRECTORY at the pending path fails the retention copy (open for
+	// write on a directory) while the backup copy lands normally.
+	if err := os.MkdirAll(backup+".pending", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	swapAfterRenameHook(t, 2) // write + retry torn; restore lands clean
+
+	err := WriteFileAtomicVerified(target, backup, []byte("new text"))
+	var vwe *VerifiedWriteError
+	if !errors.As(err, &vwe) {
+		t.Fatalf("want *VerifiedWriteError, got %v", err)
+	}
+	if !vwe.Restored {
+		t.Errorf("Restored = false, want true (retention failure must not block the restore)")
+	}
+	if vwe.Pending != "" {
+		t.Errorf("Pending = %q, want empty (retention failed)", vwe.Pending)
+	}
+	if vwe.RetentionErr == nil {
+		t.Errorf("RetentionErr = nil, want the retention failure recorded")
+	}
+	msg := vwe.Error()
+	if !strings.Contains(msg, backup) {
+		t.Errorf("prose must name the backup that did land: %q", msg)
+	}
+	// The OS cause may echo the failed path, but the prose must never CLAIM
+	// the unsaved text was kept there.
+	if strings.Contains(msg, "unsaved text is kept at") {
+		t.Errorf("prose claims retention at the never-written pending path: %q", msg)
+	}
+	if !strings.Contains(msg, "could not be retained on disk") {
+		t.Errorf("prose must say the unsaved text was not retained: %q", msg)
+	}
+	if got := readOrEmpty(t, target); got != "original" {
+		t.Errorf("target = %q, want the original restored", got)
+	}
+}
+
+// New-page failure: no pre-write backup exists (the page had no previous
+// version), so the prose must not offer one.
+func TestWriteFileAtomicVerified_NewPageFailureNamesNoPhantomBackup(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "page.md")
+	backup := filepath.Join(dir, "b.md")
+	swapAfterRenameHook(t, 2) // write + retry torn; new-page "restore" removes
+
+	err := WriteFileAtomicVerified(target, backup, []byte("first"))
+	var vwe *VerifiedWriteError
+	if !errors.As(err, &vwe) {
+		t.Fatalf("want *VerifiedWriteError, got %v", err)
+	}
+	if vwe.Backup != "" {
+		t.Errorf("Backup = %q, want empty (no previous version existed to back up)", vwe.Backup)
+	}
+	if vwe.Pending == "" {
+		t.Errorf("Pending empty, want the incoming bytes retained")
+	}
+	msg := vwe.Error()
+	if strings.Contains(msg, backup) && !strings.Contains(msg, backup+".pending") {
+		t.Errorf("prose names the phantom backup path: %q", msg)
+	}
+}
