@@ -309,6 +309,29 @@ func TestVerifiedWrite_BackupsNeverIndexed(t *testing.T) {
 	}
 }
 
+// 6a. Nested detected roots (a linked notebook inside the vault root) must
+// resolve deterministically to the innermost root: map-order iteration
+// would flip the chosen root per call, and a .pending copy retained under
+// one root is never swept by a success resolved to the other.
+func TestVerifiedWrite_NestedRootsResolveDeterministically(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+	inner := filepath.Clean(filepath.Join(app.vaultPath, "LinkedNB"))
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	forceNetworkRoot(t, app, inner)
+
+	target := filepath.Join(inner, "page.md")
+	for i := 0; i < 200; i++ {
+		root, rel, ok := app.verifiedWriteScope(target)
+		if !ok || root != inner || rel != "page.md" {
+			t.Fatalf("scope resolved to (%q, %q, %v), want the innermost root %q with rel %q",
+				root, rel, ok, inner, "page.md")
+		}
+	}
+}
+
 // Detection at link time + forget at unlink.
 func TestVerifiedWrite_LinkDetectionLifecycle(t *testing.T) {
 	app := newTestApp(t)

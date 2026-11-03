@@ -17,6 +17,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"silt/backend/db"
@@ -112,20 +113,27 @@ func (a *App) verifiedWriteScope(filePath string) (root, rel string, ok bool) {
 	if len(networks) == 0 {
 		return "", "", false
 	}
+	// Deterministic deepest-first. With nested detected roots (a linked
+	// notebook inside the vault root), map-order iteration would resolve the
+	// same page to different roots per call, and a .pending copy retained
+	// under one root is never swept by a success resolved to the other —
+	// breaking the one-generation sweep contract. For containing roots the
+	// longer path is the deeper one, and lexicographic sort puts it last.
+	sort.Strings(networks)
 
 	abs, err := filepath.Abs(filepath.Clean(filePath))
 	if err != nil {
 		return "", "", false
 	}
-	for _, r := range networks {
-		rel, err := filepath.Rel(r, abs)
+	for i := len(networks) - 1; i >= 0; i-- {
+		rel, err := filepath.Rel(networks[i], abs)
 		if err != nil {
 			continue
 		}
 		if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || rel == "." {
 			continue
 		}
-		return r, rel, true
+		return networks[i], rel, true
 	}
 	return "", "", false
 }
