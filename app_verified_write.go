@@ -15,6 +15,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -101,6 +102,7 @@ func (a *App) detectVerifiedWriteRoot(root string) {
 		return
 	}
 	key := filepath.Clean(root)
+	epoch := a.sessionEpoch()
 	a.verifiedRootsMu.Lock()
 	if a.rootStorageProbes == nil {
 		a.rootStorageProbes = make(map[string]bool)
@@ -123,15 +125,24 @@ func (a *App) detectVerifiedWriteRoot(root string) {
 	a.verifiedRootsMu.Lock()
 	// Re-check after the unlocked window: a concurrent probe (or a teardown
 	// clearing the map) may have recorded while this one ran; first record
-	// wins, keeping the once-per-session idempotence.
-	if a.rootStorageProbes == nil {
-		a.rootStorageProbes = make(map[string]bool)
-	}
-	if _, probed := a.rootStorageProbes[key]; !probed {
-		a.rootStorageProbes[key] = network
-		recorded = true
+	// wins, keeping the once-per-session idempotence. A teardown bumps the
+	// epoch — a probe from the PREVIOUS vault session must not seed the next
+	// session's map with a stale classification (which would also skip the
+	// next session's own probe).
+	if a.verifiedRootsEpoch == epoch {
+		if a.rootStorageProbes == nil {
+			a.rootStorageProbes = make(map[string]bool)
+		}
+		if _, probed := a.rootStorageProbes[key]; !probed {
+			a.rootStorageProbes[key] = network
+			recorded = true
+		}
 	}
 	a.verifiedRootsMu.Unlock()
+	// The orphan sweep runs once per root per session (this function early-
+	// returns above for already-probed roots), after the probe, on the
+	// session's own map state.
+	a.sweepOrphanedWriteBackups(root)
 	if !recorded || !network {
 		return
 	}
@@ -140,6 +151,44 @@ func (a *App) detectVerifiedWriteRoot(root string) {
 		return
 	}
 	log.Printf("verified-write: %s is on a non-atomic filesystem; page writes use backup+verify mode (reduced crash safety)", key)
+}
+
+// sweepOrphanedWriteBackups removes pre-write backups whose target page no
+// longer exists. The next write at the same relative path sweeps a backup
+// naturally (O_TRUNC), but a page deleted or renamed away leaves its last
+// backup orphaned forever — unbounded growth of a hidden directory that also
+// retains deleted-page content. Runs once per root per session (after the
+// probe); a root classified local this session may still carry backups from
+// an earlier session in which it was detected network, so the sweep is
+// unconditional. .pending copies are deliberately NOT swept: they are the
+// post-failure recovery copy of text that exists nowhere else.
+func (a *App) sweepOrphanedWriteBackups(root string) {
+	if root == "" {
+		return
+	}
+	backupRoot := filepath.Join(root, filepath.FromSlash(writeBackupDirName))
+	_ = filepath.WalkDir(backupRoot, func(p string, d fs.DirEntry, err error) error {
+		// An unreadable entry — or a missing backup dir, the common case for
+		// roots that never wrote verified — has nothing to sweep; nil keeps
+		// the walk going instead of aborting the whole sweep.
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() || strings.HasSuffix(p, ".pending") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(backupRoot, p)
+		if relErr != nil {
+			return nil
+		}
+		target := filepath.Join(root, rel)
+		if _, statErr := os.Stat(target); os.IsNotExist(statErr) {
+			if rmErr := os.Remove(p); rmErr != nil {
+				log.Printf("verified-write: could not remove orphaned backup %s: %v", p, rmErr)
+			}
+		}
+		return nil
+	})
 }
 
 // verifiedWriteScope returns the detected non-atomic root containing filePath,
@@ -229,12 +278,23 @@ func (a *App) forgetVerifiedWriteRoot(root string) {
 	a.verifiedRootsMu.Unlock()
 }
 
+// sessionEpoch returns the current vault-session generation for the root
+// probes. Guarded by verifiedRootsMu like the maps it invalidates.
+func (a *App) sessionEpoch() uint64 {
+	a.verifiedRootsMu.RLock()
+	defer a.verifiedRootsMu.RUnlock()
+	return a.verifiedRootsEpoch
+}
+
 // clearVerifiedWriteRoots drops all detection state (vault teardown). The
 // maps are vault-session-scoped: the next vault's roots are re-probed at open.
+// The epoch bump also discards probes still in flight from the closing
+// session, so a slow/dead-mount probe cannot pollute the next session's map.
 func (a *App) clearVerifiedWriteRoots() {
 	a.verifiedRootsMu.Lock()
 	a.rootStorageProbes = nil
 	a.verifiedTipNotified = nil
+	a.verifiedRootsEpoch++
 	a.verifiedRootsMu.Unlock()
 }
 

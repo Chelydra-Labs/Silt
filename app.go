@@ -113,8 +113,13 @@ type App struct {
 	// verified staged writer (app_verified_write.go). Probed once per session
 	// at open/link; verifiedTipNotified dedupes the degraded-safety tip per
 	// root per session. Both vault-session-scoped, cleared on teardown/unlink.
+	// verifiedRootsEpoch invalidates in-flight probes across teardown: a probe
+	// that started before a vault close must never record into the next
+	// vault's map (it would leak a stale classification and suppress the next
+	// session's own probe).
 	rootStorageProbes   map[string]bool
 	verifiedTipNotified map[string]bool
+	verifiedRootsEpoch  uint64
 	verifiedRootsMu     sync.RWMutex
 	vaultPath           string
 	spacesPerTab        int

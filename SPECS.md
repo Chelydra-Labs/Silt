@@ -815,6 +815,14 @@ once per root as a dismissible notice. Backups live under `.system/` and
 never surface as pages. Local filesystems keep the plain staged protocol
 above, unchanged.
 
+Backup retention: each write sweeps the previous generation at the same
+relative path, and the session's root probe additionally removes backups whose
+target page no longer exists (deleted or renamed away — otherwise a deleted
+page's last backup would linger forever). `.pending` copies are never swept
+automatically: they are the post-failure recovery copy of text that exists
+nowhere else and are removed only by a later successful write at the same
+path or manually after recovery.
+
 Detection coverage is explicit, not universal: the detectors recognize
 NFS/SMB/CIFS/NCP mounts on Linux and NFS/DFS/WebDAV/CBFS/SMB/CIFS on
 Windows. FUSE mounts on Linux (sshfs, rclone, …) and all macOS mounts are

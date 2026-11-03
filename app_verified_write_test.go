@@ -927,3 +927,133 @@ func TestResolveConflict_KeepTheirs_TornVerifiedSiblingCopyFailsLoud(t *testing.
 		t.Fatalf("torn sibling copy must not be indexed as a page, got %d blocks", len(idx))
 	}
 }
+
+// #1019 advisory: a probe that completes after vault teardown must not record
+// into the NEXT session's map (its stale classification would also suppress
+// that session's own probe). The teardown epoch bump discards it.
+func TestVerifiedWrite_ProbeAfterTeardownDoesNotSeedNextSession(t *testing.T) {
+	app := newTestApp(t)
+	root := t.TempDir()
+
+	staleStarted := make(chan struct{})
+	releaseStale := make(chan struct{})
+	freshStarted := make(chan struct{})
+	releaseFresh := make(chan struct{})
+	orig := rootNetworkFSCheck
+	var calls int
+	rootNetworkFSCheck = func(string) error {
+		calls++
+		switch calls {
+		case 1: // session A's probe: slow, classifies LOCAL
+			close(staleStarted)
+			<-releaseStale
+			return nil
+		default: // session B's probe: classifies NETWORK
+			close(freshStarted)
+			<-releaseFresh
+			return errors.New("simulated network mount")
+		}
+	}
+	t.Cleanup(func() { rootNetworkFSCheck = orig })
+
+	staleDone := make(chan struct{})
+	go func() {
+		defer close(staleDone)
+		app.detectVerifiedWriteRoot(root) // session A
+	}()
+	<-staleStarted
+
+	// Teardown mid-probe: the session ends while A's probe is still blocked
+	// on the dead mount.
+	app.clearVerifiedWriteRoots()
+
+	freshDone := make(chan struct{})
+	go func() {
+		defer close(freshDone)
+		app.detectVerifiedWriteRoot(root) // session B
+	}()
+	<-freshStarted
+
+	// Session A's stale result arrives FIRST — without the epoch guard it
+	// would win first-record and pin the next session to LOCAL.
+	close(releaseStale)
+	<-staleDone
+	close(releaseFresh)
+	<-freshDone
+
+	app.verifiedRootsMu.RLock()
+	network, probed := app.rootStorageProbes[root]
+	app.verifiedRootsMu.RUnlock()
+	if !probed || !network {
+		t.Errorf("root = (%v, probed=%v), want the fresh session's NETWORK classification to survive", network, probed)
+	}
+}
+
+// #1019 advisory: backups of deleted pages are reclaimed at the session's
+// probe (slow unbounded growth + lingering deleted content otherwise), while
+// backups of live pages and .pending recovery copies are kept.
+func TestVerifiedWrite_OrphanedBackupsSwept(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	backupDir := filepath.Join(app.vaultPath, ".system", "writebackups", "NB", "Sub")
+	if err := os.MkdirAll(backupDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Live page: backup kept.
+	if err := os.MkdirAll(filepath.Join(app.vaultPath, "NB", "Sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(app.vaultPath, "NB", "Sub", "Live.md"), []byte("live"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(backupDir, "Live.md"), []byte("live old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Deleted page: backup swept.
+	if err := os.WriteFile(filepath.Join(backupDir, "Gone.md"), []byte("deleted page content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Deleted page's retained copy: NEVER swept — it is the post-failure
+	// recovery copy of text that exists nowhere else.
+	if err := os.WriteFile(filepath.Join(backupDir, "Gone.md.pending"), []byte("unsaved text"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app.sweepOrphanedWriteBackups(app.vaultPath)
+
+	if _, err := os.Stat(filepath.Join(backupDir, "Live.md")); err != nil {
+		t.Errorf("live page's backup was swept: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(backupDir, "Gone.md")); !os.IsNotExist(err) {
+		t.Errorf("deleted page's backup not swept (stat err = %v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(backupDir, "Gone.md.pending")); err != nil {
+		t.Errorf("recovery .pending copy was swept: %v", err)
+	}
+}
+
+// Wiring half of the sweep: it must run as part of a session's probe (once
+// per root per session), not only when called directly.
+func TestVerifiedWrite_OrphanSweepRunsAtProbe(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	backupDir := filepath.Join(app.vaultPath, ".system", "writebackups")
+	if err := os.MkdirAll(backupDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	orphan := filepath.Join(backupDir, "RenamedAway.md")
+	if err := os.WriteFile(orphan, []byte("old content of a page that no longer exists"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate the next session: teardown clears the probe state, the probe
+	// re-runs, and the sweep reclaims the orphan.
+	app.clearVerifiedWriteRoots()
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Errorf("orphaned backup survived the session probe (stat err = %v)", err)
+	}
+}
