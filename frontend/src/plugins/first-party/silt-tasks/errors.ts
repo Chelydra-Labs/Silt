@@ -13,16 +13,8 @@
  * Keep the raw message as the final fallback so unknown errors stay
  * diagnosable (fail-loudly: never swallow the underlying detail).
  */
-import {
-  coerceIPCError,
-  coerceIPCErrorMessage,
-  type IPCErrorShape
-} from '../../../lib/ipcError'
+import { coerceIPCError, type IPCErrorShape } from '../../../lib/ipcError'
 import { IPCErrorCode } from '../../../generated/enums'
-
-export function friendlyTaskError(raw: string): string {
-  return mapTaskError(coerceIPCErrorMessage(raw))
-}
 
 /** Convenience: coerce a caught value to a friendly message string. */
 export function friendlyCaughtError(e: unknown): string {
