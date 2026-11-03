@@ -1,6 +1,6 @@
 <script lang="ts">
   import { SvelteSet } from 'svelte/reactivity'
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { Events } from '@wailsio/runtime'
   import { EventName } from '../generated/enums'
   import SidebarPluginPanels from './sidebar/SidebarPluginPanels.svelte'
@@ -22,6 +22,7 @@
   } from '../lib/sidebar/navigationPreferences'
   import ContextMenu from './ContextMenu.svelte'
   import NamePromptDialog from './NamePromptDialog.svelte'
+  import { trapFocus } from '../lib/focusTrap'
   import { isDevMode, openInspect } from '../lib/devModeInspect'
   import { settings } from '../settings/store.svelte'
   import { shortcutBinding } from '../settings/shortcutActions'
@@ -257,6 +258,7 @@
   let actionError = $derived(crud.actionError)
   let deleteTarget = $derived(crud.deleteTarget)
   let deleteTargetDisposition = $derived(crud.deleteTargetDisposition)
+  let deleteTargetRootPath = $derived(crud.deleteTargetRootPath)
 
   let contextMenu = $derived(menu.contextMenu)
   let contextMenuUnlink = $derived(menu.contextMenuUnlink)
@@ -285,6 +287,36 @@
   const openDuplicatePrompt = menu.openDuplicatePrompt
   const openChildSectionPrompt = menu.openChildSectionPrompt
   const handleContextPageHistory = menu.handleContextPageHistory
+
+  // Delete-dialog keyboard/focus a11y (#1006): the same contract as
+  // ConfirmDialog/NamePromptDialog — Esc cancels, Tab wraps inside the
+  // dialog, initial focus lands on the dialog surface rather than the
+  // destructive confirm (#531), and focus returns to the invoking row on
+  // close. Inlined as an $effect because the dialog renders conditionally
+  // inside this template.
+  let deleteDialogRef = $state<HTMLDivElement | null>(null)
+  $effect(() => {
+    if (!deleteTarget) return
+    const previouslyFocused = document.activeElement as HTMLElement | null
+    const onKeydown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        cancelDelete()
+      }
+    }
+    window.addEventListener('keydown', onKeydown, true)
+    let disposeTrap = () => {}
+    void tick().then(() => {
+      if (deleteDialogRef) disposeTrap = trapFocus(deleteDialogRef)
+      deleteDialogRef?.focus()
+    })
+    return () => {
+      disposeTrap()
+      window.removeEventListener('keydown', onKeydown, true)
+      if (previouslyFocused?.isConnected) previouslyFocused.focus?.()
+    }
+  })
 
   function shortcutSuffix(
     action: Parameters<typeof shortcutBinding>[0]
@@ -701,6 +733,7 @@
       class="absolute inset-0 cursor-default border-none bg-transparent p-0"
     ></button>
     <div
+      bind:this={deleteDialogRef}
       role="dialog"
       aria-modal="true"
       aria-label="Confirm delete"
@@ -728,7 +761,7 @@
           {#if deleteTargetDisposition === 'unlink'}
             Unlink Notebook?
           {:else if deleteTargetDisposition === 'permanent'}
-            Permanently delete {deleteTarget.level}?
+            Delete from external folder?
           {:else}
             Delete {deleteTarget.level}?
           {/if}
@@ -739,10 +772,15 @@
             Its files are left <strong>completely untouched</strong> — re-link the
             folder later to index it again.
           {:else if deleteTargetDisposition === 'permanent'}
-            This will <strong>permanently delete</strong>
-            {deleteTarget.label} from the external linked folder. It is
-            <strong>not</strong> moved to vault
-            <code>.system/trash/</code> and cannot be recovered from Silt.
+            {#if deleteTargetRootPath}
+              <strong>{deleteTarget.label}</strong> will be permanently removed
+              from <code>{deleteTargetRootPath}</code>.
+            {:else}
+              <strong>{deleteTarget.label}</strong> will be permanently removed from
+              the external linked folder.
+            {/if}
+            Files in linked folders are deleted in place — they do not go to the Silt
+            trash and cannot be recovered here.
           {:else}
             This will move the {deleteTarget.label} to
             <code>.system/trash/</code>. You can recover it from there manually.

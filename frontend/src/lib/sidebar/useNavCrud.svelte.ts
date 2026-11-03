@@ -154,6 +154,15 @@ export function useNavCrud(deps: UseNavCrudDeps) {
   const deleteTargetDisposition = $derived(
     deleteTarget ? deleteDisposition(deps.getTree(), deleteTarget) : 'trash'
   )
+  // On-disk root path of the linked notebook a permanent delete removes
+  // files from — named in the confirm copy so the user can see exactly
+  // which external folder is affected (#1006). '' when the target isn't a
+  // linked page/section or the tree doesn't carry the path (the dialog then
+  // falls back to a generic folder phrase).
+  const deleteTargetRootPath = $derived.by(() => {
+    if (!deleteTarget || deleteTargetDisposition !== 'permanent') return ''
+    return findNotebook(deps.getTree(), deleteTarget.notebook)?.root_path ?? ''
+  })
 
   function openCreate(mode: 'notebook' | 'section') {
     createMode = mode
@@ -521,6 +530,9 @@ export function useNavCrud(deps: UseNavCrudDeps) {
     },
     get deleteTargetDisposition() {
       return deleteTargetDisposition
+    },
+    get deleteTargetRootPath() {
+      return deleteTargetRootPath
     },
     // name-prompt helpers
     namePromptTitle,

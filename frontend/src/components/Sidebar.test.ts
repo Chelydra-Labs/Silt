@@ -146,6 +146,9 @@ describe('Sidebar', () => {
     mocks.createNotebook.mockReset()
     mocks.createSection.mockReset()
     mocks.createPage.mockReset()
+    mocks.deletePage.mockReset().mockResolvedValue(undefined)
+    mocks.deleteSection.mockReset().mockResolvedValue(undefined)
+    mocks.deleteNotebook.mockReset().mockResolvedValue(undefined)
     mocks.duplicatePage.mockReset().mockResolvedValue(undefined)
     mocks.revealPageInOS.mockReset().mockResolvedValue(undefined)
     mocks.revealNotebookInOS.mockReset().mockResolvedValue(undefined)
@@ -1419,12 +1422,13 @@ describe('Sidebar', () => {
     expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
   })
 
-  it('delete confirm for linked page warns permanent deletion (#646)', async () => {
+  it('delete confirm for linked page names the external path and warns in-place deletion (#646/#1006)', async () => {
     mocks.listNavigation.mockResolvedValue({
       notebooks: [
         {
           name: 'Synced',
           source: 'linked:abc',
+          root_path: '/mnt/ext/Synced',
           sections: [{ name: 'Notes', pages: [{ name: 'Plan', count: 1 }] }]
         }
       ]
@@ -1451,17 +1455,23 @@ describe('Sidebar', () => {
     await fireEvent.click(screen.getByRole('menuitem', { name: /Delete/i }))
     await flush()
 
-    expect(screen.getByText(/Permanently delete page/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/Delete from external folder\?/i)
+    ).toBeInTheDocument()
+    expect(screen.getByText('page "Plan"')).toBeInTheDocument()
+    // The external on-disk path must be named so the target is unambiguous.
+    expect(screen.getByText('/mnt/ext/Synced')).toBeInTheDocument()
+    expect(screen.getByText(/deleted in place/i)).toBeInTheDocument()
+    expect(screen.getByText(/do not go to the Silt trash/i)).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: 'Delete permanently' })
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText(/cannot be recovered from Silt/i)
     ).toBeInTheDocument()
     // Must not claim vault trash recovery for linked content.
     expect(
       screen.queryByText(/You can recover it from there manually/)
     ).toBeNull()
+    // Gating: the destructive IPC must not fire while the dialog is open.
+    expect(mocks.deletePage).not.toHaveBeenCalled()
   })
 
   it('restores expansion and uses one roving tree tab stop', async () => {
