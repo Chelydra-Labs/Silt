@@ -36,7 +36,7 @@
   <p class="font-body-md" role="alert">
     This page was changed by another app since Silt opened it, so your save was
     held. Pick what happens next — the version you don't keep is preserved as a
-    separate page in the same folder.
+    separate page in the same folder when a copy still exists.
   </p>
   <!-- Own alert semantics: inserted only on failure, so the announcement
        fires at the moment something actually went wrong. -->

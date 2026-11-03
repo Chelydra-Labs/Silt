@@ -779,17 +779,30 @@
     const reloading = pendingExternalReload
     lastSyncedBlocksKey = key
 
-    suppressUpdate = true
-    editorInstance.commands.setContent(blocksToDoc(blocks), {
-      emitUpdate: false
-    })
-    suppressUpdate = false
-    // The replacement is a history boundary (source-viewer parity):
-    // setContent is an ordinary undoable replace, so one undo would
-    // resurrect the pre-replacement buffer — after keep_theirs that is the
-    // refused-era doc, and its undo-driven autosave would clobber the
-    // version the user chose to keep (#1005).
-    resetUndoHistory(editorInstance)
+    // A settle echo whose doc equals the on-screen buffer (keep_mine /
+    // keep_both resolving while blurred round-trips the endorsed buffer,
+    // with only raw_text re-rendered by the backend) must not reset the
+    // undo history: the reset exists so undo cannot resurrect the
+    // pre-replacement buffer, and with nothing replaced there is no
+    // boundary to draw — wiping it would discard the user's own
+    // pre-conflict edits while protecting nothing (#1005).
+    const nextDocJSON = blocksToDoc(blocks)
+    const docsEqual = editorInstance.state.schema
+      .nodeFromJSON(nextDocJSON)
+      .eq(editorInstance.state.doc)
+    if (!docsEqual) {
+      suppressUpdate = true
+      editorInstance.commands.setContent(nextDocJSON, {
+        emitUpdate: false
+      })
+      suppressUpdate = false
+      // The replacement is a history boundary (source-viewer parity):
+      // setContent is an ordinary undoable replace, so one undo would
+      // resurrect the pre-replacement buffer — after keep_theirs that is the
+      // refused-era doc, and its undo-driven autosave would clobber the
+      // version the user chose to keep (#1005).
+      resetUndoHistory(editorInstance)
+    }
     // Reset save state — new content loaded, nothing is dirty (#167).
     autosave.markClean()
     if (reloading) {

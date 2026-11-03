@@ -27,7 +27,11 @@ export const CONFLICT_RESOLUTIONS: {
   {
     key: 'keep_theirs',
     label: 'Keep the other version',
-    hint: 'Reloads the version on disk. Your changes are saved as a separate page.'
+    // No-stash edge: keep_theirs can settle with no refused-write copy to
+    // preserve, and the runtime announcement then says only "the version on
+    // disk was kept" — the hint must not promise a sibling that was never
+    // written (#1005).
+    hint: 'Reloads the version on disk. Your changes are saved as a separate page when a copy still exists.'
   },
   {
     key: 'keep_both',

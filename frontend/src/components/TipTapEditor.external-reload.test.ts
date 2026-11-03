@@ -534,4 +534,64 @@ describe('TipTapEditor same-ID external reload', () => {
     expect(pmText(view.container)).not.toContain('refused-era typing')
     view.unmount()
   })
+
+  // #1005 equal-content settle echo: after keep_mine resolves while blurred,
+  // the settle echo can carry a re-rendered raw_text (backend id-comment
+  // normalization) whose doc is IDENTICAL to the endorsed buffer. The
+  // replace branch used to setContent + resetUndoHistory unconditionally —
+  // wiping the user's own pre-conflict undo history while protecting
+  // nothing (there is no replacement to draw a boundary for).
+  it('equal-content settle echo preserves the undo history', async () => {
+    // Earlier tests override the resolve mock with deferred promises; pin it.
+    mocks.resolveExternalConflict.mockResolvedValue(
+      'Journal-2026-06-22.conflict-20260622-090000'
+    )
+    const first = [mkBlock('NOTE', { id: STABLE_ID, clean_text: 'my text' })]
+    const view = render(TipTapEditor, {
+      props: {
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily',
+        blocks: first,
+        onUpdate: () => {}
+      }
+    })
+    await waitFor(() => {
+      expect(view.container.querySelector('.ProseMirror')).toBeTruthy()
+    })
+    const pmEl = view.container.querySelector('.ProseMirror') as HTMLElement
+    await fireEvent.focus(pmEl)
+    const editor = getActiveEditor()
+    expect(editor).toBeTruthy()
+    editor!.commands.insertContent('typed tail')
+    // keep_mine resolves while blurred: the settle echo must not cost the
+    // user their undo history.
+    await fireEvent.blur(pmEl)
+    const handle = getEditor(editorKey('Work', 'Journal', 'Daily'))
+    await handle!.resolveExternalConflict!('keep_mine')
+    await view.rerender({
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      blocks: [
+        mkBlock('NOTE', {
+          id: STABLE_ID,
+          clean_text: 'typed tailmy text',
+          raw_text:
+            'typed tailmy text <!-- id: ' + STABLE_ID + ' @ 2026-01-02 -->'
+        })
+      ],
+      onUpdate: () => {}
+    })
+    await new Promise((r) => setTimeout(r, 50))
+
+    // The echo was doc-equal: undo still reaches the pre-typing state and
+    // the text still matches the endorsed buffer.
+    expect(editor!.can().undo()).toBe(true)
+    expect(pmText(view.container)).toContain('typed tailmy text')
+    editor!.commands.undo()
+    expect(pmText(view.container)).not.toContain('typed tail')
+    expect(pmText(view.container)).toContain('my text')
+    view.unmount()
+  })
 })
