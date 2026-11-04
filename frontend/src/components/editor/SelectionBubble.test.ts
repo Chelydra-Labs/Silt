@@ -159,6 +159,26 @@ describe('SelectionBubble', () => {
     expect(getByLabelText('Italic').getAttribute('aria-pressed')).toBe('false')
   })
 
+  it('reflects an active underline mark and toggles it on click (#1030)', async () => {
+    const editor = makeEditor()
+    const { getByLabelText } = render(SelectionBubble, {
+      props: {
+        editor: editor as never,
+        activeMarks: new Set<string>(['underline']),
+        selectionEmpty: false,
+        selectionCoords: coords
+      }
+    })
+    expect(getByLabelText('Underline').getAttribute('aria-pressed')).toBe(
+      'true'
+    )
+    expect(getByLabelText('Bold').getAttribute('aria-pressed')).toBe('false')
+
+    await fireEvent.click(getByLabelText('Underline'))
+    expect(editor._toggleMark).toHaveBeenCalledWith('underline')
+    expect(editor._run).toHaveBeenCalled()
+  })
+
   it('uses bubble-btn hit targets sized for touch (≥32×32 in CSS)', () => {
     const { getByLabelText } = render(SelectionBubble, {
       props: {

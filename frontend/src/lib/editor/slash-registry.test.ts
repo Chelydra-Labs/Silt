@@ -182,3 +182,20 @@ describe('formatting slash commands (#168)', () => {
     expect(clear?.hotkey).toBeUndefined()
   })
 })
+
+describe('built-in underline registration (#1030)', () => {
+  it('registers /underline with the format_underline action name', async () => {
+    // The module-load built-ins are cleared by every beforeEach above, so
+    // re-import a fresh instance to assert the shipped registration itself
+    // (not a hand-built copy of it).
+    vi.resetModules()
+    const fresh = await import('./slash-registry')
+    expect(fresh.getSlashCommands().find((c) => c.id === 'underline')).toEqual({
+      id: 'underline',
+      label: 'Underline',
+      description: 'Underline the selection',
+      icon: 'format_underlined',
+      hotkey: 'format_underline'
+    })
+  })
+})

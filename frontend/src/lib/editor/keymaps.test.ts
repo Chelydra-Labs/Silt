@@ -1428,13 +1428,19 @@ describe('moveActiveBlock — drag-handle keyboard complement (#181)', () => {
 function pressKey(
   editor: Editor,
   key: string,
-  opts: { shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean } = {}
+  opts: {
+    shiftKey?: boolean
+    ctrlKey?: boolean
+    altKey?: boolean
+    metaKey?: boolean
+  } = {}
 ): boolean {
   const event = new KeyboardEvent('keydown', {
     key,
     bubbles: true,
     shiftKey: opts.shiftKey ?? false,
     ctrlKey: opts.ctrlKey ?? false,
+    altKey: opts.altKey ?? false,
     metaKey: opts.metaKey ?? false
   })
   let handled = false
@@ -2203,5 +2209,35 @@ describe('format_subscript keymap (#511 — Ctrl+Shift, chord)', () => {
     // use and is exercised in real focus in production.
     expect(pressSubscript(editor)).toBe(true)
     editor.destroy()
+  })
+})
+
+describe('format_underline keymap (#1030 — Mod-u)', () => {
+  it('toggles underline via the default Mod-u chord', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent(blockDoc('noteBlock', 'hello'))
+    editor.commands.setTextSelection({ from: 2, to: 5 })
+
+    expect(pressKey(editor, 'u', { ctrlKey: true })).toBe(true)
+    expect(editor.isActive('underline')).toBe(true)
+
+    expect(pressKey(editor, 'u', { ctrlKey: true })).toBe(true)
+    expect(editor.isActive('underline')).toBe(false)
+    editor.destroy()
+  })
+
+  it('honours a live remap of the format_underline action', () => {
+    // Mod-Alt-u is not bound by StarterKit's Underline extension, so the
+    // keymap firing proves the config-driven format_underline binding — not
+    // StarterKit's hardcoded fallback — handled the chord.
+    withHotkeys({ format_underline: 'Ctrl+Alt+u' }, () => {
+      const editor = makeEditorWithKeymaps()
+      editor.commands.setContent(blockDoc('noteBlock', 'hello'))
+      editor.commands.setTextSelection({ from: 2, to: 5 })
+
+      expect(pressKey(editor, 'u', { ctrlKey: true, altKey: true })).toBe(true)
+      expect(editor.isActive('underline')).toBe(true)
+      editor.destroy()
+    })
   })
 })
