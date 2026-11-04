@@ -45,7 +45,18 @@ export type MermaidTheme = 'dark' | 'default'
 async function ensureMermaid(theme: MermaidTheme): Promise<MermaidApi> {
   const api = await loadMermaid()
   if (initTheme !== theme) {
-    api.initialize({ startOnLoad: false, theme, securityLevel: 'strict' })
+    // v12 defaults to the `neo` look, ELK layout, a narrower label wrap width and
+    // a 120px minimum node width. Pin v11's look, layout and label metrics so
+    // existing diagrams keep their established geometry.
+    api.initialize({
+      startOnLoad: false,
+      theme,
+      securityLevel: 'strict',
+      look: 'classic',
+      layout: 'dagre',
+      flowchart: { wrappingWidth: 200, minNodeWidth: 0 },
+      state: { wrappingWidth: 200, minNodeWidth: 0 }
+    })
     initTheme = theme
     // Cached SVGs are theme-coloured; a theme switch invalidates them.
     cache.clear()

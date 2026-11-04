@@ -45,7 +45,14 @@ describe('useMermaid (#190)', () => {
       expect.objectContaining({
         securityLevel: 'strict',
         startOnLoad: false,
-        theme: 'dark'
+        theme: 'dark',
+        look: 'classic',
+        layout: 'dagre',
+        flowchart: expect.objectContaining({
+          wrappingWidth: 200,
+          minNodeWidth: 0
+        }),
+        state: expect.objectContaining({ wrappingWidth: 200, minNodeWidth: 0 })
       })
     )
     // Switching theme re-initializes (and invalidates the cache).
