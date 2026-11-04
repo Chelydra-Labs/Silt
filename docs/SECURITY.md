@@ -183,5 +183,6 @@ Drop the override once those packages declare 11 themselves.
 GHSA-gcqx-w48m-w2h4 affects `deepmerge` ≥ 4.2.0; no patched release exists
 (4.3.1 is latest) and the upstream fix is a dependency replacement, not a
 version bump. Exposure is limited to trusted local `svelte.config.js` objects
-merged at build/dev time, so the alert is dismissed as tolerable risk. Revisit
-when `sveltejs/vite-plugin-svelte` #1415 (drop deepmerge) lands.
+merged at build/dev time, so it is carried as tolerable risk and the alert is
+dismissed once this change merges. Revisit when
+`sveltejs/vite-plugin-svelte` #1415 (drop deepmerge) lands.
