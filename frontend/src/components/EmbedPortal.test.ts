@@ -174,6 +174,33 @@ describe('EmbedPortal (#127)', () => {
     vi.useRealTimers()
   })
 
+  it('mounts the nested editor with underline enabled (#1030)', async () => {
+    mocks.resolveBlockReference.mockResolvedValue({
+      exists: true,
+      id: FIXTURE_UUID,
+      notebook: 'Work',
+      section: '',
+      page: 'Top',
+      file_date: '2026-06-15',
+      clean_text: 'editable content'
+    })
+    render(EmbedPortal, { props: { uuid: FIXTURE_UUID } })
+    await waitFor(() => {
+      expect(screen.getByLabelText(/embedded block preview/i)).toBeTruthy()
+    })
+
+    await fireEvent.click(screen.getByLabelText(/embedded block preview/i))
+    await tick()
+
+    // The portal builds its own StarterKit.configure list; pin that underline
+    // survives it (the schema-level tests use hand-built extension lists).
+    const pm = document.querySelector('.ProseMirror') as HTMLElement & {
+      editor: { schema: { marks: Record<string, unknown> } }
+    }
+    expect(pm).toBeTruthy()
+    expect(pm.editor.schema.marks.underline).toBeDefined()
+  })
+
   // #1019 advisory: typed recovery prose that merely CONTAINS "being edited"
   // (a page named for the phrase) must surface as a save failure, not enter
   // the focus-lock retry loop or show the busy copy — the substring fallback

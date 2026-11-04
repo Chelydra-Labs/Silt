@@ -282,6 +282,26 @@ describe('TaskSubEditorModal (#304)', () => {
     })
   })
 
+  it('leaves underline enabled in the production sub-editor schema (#1030)', async () => {
+    mocks.fetchSubtree.mockResolvedValue([])
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+
+      onClose: () => {}
+    })
+    await vi.waitFor(() => {
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    })
+
+    // The component builds its own StarterKit.configure list; a silent
+    // `underline: false` there would not be caught by the schema-level tests.
+    const pm = document.querySelector('.ProseMirror') as HTMLElement & {
+      editor: { schema: { marks: Record<string, unknown> } }
+    }
+    expect(pm.editor.schema.marks.underline).toBeDefined()
+  })
+
   it('normalizes subtree block depths relative to sub-editor root (starts at depth 0)', async () => {
     mocks.fetchSubtree.mockResolvedValue([
       {
