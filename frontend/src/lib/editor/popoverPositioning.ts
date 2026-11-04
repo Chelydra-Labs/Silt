@@ -67,7 +67,9 @@ export function findScrollableAncestor(
  * When `horizontal` is given the left edge is additionally held inside that
  * band. A band narrower than the popover pins the left edge to the band's
  * start: overflowing the far side is the only alternative, and doing so would
- * put the popover back over whatever the band exists to avoid.
+ * put the popover back over whatever the band exists to avoid — unless the
+ * band's start itself lies past the window's right edge, where the viewport
+ * (the outermost bound) takes precedence.
  */
 export function clampToViewport(
   rect: BoundedRect,
@@ -88,8 +90,12 @@ export function clampToViewport(
     // The viewport margin floor wins over a band that starts off-screen.
     const minLeft = Math.max(POPOVER_MARGIN, horizontal.left + POPOVER_MARGIN)
     const maxLeft = horizontal.right - width - POPOVER_MARGIN
-    left =
+    const bandLeft =
       maxLeft < minLeft ? minLeft : Math.min(maxLeft, Math.max(minLeft, left))
+    // The viewport is the outermost bound: a band that starts past the window's
+    // right edge must not carry the popover off-screen with it.
+    const viewportMax = viewport.width - width - POPOVER_MARGIN
+    left = Math.max(POPOVER_MARGIN, Math.min(viewportMax, bandLeft))
   }
   return { left, top }
 }

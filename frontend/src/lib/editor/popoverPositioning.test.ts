@@ -107,6 +107,43 @@ describe('clampToViewport', () => {
     expect(result.left).toBe(POPOVER_MARGIN)
   })
 
+  it('keeps a band-clamped popover inside the window right edge', () => {
+    // ~700px window, sidebar at its 480px clamp → a 220px column with a popover
+    // wider than the column: pinning to the band start would run off-window.
+    const viewport = { width: 700, height: 800 }
+    const width = 300
+    const result = clampToViewport(
+      { x: 490, y: 100, width, height: 200 },
+      viewport,
+      { left: 480, right: 700 }
+    )
+    expect(result.left).toBe(viewport.width - width - POPOVER_MARGIN)
+    expect(result.left).toBeLessThanOrEqual(
+      viewport.width - width - POPOVER_MARGIN
+    )
+    expect(result.left).toBeGreaterThanOrEqual(POPOVER_MARGIN)
+  })
+
+  it('still pins to the band start when the narrow band fits in the window', () => {
+    const result = clampToViewport(
+      { x: 120, y: 100, width: 300, height: 100 },
+      { width: 1000, height: 800 },
+      { left: 200, right: 300 }
+    )
+    // Band max would be 300 - 300 - 8 = -8 (below the margin floor), so the
+    // band start wins over the far side.
+    expect(result.left).toBe(200 + POPOVER_MARGIN)
+  })
+
+  it('falls back to the margin when a band-clamped popover is wider than the window', () => {
+    const result = clampToViewport(
+      { x: 200, y: 100, width: 1200, height: 100 },
+      { width: 1000, height: 800 },
+      { left: 100, right: 400 }
+    )
+    expect(result.left).toBe(POPOVER_MARGIN)
+  })
+
   it('keeps the pre-band output when no band is passed', () => {
     // Backward-compat lock: same inputs as the min-margin case above.
     expect(
