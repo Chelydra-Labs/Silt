@@ -1513,6 +1513,15 @@ describe('inline mark round-trips (#168)', () => {
     it('round-trips underline (<u>...</u>)', () => {
       expectRoundTrip('this is <u>underlined</u> text')
     })
+    it('tokenizes <u> into an underline mark and serializes it back (#1030)', () => {
+      const cleanText = 'a <u>b</u> c'
+      const doc = blocksToDoc([mkBlock('NOTE', { clean_text: cleanText })])
+      const inline = doc.content[0].content ?? []
+      const underlined = inline.find((n) => n.text === 'b')
+      expect(underlined?.marks).toEqual([{ type: 'underline' }])
+      // The serializer emits the same HTML form the tokenizer consumed.
+      expect(docToBlocks(doc)[0].clean_text).toBe(cleanText)
+    })
     it('round-trips subscript (<sub>...</sub>)', () => {
       expectRoundTrip('this is H<sub>2</sub>O text')
     })

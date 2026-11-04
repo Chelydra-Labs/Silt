@@ -10,7 +10,12 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { DOMParser as PmDOMParser, Node as PmNode } from '@tiptap/pm/model'
-import { SiltBlockExtensions } from './index'
+import {
+  SiltBlockExtensions,
+  SiltInlineMarkExtensions,
+  SiltColorMarkExtensions,
+  SiltHardBreak
+} from './index'
 import {
   BlockReferenceNode,
   CalloutBlock,
@@ -19,6 +24,7 @@ import {
   MentionNode,
   normalizeCalloutVariant
 } from './schema'
+import type { DocJSON } from './types'
 
 function schemaFor() {
   const ed = new Editor({
@@ -415,5 +421,103 @@ describe('markdown-as-you-type input rules (#657)', () => {
     const note = firstBlockOfType(editor, 'noteBlock')
     expect(note).not.toBeNull()
     expect(note!.attrs.bullet).toBe('- ')
+  })
+})
+
+// ---- Underline mark (#1030) -------------------------------------------------
+// StarterKit 3.x registers Underline unless explicitly disabled, and every Silt
+// editor surface leaves that default intact. These tests pin the resulting mark
+// through the real schema and the real paste pipeline so a future
+// StarterKit/editor-config change cannot silently drop underline support (or
+// tempt someone into registering a second Underline extension).
+function makeUnderlineEditor(): Editor {
+  return track(
+    new Editor({
+      extensions: [
+        StarterKit.configure({
+          paragraph: false,
+          heading: false,
+          bulletList: false,
+          orderedList: false,
+          listItem: false,
+          blockquote: false,
+          codeBlock: false,
+          horizontalRule: false,
+          trailingNode: false,
+          hardBreak: false
+        }),
+        SiltHardBreak,
+        ...SiltBlockExtensions,
+        ...SiltInlineMarkExtensions,
+        ...SiltColorMarkExtensions
+      ],
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'noteBlock',
+            attrs: { id: 'underline-test', depth: 0, bullet: '' }
+          }
+        ]
+      }
+    })
+  )
+}
+
+function underlinedText(editor: Editor): string[] {
+  const found: string[] = []
+  editor.state.doc.descendants((node) => {
+    if (node.isText && node.marks.some((m) => m.type.name === 'underline')) {
+      found.push(node.text ?? '')
+    }
+  })
+  return found
+}
+
+describe('underline mark (#1030)', () => {
+  it('exists in the real schema via StarterKit (single registration)', () => {
+    const editor = makeUnderlineEditor()
+    expect(editor.schema.marks.underline).toBeDefined()
+    expect(Object.keys(editor.schema.marks)).toContain('underline')
+    // Silt's own mark extension bundles must not re-register it: a duplicate
+    // would warn and could shift schema mark rank / clean_text ordering.
+    const siltMarkNames = [
+      ...SiltInlineMarkExtensions,
+      ...SiltColorMarkExtensions
+    ].map((ext) => ext.name)
+    expect(siltMarkNames).not.toContain('underline')
+  })
+
+  it('toggles on a selection and clears on a second toggle', () => {
+    const editor = makeUnderlineEditor()
+    editor.commands.insertContent('underlined')
+    editor.commands.setTextSelection({ from: 1, to: 11 })
+    expect(editor.isActive('underline')).toBe(false)
+
+    editor.chain().focus().toggleMark('underline').run()
+    expect(editor.isActive('underline')).toBe(true)
+    const marked = (editor.getJSON() as DocJSON).content[0].content
+    expect(marked?.find((n) => n.text === 'underlined')?.marks).toEqual([
+      { type: 'underline' }
+    ])
+
+    editor.chain().focus().toggleMark('underline').run()
+    expect(editor.isActive('underline')).toBe(false)
+    const cleared = (editor.getJSON() as DocJSON).content[0].content
+    expect(cleared?.find((n) => n.text === 'underlined')?.marks).toBeUndefined()
+  })
+
+  it('parses pasted <u>…</u> through the real paste pipeline', () => {
+    const editor = makeUnderlineEditor()
+    editor.view.pasteHTML('<u>from tag</u>')
+    expect(underlinedText(editor)).toEqual(['from tag'])
+  })
+
+  it('parses pasted text-decoration: underline through the real paste pipeline', () => {
+    const editor = makeUnderlineEditor()
+    editor.view.pasteHTML(
+      '<span style="text-decoration: underline">from style</span>'
+    )
+    expect(underlinedText(editor)).toEqual(['from style'])
   })
 })

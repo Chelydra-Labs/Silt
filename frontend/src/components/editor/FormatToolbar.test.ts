@@ -273,6 +273,21 @@ describe('FormatToolbar', () => {
     expect(boldBtn.getAttribute('aria-pressed')).toBe('true')
   })
 
+  it('reflects an active underline mark in aria-pressed (#1030)', () => {
+    const editor = makeMockEditor()
+    const { getByLabelText } = render(FormatToolbar, {
+      props: {
+        editor: editor as never,
+        ...baseProps,
+        activeMarks: new Set<string>(['underline'])
+      }
+    })
+    expect(getByLabelText('Underline').getAttribute('aria-pressed')).toBe(
+      'true'
+    )
+    expect(getByLabelText('Bold').getAttribute('aria-pressed')).toBe('false')
+  })
+
   it('has role=toolbar with tabindex for keyboard navigation', () => {
     const editor = makeMockEditor()
     const { getByRole } = render(FormatToolbar, {

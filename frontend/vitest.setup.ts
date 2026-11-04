@@ -40,6 +40,26 @@ if (typeof window !== 'undefined' && !window.matchMedia) {
     }) as MediaQueryList
 }
 
+// jsdom omits ClipboardEvent, which EditorView.pasteHTML() constructs
+// internally. The paste tests drive the real pipeline through that method, so
+// the constructor must exist; clipboardData is unused on this path (the HTML
+// is passed explicitly).
+if (typeof globalThis.ClipboardEvent === 'undefined') {
+  class ClipboardEventPolyfill extends Event {
+    readonly clipboardData: DataTransfer | null
+    constructor(
+      type: string,
+      init?: EventInit & { clipboardData?: DataTransfer | null }
+    ) {
+      super(type, init)
+      this.clipboardData = init?.clipboardData ?? null
+    }
+  }
+  ;(
+    globalThis as unknown as { ClipboardEvent: typeof ClipboardEvent }
+  ).ClipboardEvent = ClipboardEventPolyfill as unknown as typeof ClipboardEvent
+}
+
 // Svelte 5 transitions (transition:fly/fade) call element.animate(), which
 // jsdom does not implement. Polyfill globally so any component using a
 // transition renders in tests without per-file stubs.
