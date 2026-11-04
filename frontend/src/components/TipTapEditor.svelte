@@ -59,6 +59,7 @@
     blocksToDoc
   } from '../lib/editor'
   import type { ParsedBlock } from '../lib/editor'
+  import { siltPasteProps } from '../lib/editor/schema'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import ChoiceDialog from './ChoiceDialog.svelte'
   import { settings, appendDismissedTip } from '../settings/store.svelte'
@@ -451,6 +452,10 @@
   const editorStore = createEditor({
     extensions: editorExtensions,
     content: initialDoc,
+    // Text-only Ctrl+V inserts inline for one line and one block per line for
+    // many; HTML pasted into a cell/callout stays paragraph-based. Shared with
+    // the Task Sub-Editor so both surfaces behave identically.
+    editorProps: siltPasteProps,
     onUpdate: () => {
       if (suppressUpdate) return
       if (autosave.holdsForConflict()) {

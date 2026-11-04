@@ -30,7 +30,10 @@ import {
   markPasteRule
 } from '@tiptap/core'
 import { newlineInCode } from '@tiptap/pm/commands'
+import { Slice, Fragment } from '@tiptap/pm/model'
+import type { Node as PMNode, ResolvedPos } from '@tiptap/pm/model'
 import { TextSelection } from '@tiptap/pm/state'
+import type { EditorView } from '@tiptap/pm/view'
 import { DEFAULT_TASK_PRIORITY } from './types'
 import {
   Details,
@@ -271,6 +274,25 @@ export const TaskBlock = Node.create({
   }
 })
 
+// Containers whose serializers depend on `paragraph` children: table cells
+// (TipTap table commands hard-depend on schema.nodes.paragraph) and callouts
+// (serializeCalloutToText reads the title from children[0]). The paste helpers
+// below use the same set so the parse rule and the context-aware paste path
+// cannot drift apart.
+const PARAGRAPH_CONTAINER_SELECTOR = 'td, th, [data-type="callout"]'
+const PARAGRAPH_CONTAINER_NODES = new Set([
+  'tableCell',
+  'tableHeader',
+  'calloutBlock'
+])
+
+function inParagraphContainer($pos: ResolvedPos): boolean {
+  for (let d = $pos.depth; d > 0; d--) {
+    if (PARAGRAPH_CONTAINER_NODES.has($pos.node(d).type.name)) return true
+  }
+  return false
+}
+
 // ---- NoteBlock -----------------------------------------------------------
 // Renders on-disk as: <indent><bullet?>desc <!-- id: uuid -->
 export const NoteBlock = Node.create({
@@ -339,13 +361,16 @@ export const NoteBlock = Node.create({
         // ({ tag: 'p' }, default priority 50), which is registered first and
         // would otherwise win.
         //
-        // Table cells are the exception: tableCell/tableHeader content is
-        // 'block+' and TipTap's table commands hard-depend on real
-        // `paragraph` nodes, so let the paragraph rule keep `<p>` inside
-        // td/th.
+        // Paragraph-required containers are the exception: tableCell content
+        // and calloutBlock children must stay real `paragraph` nodes (TipTap's
+        // table commands and serializeCalloutToText depend on them). Internal
+        // clipboard re-parse has to keep that invariant too, so whole-callout
+        // copy/paste does not demote its title to a noteBlock. `closest` also
+        // covers nested callouts.
         tag: 'p',
         priority: 60,
-        getAttrs: (el) => (el.closest('td,th') ? false : null)
+        getAttrs: (el) =>
+          el.closest(PARAGRAPH_CONTAINER_SELECTOR) ? false : null
       }
     ]
   },
@@ -589,6 +614,117 @@ export const HeaderBlock = Node.create({
     ]
   }
 })
+
+// ---- Shared paste path ---------------------------------------------------
+// `clipboardTextParser` only runs when the clipboard has no HTML (or the paste
+// is plain). ProseMirror's default would synthesize one `<p>` per line and feed
+// it through the parser above, which turns a single-line Ctrl+V into an
+// isolating noteBlock split. Handling text here keeps the native expectation:
+// one line inserts inline at the caret, multiple lines become one block each.
+export function siltClipboardTextParser(
+  text: string,
+  $context: ResolvedPos,
+  _plain: boolean,
+  view: EditorView
+): Slice {
+  const schema = view.state.schema
+  const lines = text.replace(/\r\n?/g, '\n').split('\n')
+  // A terminal/VS Code copy appends a newline; drop one trailing empty line so
+  // "X\n" stays a single inline line instead of becoming a block paste.
+  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop()
+
+  const marks = $context.marks()
+  if (lines.length === 1) {
+    return new Slice(
+      Fragment.from(lines[0] ? schema.text(lines[0], marks) : []),
+      0,
+      0
+    )
+  }
+
+  const blockType = inParagraphContainer($context)
+    ? schema.nodes.paragraph
+    : schema.nodes.noteBlock
+  const blocks = lines.map((line) =>
+    blockType.create(null, line ? schema.text(line, marks) : null)
+  )
+  return new Slice(Fragment.from(blocks), 0, 0)
+}
+
+// HTML paste into a paragraph-required container has no ancestry to inspect:
+// the pasted `<p>` is parsed while the caret already sits inside a cell or
+// callout, so the DOM fragment carries no `td`/callout wrapper. Normalize the
+// parsed slice against the insertion context instead (this also covers partial
+// copies out of a cell/callout and drag/drop).
+export function siltTransformPasted(slice: Slice, view: EditorView): Slice {
+  const paragraphType = view.state.schema.nodes.paragraph
+  if (!paragraphType || !inParagraphContainer(view.state.selection.$from)) {
+    return slice
+  }
+
+  let changed = false
+  const blocks: PMNode[] = []
+  slice.content.forEach((node) => {
+    if (node.type.name === 'noteBlock') {
+      blocks.push(paragraphType.create(null, node.content))
+      changed = true
+    } else {
+      blocks.push(node)
+    }
+  })
+  return changed
+    ? new Slice(Fragment.from(blocks), slice.openStart, slice.openEnd)
+    : slice
+}
+
+// Replacing an *empty* textblock with a block slice is the one case
+// `replaceSelection` cannot do itself: the surrounding noteBlock/callout/
+// cell is isolating, so the insertion leaves the empty block behind (a blank
+// line above pasted content). Handle that case explicitly.
+export function siltHandlePaste(
+  view: EditorView,
+  _event: ClipboardEvent,
+  slice: Slice
+): boolean {
+  const { selection } = view.state
+  const $from = selection.$from
+  if (!selection.empty || !$from.parent.isTextblock) return false
+  // Only prose blocks: replacing an empty task/header block with prose would
+  // silently change the block's type and drop its metadata.
+  if (
+    $from.parent.type.name !== 'noteBlock' &&
+    $from.parent.type.name !== 'paragraph'
+  ) {
+    return false
+  }
+  if ($from.parent.content.size !== 0) return false
+  if (slice.openStart || slice.openEnd || slice.content.childCount === 0) {
+    return false
+  }
+  let blockContent = true
+  slice.content.forEach((node) => {
+    if (!node.isBlock) blockContent = false
+  })
+  if (!blockContent) return false
+
+  const from = $from.before($from.depth)
+  const to = $from.after($from.depth)
+  view.dispatch(
+    view.state.tr
+      .replace(from, to, slice)
+      .scrollIntoView()
+      .setMeta('paste', true)
+      .setMeta('uiEvent', 'paste')
+  )
+  return true
+}
+
+// One object both editor surfaces spread into `createEditor`'s editorProps.
+export const siltPasteProps = {
+  clipboardTextParser: siltClipboardTextParser,
+  transformPasted: siltTransformPasted,
+  handlePaste: siltHandlePaste
+}
 
 // Silt-specific block extensions. NoteBlock MUST be first — ProseMirror uses
 // the first registered block type as the "default" for content normalization.

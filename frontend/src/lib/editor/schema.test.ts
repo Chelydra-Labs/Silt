@@ -23,8 +23,10 @@ import {
   CodeBlock,
   InlineMathNode,
   MentionNode,
-  normalizeCalloutVariant
+  normalizeCalloutVariant,
+  siltPasteProps
 } from './schema'
+import { docToBlocks } from './converters'
 import type { DocJSON } from './types'
 
 function schemaFor() {
@@ -527,10 +529,23 @@ describe('underline mark (#1030)', () => {
 // External rich HTML names blocks by element (`<p>`, `<h1>`-`<h6>`, `<pre>`),
 // not by Silt's serialized `div[data-type=…]` shape. These rules run through
 // the real paste pipeline (`view.pasteHTML`) against the production-shaped
-// schema: paragraph stays enabled because table cells require it.
-function makeLeafTagEditor(): Editor {
+// schema: paragraph stays enabled because table cells require it. The shared
+// paste helpers are wired in exactly as the two editor surfaces wire them, so
+// `pasteText` exercises the same code path as Ctrl+V.
+function makeLeafTagEditor(
+  content: DocJSON = {
+    type: 'doc',
+    content: [
+      {
+        type: 'noteBlock',
+        attrs: { id: 'leaf-tag-test', depth: 0, bullet: '' }
+      }
+    ]
+  }
+): Editor {
   return track(
     new Editor({
+      editorProps: siltPasteProps,
       extensions: [
         StarterKit.configure({
           // paragraph deliberately enabled — the `<p>` rule must beat it on
@@ -553,15 +568,7 @@ function makeLeafTagEditor(): Editor {
         ...SiltInlineMarkExtensions,
         ...SiltColorMarkExtensions
       ],
-      content: {
-        type: 'doc',
-        content: [
-          {
-            type: 'noteBlock',
-            attrs: { id: 'leaf-tag-test', depth: 0, bullet: '' }
-          }
-        ]
-      }
+      content
     })
   )
 }
@@ -803,5 +810,224 @@ describe('external leaf-tag parse rules (#1031)', () => {
     expect(owners('p')).toEqual(['noteBlock'])
     expect(owners('pre')).toEqual(['codeBlock'])
     expect(owners('h3')).toEqual(['headerBlock'])
+  })
+})
+
+// ---- Text-only paste and paragraph-required containers ---------------------
+// Ctrl+V of a clipboard that has only text/plain used to synthesize `<p>` per
+// line, which the p rule turned into isolating noteBlocks (splitting the caret
+// block, or leaving an empty block behind). These tests drive the real
+// `view.pasteText`/`pasteHTML` paths with the shared editorProps wired in.
+function textPos(editor: Editor, text: string): number {
+  let pos = -1
+  editor.state.doc.descendants((node, p) => {
+    if (pos < 0 && node.isText && node.text === text) pos = p
+  })
+  if (pos < 0) throw new Error(`text not found: ${text}`)
+  return pos
+}
+
+function noteDoc(text: string): DocJSON {
+  return {
+    type: 'doc',
+    content: [
+      {
+        type: 'noteBlock',
+        attrs: { id: 'paste-test', depth: 0, bullet: '' },
+        content: text ? [{ type: 'text', text }] : []
+      }
+    ]
+  }
+}
+
+function tableDoc(cellText: string): DocJSON {
+  return {
+    type: 'doc',
+    content: [
+      {
+        type: 'table',
+        content: [
+          {
+            type: 'tableRow',
+            content: [
+              {
+                type: 'tableCell',
+                content: [
+                  {
+                    type: 'paragraph',
+                    content: cellText ? [{ type: 'text', text: cellText }] : []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
+
+function calloutDoc(title: string, body: string): DocJSON {
+  return {
+    type: 'doc',
+    content: [
+      {
+        type: 'calloutBlock',
+        attrs: { variant: 'note' },
+        content: [
+          { type: 'paragraph', content: [{ type: 'text', text: title }] },
+          { type: 'paragraph', content: [{ type: 'text', text: body }] }
+        ]
+      }
+    ]
+  }
+}
+
+function childTypeNames(node: PmNode | null): string[] {
+  const names: string[] = []
+  node?.forEach((child) => names.push(child.type.name))
+  return names
+}
+
+describe('text-only paste (Ctrl+V) into paragraph-required containers', () => {
+  it('inserts a single plain-text line inline at the caret', () => {
+    const editor = makeLeafTagEditor(noteDoc('abcdef'))
+    editor.commands.setTextSelection(textPos(editor, 'abcdef') + 3)
+    editor.view.pasteText('X')
+
+    expect(editor.state.doc.childCount).toBe(1)
+    expect(editor.state.doc.firstChild?.type.name).toBe('noteBlock')
+    expect(editor.state.doc.firstChild?.textContent).toBe('abcXdef')
+  })
+
+  it('inserts a single plain-text line into an empty note without a leftover block', () => {
+    const editor = makeLeafTagEditor()
+    editor.commands.setTextSelection(1)
+    editor.view.pasteText('X')
+
+    expect(editor.state.doc.childCount).toBe(1)
+    expect(editor.state.doc.firstChild?.type.name).toBe('noteBlock')
+    expect(editor.state.doc.firstChild?.textContent).toBe('X')
+  })
+
+  it('produces one block per line for multi-line plain text', () => {
+    const editor = makeLeafTagEditor()
+    editor.commands.setTextSelection(1)
+    editor.view.pasteText('one\ntwo')
+
+    const notes = flatBlocks(editor).filter((b) => b.type === 'noteBlock')
+    expect(notes.map((b) => b.text)).toEqual(['one', 'two'])
+    expect(editor.state.doc.childCount).toBe(2)
+  })
+
+  it('strips the trailing newline a terminal copy appends', () => {
+    const editor = makeLeafTagEditor(noteDoc('abcdef'))
+    editor.commands.setTextSelection(textPos(editor, 'abcdef') + 3)
+    editor.view.pasteText('X\n')
+
+    expect(editor.state.doc.firstChild?.textContent).toBe('abcXdef')
+  })
+
+  it('keeps plain-text paste inside a table cell paragraph-based', () => {
+    const editor = makeLeafTagEditor(tableDoc('cell'))
+    editor.commands.setTextSelection(textPos(editor, 'cell') + 2)
+    editor.view.pasteText('X')
+
+    const cell = firstNodeOfType(editor, 'tableCell')
+    expect(cell?.firstChild?.type.name).toBe('paragraph')
+    expect(cell?.textContent).toBe('ceXll')
+    expect(firstNodeOfType(editor, 'noteBlock')).toBeNull()
+  })
+
+  it('keeps multi-line plain text inside a table cell paragraph-based', () => {
+    const editor = makeLeafTagEditor(tableDoc(''))
+    let paragraphPos = -1
+    editor.state.doc.descendants((node, pos) => {
+      if (paragraphPos < 0 && node.type.name === 'paragraph') paragraphPos = pos
+    })
+    editor.commands.setTextSelection(paragraphPos + 1)
+    editor.view.pasteText('one\ntwo')
+
+    const cell = firstNodeOfType(editor, 'tableCell')
+    expect(childTypeNames(cell)).toEqual(['paragraph', 'paragraph'])
+    expect(cell?.textContent).toBe('onetwo')
+    expect(firstNodeOfType(editor, 'noteBlock')).toBeNull()
+  })
+})
+
+describe('callout copy/paste keeps paragraph children', () => {
+  it('parses internally serialized callout HTML as paragraphs and round-trips the title', () => {
+    const editor = makeLeafTagEditor()
+    // The shape ProseMirror's clipboard serializer produces for a callout.
+    editor.view.pasteHTML(
+      '<div data-type="callout" data-variant="warning"><p>Title</p><p>Body</p></div>'
+    )
+
+    const callout = firstNodeOfType(editor, 'calloutBlock')
+    expect(callout, 'expected the callout to survive paste').not.toBeNull()
+    expect(childTypeNames(callout)).toEqual(['paragraph', 'paragraph'])
+    expect(
+      flatBlocks(editor).filter(
+        (b) => b.type === 'noteBlock' && b.text.trim() !== ''
+      )
+    ).toEqual([])
+
+    const saved = docToBlocks(editor.getJSON() as DocJSON).find(
+      (b) => b.type === 'CALLOUT'
+    )
+    expect(saved?.raw_text).toBe('> [!warning] Title\n> Body')
+  })
+
+  it('parses nested callout paragraphs as paragraphs too', () => {
+    const editor = makeLeafTagEditor()
+    editor.view.pasteHTML(
+      '<div data-type="callout"><div data-type="callout"><p>Inner</p></div></div>'
+    )
+
+    const outer = firstNodeOfType(editor, 'calloutBlock')
+    expect(childTypeNames(outer)).toEqual(['calloutBlock'])
+    const inner = outer?.firstChild ?? null
+    expect(childTypeNames(inner)).toEqual(['paragraph'])
+    expect(
+      flatBlocks(editor).filter(
+        (b) => b.type === 'noteBlock' && b.text.trim() !== ''
+      )
+    ).toEqual([])
+  })
+
+  it('keeps partial HTML pasted into an existing callout paragraph-based', () => {
+    const editor = makeLeafTagEditor(calloutDoc('Title', 'Body'))
+    editor.commands.setTextSelection(textPos(editor, 'Body') + 4)
+    editor.view.pasteHTML('<p>More</p>')
+
+    const callout = firstNodeOfType(editor, 'calloutBlock')
+    expect(childTypeNames(callout)).toEqual([
+      'paragraph',
+      'paragraph',
+      'paragraph'
+    ])
+    expect(callout?.textContent).toBe('TitleBodyMore')
+    expect(
+      flatBlocks(editor).filter(
+        (b) => b.type === 'noteBlock' && b.text.trim() !== ''
+      )
+    ).toEqual([])
+  })
+})
+
+describe('HTML pasted into an existing table cell stays paragraph-based', () => {
+  it('converts the parsed noteBlock into a paragraph at the insertion context', () => {
+    const editor = makeLeafTagEditor(tableDoc('cell'))
+    editor.commands.setTextSelection(textPos(editor, 'cell') + 2)
+    editor.view.pasteHTML('<p>X</p>')
+
+    const cell = firstNodeOfType(editor, 'tableCell')
+    expect(childTypeNames(cell)).toEqual([
+      'paragraph',
+      'paragraph',
+      'paragraph'
+    ])
+    expect(cell?.textContent).toBe('ceXll')
+    expect(firstNodeOfType(editor, 'noteBlock')).toBeNull()
   })
 })
