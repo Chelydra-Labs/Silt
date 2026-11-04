@@ -14,6 +14,7 @@ import {
   SiltBlockExtensions,
   SiltInlineMarkExtensions,
   SiltColorMarkExtensions,
+  SiltTableExtensions,
   SiltHardBreak
 } from './index'
 import {
@@ -519,5 +520,288 @@ describe('underline mark (#1030)', () => {
       '<span style="text-decoration: underline">from style</span>'
     )
     expect(underlinedText(editor)).toEqual(['from style'])
+  })
+})
+
+// ---- External leaf-tag parse rules (#1031) ---------------------------------
+// External rich HTML names blocks by element (`<p>`, `<h1>`-`<h6>`, `<pre>`),
+// not by Silt's serialized `div[data-type=…]` shape. These rules run through
+// the real paste pipeline (`view.pasteHTML`) against the production-shaped
+// schema: paragraph stays enabled because table cells require it.
+function makeLeafTagEditor(): Editor {
+  return track(
+    new Editor({
+      extensions: [
+        StarterKit.configure({
+          // paragraph deliberately enabled — the `<p>` rule must beat it on
+          // priority, and td/th must still get paragraph nodes.
+          heading: false,
+          bulletList: false,
+          orderedList: false,
+          listItem: false,
+          blockquote: false,
+          codeBlock: false,
+          horizontalRule: false,
+          trailingNode: false,
+          hardBreak: false
+        }),
+        SiltHardBreak,
+        ...SiltBlockExtensions,
+        CalloutBlock,
+        CodeBlock,
+        ...SiltTableExtensions,
+        ...SiltInlineMarkExtensions,
+        ...SiltColorMarkExtensions
+      ],
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'noteBlock',
+            attrs: { id: 'leaf-tag-test', depth: 0, bullet: '' }
+          }
+        ]
+      }
+    })
+  )
+}
+
+type FlatBlock = {
+  type: string
+  attrs: Record<string, unknown>
+  text: string
+  parent: string | null
+}
+
+function flatBlocks(editor: Editor): FlatBlock[] {
+  const out: FlatBlock[] = []
+  editor.state.doc.descendants((node, _pos, parent) => {
+    if (!node.isBlock) return
+    out.push({
+      type: node.type.name,
+      attrs: { ...node.attrs },
+      text: node.textContent,
+      parent: parent?.type.name ?? null
+    })
+  })
+  return out
+}
+
+function findBlockByText(
+  editor: Editor,
+  type: string,
+  text: string
+): FlatBlock | undefined {
+  return flatBlocks(editor).find((b) => b.type === type && b.text === text)
+}
+
+function firstNodeOfType(editor: Editor, type: string): PmNode | null {
+  let found: PmNode | null = null
+  editor.state.doc.descendants((node) => {
+    if (!found && node.type.name === type) found = node
+  })
+  return found
+}
+
+// The editor starts from a seed noteBlock, so text assertions must select the
+// pasted block by its content rather than by being the first of its type.
+function nodeWithText(
+  editor: Editor,
+  type: string,
+  text: string
+): PmNode | null {
+  let found: PmNode | null = null
+  editor.state.doc.descendants((node) => {
+    if (!found && node.type.name === type && node.textContent === text) {
+      found = node
+    }
+  })
+  return found
+}
+
+function inlineMarkNames(block: PmNode | null): string[][] {
+  const marks: string[][] = []
+  block?.forEach((node) => {
+    if (node.isText) marks.push(node.marks.map((m) => m.type.name))
+  })
+  return marks
+}
+
+describe('external leaf-tag parse rules (#1031)', () => {
+  it('parses <h1>…<h6> as headerBlock at the matching depth', () => {
+    for (const level of [1, 2, 3, 4, 5, 6] as const) {
+      const editor = makeLeafTagEditor()
+      editor.view.pasteHTML(`<h${level}>Heading ${level}</h${level}>`)
+      const header = findBlockByText(editor, 'headerBlock', `Heading ${level}`)
+      expect(header, `expected h${level} to become a headerBlock`).toBeDefined()
+      expect(header!.attrs.depth).toBe(level)
+    }
+  })
+
+  it('keeps the serialized div[data-type=header] depth intact', () => {
+    const editor = makeLeafTagEditor()
+    editor.view.pasteHTML(
+      '<div data-type="header" data-depth="4">Silt heading</div>'
+    )
+    const header = findBlockByText(editor, 'headerBlock', 'Silt heading')
+    expect(header).toBeDefined()
+    expect(header!.attrs.depth).toBe(4)
+  })
+
+  it('parses a top-level <p> as a noteBlock with default attrs', () => {
+    const editor = makeLeafTagEditor()
+    editor.view.pasteHTML('<p>plain paragraph</p>')
+    const note = findBlockByText(editor, 'noteBlock', 'plain paragraph')
+    expect(note).toBeDefined()
+    expect(note!.attrs).toMatchObject({
+      depth: 0,
+      bullet: '',
+      quote: '',
+      align: 'left',
+      file_date: ''
+    })
+    // The paragraph rule must not have produced a textual paragraph sibling.
+    expect(
+      flatBlocks(editor).filter(
+        (b) => b.type === 'paragraph' && b.text.trim() !== ''
+      )
+    ).toEqual([])
+  })
+
+  it('keeps <p> inside table cells as paragraph nodes', () => {
+    const editor = makeLeafTagEditor()
+    editor.view.pasteHTML(
+      '<table><tbody><tr><td><p>cell text</p></td>' +
+        '<th><p>head text</p></th></tr></tbody></table>'
+    )
+    expect(firstNodeOfType(editor, 'tableCell')?.firstChild?.type.name).toBe(
+      'paragraph'
+    )
+    expect(firstNodeOfType(editor, 'tableHeader')?.firstChild?.type.name).toBe(
+      'paragraph'
+    )
+    // Cell text did not leak out as a top-level note.
+    expect(findBlockByText(editor, 'noteBlock', 'cell text')).toBeUndefined()
+  })
+
+  it('keeps the serialized div[data-type=note] shape intact', () => {
+    const editor = makeLeafTagEditor()
+    editor.view.pasteHTML(
+      '<div data-type="note" data-depth="2" data-bullet="- ">Silt note</div>'
+    )
+    const note = findBlockByText(editor, 'noteBlock', 'Silt note')
+    expect(note).toBeDefined()
+    expect(note!.attrs).toMatchObject({ depth: 2, bullet: '- ' })
+  })
+
+  it('parses <pre><code class="language-ts"> as a codeBlock with language', () => {
+    const editor = makeLeafTagEditor()
+    editor.view.pasteHTML(
+      '<pre><code class="language-ts">const x = 1</code></pre>'
+    )
+    const code = findBlockByText(editor, 'codeBlock', 'const x = 1')
+    expect(code, 'expected <pre> to become a codeBlock').toBeDefined()
+    expect(code!.attrs.language).toBe('ts')
+  })
+
+  it('extracts the lang- class variant too', () => {
+    const editor = makeLeafTagEditor()
+    editor.view.pasteHTML(
+      '<pre><code class="lang-rust">fn main() {}</code></pre>'
+    )
+    const code = findBlockByText(editor, 'codeBlock', 'fn main() {}')
+    expect(code).toBeDefined()
+    expect(code!.attrs.language).toBe('rust')
+  })
+
+  it('parses a bare <pre> as a codeBlock with no language', () => {
+    const editor = makeLeafTagEditor()
+    editor.view.pasteHTML('<pre>plain pre</pre>')
+    const code = findBlockByText(editor, 'codeBlock', 'plain pre')
+    expect(code).toBeDefined()
+    expect(code!.attrs.language).toBe('')
+  })
+
+  it('keeps the serialized div[data-type=code] language intact', () => {
+    const editor = makeLeafTagEditor()
+    editor.view.pasteHTML(
+      '<div data-type="code" data-language="go">fmt.Println()</div>'
+    )
+    const code = findBlockByText(editor, 'codeBlock', 'fmt.Println()')
+    expect(code).toBeDefined()
+    expect(code!.attrs.language).toBe('go')
+  })
+
+  it('keeps inline marks inside a pasted <p>', () => {
+    const editor = makeLeafTagEditor()
+    editor.view.pasteHTML(
+      '<p>plain <strong>bold</strong> <em>italic</em> <u>under</u></p>'
+    )
+    const note = nodeWithText(editor, 'noteBlock', 'plain bold italic under')
+    expect(note, 'expected the <p> to become a noteBlock').not.toBeNull()
+    const marks = inlineMarkNames(note)
+    expect(marks).toContainEqual(['bold'])
+    expect(marks).toContainEqual(['italic'])
+    expect(marks).toContainEqual(['underline'])
+  })
+
+  it('parses a span carrying both color and background-color as both marks', () => {
+    // Tag rules are first-match-wins, so the old `span[style]` rules could
+    // only ever produce one of the two marks. Style rules match per property.
+    for (const style of [
+      'color: #dc2626; background-color: #facc15',
+      'background-color: #facc15; color: #dc2626'
+    ]) {
+      const editor = makeLeafTagEditor()
+      editor.view.pasteHTML(`<p><span style="${style}">both</span></p>`)
+      const note = nodeWithText(editor, 'noteBlock', 'both')
+      const text = note?.child(0)
+      expect(text?.text).toBe('both')
+      const markNames = (text?.marks ?? []).map((m) => m.type.name)
+      expect(markNames, `style="${style}"`).toContain('textColor')
+      expect(markNames, `style="${style}"`).toContain('highlight')
+      const color = text?.marks.find((m) => m.type.name === 'textColor')
+      const background = text?.marks.find((m) => m.type.name === 'highlight')
+      expect(color?.attrs.color).toBeTruthy()
+      expect(background?.attrs.color).toBeTruthy()
+    }
+  })
+
+  it('does not lose the color mark when only color is present', () => {
+    const editor = makeLeafTagEditor()
+    editor.view.pasteHTML('<p><span style="color: #dc2626">red</span></p>')
+    const text = nodeWithText(editor, 'noteBlock', 'red')?.child(0)
+    expect(text?.marks.map((m) => m.type.name)).toEqual(['textColor'])
+  })
+
+  it('does not lose the highlight mark when only background-color is present', () => {
+    const editor = makeLeafTagEditor()
+    editor.view.pasteHTML(
+      '<p><span style="background-color: #facc15">marked</span></p>'
+    )
+    const text = nodeWithText(editor, 'noteBlock', 'marked')?.child(0)
+    expect(text?.marks.map((m) => m.type.name)).toEqual(['highlight'])
+  })
+
+  it('gives each generic leaf tag to a single Silt block type', () => {
+    // Duplicate generic tags would silently re-parse pasted blocks as the
+    // wrong node type (the failure mode the inline-chip tests above guard).
+    const schema = makeLeafTagEditor().schema
+    const siltNames = new Set(
+      [...SiltBlockExtensions, CalloutBlock, CodeBlock].map((ext) => ext.name)
+    )
+    const owners = (tag: string) =>
+      Object.entries(schema.nodes)
+        .filter(
+          ([name, type]) =>
+            siltNames.has(name) &&
+            type.spec.parseDOM?.some(
+              (rule) => 'tag' in rule && rule.tag === tag
+            )
+        )
+        .map(([name]) => name)
+    expect(owners('p')).toEqual(['noteBlock'])
+    expect(owners('pre')).toEqual(['codeBlock'])
+    expect(owners('h3')).toEqual(['headerBlock'])
   })
 })
