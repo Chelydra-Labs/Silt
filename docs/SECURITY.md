@@ -168,3 +168,20 @@ Every push to `main` and every PR runs a `security` CI job:
 
 Dependabot opens weekly PRs for GitHub Actions versions and npm dependency
 updates so new advisories surface before they hit the gate.
+
+### 5.1 npm override: `minimatch` 11
+
+`frontend/package.json` pins `minimatch` to `11.0.4` via `overrides`. The
+advisory (GHSA-g3hv-75wg-m249, globparts amplification DoS) has no fixed 10.x
+release; 11 is the only patched line. The consumers that declare `^10`
+(`eslint`, `@eslint/config-array`, `@typescript-eslint/typescript-estree`) use
+only APIs retained in 11 — the `lint` / `lint:typed` gates are the local proof.
+Drop the override once those packages declare 11 themselves.
+
+### 5.2 Accepted risk: `deepmerge` prototype poisoning
+
+GHSA-gcqx-w48m-w2h4 affects `deepmerge` ≥ 4.2.0; no patched release exists
+(4.3.1 is latest) and the upstream fix is a dependency replacement, not a
+version bump. Exposure is limited to trusted local `svelte.config.js` objects
+merged at build/dev time, so the alert is dismissed as tolerable risk. Revisit
+when `sveltejs/vite-plugin-svelte` #1415 (drop deepmerge) lands.
