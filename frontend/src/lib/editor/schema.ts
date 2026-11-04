@@ -70,11 +70,12 @@ export const Highlight = Mark.create({
     return [
       { tag: 'mark' },
       {
-        tag: 'span[style]',
-        getAttrs: (el) => {
-          const bg = el.style.backgroundColor
-          return bg ? { color: bg.trim() } : false
-        }
+        // A `style` rule rather than `span[style]`: ProseMirror's tag rules are
+        // first-match-wins per element, so an external run carrying both a
+        // text color and a background color would lose one of the two marks.
+        // Style rules are matched per property, so both coexist.
+        style: 'background-color',
+        getAttrs: (value) => (value ? { color: String(value).trim() } : false)
       }
     ]
   },
@@ -130,11 +131,11 @@ export const TextColor = Mark.create({
   parseHTML() {
     return [
       {
-        tag: 'span[style]',
-        getAttrs: (el) => {
-          const color = el.style.color
-          return color ? { color: color.trim() } : false
-        }
+        // `style` (not `span[style]`) so a run with both color and
+        // background-color keeps this mark alongside Highlight — tag rules
+        // match only the first rule, style rules match their own property.
+        style: 'color',
+        getAttrs: (value) => (value ? { color: String(value).trim() } : false)
       }
     ]
   },
@@ -330,7 +331,23 @@ export const NoteBlock = Node.create({
   },
 
   parseHTML() {
-    return [{ tag: 'div[data-type="note"]' }]
+    return [
+      { tag: 'div[data-type="note"]' },
+      {
+        // External/plain paragraphs become notes so pasted prose keeps its
+        // block boundary. priority 60 beats StarterKit's paragraph rule
+        // ({ tag: 'p' }, default priority 50), which is registered first and
+        // would otherwise win.
+        //
+        // Table cells are the exception: tableCell/tableHeader content is
+        // 'block+' and TipTap's table commands hard-depend on real
+        // `paragraph` nodes, so let the paragraph rule keep `<p>` inside
+        // td/th.
+        tag: 'p',
+        priority: 60,
+        getAttrs: (el) => (el.closest('td,th') ? false : null)
+      }
+    ]
   },
 
   renderHTML({ HTMLAttributes }) {
@@ -517,7 +534,18 @@ export const HeaderBlock = Node.create({
       },
       depth: {
         default: 1,
-        parseHTML: (el) => Number(el.getAttribute('data-depth') || 1),
+        // External pastes carry the level in the tag (`<h3>`), not in
+        // data-depth. TipTap injects attribute parsers into every rule and
+        // they override rule-level attrs, so both shapes are resolved here.
+        parseHTML: (el) => {
+          const explicit = el.getAttribute('data-depth')
+          if (explicit !== null && explicit !== '') {
+            const parsed = Number(explicit)
+            if (Number.isFinite(parsed)) return parsed
+          }
+          const level = /^h([1-6])$/.exec(el.tagName.toLowerCase())
+          return level ? Number(level[1]) : 1
+        },
         renderHTML: (attrs) => ({ 'data-depth': String(attrs.depth) })
       },
       // Block-level text alignment (#173).
@@ -539,7 +567,18 @@ export const HeaderBlock = Node.create({
   },
 
   parseHTML() {
-    return [{ tag: 'div[data-type="header"]' }]
+    return [
+      { tag: 'div[data-type="header"]' },
+      // External headings land as headerBlocks at the matching depth. StarterKit's
+      // heading extension is disabled on every Silt surface, so there is no
+      // competing rule here.
+      { tag: 'h1' },
+      { tag: 'h2' },
+      { tag: 'h3' },
+      { tag: 'h4' },
+      { tag: 'h5' },
+      { tag: 'h6' }
+    ]
   },
 
   renderHTML({ HTMLAttributes }) {
@@ -712,7 +751,15 @@ export const CodeBlock = Node.create({
       },
       language: {
         default: '',
-        parseHTML: (el) => el.getAttribute('data-language') || '',
+        // Silt's own shape carries data-language; external `<pre><code>` puts
+        // the fence info in the nested code class (`language-ts`, `lang-ts`).
+        parseHTML: (el) => {
+          const explicit = el.getAttribute('data-language')
+          if (explicit) return explicit
+          const cls = el.querySelector('code')?.getAttribute('class') ?? ''
+          const match = /(?:^|\s)(?:language-|lang-)([\w+#.-]+)/.exec(cls)
+          return match ? match[1] : ''
+        },
         renderHTML: (attrs) =>
           attrs.language ? { 'data-language': attrs.language } : {}
       },
@@ -726,7 +773,13 @@ export const CodeBlock = Node.create({
   },
 
   parseHTML() {
-    return [{ tag: 'div[data-type="code"]' }, { tag: 'pre[data-type="code"]' }]
+    return [
+      { tag: 'div[data-type="code"]' },
+      { tag: 'pre[data-type="code"]' },
+      // Last: external `<pre>` blocks. The Silt shapes above must win when
+      // both match, so this generic rule stays at the end.
+      { tag: 'pre' }
+    ]
   },
 
   renderHTML({ HTMLAttributes }) {
