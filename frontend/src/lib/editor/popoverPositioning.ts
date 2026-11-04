@@ -5,6 +5,10 @@
  * previous inline copies had subtly hard-coded widths/heights that drifted
  * from the actual popover size.
  *
+ * Callers anchored to a pane can pass `horizontal` to pin the popover inside
+ * that column in viewport coordinates; the viewport stays the outer bound so a
+ * pane wider than the window still cannot push the popover off-screen.
+ *
  * Pure: reads viewport dimensions from the args so it is unit-testable.
  */
 export interface Viewport {
@@ -24,6 +28,12 @@ export interface BoundedRect {
 }
 
 export const POPOVER_MARGIN = 8
+
+/** Viewport-space horizontal band a popover should stay inside. */
+export interface PopoverHorizontalBounds {
+  left: number
+  right: number
+}
 
 /**
  * Nearest scrollable ancestor of `el`, or `document` when none exists.
@@ -53,10 +63,16 @@ export function findScrollableAncestor(
  * Returns the clamped `{ left, top }` so the popover is fully on-screen.
  * If the popover is larger than the viewport, both axes fall back to the
  * margin so it stays anchored at the top-left rather than going negative.
+ *
+ * When `horizontal` is given the left edge is additionally held inside that
+ * band. A band narrower than the popover pins the left edge to the band's
+ * start: overflowing the far side is the only alternative, and doing so would
+ * put the popover back over whatever the band exists to avoid.
  */
 export function clampToViewport(
   rect: BoundedRect,
-  viewport: Viewport
+  viewport: Viewport,
+  horizontal?: PopoverHorizontalBounds
 ): { left: number; top: number } {
   let { x: left, y: top } = rect
   const { width, height } = rect
@@ -68,6 +84,13 @@ export function clampToViewport(
   }
   left = Math.max(POPOVER_MARGIN, left)
   top = Math.max(POPOVER_MARGIN, top)
+  if (horizontal) {
+    // The viewport margin floor wins over a band that starts off-screen.
+    const minLeft = Math.max(POPOVER_MARGIN, horizontal.left + POPOVER_MARGIN)
+    const maxLeft = horizontal.right - width - POPOVER_MARGIN
+    left =
+      maxLeft < minLeft ? minLeft : Math.min(maxLeft, Math.max(minLeft, left))
+  }
   return { left, top }
 }
 
@@ -94,7 +117,7 @@ export function flipOrClamp(
   anchor: AnchorRect,
   popover: { width: number; height: number },
   viewport: Viewport,
-  opts?: { placement?: FlipPlacement }
+  opts?: { placement?: FlipPlacement; horizontal?: PopoverHorizontalBounds }
 ): { left: number; top: number } {
   const placement = opts?.placement ?? 'below'
   const opensAbove = anchor.top - popover.height - POPOVER_MARGIN
@@ -113,6 +136,7 @@ export function flipOrClamp(
   }
   return clampToViewport(
     { x: anchor.left, y: top, width: popover.width, height: popover.height },
-    viewport
+    viewport,
+    opts?.horizontal
   )
 }

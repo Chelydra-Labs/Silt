@@ -69,6 +69,59 @@ describe('clampToViewport', () => {
     expect(result.left).toBe(1000 - 200 - POPOVER_MARGIN)
     expect(result.top).toBe(800 - 100 - POPOVER_MARGIN)
   })
+
+  it('clamps left to the pane band when the window would allow it further left', () => {
+    const result = clampToViewport(
+      { x: 0, y: 100, width: 200, height: 100 },
+      { width: 1000, height: 800 },
+      { left: 300, right: 900 }
+    )
+    // Window math floors at 8; the band pushes the edge to the pane start.
+    expect(result.left).toBe(300 + POPOVER_MARGIN)
+  })
+
+  it('clamps right to the pane band when the window edge is further right', () => {
+    const result = clampToViewport(
+      { x: 800, y: 100, width: 200, height: 100 },
+      { width: 1000, height: 800 },
+      { left: 300, right: 900 }
+    )
+    expect(result.left).toBe(900 - 200 - POPOVER_MARGIN)
+  })
+
+  it('pins to the pane start when the band is narrower than the popover', () => {
+    const result = clampToViewport(
+      { x: 120, y: 100, width: 200, height: 100 },
+      { width: 1000, height: 800 },
+      { left: 100, right: 200 }
+    )
+    expect(result.left).toBe(100 + POPOVER_MARGIN)
+  })
+
+  it('never goes negative for a band that starts off-screen', () => {
+    const result = clampToViewport(
+      { x: 0, y: 100, width: 200, height: 100 },
+      { width: 1000, height: 800 },
+      { left: -50, right: 150 }
+    )
+    expect(result.left).toBe(POPOVER_MARGIN)
+  })
+
+  it('keeps the pre-band output when no band is passed', () => {
+    // Backward-compat lock: same inputs as the min-margin case above.
+    expect(
+      clampToViewport(
+        { x: 0, y: 0, width: 100, height: 50 },
+        { width: 1000, height: 800 }
+      )
+    ).toEqual({ left: POPOVER_MARGIN, top: POPOVER_MARGIN })
+    expect(
+      clampToViewport(
+        { x: 900, y: 100, width: 200, height: 100 },
+        { width: 1000, height: 800 }
+      )
+    ).toEqual({ left: 1000 - 200 - POPOVER_MARGIN, top: 100 })
+  })
 })
 
 describe('findScrollableAncestor', () => {
@@ -168,5 +221,15 @@ describe('flipOrClamp', () => {
       { width: 1000, height: 800 }
     )
     expect(result.left).toBe(1000 - 256 - POPOVER_MARGIN)
+  })
+
+  it('threads the pane band through to the horizontal clamp', () => {
+    const result = flipOrClamp(
+      { top: 100, bottom: 120, left: 120 },
+      { width: 256, height: 300 },
+      { width: 1000, height: 800 },
+      { horizontal: { left: 400, right: 900 } }
+    )
+    expect(result.left).toBe(400 + POPOVER_MARGIN)
   })
 })

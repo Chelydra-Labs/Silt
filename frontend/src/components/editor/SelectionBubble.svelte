@@ -3,7 +3,8 @@
   import { Browser } from '@wailsio/runtime'
   import {
     clampToViewport,
-    flipOrClamp
+    flipOrClamp,
+    type PopoverHorizontalBounds
   } from '../../lib/editor/popoverPositioning'
   import {
     toggleUnorderedList,
@@ -24,6 +25,8 @@
     selectionCoords: { left: number; top: number; bottom: number } | null
     isDark?: boolean
     colorEnabled?: boolean
+    /** Editor pane element; its horizontal extent bounds the bubble. */
+    boundsEl?: HTMLElement | null
   }
 
   let {
@@ -32,7 +35,8 @@
     selectionEmpty,
     selectionCoords,
     isDark = true,
-    colorEnabled = true
+    colorEnabled = true,
+    boundsEl = null
   }: Props = $props()
 
   type MarkBtn = {
@@ -376,6 +380,14 @@
     const el = menuEl
     const width = el?.offsetWidth || 220
     const height = el?.offsetHeight || 80
+    // Bound the bubble to the editor column: clamping to the window lets a
+    // left-edge selection slide under the sidebar. A zero-width rect (jsdom)
+    // gives no usable band, so fall back to the viewport.
+    let horizontal: PopoverHorizontalBounds | undefined
+    const bounds = boundsEl?.getBoundingClientRect()
+    if (bounds && bounds.width > 0) {
+      horizontal = { left: bounds.left, right: bounds.right }
+    }
     pos = flipOrClamp(
       {
         top: selectionCoords.top,
@@ -384,7 +396,7 @@
       },
       { width, height },
       { width: window.innerWidth, height: window.innerHeight },
-      { placement: 'above' }
+      { placement: 'above', horizontal }
     )
   }
 

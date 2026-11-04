@@ -190,9 +190,78 @@ describe('SelectionBubble', () => {
     expect(mocks.flipOrClamp).toHaveBeenCalled()
     const call = mocks.flipOrClamp.mock.calls.at(-1)
     expect(call?.[3]).toEqual({ placement: 'above' })
+    // No pane bound supplied: the band must stay absent so the viewport is the
+    // only constraint.
+    expect(
+      (call?.[3] as { horizontal?: unknown } | undefined)?.horizontal
+    ).toBeUndefined()
     const bubble = container.querySelector('.selection-bubble') as HTMLElement
     expect(bubble.style.left).toBe('80px')
     expect(bubble.style.top).toBe('60px')
+  })
+
+  it('bounds the bubble to the editor pane so it cannot slide under the sidebar', async () => {
+    const pane = document.createElement('div')
+    pane.getBoundingClientRect = () =>
+      ({
+        x: 300,
+        y: 0,
+        width: 600,
+        height: 600,
+        left: 300,
+        right: 900,
+        top: 0,
+        bottom: 600,
+        toJSON: () => ({})
+      }) as DOMRect
+    // Stand-in for the real clamp: keep the result anchored to the band start
+    // so the assertion proves the band was derived and honoured end to end.
+    mocks.flipOrClamp.mockImplementation(
+      (_anchor, _popover, _viewport, opts) => {
+        const band = (opts as { horizontal?: { left: number } }).horizontal
+        return band
+          ? { left: Math.max(band.left + 8, 80), top: 60 }
+          : { left: 80, top: 60 }
+      }
+    )
+    const { container } = render(SelectionBubble, {
+      props: {
+        editor: makeEditor() as never,
+        activeMarks: new Set<string>(),
+        selectionEmpty: false,
+        selectionCoords: coords,
+        boundsEl: pane
+      }
+    })
+    await tick()
+    const call = mocks.flipOrClamp.mock.calls.at(-1)
+    expect(
+      (call?.[3] as { horizontal?: { left: number; right: number } }).horizontal
+    ).toEqual({ left: 300, right: 900 })
+    const bubble = container.querySelector('.selection-bubble') as HTMLElement
+    expect(parseFloat(bubble.style.left)).toBeGreaterThanOrEqual(300 + 8)
+  })
+
+  it('ignores a zero-width pane rect and falls back to the viewport', async () => {
+    // jsdom's default rect is all zeros; treating it as a band would pin the
+    // bubble to the window's left margin.
+    const pane = document.createElement('div')
+    const { container } = render(SelectionBubble, {
+      props: {
+        editor: makeEditor() as never,
+        activeMarks: new Set<string>(),
+        selectionEmpty: false,
+        selectionCoords: coords,
+        boundsEl: pane
+      }
+    })
+    await tick()
+    const call = mocks.flipOrClamp.mock.calls.at(-1)
+    expect(
+      (call?.[3] as { horizontal?: unknown } | undefined)?.horizontal
+    ).toBeUndefined()
+    const bubble = container.querySelector('.selection-bubble') as HTMLElement
+    expect(bubble.style.left).toBe('80px')
   })
 
   it('hides on scroll then re-shows after settle while selection remains', async () => {
