@@ -45,7 +45,15 @@ export type MermaidTheme = 'dark' | 'default'
 async function ensureMermaid(theme: MermaidTheme): Promise<MermaidApi> {
   const api = await loadMermaid()
   if (initTheme !== theme) {
-    api.initialize({ startOnLoad: false, theme, securityLevel: 'strict' })
+    // v12 defaults to the `neo` look and ELK layout; pin v11's classic/dagre
+    // so existing diagrams keep their established appearance and geometry.
+    api.initialize({
+      startOnLoad: false,
+      theme,
+      securityLevel: 'strict',
+      look: 'classic',
+      layout: 'dagre'
+    })
     initTheme = theme
     // Cached SVGs are theme-coloured; a theme switch invalidates them.
     cache.clear()
