@@ -200,6 +200,9 @@
     top: number
     bottom: number
   } | null = null
+  // Editor column, so the selection bubble clamps to the pane rather than the
+  // window (which lets it slide under the sidebar near the left edge).
+  let editorHostEl = $state<HTMLElement | null>(null)
 
   function readSelectionCoords(editor: {
     isDestroyed: boolean
@@ -1069,6 +1072,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <!-- Contextmenu listener is on the outer host wrapper to handle editor-wide custom right-click menus -->
 <div
+  bind:this={editorHostEl}
   class="tiptap-editor-host"
   class:focused={isFocused}
   class:focus-mode={focusModeEnabled}
@@ -1087,6 +1091,7 @@
       {selectionCoords}
       {isDark}
       colorEnabled={settings.config?.ui?.formatting?.color_enabled !== false}
+      boundsEl={editorHostEl}
     />
     {#if spellcheckMenu.spellMenu && editorInstance}
       <SpellcheckMenu
