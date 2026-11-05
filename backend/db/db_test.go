@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1697,6 +1698,51 @@ func TestOnDiskWAL_DeleteIndexForcesCleanRebuild(t *testing.T) {
 	}
 	if len(known) != 0 {
 		t.Errorf("expected empty files table after rebuild, got %d rows", len(known))
+	}
+}
+
+func TestPreparedStatementRepeatedJoinOrderByParameters(t *testing.T) {
+	dm, _ := newOnDiskDB(t)
+	db := dm.SQLDB()
+	if _, err := db.Exec(`CREATE TEMP TABLE driver_stmt_values (id INTEGER PRIMARY KEY, group_id INTEGER, value TEXT);
+		INSERT INTO driver_stmt_values VALUES (1, 0, 'zero-a'), (2, 0, 'zero-b'), (3, 1, 'one-a'), (4, 1, 'one-b');`); err != nil {
+		t.Fatalf("seed prepared-statement rows: %v", err)
+	}
+	stmt, err := db.Prepare(`SELECT v.value FROM driver_stmt_values AS v
+		JOIN driver_stmt_values AS g ON g.group_id = ? AND g.id = v.id
+		WHERE v.group_id = ? ORDER BY v.value`)
+	if err != nil {
+		t.Fatalf("prepare join/order query: %v", err)
+	}
+	defer stmt.Close()
+
+	for _, tc := range []struct {
+		group int
+		want  []string
+	}{{0, []string{"zero-a", "zero-b"}}, {1, []string{"one-a", "one-b"}}, {0, []string{"zero-a", "zero-b"}}, {1, []string{"one-a", "one-b"}}} {
+		rows, err := stmt.Query(tc.group, tc.group)
+		if err != nil {
+			t.Fatalf("execute prepared query for group %d: %v", tc.group, err)
+		}
+		var got []string
+		for rows.Next() {
+			var value string
+			if err := rows.Scan(&value); err != nil {
+				rows.Close()
+				t.Fatalf("scan group %d: %v", tc.group, err)
+			}
+			got = append(got, value)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			t.Fatalf("iterate group %d: %v", tc.group, err)
+		}
+		if err := rows.Close(); err != nil {
+			t.Fatalf("close group %d rows: %v", tc.group, err)
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("group %d result = %v, want %v", tc.group, got, tc.want)
+		}
 	}
 }
 
