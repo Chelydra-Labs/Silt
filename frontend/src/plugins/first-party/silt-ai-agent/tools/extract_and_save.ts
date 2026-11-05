@@ -524,7 +524,7 @@ export async function commitExtractAndSave(
   }
 
   const path = pagePathOf(target)
-  const head = `Extracted ${mode} from ${sourceIds.length || '?'} source block(s) → ${path} (${blocks.length} block(s)).`
+  const head = `Extracted ${mode} from ${sourceIds.length || '?'} source block(s) → ${path} (${writtenCount} block(s)).`
   auditWrite(ctx, 'extract_and_save', 'ok')
   return {
     content: `${head}\nWrote ${writtenCount} block(s) via atomic page batch.`

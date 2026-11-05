@@ -254,6 +254,9 @@ describe('extract_and_save stage (handleExtractAndSave)', () => {
       /<!-- src: src-1 mode:action_items -->/
     )
     expect(res.stagedPreview?.affectedCount).toBe(3)
+    // The summary line must count the same batch (bodies + citation NOTE)
+    // as affectedCount — the confirm card reads as one number.
+    expect(res.stagedPreview?.summary).toMatch(/\(3 blocks\)/)
   })
 
   it('action_items mode: strips task markers the LLM echoed into titles', async () => {

@@ -382,9 +382,11 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 						// tokens the model echoed into the title ([due::],
 						// [priority::], [owner::]…) become honored metadata
 						// instead of inert description text.
-						// Collapse internal newlines first: TaskCheckboxRegex is
-						// line-anchored, so a multi-line title would mis-parse
-						// as a NOTE and the task never reaches the hub (#1039).
+						// Defense-in-depth: op intake already collapses newlines
+						// (the `\n`→space at op intake is the live guard), and
+						// TaskCheckboxRegex tolerates a lone `\r` — but this
+						// seam must never mis-type a task as a NOTE if a
+						// future caller skips intake normalization (#1039).
 						flat := strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(r.text)
 						nb, _, _ = parser.ParseLine("- [ ] "+flat, 0, a.spacesPerTab)
 						// The parse minted its own id/date for an id-less line;
