@@ -8,7 +8,8 @@
 //   - 'summary'       → { summary: string }
 //   - 'flashcards'    → { items: [{ front, back }] }
 //   - 'qa_pairs'      → { items: [{ question, answer }] }
-//   - 'action_items'  → { items: [{ title, due_date? }] }
+//   - 'action_items'  → { items: [{ title, due_date? }] } — written as TASK
+//     blocks (task hub + due schedule, #1008); the other modes write NOTEs.
 //
 // Failure handling: malformed JSON / model errors stage nothing and write
 // nothing. Sources are NEVER mutated.
@@ -30,8 +31,9 @@ export const extractAndSaveToolDef = {
   description:
     'Read source blocks, run a structured extraction via the chat model ' +
     '(summary / flashcards / qa_pairs / action_items), and save the result ' +
-    'as a new note. Each extracted item becomes a block carrying a citation ' +
-    'comment back to its source block_ids. Source blocks are never modified.',
+    'as a new note. Extracted items carry a citation back to their source ' +
+    'block_ids (inline for NOTE modes, a trailing attribution note for ' +
+    'action items). Source blocks are never modified.',
   parameters: {
     type: 'object',
     required: ['source_block_ids', 'mode', 'target'],
@@ -195,8 +197,15 @@ export interface FrozenExtractPayload {
   mode: ExtractionMode
   target: TargetSpec
   source_block_ids: string[]
-  /** Fully rendered NOTE bodies including citation trailer. */
+  /** Fully rendered block bodies. NOTE modes embed the citation trailer in
+   *  each body; action_items bodies are marker-free TASK text (the renderer
+   *  owns the checkbox) with no citation — that rides in `citation` so the
+   *  task's clean_content (hub titles, aria-labels, exports) never carries
+   *  an HTML comment (#1039 D1). */
   blocks: string[]
+  /** Set in action_items mode only: commit writes this as its own trailing
+   *  NOTE op so attribution survives as a block without polluting TASK bodies. */
+  citation?: string
 }
 
 function pagePathOf(target: TargetSpec): string {
@@ -346,14 +355,25 @@ export async function handleExtractAndSave(
   }
 
   const citation = `<!-- src: ${foundIds.join(',')} mode:${mode} -->`
-  const frozenBlocks = parsed.blocks.map((body) => `${body}\n\n${citation}`)
+  // NOTE modes embed the citation trailer in each body (unchanged shape);
+  // action_items TASK bodies stay clean and the commit path emits the
+  // citation as its own trailing NOTE op (#1039 D1).
+  const frozenBlocks =
+    mode === 'action_items'
+      ? parsed.blocks
+      : parsed.blocks.map((body) => `${body}\n\n${citation}`)
+  // The confirm card lists exactly what the batch writes: bodies plus, in
+  // action_items mode, the citation attribution block.
+  const previewBodies =
+    mode === 'action_items' ? [...frozenBlocks, citation] : frozenBlocks
   const path = pagePathOf(target)
 
   const frozen: FrozenExtractPayload = {
     mode,
     target,
     source_block_ids: foundIds,
-    blocks: frozenBlocks
+    blocks: frozenBlocks,
+    citation: mode === 'action_items' ? citation : undefined
   }
 
   if (signal?.aborted) {
@@ -373,9 +393,9 @@ export async function handleExtractAndSave(
     stagedToken: token,
     stagedPreview: {
       kind: 'extract_and_save',
-      summary: `Extract ${mode} → ${path} (${frozenBlocks.length} block${frozenBlocks.length === 1 ? '' : 's'})`,
-      details: previewDetails(frozenBlocks),
-      affectedCount: frozenBlocks.length,
+      summary: `Extract ${mode} → ${path} (${previewBodies.length} block${previewBodies.length === 1 ? '' : 's'})`,
+      details: previewDetails(previewBodies),
+      affectedCount: previewBodies.length,
       severity: 'danger'
     }
   }
@@ -439,6 +459,7 @@ export async function commitExtractAndSave(
   // pre-existing target the user already had.
   const existedBefore = await targetPageExists(ctx, target)
   let mintedNewPage = false
+  let writtenCount = blocks.length
   try {
     await ctx.createPage(target.notebook, target.section, target.page)
     mintedNewPage = !existedBefore
@@ -449,14 +470,28 @@ export async function commitExtractAndSave(
       return cancelledResult()
     }
 
-    const ops = blocks.map((text) => ({
+    // Action items are TASK blocks so they surface in the task hub with
+    // their [due::] intact (#1008); every other mode stays a NOTE. The
+    // bodies were rendered marker-free at stage time — the TASK renderer
+    // owns `- [ ] ` emission, so exactly one marker lands on disk.
+    const opType = mode === 'action_items' ? 'TASK' : 'NOTE'
+    const mkOp = (type: 'TASK' | 'NOTE', text: string) => ({
       kind: 'create' as const,
-      type: 'NOTE' as const,
+      type,
       text,
       notebook: target.notebook,
       section: target.section,
       page: target.page
-    }))
+    })
+    const ops = blocks.map((text) => mkOp(opType, text))
+    // Action-item attribution rides as its own trailing NOTE (#1039 D1):
+    // TASK bodies stay free of the citation comment everywhere they surface
+    // (disk, DB clean_content, hub titles, aria-labels, exports).
+    const citation = asString(params.citation).trim()
+    if (mode === 'action_items' && citation) {
+      ops.push(mkOp('NOTE', citation))
+      writtenCount = ops.length
+    }
 
     const ok = await ctx.applyBlocks(ops)
     if (!ok) {
@@ -489,10 +524,10 @@ export async function commitExtractAndSave(
   }
 
   const path = pagePathOf(target)
-  const head = `Extracted ${mode} from ${sourceIds.length || '?'} source block(s) → ${path} (${blocks.length} block(s)).`
+  const head = `Extracted ${mode} from ${sourceIds.length || '?'} source block(s) → ${path} (${writtenCount} block(s)).`
   auditWrite(ctx, 'extract_and_save', 'ok')
   return {
-    content: `${head}\nWrote ${blocks.length} block(s) via atomic page batch.`
+    content: `${head}\nWrote ${writtenCount} block(s) via atomic page batch.`
   }
 }
 
@@ -671,7 +706,7 @@ export function parseExtraction(
   return { blocks }
 }
 
-/** Render one extracted item to a NOTE body string per the mode. */
+/** Render one extracted item to a block body string per the mode. */
 function renderItem(
   mode: ExtractionMode,
   item: unknown,
@@ -692,14 +727,58 @@ function renderItem(
     return `**Q${index + 1}: ${q}**\n${a}`
   }
   if (mode === 'action_items') {
-    const title = truncate(asString(o.title).trim(), MAX_FIELD_LENGTH)
+    const title = truncate(
+      normalizeActionTitle(asString(o.title)),
+      MAX_FIELD_LENGTH
+    )
     if (!title) return ''
-    const due = truncate(asString(o.due_date).trim(), 32)
-    const dueSuffix =
-      due && /^\d{4}-\d{2}-\d{2}$/.test(due) ? ` [due:: ${due}]` : ''
-    return `- [ ] ${title}${dueSuffix}`
+    // ISO datetimes are the most common LLM deviation from the date-only
+    // schema — slice the date part instead of dropping the schedule (#1039 V1).
+    const rawDue = truncate(asString(o.due_date).trim(), 32)
+    const due = ISO_DATE_PREFIX.test(rawDue) ? rawDue.slice(0, 10) : rawDue
+    // A shape test alone admits 2026-02-30 / 2026-13-45; require a real
+    // calendar date so junk is dropped rather than written (#1039 D4).
+    const dueSuffix = isRealCalendarDate(due) ? ` [due:: ${due}]` : ''
+    return `${title}${dueSuffix}`
   }
   return ''
+}
+
+// LLMs echo the source's task syntax despite the "no checkbox" prompt
+// (`- [ ] Set up …`, `* [x] Set up …`, bare `[ ] Set up …`). The body must be
+// marker-free because the TASK renderer owns `- [ ] ` emission (#1008) — a
+// marker in the text would land on disk as `- [ ] - [ ] …`. The bullet
+// alternative requires whitespace after the marker (GFM bullets always carry
+// it) so `--force reindex` / `**bold**` prefixes are not eaten (#1039 D3).
+const LEADING_TASK_MARKER = /^(\s*[-*+]\s*)?\[[ xX]?\]\s*|^(\s*[-*+]\s+)+/
+
+/** YYYY-MM-DD prefix — matches date-only and ISO-datetime forms alike. */
+const ISO_DATE_PREFIX = /^\d{4}-\d{2}-\d{2}/
+
+/** True only for a YYYY-MM-DD that exists on the calendar: shape-plus
+ * round-trip, so 2026-02-30 and 2026-13-45 fail instead of writing a
+ * nonexistent date the hub calendar would choke on (#1039 D4). */
+function isRealCalendarDate(d: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false
+  const [y, m, day] = d.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, day))
+  return (
+    dt.getUTCFullYear() === y &&
+    dt.getUTCMonth() === m - 1 &&
+    dt.getUTCDate() === day
+  )
+}
+
+/** Strip leading bullet/checkbox markers the model emitted (looped — a
+ *  double marker strips in one pass per layer). */
+function normalizeActionTitle(raw: string): string {
+  let out = raw.trim()
+  for (let i = 0; i < 4 && out !== ''; i++) {
+    const next = out.replace(LEADING_TASK_MARKER, '')
+    if (next === out) break
+    out = next.trim()
+  }
+  return out
 }
 
 /** Strip ```json fences and surrounding prose; return the JSON body or ''. */
