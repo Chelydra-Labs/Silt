@@ -217,3 +217,57 @@ func TestPluginApplyBlocks_TaskCreateEchoedTokens(t *testing.T) {
 		t.Errorf("created task line is not byte-stable on re-render\n disk: %q\nagain: %q", taskLine, rendered)
 	}
 }
+
+// TestPluginApplyBlocks_TaskCreateMultilineTitle pins the #1039 iter-1 fix:
+// an LLM title with an internal newline must still parse as a TASK (the
+// checkbox regex is line-anchored), so the item reaches the hub instead of
+// silently indexing as a NOTE.
+func TestPluginApplyBlocks_TaskCreateMultilineTitle(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "ExtractNB", "", "MultilineAction"
+
+	seedWriterFamilyPage(t, app, notebook, section, page, "eeee1008-2222-4222-8222-222222222222", "")
+
+	err := app.applyBlocksOps([]PluginCreateBlockOp{{
+		Kind:     "create",
+		Type:     "TASK",
+		Text:     "Migrate the DB\nand verify replicas [due:: 2026-08-01]",
+		Notebook: notebook,
+		Section:  section,
+		Page:     page,
+	}}, historyReasonPlugin)
+	if err != nil {
+		t.Fatalf("applyBlocksOps: %v", err)
+	}
+
+	path := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read page: %v", err)
+	}
+	body := string(got)
+	if strings.Contains(body, "\n") && strings.Count(body, "- [ ]") != 1 {
+		t.Fatalf("expected exactly one task marker on disk:\n%s", body)
+	}
+
+	blocks, _, _, _, err := parser.ParseFileContent(body, notebook, section, page, "2026-01-01", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	var task *parser.ParsedBlock
+	for i := range blocks {
+		if blocks[i].Type == parser.BlockTask {
+			task = &blocks[i]
+			break
+		}
+	}
+	if task == nil {
+		t.Fatalf("multi-line title mis-typed as NOTE — no TASK block in written page:\n%s", body)
+	}
+	if task.DueDate != "2026-08-01" {
+		t.Errorf("due date lost, got %q", task.DueDate)
+	}
+	if strings.Contains(task.CleanText, "\n") {
+		t.Errorf("newline must be collapsed to a space in CleanText: %q", task.CleanText)
+	}
+}

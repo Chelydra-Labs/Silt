@@ -382,7 +382,11 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 						// tokens the model echoed into the title ([due::],
 						// [priority::], [owner::]…) become honored metadata
 						// instead of inert description text.
-						nb, _, _ = parser.ParseLine("- [ ] "+r.text, 0, a.spacesPerTab)
+						// Collapse internal newlines first: TaskCheckboxRegex is
+						// line-anchored, so a multi-line title would mis-parse
+						// as a NOTE and the task never reaches the hub (#1039).
+						flat := strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(r.text)
+						nb, _, _ = parser.ParseLine("- [ ] "+flat, 0, a.spacesPerTab)
 						// The parse minted its own id/date for an id-less line;
 						// the pre-minted r.newID is what callers were promised.
 						nb.ID = r.newID

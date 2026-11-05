@@ -393,7 +393,7 @@ export async function handleExtractAndSave(
     stagedToken: token,
     stagedPreview: {
       kind: 'extract_and_save',
-      summary: `Extract ${mode} → ${path} (${frozenBlocks.length} block${frozenBlocks.length === 1 ? '' : 's'})`,
+      summary: `Extract ${mode} → ${path} (${previewBodies.length} block${previewBodies.length === 1 ? '' : 's'})`,
       details: previewDetails(previewBodies),
       affectedCount: previewBodies.length,
       severity: 'danger'
