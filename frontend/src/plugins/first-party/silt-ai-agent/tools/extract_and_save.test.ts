@@ -224,13 +224,14 @@ describe('extract_and_save stage (handleExtractAndSave)', () => {
         ]
       })
     })
-    await handleExtractAndSave(ctx, {
+    const res = await handleExtractAndSave(ctx, {
       source_block_ids: ['src-1'],
       mode: 'action_items',
       target: TARGET
     })
     const frozen = vi.mocked(stageOperation).mock.calls[0][2] as {
       blocks: string[]
+      citation?: string
     }
     // Bodies must be marker-free: the TASK renderer owns `- [ ] ` emission,
     // so a marker here would double up on disk (#1008).
@@ -241,7 +242,18 @@ describe('extract_and_save stage (handleExtractAndSave)', () => {
     expect(frozen.blocks[1]).not.toMatch(/\[due::/)
     for (const body of frozen.blocks) {
       expect(body).not.toMatch(/(^|\n)\s*[-*+]\s*\[[ xX]?\]/)
+      // #1039 D1: the citation must not ride inside a TASK body (it would
+      // land in clean_content → hub titles/aria-labels). It freezes
+      // separately and becomes its own trailing NOTE op at commit.
+      expect(body).not.toContain('<!--')
     }
+    expect(frozen.citation).toBe('<!-- src: src-1 mode:action_items -->')
+    // The confirm card lists the whole batch: bodies + the attribution
+    // block, so affectedCount matches what commit actually writes.
+    expect(res.stagedPreview?.details).toMatch(
+      /<!-- src: src-1 mode:action_items -->/
+    )
+    expect(res.stagedPreview?.affectedCount).toBe(3)
   })
 
   it('action_items mode: strips task markers the LLM echoed into titles', async () => {
@@ -282,6 +294,36 @@ describe('extract_and_save stage (handleExtractAndSave)', () => {
     }
   })
 
+  it('action_items mode: marker stripping does not eat --/** prefixes glued to words', async () => {
+    // #1039 D3: the bullet alternative used to run `[-*+]\s` (no trailing
+    // whitespace required), so real titles lost leading characters:
+    // `--force reindex the vault` → `force reindex the vault` and
+    // `**Migrate the DB**` → `Migrate the DB**`. GFM bullets always carry
+    // a trailing space; both prefixes must now survive intact.
+    const { ctx } = makeCtx({
+      sources: SOURCES,
+      completeContent: JSON.stringify({
+        items: [
+          { title: '**Migrate the DB**' },
+          { title: '--force reindex the vault' },
+          { title: '+ deploy' }
+        ]
+      })
+    })
+    await handleExtractAndSave(ctx, {
+      source_block_ids: ['src-1'],
+      mode: 'action_items',
+      target: TARGET
+    })
+    const frozen = vi.mocked(stageOperation).mock.calls[0][2] as {
+      blocks: string[]
+    }
+    expect(frozen.blocks[0]).toBe('**Migrate the DB**')
+    expect(frozen.blocks[1]).toBe('--force reindex the vault')
+    // A real bullet (+ whitespace) still strips.
+    expect(frozen.blocks[2]).toBe('deploy')
+  })
+
   it('action_items mode: drops invalid due dates instead of emitting junk tokens', async () => {
     const { ctx } = makeCtx({
       sources: SOURCES,
@@ -298,6 +340,60 @@ describe('extract_and_save stage (handleExtractAndSave)', () => {
       blocks: string[]
     }
     expect(frozen.blocks[0].split('\n')[0]).toBe('Set up replication')
+  })
+
+  it('action_items mode: rejects nonexistent calendar dates that pass the shape test', async () => {
+    // #1039 D4: 2026-02-30 / 2026-13-45 match ^\d{4}-\d{2}-\d{2}$ but do not
+    // exist — writing them would give the hub calendar Invalid Date paths.
+    const { ctx } = makeCtx({
+      sources: SOURCES,
+      completeContent: JSON.stringify({
+        items: [
+          { title: 'Fix flaky build', due_date: '2026-02-30' },
+          { title: 'Rotate keys', due_date: '2026-13-45' },
+          // Leap-year boundary: 2028-02-29 exists, 2026-02-29 does not.
+          { title: 'Leap task A', due_date: '2028-02-29' },
+          { title: 'Leap task B', due_date: '2026-02-29' }
+        ]
+      })
+    })
+    await handleExtractAndSave(ctx, {
+      source_block_ids: ['src-1'],
+      mode: 'action_items',
+      target: TARGET
+    })
+    const frozen = vi.mocked(stageOperation).mock.calls[0][2] as {
+      blocks: string[]
+    }
+    expect(frozen.blocks[0]).toBe('Fix flaky build')
+    expect(frozen.blocks[1]).toBe('Rotate keys')
+    expect(frozen.blocks[2]).toBe('Leap task A [due:: 2028-02-29]')
+    expect(frozen.blocks[3]).toBe('Leap task B')
+  })
+
+  it('action_items mode: slices the date part off ISO datetime dues', async () => {
+    // #1039 V1: ISO datetimes are the most common LLM deviation from the
+    // date-only schema — the schedule must survive as the date part, not be
+    // silently dropped.
+    const { ctx } = makeCtx({
+      sources: SOURCES,
+      completeContent: JSON.stringify({
+        items: [
+          { title: 'Ship release', due_date: '2026-08-01T14:30:00Z' },
+          { title: 'Ship hotfix', due_date: '2026-08-02T09:00' }
+        ]
+      })
+    })
+    await handleExtractAndSave(ctx, {
+      source_block_ids: ['src-1'],
+      mode: 'action_items',
+      target: TARGET
+    })
+    const frozen = vi.mocked(stageOperation).mock.calls[0][2] as {
+      blocks: string[]
+    }
+    expect(frozen.blocks[0]).toBe('Ship release [due:: 2026-08-01]')
+    expect(frozen.blocks[1]).toBe('Ship hotfix [due:: 2026-08-02]')
   })
 
   it('passes responseSchema + citation prompt to ctx.ai.complete', async () => {
@@ -632,16 +728,17 @@ describe('extract_and_save commit (commitExtractAndSave)', () => {
     expect(res.content).toContain('Work/Notes/Distilled')
   })
 
-  it('action_items mode: writes TASK ops with marker-free text + due token', async () => {
+  it('action_items mode: writes TASK ops with marker-free text + due token, citation as trailing NOTE', async () => {
     const { ctx, applyBlocks } = makeCtx({ sources: SOURCES })
     const frozenTasks = {
       mode: 'action_items',
       target: TARGET,
       source_block_ids: ['src-1'],
       blocks: [
-        'Set up Postgres replication [due:: 2026-08-01]\n\n<!-- src: src-1 mode:action_items -->',
-        'Document Redis failover\n\n<!-- src: src-1 mode:action_items -->'
-      ]
+        'Set up Postgres replication [due:: 2026-08-01]',
+        'Document Redis failover'
+      ],
+      citation: '<!-- src: src-1 mode:action_items -->'
     }
     const res = await commitExtractAndSave(ctx, frozenTasks)
     expect(res.error).toBeUndefined()
@@ -651,17 +748,23 @@ describe('extract_and_save commit (commitExtractAndSave)', () => {
       type: string
       text: string
     }>
-    expect(ops).toHaveLength(2)
-    for (const op of ops) {
+    // 2 TASK bodies + 1 attribution NOTE (#1039 D1).
+    expect(ops).toHaveLength(3)
+    for (const op of ops.slice(0, 2)) {
       expect(op.kind).toBe('create')
       // TASK type is what routes the blocks into the task hub with a live
       // due date (#1008) — a NOTE leaves the token as inert text.
       expect(op.type).toBe('TASK')
       expect(op.text).not.toMatch(/^\s*[-*+]\s*\[[ xX]?\]/)
+      // TASK bodies must stay citation-free: the comment would land in
+      // clean_content and render verbatim in hub titles/aria-labels.
+      expect(op.text).not.toContain('<!--')
     }
-    expect(ops[0].text).toMatch(
-      /^Set up Postgres replication \[due:: 2026-08-01\]/
-    )
+    expect(ops[0].text).toBe('Set up Postgres replication [due:: 2026-08-01]')
+    expect(ops[2].kind).toBe('create')
+    expect(ops[2].type).toBe('NOTE')
+    expect(ops[2].text).toBe('<!-- src: src-1 mode:action_items -->')
+    expect(res.content).toMatch(/Wrote 3 block\(s\)/)
   })
 
   it('fail-closed on malformed frozen params (failed parse after confirm)', async () => {
