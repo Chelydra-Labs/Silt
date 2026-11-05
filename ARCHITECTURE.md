@@ -1766,12 +1766,18 @@ normalizer (lib/editor/paste/ExternalPasteNormalizer.ts) that strips Word/Outloo
 artefacts and flattens their containers into Silt blocks. `Ctrl+Shift+V` inserts
 the clipboard as plain text (PlainPaste extension, lib/editor/plainPaste.ts).
 The context-menu Paste action routes through the same pipeline: it reads a
-clipboard payload (lib/editor/clipboardHtml.ts) and calls `view.pasteHTML` /
-`view.pasteText`, so a menu paste lands identical to `Ctrl+V`. On Windows the
-webview reads clipboard HTML via `navigator.clipboard.read()`; Wails denies that
-call on Linux, so the reader falls back to the Go `ReadClipboardHTML` binding
-instead. When no source yields HTML the menu pastes the text payload, which is
-also the fallback for an oversized HTML payload.
+clipboard payload (lib/editor/clipboardHtml.ts) and hands it to
+`pasteClipboardPayload` (lib/editor/paste/pastePayload.ts), which picks the
+flavour with ProseMirror's own rule — plain text when the caret is inside a code
+block, when no HTML was read, or when the HTML is unusable or oversized; HTML
+otherwise — and calls `view.pasteHTML` / `view.pasteText`. A menu paste
+therefore matches `Ctrl+V`: rich HTML when available, plain text in a code
+context or for an oversized payload. On Windows the webview reads clipboard
+HTML via `navigator.clipboard.read()`. Wails hard-denies that call on Linux, so
+the Linux menu paste is text-only until PR-5 adds the Go `ReadClipboardHTML`
+binding, which the reader already probes for lazily and treats as absent while
+it does not exist. When every read source fails the menu surfaces a "Paste
+failed" toast; a readable-but-empty clipboard stays silent, as with `Ctrl+V`.
 
 
 9. Performance Budgets
