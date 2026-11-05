@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -666,6 +667,9 @@ func TestPluginCrossPageMove_UnreadableSourceProbeNamesIt(t *testing.T) {
 
 	lockHeld := make(chan struct{})
 	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseLock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseLock()
 	go func() {
 		app.coordinator.LockFileWrite(srcPath, func() {
 			close(lockHeld)
@@ -699,15 +703,21 @@ func TestPluginCrossPageMove_UnreadableSourceProbeNamesIt(t *testing.T) {
 		time.Sleep(2 * time.Millisecond)
 	}
 
-	// The probe's read must fail: strip read permission from the source
-	// file before releasing the lock (best-effort on platforms/root users
-	// that ignore the mode — the assertion below then degrades to the
-	// generic loud-failure check).
-	if chmodErr := os.Chmod(srcPath, 0o000); chmodErr != nil {
-		t.Fatalf("chmod source unreadable: %v", chmodErr)
+	// Replacing the source with a directory makes ReadFile fail on every
+	// platform, unlike permission bits which Windows may ignore.
+	parkedSource := srcPath + ".parked"
+	if err := os.Rename(srcPath, parkedSource); err != nil {
+		t.Fatalf("park source file: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(srcPath, 0o644) })
-	close(release)
+	if err := os.Mkdir(srcPath, 0o755); err != nil {
+		_ = os.Rename(parkedSource, srcPath)
+		t.Fatalf("replace source with directory: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Remove(srcPath)
+		_ = os.Rename(parkedSource, srcPath)
+	})
+	releaseLock()
 
 	err := <-done
 	if err == nil {
