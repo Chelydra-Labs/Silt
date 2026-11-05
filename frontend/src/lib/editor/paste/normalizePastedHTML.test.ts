@@ -271,6 +271,18 @@ describe('normalizePastedHTML tables', () => {
     expect(out).toContain('Nested layout row')
   })
 
+  it('unwraps a two-cell presentation table into separate blocks', () => {
+    const out = normalizePastedHTML(PRESENTATION_TABLE_2CELL)
+    expect(bodyOf(out).querySelector('table')).toBeNull()
+    const paragraphs = Array.from(bodyOf(out).querySelectorAll('p'))
+    expect(paragraphs.map((p) => p.textContent)).toEqual([
+      'Left cell',
+      'Right cell'
+    ])
+    // The old unwrap concatenated both cells into one text run.
+    expect(out).not.toContain('Left cellRight cell')
+  })
+
   it('keeps genuine tables, expands colspan and drops rowspan', () => {
     const out = normalizePastedHTML(GENUINE_TABLE)
     const body = bodyOf(out)

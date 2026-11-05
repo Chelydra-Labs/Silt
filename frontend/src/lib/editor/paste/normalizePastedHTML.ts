@@ -204,6 +204,10 @@ function unwrapLayoutTables(root: HTMLElement): void {
     if (!isLayoutTable(table as HTMLTableElement)) continue
     const fragment = table.ownerDocument.createDocumentFragment()
     for (const cell of tableCells(table as HTMLTableElement)) {
+      // Each cell's inline runs become at least one block, or a multi-cell
+      // presentation table would glue neighbours together ("ab") once the
+      // cell boundary disappears.
+      wrapInlineRuns(cell)
       while (cell.firstChild) fragment.appendChild(cell.firstChild)
     }
     if (!fragment.firstChild) {

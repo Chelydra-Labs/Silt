@@ -200,6 +200,12 @@ describe('external paste through the real Silt schema', () => {
     ])
   })
 
+  it('unwraps a multi-cell presentation table without gluing cell text', () => {
+    const nodes = meaningful(paste(makeEditor(), PRESENTATION_TABLE_2CELL))
+    expect(nodes.some((n) => n.type === 'table')).toBe(false)
+    expect(nodes.map(textOf)).toEqual(['Left cell', 'Right cell'])
+  })
+
   it('flattens mso-list pseudo paragraphs to notes at the right depth', () => {
     const nodes = meaningful(paste(makeEditor(), MSO_PSEUDO_LIST))
     expect(
