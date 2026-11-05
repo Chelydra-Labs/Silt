@@ -214,7 +214,7 @@ describe('extract_and_save stage (handleExtractAndSave)', () => {
     expect(frozen.blocks[0]).toMatch(/Q1: Postgres MVCC\?/)
   })
 
-  it('action_items mode: freezes GFM checkboxes with optional due', async () => {
+  it('action_items mode: freezes marker-free task bodies with optional due', async () => {
     const { ctx } = makeCtx({
       sources: SOURCES,
       completeContent: JSON.stringify({
@@ -232,9 +232,72 @@ describe('extract_and_save stage (handleExtractAndSave)', () => {
     const frozen = vi.mocked(stageOperation).mock.calls[0][2] as {
       blocks: string[]
     }
-    expect(frozen.blocks[0]).toMatch(/- \[ \] Set up Postgres replication/)
-    expect(frozen.blocks[0]).toMatch(/\[due:: 2026-08-01\]/)
-    expect(frozen.blocks[1]).toMatch(/- \[ \] Document Redis failover/)
+    // Bodies must be marker-free: the TASK renderer owns `- [ ] ` emission,
+    // so a marker here would double up on disk (#1008).
+    expect(frozen.blocks[0]).toMatch(
+      /^Set up Postgres replication \[due:: 2026-08-01\]/
+    )
+    expect(frozen.blocks[1]).toMatch(/^Document Redis failover/)
+    expect(frozen.blocks[1]).not.toMatch(/\[due::/)
+    for (const body of frozen.blocks) {
+      expect(body).not.toMatch(/(^|\n)\s*[-*+]\s*\[[ xX]?\]/)
+    }
+  })
+
+  it('action_items mode: strips task markers the LLM echoed into titles', async () => {
+    const { ctx } = makeCtx({
+      sources: SOURCES,
+      completeContent: JSON.stringify({
+        items: [
+          {
+            title: '- [ ] Set up Postgres replication',
+            due_date: '2026-08-01'
+          },
+          { title: '* [x] Document Redis failover' },
+          { title: '[ ] bare checkbox variant' },
+          { title: '- plain bullet variant' }
+        ]
+      })
+    })
+    await handleExtractAndSave(ctx, {
+      source_block_ids: ['src-1'],
+      mode: 'action_items',
+      target: TARGET
+    })
+    const frozen = vi.mocked(stageOperation).mock.calls[0][2] as {
+      blocks: string[]
+    }
+    const firstLines = frozen.blocks.map((b) => b.split('\n')[0])
+    expect(firstLines[0]).toMatch(
+      /^Set up Postgres replication \[due:: 2026-08-01\]/
+    )
+    expect(firstLines[1]).toBe('Document Redis failover')
+    expect(firstLines[2]).toBe('bare checkbox variant')
+    expect(firstLines[3]).toBe('plain bullet variant')
+    // Simulate the TASK renderer's marker emission: exactly one `- [ ] `
+    // must survive on disk for each item.
+    for (const line of firstLines) {
+      const rendered = `- [ ] ${line}`
+      expect(rendered.match(/- \[[ xX]?\]/g)).toHaveLength(1)
+    }
+  })
+
+  it('action_items mode: drops invalid due dates instead of emitting junk tokens', async () => {
+    const { ctx } = makeCtx({
+      sources: SOURCES,
+      completeContent: JSON.stringify({
+        items: [{ title: 'Set up replication', due_date: 'next Friday' }]
+      })
+    })
+    await handleExtractAndSave(ctx, {
+      source_block_ids: ['src-1'],
+      mode: 'action_items',
+      target: TARGET
+    })
+    const frozen = vi.mocked(stageOperation).mock.calls[0][2] as {
+      blocks: string[]
+    }
+    expect(frozen.blocks[0].split('\n')[0]).toBe('Set up replication')
   })
 
   it('passes responseSchema + citation prompt to ctx.ai.complete', async () => {
@@ -567,6 +630,38 @@ describe('extract_and_save commit (commitExtractAndSave)', () => {
     expect(ops[0].text).toMatch(/Postgres uses MVCC/)
     expect(ops[0].notebook).toBe('Work')
     expect(res.content).toContain('Work/Notes/Distilled')
+  })
+
+  it('action_items mode: writes TASK ops with marker-free text + due token', async () => {
+    const { ctx, applyBlocks } = makeCtx({ sources: SOURCES })
+    const frozenTasks = {
+      mode: 'action_items',
+      target: TARGET,
+      source_block_ids: ['src-1'],
+      blocks: [
+        'Set up Postgres replication [due:: 2026-08-01]\n\n<!-- src: src-1 mode:action_items -->',
+        'Document Redis failover\n\n<!-- src: src-1 mode:action_items -->'
+      ]
+    }
+    const res = await commitExtractAndSave(ctx, frozenTasks)
+    expect(res.error).toBeUndefined()
+    expect(applyBlocks).toHaveBeenCalledTimes(1)
+    const ops = applyBlocks.mock.calls[0][0] as Array<{
+      kind: string
+      type: string
+      text: string
+    }>
+    expect(ops).toHaveLength(2)
+    for (const op of ops) {
+      expect(op.kind).toBe('create')
+      // TASK type is what routes the blocks into the task hub with a live
+      // due date (#1008) — a NOTE leaves the token as inert text.
+      expect(op.type).toBe('TASK')
+      expect(op.text).not.toMatch(/^\s*[-*+]\s*\[[ xX]?\]/)
+    }
+    expect(ops[0].text).toMatch(
+      /^Set up Postgres replication \[due:: 2026-08-01\]/
+    )
   })
 
   it('fail-closed on malformed frozen params (failed parse after confirm)', async () => {

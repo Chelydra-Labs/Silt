@@ -79,8 +79,11 @@ Most are read-only and run inline. Write safety is controlled by
   In confirm mode the harness stages them (commit runs after you approve).
   `extract_and_save` runs the nested model **before** Confirm, freezes the
   rendered blocks in the staging token, shows a content preview, and commits
-  only that frozen payload (no second model call). Parse/model errors stage
-  nothing and write nothing. Commit uses `createPage` + a single-page
+  only that frozen payload (no second model call). In `action_items` mode
+  each item commits as a TASK block (marker-free body — the renderer owns
+  the `- [ ] ` emission) so items surface in the Tasks hub with their
+  `[due::]` schedule; the other modes write NOTE blocks. Parse/model errors
+  stage nothing and write nothing. Commit uses `createPage` + a single-page
   `applyBlocks` batch (not a multi-API database transaction). On failure after
   minting a **new** empty page, the tool best-effort deletes that page; it
    never deletes a target page that already existed. Nested extraction

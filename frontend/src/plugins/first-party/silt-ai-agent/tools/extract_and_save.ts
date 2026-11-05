@@ -8,7 +8,8 @@
 //   - 'summary'       → { summary: string }
 //   - 'flashcards'    → { items: [{ front, back }] }
 //   - 'qa_pairs'      → { items: [{ question, answer }] }
-//   - 'action_items'  → { items: [{ title, due_date? }] }
+//   - 'action_items'  → { items: [{ title, due_date? }] } — written as TASK
+//     blocks (task hub + due schedule, #1008); the other modes write NOTEs.
 //
 // Failure handling: malformed JSON / model errors stage nothing and write
 // nothing. Sources are NEVER mutated.
@@ -195,7 +196,9 @@ export interface FrozenExtractPayload {
   mode: ExtractionMode
   target: TargetSpec
   source_block_ids: string[]
-  /** Fully rendered NOTE bodies including citation trailer. */
+  /** Fully rendered block bodies including citation trailer. Written as
+   *  TASK blocks in action_items mode (marker-free — the renderer owns the
+   *  checkbox), NOTE blocks otherwise. */
   blocks: string[]
 }
 
@@ -449,9 +452,14 @@ export async function commitExtractAndSave(
       return cancelledResult()
     }
 
+    // Action items are TASK blocks so they surface in the task hub with
+    // their [due::] intact (#1008); every other mode stays a NOTE. The
+    // bodies were rendered marker-free at stage time — the TASK renderer
+    // owns `- [ ] ` emission, so exactly one marker lands on disk.
+    const opType = mode === 'action_items' ? 'TASK' : 'NOTE'
     const ops = blocks.map((text) => ({
       kind: 'create' as const,
-      type: 'NOTE' as const,
+      type: opType as 'TASK' | 'NOTE',
       text,
       notebook: target.notebook,
       section: target.section,
@@ -671,7 +679,7 @@ export function parseExtraction(
   return { blocks }
 }
 
-/** Render one extracted item to a NOTE body string per the mode. */
+/** Render one extracted item to a block body string per the mode. */
 function renderItem(
   mode: ExtractionMode,
   item: unknown,
@@ -692,14 +700,35 @@ function renderItem(
     return `**Q${index + 1}: ${q}**\n${a}`
   }
   if (mode === 'action_items') {
-    const title = truncate(asString(o.title).trim(), MAX_FIELD_LENGTH)
+    const title = truncate(
+      normalizeActionTitle(asString(o.title)),
+      MAX_FIELD_LENGTH
+    )
     if (!title) return ''
     const due = truncate(asString(o.due_date).trim(), 32)
     const dueSuffix =
       due && /^\d{4}-\d{2}-\d{2}$/.test(due) ? ` [due:: ${due}]` : ''
-    return `- [ ] ${title}${dueSuffix}`
+    return `${title}${dueSuffix}`
   }
   return ''
+}
+
+// LLMs echo the source's task syntax despite the "no checkbox" prompt
+// (`- [ ] Set up …`, `* [x] Set up …`, bare `[ ] Set up …`). The body must be
+// marker-free because the TASK renderer owns `- [ ] ` emission (#1008) — a
+// marker in the text would land on disk as `- [ ] - [ ] …`.
+const LEADING_TASK_MARKER = /^(\s*[-*+]\s*)?\[[ xX]?\]\s*|^(\s*[-*+]\s)+/
+
+/** Strip leading bullet/checkbox markers the model emitted (looped — a
+ *  double marker strips in one pass per layer). */
+function normalizeActionTitle(raw: string): string {
+  let out = raw.trim()
+  for (let i = 0; i < 4 && out !== ''; i++) {
+    const next = out.replace(LEADING_TASK_MARKER, '')
+    if (next === out) break
+    out = next.trim()
+  }
+  return out
 }
 
 /** Strip ```json fences and surrounding prose; return the JSON body or ''. */
