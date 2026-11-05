@@ -158,6 +158,21 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      - name: Install GTK3 build dependencies
+        # The opt-in -tags gtk3 lane (legacy WebKit2GTK) needs a different
+        # toolchain from the GTK4 default, so it gets its own cached apt set.
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: libgtk-3-dev libwebkit2gtk-4.1-dev
+          version: gtk3-1
+
+      - name: Build and vet Go (gtk3 variant)
+        # Nothing else in CI compiles the linux && gtk3 combination, which
+        # selects a separate Wails CGO path and our GTK3 clipboard stub.
+        run: |
+          go build -tags gtk3 ./...
+          go vet -tags gtk3 ./...
+
       - name: Binding parity check
         # Exact comparison against cmd/inventory/current-approved-v3.json.
         # Deliberate IPC surface changes must regenerate the fixture in-PR:
