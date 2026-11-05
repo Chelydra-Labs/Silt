@@ -2,6 +2,8 @@ import type { Editor } from 'svelte-tiptap'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { serializeInlineContent } from './converters'
 import { findActiveBlock } from './keymaps'
+import { readClipboardPayload } from './clipboardHtml'
+import { pasteClipboardPayload } from './paste/pastePayload'
 import { pushNotification } from '../../notifications/store.svelte'
 
 /**
@@ -65,14 +67,26 @@ export function copySelection(deps: ClipboardDeps): void {
 export async function pasteFromClipboard(deps: ClipboardDeps): Promise<void> {
   const { editor, notify } = deps
   try {
-    const text = await navigator.clipboard.readText()
-    if (text) {
-      editor.commands.insertContent({ type: 'text', text })
+    const payload = await readClipboardPayload()
+    // `pasteClipboardPayload` picks the flavour the way Ctrl+V does (text in a
+    // code context, no HTML, or an unusable/oversized payload; HTML otherwise)
+    // and drives the view's paste entry points so the full pipeline runs.
+    const choice = pasteClipboardPayload(editor.view, payload)
+    // `unavailable` means every source failed (API absent, permission denied);
+    // a readable-but-empty clipboard stays silent, exactly like Ctrl+V.
+    if (choice.kind === 'none' && payload.unavailable) {
+      notify({
+        kind: 'error',
+        message: 'Paste failed: the clipboard is unavailable.'
+      })
     }
   } catch {
+    // readClipboardPayload() is total and the selection predicate does not
+    // throw, so this is a genuine paste-pipeline failure: say the paste
+    // failed rather than blaming the clipboard read.
     notify({
       kind: 'error',
-      message: 'Paste failed: clipboard could not be read.'
+      message: 'Paste failed: the clipboard contents could not be inserted.'
     })
   }
 }
