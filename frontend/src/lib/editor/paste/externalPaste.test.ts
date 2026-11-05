@@ -303,8 +303,44 @@ describe('external paste through the real Silt schema', () => {
         .split('|')
         .map((c) => c.trim())
     ).toEqual(['', 'Name', 'Values', '', ''])
+    expect(
+      markdown
+        .split('\n')[3]
+        .split('|')
+        .map((c) => c.trim())
+    ).toEqual(['', '', '3', '4', ''])
     expect(markdown).not.toContain('colspan')
     expect(markdown).not.toContain('rowspan')
+  })
+
+  it('keeps pasted list markers when the caret is on an empty bulleted note', () => {
+    // The other paste helpers selectAll() first, which hides siltHandlePaste's
+    // empty-parent branch. Press Enter on an outliner line, then paste a real
+    // list: its ordered/nested markers must not be flattened to the parent's.
+    const editor = makeEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'empty', depth: 0, bullet: '- ', quote: '' },
+          content: []
+        }
+      ]
+    })
+    editor.commands.setTextSelection(1)
+    editor.view.pasteHTML(NESTED_ORDERED_LIST)
+
+    const nodes = editor.getJSON().content ?? []
+    expect(
+      nodes.map((n) => [noteAttrs(n).depth, noteAttrs(n).bullet, textOf(n)])
+    ).toEqual([
+      [0, '3. ', 'Install the app'],
+      [0, '4. ', 'Configure it'],
+      [1, '- ', 'Windows'],
+      [1, '- ', 'Linux'],
+      [0, '5. ', 'Restart']
+    ])
   })
 
   it('mints fresh unique ids for every pasted block', () => {

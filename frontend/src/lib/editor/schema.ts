@@ -742,10 +742,23 @@ export function siltHandlePaste(
     if (marked) {
       const blocks: PMNode[] = []
       slice.content.forEach((node) => {
+        if (node.type.name !== 'noteBlock') {
+          blocks.push(node)
+          return
+        }
+        // Pasted list content carries its own markers. Only marker-less notes
+        // (plain prose) should inherit the empty parent's marker attrs;
+        // overwriting every note would flatten a pasted ordered/nested list to
+        // the parent's bullet and depth.
+        const hasOwnMarker =
+          String(node.attrs.bullet ?? '') !== '' ||
+          String(node.attrs.quote ?? '') !== ''
         blocks.push(
-          node.type.name === 'noteBlock'
-            ? node.type.create(inherited, node.content, node.marks)
-            : node
+          node.type.create(
+            hasOwnMarker ? node.attrs : inherited,
+            node.content,
+            node.marks
+          )
         )
       })
       content = Fragment.from(blocks)
