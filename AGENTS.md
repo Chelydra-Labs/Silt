@@ -43,6 +43,7 @@ Repo-specific rules that augment the global `~/.config/opencode/AGENTS.md`.
 
 ## Conventions
 
+- **Platform support: Windows + Linux only.** The release matrix and CI build/test Windows and Linux exclusively — spend no effort verifying or supporting macOS (if it happens to work from source, fine). No darwin-specific code paths unless macOS becomes a release target.
 - Follow `ARCHITECTURE.md` (topology, SQLite schema, IPC contract) and
   `SPECS.md` (file format, plugin SDK, config schema) as the sources of truth.
 - Plugin JS runs in the main webview; the SDK (`PluginContext`) is the
