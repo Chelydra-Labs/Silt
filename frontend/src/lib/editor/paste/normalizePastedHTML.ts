@@ -217,16 +217,55 @@ function unwrapLayoutTables(root: HTMLElement): void {
   }
 }
 
-// Spread colspan into empty sibling cells (the GFM/table model is a strict
-// grid) and drop rowspan entirely — a spanning cell has no faithful markdown
-// representation, and leaving the attrs makes TipTap's parser drop cells.
+function spanCount(raw: string | null): number {
+  const value = Number.parseInt(raw || '1', 10)
+  return Number.isFinite(value) && value > 1 ? value : 1
+}
+
+// Spread colspan into empty sibling cells and drop rowspan (the GFM/table model
+// is a strict grid with no spanning). Dropping a rowspan would shift every
+// later cell left, so track the occupied columns and pad each following row at
+// the spanned column instead — `serializeTableToGFM` only pads at the end, and
+// end-padding would put "3"/"4" under the wrong headers.
 function expandTableCells(root: HTMLElement): void {
-  for (const cell of Array.from(root.querySelectorAll('td, th'))) {
-    const colspan = Number(cell.getAttribute('colspan') || '1')
-    cell.removeAttribute('colspan')
-    cell.removeAttribute('rowspan')
-    for (let i = 1; i < colspan; i++) {
-      cell.after(cell.ownerDocument.createElement(cell.tagName.toLowerCase()))
+  for (const table of Array.from(root.querySelectorAll('table'))) {
+    const rows = Array.from((table as HTMLTableElement).rows ?? [])
+    // column -> number of rows this span still covers, current row included.
+    const spans = new Map<number, number>()
+    for (const row of rows) {
+      let column = 0
+      for (const cell of Array.from(row.cells ?? [])) {
+        while ((spans.get(column) ?? 0) > 0) {
+          const filler = cell.ownerDocument.createElement('td')
+          row.insertBefore(filler, cell)
+          column++
+        }
+        const colspan = spanCount(cell.getAttribute('colspan'))
+        const rowspan = spanCount(cell.getAttribute('rowspan'))
+        cell.removeAttribute('colspan')
+        cell.removeAttribute('rowspan')
+        for (let i = 1; i < colspan; i++) {
+          cell.after(
+            cell.ownerDocument.createElement(cell.tagName.toLowerCase())
+          )
+        }
+        if (rowspan > 1) {
+          for (let i = 0; i < colspan; i++) {
+            spans.set(column + i, Math.max(spans.get(column + i) ?? 0, rowspan))
+          }
+        }
+        column += colspan
+      }
+      // A span can extend past this row's last cell; pad the tail so the next
+      // row starts at the same column.
+      while (spans.size > 0 && column <= Math.max(...spans.keys())) {
+        row.appendChild(row.ownerDocument.createElement('td'))
+        column++
+      }
+      for (const [spanColumn, remaining] of spans) {
+        if (remaining <= 1) spans.delete(spanColumn)
+        else spans.set(spanColumn, remaining - 1)
+      }
     }
   }
 }

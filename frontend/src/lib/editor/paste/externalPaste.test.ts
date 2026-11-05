@@ -292,6 +292,9 @@ describe('external paste through the real Silt schema', () => {
     const rows = nodes[0].content ?? []
     expect(rows).toHaveLength(3)
     expect((rows[0].content ?? []).map(textOf)).toEqual(['Name', 'Values', ''])
+    // The row-2 "Row" cell spans rows 2-3; dropping the rowspan must leave an
+    // empty cell in that column on row 3 or 3/4 slide under Name/Values.
+    expect((rows[2].content ?? []).map(textOf)).toEqual(['', '3', '4'])
 
     const markdown = markdownOf(nodes)
     expect(

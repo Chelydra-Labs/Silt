@@ -296,6 +296,17 @@ describe('normalizePastedHTML tables', () => {
     const firstBodyCell = body.querySelectorAll('tr')[1]?.children[0]
     expect(firstBodyCell?.textContent).toBe('Row')
   })
+
+  it('keeps the grid aligned after dropping a rowspan', () => {
+    const out = normalizePastedHTML(GENUINE_TABLE)
+    const rows = Array.from(bodyOf(out).querySelectorAll('tr'))
+    // Row 2's "Row" cell spans rows 2-3; row 3 must gain an empty cell in the
+    // spanned column so 3/4 stay under Values/'' rather than Name/Values.
+    expect(
+      Array.from(rows[2]?.children ?? []).map((c) => c.textContent)
+    ).toEqual(['', '3', '4'])
+    expect(rows.map((row) => row.children.length)).toEqual([3, 3, 3])
+  })
 })
 
 describe('normalizePastedHTML blocks and code', () => {
