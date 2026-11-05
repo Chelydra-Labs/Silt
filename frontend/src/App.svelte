@@ -373,7 +373,11 @@
     void activeNotebook
     void activeSection
     void activePage
-    void pageType.refresh()
+    // Untracked: refresh()'s sync prologue reads `values` and its fetch
+    // completion rewrites info/values/core — tracking either re-runs this
+    // effect after every fetch, an unbounded spin throttled only by IPC
+    // latency (#1018).
+    void untrack(() => pageType.refresh())
   })
 
   // Per-type dashboard view. Reached from the type strip's "View all" action;
