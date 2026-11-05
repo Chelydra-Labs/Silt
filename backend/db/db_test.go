@@ -1705,6 +1705,7 @@ func TestOnDiskWAL_DeleteIndexForcesCleanRebuild(t *testing.T) {
 func TestPreparedStatementRepeatedJoinOrderByParameters(t *testing.T) {
 	dm, _ := newOnDiskDB(t)
 	db := dm.SQLDB()
+	// This temp table relies on db.go's single-connection pool (SetMaxOpenConns(1)).
 	if _, err := db.Exec(`CREATE TEMP TABLE driver_stmt_values (id INTEGER PRIMARY KEY, group_id INTEGER, value TEXT);
 		INSERT INTO driver_stmt_values VALUES (1, 0, 'zero-a'), (2, 0, 'zero-b'), (3, 1, 'one-a'), (4, 1, 'one-b');`); err != nil {
 		t.Fatalf("seed prepared-statement rows: %v", err)
