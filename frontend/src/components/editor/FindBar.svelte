@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Editor } from '@tiptap/core'
+  import { untrack } from 'svelte'
   import {
     getMatchCount,
     getActiveMatchIndex,
@@ -94,22 +95,36 @@
     }
   }
 
+  function searchParams() {
+    return {
+      search: query,
+      caseSensitive,
+      wholeWord,
+      regexp,
+      // Read untracked: revealing the replace row must not re-run this effect,
+      // which would jump the selection via findNextInPage.
+      replace: untrack(() => findBarState.replaceOpen) ? replaceValue : ''
+    }
+  }
+
   function applyQuery(): void {
     if (sourceTarget) {
       applySourceQuery(true)
       return
     }
     if (!editor) return
-    editor.commands.setSearchQuery({
-      search: query,
-      caseSensitive,
-      wholeWord,
-      regexp,
-      replace: findBarState.replaceOpen ? replaceValue : ''
-    })
+    editor.commands.setSearchQuery(searchParams())
     // Jump to the nearest match so the counter reflects a real position.
     if (query) editor.commands.findNextInPage()
     refreshCounts()
+  }
+
+  function toggleReplace(): void {
+    const next = !findBarState.replaceOpen
+    findBarState.setReplaceOpen(next)
+    // Edit mode: push the current replacement text into the SearchQuery so
+    // replaceNextInPage uses it, without navigating the selection.
+    if (next && editor) editor.commands.setSearchQuery(searchParams())
   }
 
   // Re-apply whenever the query string, replace text, or a toggle flips.
@@ -366,6 +381,14 @@
     </div>
     <button
       type="button"
+      class="replace-toggle"
+      aria-label="Toggle replace"
+      aria-expanded={findBarState.replaceOpen}
+      title="Toggle replace"
+      onclick={toggleReplace}>⇄</button
+    >
+    <button
+      type="button"
       class="close-btn"
       aria-label="Close find bar (Esc)"
       aria-keyshortcuts="Escape"
@@ -484,6 +507,7 @@
   }
   .toggle,
   .nav-btn,
+  .replace-toggle,
   .close-btn {
     min-width: 26px;
     height: 26px;
@@ -498,9 +522,13 @@
   }
   .toggle:hover,
   .nav-btn:hover,
+  .replace-toggle:hover,
   .close-btn:hover {
     background: var(--color-hover);
     color: var(--color-text-primary);
+  }
+  .replace-toggle[aria-expanded='true'] {
+    color: var(--color-accent-primary-start);
   }
   .toggle.on {
     background: var(--color-accent-primary-start);
@@ -514,6 +542,7 @@
   }
   .toggle:focus-visible,
   .nav-btn:focus-visible,
+  .replace-toggle:focus-visible,
   .close-btn:focus-visible,
   .action-btn:focus-visible {
     outline: 2px solid var(--color-accent-primary-start);
