@@ -40,33 +40,54 @@ function pasteEvent(plainText: string): ClipboardEvent {
   } as unknown as ClipboardEvent
 }
 
-/** Invoke PlainPaste's specific handlePaste (via its plugin spec, NOT someProp
- *  — the Link extension's handlePasteLink comes earlier in the chain, so
- *  someProp would return that one). In the real app ProseMirror walks the
- *  handlePaste chain in order; Link defers (returns false), then PlainPaste
- *  runs and wins when shift is held. */
-function callHandlePaste(editor: Editor, event: ClipboardEvent): boolean {
-  // The Link extension's handlePasteLink comes earlier in the chain, so
-  // someProp would return that one. Find PlainPaste's plugin by key (the
-  // Plugin type hides runtime `.key`, hence the cast) and read its spec's
-  // handlePaste directly. In the real app ProseMirror walks the handlePaste
-  // chain in order; Link defers (returns false), then PlainPaste runs and
-  // wins when shift is held.
+/** PlainPaste's runtime plugin spec props (the Plugin type hides `.key`). */
+function plainPasteProps(editor: Editor): {
+  handleDOMEvents?: {
+    paste?: (view: Editor['view'], event: ClipboardEvent) => boolean | void
+  }
+  handlePaste?: (
+    view: Editor['view'],
+    event: ClipboardEvent,
+    slice: ReturnType<Editor['state']['selection']['content']>
+  ) => boolean | void
+} {
   const plugin = (
     editor.view.state.plugins as unknown as Array<{
       key?: string
-      spec?: { props?: { handlePaste?: unknown } }
+      spec?: {
+        props?: {
+          handleDOMEvents?: {
+            paste?: (
+              view: Editor['view'],
+              event: ClipboardEvent
+            ) => boolean | void
+          }
+          handlePaste?: (
+            view: Editor['view'],
+            event: ClipboardEvent,
+            slice: ReturnType<Editor['state']['selection']['content']>
+          ) => boolean | void
+        }
+      }
     }>
   ).find((p) => typeof p.key === 'string' && p.key.startsWith('plainPaste'))
-  const handler = plugin?.spec?.props?.handlePaste as
-    | ((
-        v: Editor['view'],
-        e: ClipboardEvent,
-        s: ReturnType<Editor['state']['selection']['content']>
-      ) => boolean | void)
-    | undefined
-  if (!handler) return false
-  return handler(editor.view, event, editor.state.selection.content()) === true
+  return plugin?.spec?.props ?? {}
+}
+
+/** Simulate the real paste order: the DOM `paste` prop runs first
+ *  (`runCustomHandler`), then ProseMirror's `doPaste` walks the `handlePaste`
+ *  chain — Link defers (returns false), then PlainPaste runs. Calling
+ *  handlePaste alone would skip the flag snapshot the DOM hook performs. */
+function simulatePaste(editor: Editor, event: ClipboardEvent): boolean {
+  const props = plainPasteProps(editor)
+  props.handleDOMEvents?.paste?.(editor.view, event)
+  return (
+    props.handlePaste?.(
+      editor.view,
+      event,
+      editor.state.selection.content()
+    ) === true
+  )
 }
 
 describe('PlainPaste', () => {
@@ -74,7 +95,7 @@ describe('PlainPaste', () => {
     const { editor, cleanup } = mountEditor()
     try {
       _setShiftHeldForTests(true)
-      const handled = callHandlePaste(editor, pasteEvent('hello plain'))
+      const handled = simulatePaste(editor, pasteEvent('hello plain'))
       expect(handled).toBe(true)
       expect(editor.getText()).toBe('hello plain')
     } finally {
@@ -86,7 +107,7 @@ describe('PlainPaste', () => {
     const { editor, cleanup } = mountEditor()
     try {
       _setShiftHeldForTests(false)
-      const handled = callHandlePaste(editor, pasteEvent('ignored'))
+      const handled = simulatePaste(editor, pasteEvent('ignored'))
       expect(handled).toBe(false)
       expect(editor.getText()).toBe('')
     } finally {
@@ -98,7 +119,7 @@ describe('PlainPaste', () => {
     const { editor, cleanup } = mountEditor()
     try {
       _setShiftHeldForTests(true)
-      const handled = callHandlePaste(editor, pasteEvent(''))
+      const handled = simulatePaste(editor, pasteEvent(''))
       expect(handled).toBe(false)
     } finally {
       cleanup()
@@ -109,12 +130,32 @@ describe('PlainPaste', () => {
     const { editor, cleanup } = mountEditor()
     try {
       _setShiftHeldForTests(true)
-      expect(callHandlePaste(editor, pasteEvent('first'))).toBe(true)
-      // Flag reset by handlePaste — a second paste with no intervening keydown
-      // (e.g. a context-menu paste) must NOT be treated as plain.
+      expect(simulatePaste(editor, pasteEvent('first'))).toBe(true)
+      // The DOM paste hook consumed the flag — a second paste with no
+      // intervening keydown (e.g. a context-menu paste) must NOT be plain.
       expect(_getShiftHeldForTests()).toBe(false)
-      expect(callHandlePaste(editor, pasteEvent('second'))).toBe(false)
+      expect(simulatePaste(editor, pasteEvent('second'))).toBe(false)
       expect(editor.getText()).toBe('first')
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('clears the flag even when another handlePaste handler claims the paste', () => {
+    // A direct editorProp handlePaste runs before this plugin's handler and
+    // wins by returning true (the shared block-paste path does exactly that for
+    // multi-line plain text into an empty block). Only the DOM hook runs, yet
+    // the flag must not survive into the next context-menu paste.
+    const { editor, cleanup } = mountEditor()
+    try {
+      _setShiftHeldForTests(true)
+      const props = plainPasteProps(editor)
+      props.handleDOMEvents?.paste?.(editor.view, pasteEvent('claimed'))
+      expect(_getShiftHeldForTests()).toBe(false)
+      // Preempted means handlePaste never ran for that paste; the next paste
+      // must still take the rich path rather than inserting raw plain text.
+      expect(simulatePaste(editor, pasteEvent('rich'))).toBe(false)
+      expect(editor.getText()).toBe('')
     } finally {
       cleanup()
     }

@@ -654,8 +654,10 @@ export function siltClipboardTextParser(
 // HTML paste into a paragraph-required container has no ancestry to inspect:
 // the pasted `<p>` is parsed while the caret already sits inside a cell or
 // callout, so the DOM fragment carries no `td`/callout wrapper. Normalize the
-// parsed slice against the insertion context instead (this also covers partial
-// copies out of a cell/callout and drag/drop).
+// parsed slice against the paste target's context instead (this covers partial
+// copies out of a cell/callout). Drops are NOT covered: ProseMirror transforms
+// a dragged slice before the selection moves to the drop target, so the check
+// below sees the drag origin, not the container being dropped into.
 export function siltTransformPasted(slice: Slice, view: EditorView): Slice {
   const paragraphType = view.state.schema.nodes.paragraph
   if (!paragraphType || !inParagraphContainer(view.state.selection.$from)) {
@@ -709,9 +711,40 @@ export function siltHandlePaste(
 
   const from = $from.before($from.depth)
   const to = $from.after($from.depth)
+  // Replacing the empty parent wholesale would also discard the markers the
+  // user typed on it (bullet, quote, indent, align) — the same metadata loss
+  // the guard above avoids for task/header blocks. Carry them onto the pasted
+  // notes; ids stay unset so UniqueBlockIds mints fresh ones.
+  const parent = $from.parent
+  let content = slice.content
+  if (parent.type.name === 'noteBlock') {
+    const inherited = {
+      bullet: parent.attrs.bullet,
+      quote: parent.attrs.quote,
+      depth: parent.attrs.depth,
+      align: parent.attrs.align
+    }
+    const marked =
+      inherited.bullet ||
+      inherited.quote ||
+      inherited.depth ||
+      inherited.align !== 'left'
+    if (marked) {
+      const blocks: PMNode[] = []
+      slice.content.forEach((node) => {
+        blocks.push(
+          node.type.name === 'noteBlock'
+            ? node.type.create(inherited, node.content, node.marks)
+            : node
+        )
+      })
+      content = Fragment.from(blocks)
+    }
+  }
+
   view.dispatch(
     view.state.tr
-      .replace(from, to, slice)
+      .replace(from, to, new Slice(content, 0, 0))
       .scrollIntoView()
       .setMeta('paste', true)
       .setMeta('uiEvent', 'paste')

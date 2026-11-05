@@ -27,6 +27,7 @@ import {
   siltPasteProps
 } from './schema'
 import { docToBlocks } from './converters'
+import { PlainPaste, _getShiftHeldForTests } from './plainPaste'
 import type { DocJSON } from './types'
 
 function schemaFor() {
@@ -530,8 +531,9 @@ describe('underline mark (#1030)', () => {
 // not by Silt's serialized `div[data-type=…]` shape. These rules run through
 // the real paste pipeline (`view.pasteHTML`) against the production-shaped
 // schema: paragraph stays enabled because table cells require it. The shared
-// paste helpers are wired in exactly as the two editor surfaces wire them, so
-// `pasteText` exercises the same code path as Ctrl+V.
+// paste helpers are wired in exactly as the two editor surfaces wire them, and
+// PlainPaste is registered as on the main editor, so `pasteText`/`dispatchPaste`
+// exercise the same code path (and handler precedence) as the real Ctrl+V.
 function makeLeafTagEditor(
   content: DocJSON = {
     type: 'doc',
@@ -566,7 +568,8 @@ function makeLeafTagEditor(
         CodeBlock,
         ...SiltTableExtensions,
         ...SiltInlineMarkExtensions,
-        ...SiltColorMarkExtensions
+        ...SiltColorMarkExtensions,
+        PlainPaste
       ],
       content
     })
@@ -889,6 +892,53 @@ function childTypeNames(node: PmNode | null): string[] {
   return names
 }
 
+/** Dispatch a real DOM `paste` event so ProseMirror's own pipeline runs:
+ *  `handleDOMEvents` hooks first, then `doPaste`'s `handlePaste` chain. jsdom
+ *  has neither ClipboardEvent nor DataTransfer, so attach a minimal stand-in. */
+function dispatchPaste(
+  editor: Editor,
+  data: { text?: string; html?: string }
+): void {
+  const event = new Event('paste', { bubbles: true, cancelable: true })
+  Object.defineProperty(event, 'clipboardData', {
+    value: {
+      getData: (type: string) =>
+        type === 'text/plain' || type === 'Text'
+          ? (data.text ?? '')
+          : (data.html ?? '')
+    }
+  })
+  editor.view.dom.dispatchEvent(event)
+}
+
+/** jsdom's KeyboardEvent init drops the non-standard `keyCode`, which
+ *  ProseMirror uses to track the shift modifier, so pin it explicitly. */
+function dispatchKey(
+  editor: Editor,
+  type: 'keydown' | 'keyup',
+  keyCode: number,
+  shiftKey: boolean
+): void {
+  const event = new KeyboardEvent(type, { shiftKey, bubbles: true })
+  Object.defineProperty(event, 'keyCode', { value: keyCode })
+  editor.view.dom.dispatchEvent(event)
+}
+
+function hasMarkedText(editor: Editor, text: string, mark: string): boolean {
+  let found = false
+  editor.state.doc.descendants((node) => {
+    if (
+      !found &&
+      node.isText &&
+      node.text?.includes(text) &&
+      node.marks.some((m) => m.type.name === mark)
+    ) {
+      found = true
+    }
+  })
+  return found
+}
+
 describe('text-only paste (Ctrl+V) into paragraph-required containers', () => {
   it('inserts a single plain-text line inline at the caret', () => {
     const editor = makeLeafTagEditor(noteDoc('abcdef'))
@@ -952,6 +1002,34 @@ describe('text-only paste (Ctrl+V) into paragraph-required containers', () => {
     expect(childTypeNames(cell)).toEqual(['paragraph', 'paragraph'])
     expect(cell?.textContent).toBe('onetwo')
     expect(firstNodeOfType(editor, 'noteBlock')).toBeNull()
+  })
+
+  it('keeps the empty note marker when block content replaces it', () => {
+    const editor = makeLeafTagEditor({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: {
+            id: 'marked-note',
+            depth: 1,
+            bullet: '- ',
+            quote: '',
+            align: 'center'
+          }
+        }
+      ]
+    })
+    editor.commands.setTextSelection(1)
+    editor.view.pasteText('one\ntwo')
+
+    const notes = flatBlocks(editor).filter((b) => b.type === 'noteBlock')
+    expect(notes.map((b) => b.text)).toEqual(['one', 'two'])
+    for (const note of notes) {
+      expect(note.attrs.bullet).toBe('- ')
+      expect(note.attrs.depth).toBe(1)
+      expect(note.attrs.align).toBe('center')
+    }
   })
 })
 
@@ -1029,5 +1107,37 @@ describe('HTML pasted into an existing table cell stays paragraph-based', () => 
     ])
     expect(cell?.textContent).toBe('ceXll')
     expect(firstNodeOfType(editor, 'noteBlock')).toBeNull()
+  })
+})
+
+// Ctrl+Shift+V × the shared block-paste path. `siltHandlePaste` is a direct
+// editorProp, so ProseMirror consults it before PlainPaste's plugin handler;
+// when it claims the paste PlainPaste never runs. The shift flag must still be
+// consumed by the paste event itself, or the *next* keydown-less paste
+// (context menu, middle click) is silently downgraded to plain text.
+describe('plain paste flag × shared paste path', () => {
+  it('multi-line Ctrl+Shift+V into an empty note does not make the next paste plain', () => {
+    const editor = makeLeafTagEditor()
+    editor.commands.setTextSelection(1)
+
+    // Ctrl+Shift+V: keydown sets the shift flag, then the paste event carries
+    // text-only multi-line clipboard data (no text/html).
+    dispatchKey(editor, 'keydown', 86, true)
+    dispatchPaste(editor, { text: 'one\ntwo' })
+
+    expect(
+      flatBlocks(editor)
+        .filter((b) => b.type === 'noteBlock')
+        .map((b) => b.text)
+    ).toEqual(['one', 'two'])
+    // The paste was claimed by siltHandlePaste, so PlainPaste's handlePaste
+    // never ran — the flag still has to be clear at this point.
+    expect(_getShiftHeldForTests()).toBe(false)
+    dispatchKey(editor, 'keyup', 16, false)
+
+    // Context-menu-style rich paste, no preceding keydown: the bold mark must
+    // survive rather than being inserted as raw plain text.
+    dispatchPaste(editor, { text: 'bolded', html: '<b>bolded</b>' })
+    expect(hasMarkedText(editor, 'bolded', 'bold')).toBe(true)
   })
 })
