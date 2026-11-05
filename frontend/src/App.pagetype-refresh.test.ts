@@ -30,8 +30,9 @@ const bindings = vi.hoisted(() => ({
   GetStartupEvents: vi.fn(async () => []),
   RecordRecentPage: vi.fn(async () => undefined),
   // Fresh EMPTY payloads on every call — the shape real IPC produces. A
-  // shared ref would still invalidate (deep $state uses safe_not_equal for
-  // every object write); fresh arrays keep the mock faithful to production.
+  // shared ref would still invalidate (the compiler wraps every object
+  // write to $state in a fresh proxy, so each assignment is a new
+  // reference); fresh arrays keep the mock faithful to production.
   GetPageType: vi.fn(async () => null),
   GetPageProperties: vi.fn(async () => []),
   GetPageCoreMetadata: vi.fn(async () => ({
