@@ -1622,10 +1622,10 @@ describe('Sidebar', () => {
   // #1024: a failed delete IPC call must not silently close the confirm
   // dialog. The captured target is restored (retry/cancel stay deliberate)
   // and the failure prose surfaces on the app's toast stack. The delete
-  // backend has no typed envelope (app_rename.go returns plain fmt.Errorf
-  // prose), so the fixtures use realistic plain rejections; the
-  // ToastContainer render proves the prose reaches the rendered surface,
-  // not just the store.
+  // backend emits no typed envelope for runtime failures (plain fmt.Errorf
+  // prose; only path-validation is typed), so the fixtures use realistic
+  // plain rejections; the ToastContainer render proves the prose reaches
+  // the rendered surface, not just the store.
   it('vault page delete failure: dialog restored + prose toasted, trash copy (#1024)', async () => {
     render(ToastContainer)
     renderSidebarWithTree(NAV_TREE, {
@@ -1666,7 +1666,7 @@ describe('Sidebar', () => {
     expect(mocks.deletePage).toHaveBeenCalledTimes(1)
   })
 
-  it('linked page delete failure: dialog restored + typed prose toasted, permanent copy (#1024)', async () => {
+  it('linked page delete failure: dialog restored + prose toasted, permanent copy (#1024)', async () => {
     render(ToastContainer)
     renderSidebarWithTree(LINKED_TREE, {
       notebook: 'Synced',
@@ -1758,10 +1758,11 @@ describe('Sidebar', () => {
     expect(screen.getByRole('alert')).toBeInTheDocument()
   })
 
-  // #1024 review: the delete backend has no typed envelope — not-found is
-  // plain fmt.Errorf prose (app_rename.go), so a partial-delete retry
-  // surfaces it verbatim. Pins the passthrough contract (no fabricated
-  // calm mapping) until the backend types its delete errors.
+  // #1024 review: the delete backend emits no typed envelope for runtime
+  // failures — not-found is plain fmt.Errorf prose (app_rename.go), so a
+  // partial-delete retry surfaces it verbatim. Pins the passthrough
+  // contract (no fabricated calm mapping) until the backend types its
+  // delete errors.
   it('plain untyped delete rejection: dialog restored + prose verbatim (#1024)', async () => {
     render(ToastContainer)
     renderSidebarWithTree(NAV_TREE, {

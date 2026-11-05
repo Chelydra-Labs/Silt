@@ -491,12 +491,12 @@ export function useNavCrud(deps: UseNavCrudDeps) {
       // user is actually acting on).
       if (deleteTarget === null) deleteTarget = target
       console.error('Delete failed:', e)
-      // The delete path (app_rename.go) has no typed error envelope yet —
-      // failures arrive as plain Go prose ('page "X" not found', trash
-      // rename wraps) and coerceIPCError passes them through verbatim;
-      // a typed envelope keeps its recovery prose if one is ever added.
-      // Error toasts are sticky + deduped, so retries can't stack
-      // duplicates.
+      // The delete path's runtime failures (app_rename.go: not-found,
+      // trash-move/remove wraps) are plain Go prose with no typed
+      // envelope — coerceIPCError passes them through verbatim; the one
+      // typed code this path emits (invalid_navigation_path) keeps its
+      // message the same way. Error toasts are sticky + deduped, so
+      // retries can't stack duplicates.
       pushNotification({
         kind: 'error',
         message: coerceIPCError(e).message || 'The item could not be deleted.'
