@@ -1458,7 +1458,7 @@ describe('Sidebar', () => {
     await flush()
 
     expect(
-      screen.getByRole('dialog', { name: 'Confirm delete' })
+      screen.getByRole('dialog', { name: 'Delete page' })
     ).toBeInTheDocument()
     expect(screen.getByText(/\.system\/trash\//)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
@@ -1497,9 +1497,7 @@ describe('Sidebar', () => {
     await fireEvent.click(screen.getByRole('menuitem', { name: /Delete/i }))
     await flush()
 
-    expect(
-      screen.getByText(/Delete from external folder\?/i)
-    ).toBeInTheDocument()
+    expect(screen.getByText(/Delete from linked folder\?/i)).toBeInTheDocument()
     expect(screen.getByText('page "Plan"')).toBeInTheDocument()
     // The external on-disk path must be named so the target is unambiguous.
     expect(screen.getByText('/mnt/ext/Synced')).toBeInTheDocument()
@@ -1563,9 +1561,7 @@ describe('Sidebar', () => {
 
     await openDeleteConfirm(screen.getByRole('treeitem', { name: /Notes/ }))
     // Same linked-root copy as page deletes — a section removes many files.
-    expect(
-      screen.getByText(/Delete from external folder\?/i)
-    ).toBeInTheDocument()
+    expect(screen.getByText(/Delete from linked folder\?/i)).toBeInTheDocument()
     expect(
       screen.getByText('section "Notes" and all its pages')
     ).toBeInTheDocument()
@@ -1591,7 +1587,7 @@ describe('Sidebar', () => {
     await openDeleteConfirm(screen.getByText('Daily').closest('button')!)
 
     // Vault copy, not the linked-root copy.
-    expect(screen.queryByText(/Delete from external folder\?/i)).toBeNull()
+    expect(screen.queryByText(/Delete from linked folder\?/i)).toBeNull()
     expect(
       screen.queryByRole('button', { name: 'Delete permanently' })
     ).toBeNull()
@@ -1613,7 +1609,7 @@ describe('Sidebar', () => {
 
     await openDeleteConfirm(screen.getByText('Plan').closest('button')!)
 
-    const dialog = screen.getByRole('dialog', { name: 'Confirm delete' })
+    const dialog = screen.getByRole('dialog', { name: 'Delete permanently' })
     expect(dialog).toHaveAttribute('aria-modal', 'true')
     // Focus starts on the dialog surface, not the destructive confirm (#531).
     expect(document.activeElement).toBe(dialog)

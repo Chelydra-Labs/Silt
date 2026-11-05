@@ -736,7 +736,11 @@
       bind:this={deleteDialogRef}
       role="dialog"
       aria-modal="true"
-      aria-label="Confirm delete"
+      aria-label={deleteTargetDisposition === 'unlink'
+        ? 'Unlink notebook'
+        : deleteTargetDisposition === 'permanent'
+          ? 'Delete permanently'
+          : `Delete ${deleteTarget.level}`}
       tabindex="-1"
       class="relative w-full max-w-sm glass-palette glass-palette-strong border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden"
     >
@@ -750,7 +754,7 @@
               ? 'text-status-danger'
               : deleteTargetDisposition === 'permanent'
                 ? 'text-status-warn'
-                : 'text-status-danger'}"
+                : 'text-text-muted'}"
             aria-hidden="true"
             >{deleteTargetDisposition === 'unlink'
               ? 'link_off'
@@ -761,7 +765,7 @@
           {#if deleteTargetDisposition === 'unlink'}
             Unlink Notebook?
           {:else if deleteTargetDisposition === 'permanent'}
-            Delete from external folder?
+            Delete from linked folder?
           {:else}
             Delete {deleteTarget.level}?
           {/if}
@@ -774,10 +778,10 @@
           {:else if deleteTargetDisposition === 'permanent'}
             {#if deleteTargetRootPath}
               <strong>{deleteTarget.label}</strong> will be permanently removed
-              from <code>{deleteTargetRootPath}</code>.
+              from <code class="break-all">{deleteTargetRootPath}</code>.
             {:else}
               <strong>{deleteTarget.label}</strong> will be permanently removed from
-              the external linked folder.
+              its linked folder.
             {/if}
             Files in linked folders are deleted in place — they do not go to the Silt
             trash and cannot be recovered here.
@@ -796,7 +800,10 @@
         </button>
         <button
           onclick={confirmDelete}
-          class="px-4 py-2 rounded-lg bg-status-danger/20 border border-status-danger/40 text-status-danger font-label-sm-bold hover:brightness-110 transition-all cursor-pointer"
+          class="px-4 py-2 rounded-lg font-label-sm-bold transition-all cursor-pointer border {deleteTargetDisposition ===
+          'unlink'
+            ? 'bg-accent-primary-start/20 border-accent-primary-start/40 text-text-primary hover:brightness-110'
+            : 'bg-status-danger/20 border-status-danger/40 text-status-danger hover:brightness-110'}"
         >
           {deleteTargetDisposition === 'unlink'
             ? 'Unlink'
