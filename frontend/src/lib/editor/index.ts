@@ -34,6 +34,11 @@ export {
   computeDragImageOffset
 } from './siltInlineDragHandle'
 export { UniqueBlockIds, freshId } from './uniqueIdPlugin'
+export { ExternalPasteNormalizer } from './paste/ExternalPasteNormalizer'
+export {
+  normalizePastedHTML,
+  PASTE_HTML_SIZE_CAP
+} from './paste/normalizePastedHTML'
 export {
   snapshotEditCaret,
   resolveCaretInDoc,
