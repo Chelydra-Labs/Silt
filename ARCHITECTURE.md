@@ -1761,8 +1761,17 @@ ShortcutHelp legend. `Load()` migrates the relieved/renamed v1 defaults (an
 exact-legacy match only, so user remaps survive the YAML merge ambiguity) and
 stamps a one-time `dismissed_tips` marker pointing to Settings → Hotkeys, then
 decodes over `Defaults()`, which is the single source of truth for hotkeys. Paste is not in the hotkey map:
-`Ctrl+V` is ProseMirror's native rich paste, `Ctrl+Shift+V` inserts the
-clipboard as plain text (PlainPaste extension, lib/editor/plainPaste.ts).
+`Ctrl+V` is ProseMirror's native rich paste, routed through the external-HTML
+normalizer (lib/editor/paste/ExternalPasteNormalizer.ts) that strips Word/Outlook
+artefacts and flattens their containers into Silt blocks. `Ctrl+Shift+V` inserts
+the clipboard as plain text (PlainPaste extension, lib/editor/plainPaste.ts).
+The context-menu Paste action routes through the same pipeline: it reads a
+clipboard payload (lib/editor/clipboardHtml.ts) and calls `view.pasteHTML` /
+`view.pasteText`, so a menu paste lands identical to `Ctrl+V`. On Windows the
+webview reads clipboard HTML via `navigator.clipboard.read()`; Wails denies that
+call on Linux, so the reader falls back to the Go `ReadClipboardHTML` binding
+instead. When no source yields HTML the menu pastes the text payload, which is
+also the fallback for an oversized HTML payload.
 
 
 9. Performance Budgets
