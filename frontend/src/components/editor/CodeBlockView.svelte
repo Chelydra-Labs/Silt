@@ -58,7 +58,9 @@
   // invisible — it shows solid while stale and goes transparent (yielding to
   // Shiki's colours) once the highlighter catches up.
   let highlightTimer: ReturnType<typeof setTimeout> | null = null
+  let highlightGeneration = 0
   $effect(() => {
+    const generation = ++highlightGeneration
     // Mermaid blocks render an SVG, not a Shiki layer. Skip highlighting
     // entirely for them — otherwise `highlightedFor` would resolve to `code`,
     // `stale` would flip false, and in Edit-source mode the editable text would
@@ -76,6 +78,7 @@
     const t = setTimeout(() => {
       void (async () => {
         const html = await highlightCode(c, lang, theme)
+        if (generation !== highlightGeneration) return
         highlighted = html
         highlightedFor = c
       })()

@@ -28,8 +28,6 @@ async function mountMermaid(source: string) {
   return { editor, container, cleanup }
 }
 
-const settleRender = () => new Promise((resolve) => setTimeout(resolve, 230))
-
 describe('CodeBlockView Mermaid integration', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -42,7 +40,10 @@ describe('CodeBlockView Mermaid integration', () => {
     })
     const { container, cleanup } = await mountMermaid('graph TD; A-->B')
     try {
-      await settleRender()
+      await vi.waitFor(() => expect(mocks.renderMermaid).toHaveBeenCalled())
+      await vi.waitFor(() =>
+        expect(container.querySelector('.silt-mermaid-svg svg')).not.toBeNull()
+      )
       expect(mocks.renderMermaid).toHaveBeenCalledWith(
         'graph TD; A-->B',
         'dark'
@@ -61,7 +62,11 @@ describe('CodeBlockView Mermaid integration', () => {
     })
     const { container, cleanup } = await mountMermaid('not a diagram')
     try {
-      await settleRender()
+      await vi.waitFor(() =>
+        expect(
+          container.querySelector('[role="alert"]')?.textContent
+        ).toContain('Syntax error in graph')
+      )
       expect(container.querySelector('[role="alert"]')?.textContent).toContain(
         'Syntax error in graph'
       )
@@ -83,7 +88,9 @@ describe('CodeBlockView Mermaid integration', () => {
       })
     const { editor, container, cleanup } = await mountMermaid('graph TD; A-->B')
     try {
-      await settleRender()
+      await vi.waitFor(() =>
+        expect(mocks.renderMermaid).toHaveBeenCalledTimes(1)
+      )
       editor.commands.setContent({
         type: 'doc',
         content: [
@@ -94,7 +101,9 @@ describe('CodeBlockView Mermaid integration', () => {
           }
         ]
       })
-      await settleRender()
+      await vi.waitFor(() =>
+        expect(mocks.renderMermaid).toHaveBeenCalledTimes(2)
+      )
       expect(container.querySelector('[data-version="new"]')).not.toBeNull()
       resolveOld({ svg: '<svg data-version="old"></svg>', error: null })
       await new Promise((resolve) => setTimeout(resolve, 0))
@@ -110,9 +119,19 @@ describe('CodeBlockView Mermaid integration', () => {
     const originalMode = themeState.mode
     const { container, cleanup } = await mountMermaid('graph TD; A-->B')
     try {
-      await settleRender()
+      await vi.waitFor(() =>
+        expect(mocks.renderMermaid).toHaveBeenLastCalledWith(
+          'graph TD; A-->B',
+          'dark'
+        )
+      )
       themeState.mode = 'light'
-      await settleRender()
+      await vi.waitFor(() =>
+        expect(mocks.renderMermaid).toHaveBeenLastCalledWith(
+          'graph TD; A-->B',
+          'default'
+        )
+      )
       expect(mocks.renderMermaid).toHaveBeenLastCalledWith(
         'graph TD; A-->B',
         'default'

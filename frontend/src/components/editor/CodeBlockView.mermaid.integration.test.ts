@@ -40,10 +40,6 @@ async function mountMermaid(source: string) {
   return { container, cleanup }
 }
 
-async function settleRender() {
-  await new Promise((resolve) => setTimeout(resolve, 1000))
-}
-
 describe('CodeBlockView with installed Mermaid renderer', () => {
   const originalMode = themeState.mode
 
@@ -57,7 +53,14 @@ describe('CodeBlockView with installed Mermaid renderer', () => {
       'graph TD\n  A[Start] --> B[End]'
     )
     try {
-      await settleRender()
+      await vi.waitFor(
+        () => {
+          expect(
+            container.querySelector('.silt-mermaid-svg svg')
+          ).not.toBeNull()
+        },
+        { timeout: 5000 }
+      )
       const svg = container.querySelector('.silt-mermaid-svg svg')
       expect(svg).not.toBeNull()
       expect(svg?.querySelectorAll('g.node').length).toBeGreaterThan(0)
@@ -71,7 +74,12 @@ describe('CodeBlockView with installed Mermaid renderer', () => {
     themeState.mode = 'light'
     const { container, cleanup } = await mountMermaid('not a valid diagram')
     try {
-      await settleRender()
+      await vi.waitFor(
+        () => {
+          expect(container.querySelector('[role="alert"]')).not.toBeNull()
+        },
+        { timeout: 5000 }
+      )
       expect(container.querySelector('[role="alert"]')?.textContent).toMatch(
         /no diagram type detected/i
       )
