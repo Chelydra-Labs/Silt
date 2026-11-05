@@ -235,6 +235,22 @@ describe('normalizePastedHTML lists', () => {
       ['0', '2. ', 'Second numbered']
     ])
   })
+
+  it('maps lettered and negative markers to the persistable unordered bullet', () => {
+    const lettered = noteDivs(normalizePastedHTML(LETTERED_MSO_LIST))
+    expect(lettered.map((n) => n.getAttribute('data-bullet'))).toEqual([
+      '- ',
+      '- '
+    ])
+
+    const negative = noteDivs(
+      normalizePastedHTML('<ol start="-2"><li>Back</li><li>Again</li></ol>')
+    )
+    expect(negative.map((n) => n.getAttribute('data-bullet'))).toEqual([
+      '- ',
+      '- '
+    ])
+  })
 })
 
 describe('normalizePastedHTML blockquotes', () => {

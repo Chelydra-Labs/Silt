@@ -370,7 +370,10 @@ function flattenListInto(
 
   for (const child of Array.from(list.children)) {
     if (child.tagName !== 'LI') continue
-    const marker = ordered ? `${ordinal}. ` : '- '
+    // Only non-negative ordinals are representable in the block model; a
+    // negative `<ol start>` marker would be dropped by both bullet detectors
+    // on save, so fall back to the unordered marker.
+    const marker = ordered && ordinal >= 1 ? `${ordinal}. ` : '- '
     if (ordered) ordinal++
 
     const nodes = collectListItemNodes(child, depth)
@@ -416,9 +419,10 @@ function findMsoMarker(el: Element): HTMLElement | null {
 
 function pseudoBullet(marker: HTMLElement | null): string {
   const text = (marker?.textContent || '').replace(/\u00a0/g, ' ').trim()
+  // The block model persists only ordered (non-negative arabic) and unordered
+  // markers. Lettered markers and Word's symbol fonts are unordered lists;
+  // emitting `a. ` would not survive a save/reload, so map them to `- `.
   if (/^\d+[.)]?$/.test(text)) return `${Number.parseInt(text, 10)}. `
-  if (/^[A-Za-z][.)]$/.test(text)) return `${text} `
-  // Word's symbol markers (`·`, `o`, `§`) are unordered list bullets.
   return '- '
 }
 
