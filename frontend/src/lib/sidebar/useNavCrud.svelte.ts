@@ -16,6 +16,7 @@ import {
   UnlinkNotebook
 } from '../../../bindings/silt/app.js'
 import { coerceIPCError } from '../ipcError'
+import { pushNotification } from '../../notifications/store.svelte'
 import { IPCErrorCode } from '../../generated/enums'
 import {
   deleteDisposition,
@@ -483,7 +484,19 @@ export function useNavCrud(deps: UseNavCrudDeps) {
         page: next.page
       })
     } catch (e) {
+      // A destructive action's failure must not silently dismiss its
+      // confirmation (#1024): restore the captured target so the dialog
+      // stays open for a deliberate retry or cancel.
+      deleteTarget = target
       console.error('Delete failed:', e)
+      // Typed errors (e.g. verified_write_failed) ride the v3 cause
+      // envelope; coerced.message carries the recovery prose (e.g. where a
+      // retained copy lives). Error toasts are sticky + deduped, so retries
+      // can't stack duplicates.
+      pushNotification({
+        kind: 'error',
+        message: coerceIPCError(e).message || 'The item could not be deleted.'
+      })
     }
   }
 
