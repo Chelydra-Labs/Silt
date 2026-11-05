@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -1743,6 +1744,48 @@ func TestPreparedStatementRepeatedJoinOrderByParameters(t *testing.T) {
 		if !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("group %d result = %v, want %v", tc.group, got, tc.want)
 		}
+	}
+}
+
+// TestSQLiteWriteLockHonorsContext exercises cancellation while the real
+// SQLite driver is waiting for the single-writer lock used by the index.
+func TestSQLiteWriteLockHonorsContext(t *testing.T) {
+	_, dbPath := newOnDiskDB(t)
+	blocker, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Close()
+	contender, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer contender.Close()
+	contender.SetMaxOpenConns(1)
+	if _, err := contender.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := blocker.Exec("CREATE TABLE IF NOT EXISTS lock_context_probe (value INTEGER)"); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := blocker.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("INSERT INTO lock_context_probe VALUES (1)"); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err = contender.ExecContext(ctx, "INSERT INTO lock_context_probe VALUES (2)")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("contended ExecContext error = %v, want context deadline", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("context cancellation took %s despite 100ms deadline", elapsed)
 	}
 }
 
