@@ -2,6 +2,8 @@ import type { Editor } from 'svelte-tiptap'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { serializeInlineContent } from './converters'
 import { findActiveBlock } from './keymaps'
+import { readClipboardPayload } from './clipboardHtml'
+import { classifyPastedHTML } from './paste/normalizePastedHTML'
 import { pushNotification } from '../../notifications/store.svelte'
 
 /**
@@ -65,11 +67,23 @@ export function copySelection(deps: ClipboardDeps): void {
 export async function pasteFromClipboard(deps: ClipboardDeps): Promise<void> {
   const { editor, notify } = deps
   try {
-    const text = await navigator.clipboard.readText()
-    if (text) {
-      editor.commands.insertContent({ type: 'text', text })
+    const { html, text } = await readClipboardPayload()
+    // Route through the view's paste entry points, never
+    // `insertContent({type:'text'})`: only pasteHTML/pasteText run the full
+    // paste pipeline (transformPastedHTML → transformPasted → handlePaste,
+    // `uiEvent:'paste'` rules, whitespace collapse, slice context repair), so
+    // a menu paste lands identical to Ctrl+V. `passthrough` payloads
+    // (data-pm-slice, internal copies) go through pasteHTML too — the
+    // normalizer leaves them untouched. Oversized HTML is the one case that
+    // must not be parsed: it falls back to the text payload.
+    if (html && classifyPastedHTML(html) !== 'text') {
+      editor.view.pasteHTML(html)
+    } else if (text) {
+      editor.view.pasteText(text)
     }
   } catch {
+    // readClipboardPayload() is total; this guards the paste pipeline itself
+    // so a genuine failure still tells the user nothing landed.
     notify({
       kind: 'error',
       message: 'Paste failed: clipboard could not be read.'
