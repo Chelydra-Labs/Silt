@@ -47,6 +47,28 @@ import { TableHeader } from '@tiptap/extension-table-header'
 import Subscript from '@tiptap/extension-subscript'
 import Superscript from '@tiptap/extension-superscript'
 
+// CSS-wide and system color keywords carry no portable color. Storing them on
+// a mark would render the inherited color (`inherit`, `currentColor`), hide the
+// text (`transparent`), or persist a Word system color (`auto`, `windowtext`),
+// so styled page wrappers pasted as text must not turn into color marks.
+const INERT_COLOR_VALUES = new Set([
+  'inherit',
+  'initial',
+  'unset',
+  'revert',
+  'revert-layer',
+  'currentcolor',
+  'transparent',
+  'auto',
+  'windowtext'
+])
+
+function colorFromStyle(value: string | null | undefined): string | null {
+  const color = value?.trim()
+  if (!color) return null
+  return INERT_COLOR_VALUES.has(color.toLowerCase()) ? null : color
+}
+
 // ---- Highlight mark (==text== / background color) ------------------------
 // Inline highlight. The default (no color) renders a <mark> element whose
 // background comes from the `.ProseMirror mark` rule consuming the per-theme
@@ -63,7 +85,7 @@ export const Highlight = Mark.create({
     return {
       color: {
         default: null,
-        parseHTML: (el) => el.style.backgroundColor?.trim() || null,
+        parseHTML: (el) => colorFromStyle(el.style.backgroundColor),
         renderHTML: (attrs) =>
           attrs.color ? { style: `background-color: ${attrs.color}` } : {}
       }
@@ -78,7 +100,10 @@ export const Highlight = Mark.create({
         // text color and a background color would lose one of the two marks.
         // Style rules are matched per property, so both coexist.
         style: 'background-color',
-        getAttrs: (value) => (value ? { color: String(value).trim() } : false)
+        getAttrs: (value) => {
+          const color = colorFromStyle(value)
+          return color ? { color } : false
+        }
       }
     ]
   },
@@ -125,7 +150,7 @@ export const TextColor = Mark.create({
     return {
       color: {
         default: null,
-        parseHTML: (el) => el.style.color?.trim() || null,
+        parseHTML: (el) => colorFromStyle(el.style.color),
         renderHTML: (attrs) =>
           attrs.color ? { style: `color: ${attrs.color}` } : {}
       }
@@ -138,7 +163,10 @@ export const TextColor = Mark.create({
         // background-color keeps this mark alongside Highlight — tag rules
         // match only the first rule, style rules match their own property.
         style: 'color',
-        getAttrs: (value) => (value ? { color: String(value).trim() } : false)
+        getAttrs: (value) => {
+          const color = colorFromStyle(value)
+          return color ? { color } : false
+        }
       }
     ]
   },
@@ -712,9 +740,10 @@ export function siltHandlePaste(
   const from = $from.before($from.depth)
   const to = $from.after($from.depth)
   // Replacing the empty parent wholesale would also discard the markers the
-  // user typed on it (bullet, quote, indent, align) — the same metadata loss
-  // the guard above avoids for task/header blocks. Carry them onto the pasted
-  // notes; ids stay unset so UniqueBlockIds mints fresh ones.
+  // user typed on it (bullet, quote, indent, align) and its persisted
+  // `file_date` — the same metadata loss the guard above avoids for
+  // task/header blocks. Carry them onto the pasted notes; ids stay unset so
+  // UniqueBlockIds mints fresh ones.
   const parent = $from.parent
   let content = slice.content
   if (parent.type.name === 'noteBlock') {
@@ -722,13 +751,15 @@ export function siltHandlePaste(
       bullet: parent.attrs.bullet,
       quote: parent.attrs.quote,
       depth: parent.attrs.depth,
-      align: parent.attrs.align
+      align: parent.attrs.align,
+      file_date: parent.attrs.file_date
     }
     const marked =
       inherited.bullet ||
       inherited.quote ||
       inherited.depth ||
-      inherited.align !== 'left'
+      inherited.align !== 'left' ||
+      inherited.file_date
     if (marked) {
       const blocks: PMNode[] = []
       slice.content.forEach((node) => {

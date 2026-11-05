@@ -793,6 +793,27 @@ describe('external leaf-tag parse rules (#1031)', () => {
     expect(text?.marks.map((m) => m.type.name)).toEqual(['highlight'])
   })
 
+  it('does not turn inert CSS color keywords into marks', () => {
+    // Styled page wrappers commonly carry inherited/transparent values; a mark
+    // for them would render nothing useful (or hide the text) in Silt.
+    for (const style of [
+      'color: inherit; background-color: transparent',
+      'color: currentColor; background-color: initial',
+      'color: auto; background-color: windowtext'
+    ]) {
+      const editor = makeLeafTagEditor()
+      editor.view.pasteHTML(
+        `<div style="${style}"><p><span style="${style}">inert</span></p></div>`
+      )
+      const text = nodeWithText(editor, 'noteBlock', 'inert')?.child(0)
+      expect(text?.text, `style="${style}"`).toBe('inert')
+      expect(
+        text?.marks.map((m) => m.type.name),
+        `style="${style}"`
+      ).toEqual([])
+    }
+  })
+
   it('gives each generic leaf tag to a single Silt block type', () => {
     // Duplicate generic tags would silently re-parse pasted blocks as the
     // wrong node type (the failure mode the inline-chip tests above guard).
@@ -1015,7 +1036,8 @@ describe('text-only paste (Ctrl+V) into paragraph-required containers', () => {
             depth: 1,
             bullet: '- ',
             quote: '',
-            align: 'center'
+            align: 'center',
+            file_date: '2026-01-01'
           }
         }
       ]
@@ -1029,6 +1051,29 @@ describe('text-only paste (Ctrl+V) into paragraph-required containers', () => {
       expect(note.attrs.bullet).toBe('- ')
       expect(note.attrs.depth).toBe(1)
       expect(note.attrs.align).toBe('center')
+      expect(note.attrs.file_date).toBe('2026-01-01')
+    }
+  })
+
+  it('keeps a note whose only marker is its file_date', () => {
+    // `file_date` is persisted identity, so it alone must route through the
+    // inheritance branch; otherwise the replace drops it silently.
+    const editor = makeLeafTagEditor({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'dated-note', file_date: '2026-01-01' }
+        }
+      ]
+    })
+    editor.commands.setTextSelection(1)
+    editor.view.pasteText('one\ntwo')
+
+    const notes = flatBlocks(editor).filter((b) => b.type === 'noteBlock')
+    expect(notes.map((b) => b.text)).toEqual(['one', 'two'])
+    for (const note of notes) {
+      expect(note.attrs.file_date).toBe('2026-01-01')
     }
   })
 })
