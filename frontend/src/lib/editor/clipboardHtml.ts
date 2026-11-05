@@ -8,9 +8,10 @@
 //      WebView2 (Windows), where Wails' permission handler allows it.
 //   2. The Go `ReadClipboardHTML` binding — required on Linux, because Wails'
 //      GTK permission handler hard-denies `clipboard.read()` there, so the
-//      webview can never see clipboard HTML by itself. The binding lands in
-//      PR-5; this reader imports it lazily and treats its absence as "no HTML"
-//      so this seam can ship first.
+//      webview can never see clipboard HTML by itself. It reports "no HTML" on
+//      Windows/macOS (where the webview path above is the real source) and
+//      errors on the opt-in GTK3 build; the reader treats a missing export or a
+//      failed read as "no HTML".
 //   3. `navigator.clipboard.readText()` — always available to the app and the
 //      only path for text-only clipboards.
 //
@@ -83,9 +84,10 @@ async function readHtmlFromNavigator(): Promise<SourceRead> {
 }
 
 /**
- * HTML from the Go clipboard binding. Absent-safe by design: the binding does
- * not exist until PR-5, so an undefined export means "this platform has no Go
- * HTML source yet", not an error.
+ * HTML from the Go clipboard binding. Absent-safe by design: platforms and
+ * builds without a native HTML source (GTK3, non-Linux) either omit the export
+ * or report "no HTML", so an undefined export means "this build has no Go HTML
+ * source", not an error.
  */
 async function readHtmlFromBinding(): Promise<SourceRead> {
   try {

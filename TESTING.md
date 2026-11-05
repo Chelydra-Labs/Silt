@@ -61,7 +61,7 @@ this matrix records the intent of each area's coverage.
 
 | Area | Covers |
 |---|---|
-| App bindings (root `*_test.go`) | the Wails-bound IPC surface — block mutation/state, navigation CRUD, vault lifecycle (move/copy/switch), archive export/import, plugin install/capabilities, recurrence, task dependencies (cycle prevention, DONE fan-out), subtree fetch/splice, standalone tasks, templates, themes, spellcheck, updates, lock-order invariants |
+| App bindings (root `*_test.go`) | the Wails-bound IPC surface — block mutation/state, navigation CRUD, vault lifecycle (move/copy/switch), archive export/import, plugin install/capabilities, recurrence, task dependencies (cycle prevention, DONE fan-out), subtree fetch/splice, standalone tasks, templates, themes, spellcheck, updates, lock-order invariants, clipboard HTML binding plumbing (stubbed OS seam) |
 | `backend/config` | config schema, load-over-defaults, atomic save, hot-reload |
 | `backend/core` | `ExecutionCoordinator` — DB write serialization, read concurrency, per-file lock isolation |
 | `backend/db` | `DatabaseManager` — block insertion/cascade, re-index, FTS5 (ranking/snippets/grouping/pagination), files-table incremental diff, WAL recovery, tag hydration, task_dependencies projection + cascade |
@@ -142,6 +142,21 @@ manually against `wails3 dev`. Grouped by surface; each item is pass/fail.
       line is a clean no-op (no duplicate line created) — reload stays blank.
 - [ ] Typing `- `, `* `, `+ `, or `1. ` at the start of a blank line still
       creates the bullet/numbered marker (explicit input rules unaffected).
+
+**Clipboard paste (rich vs plain)** — menu Paste against native `Ctrl+V`, per
+platform and build. The rich path is only observable with a live webview, so
+these are manual by design.
+- [ ] Windows (WebView2): copy rich content from Word, from a web page, and from
+      Silt itself; menu Paste and `Ctrl+V` produce the same blocks and marks
+      (HTML via `navigator.clipboard.read()`); `Ctrl+Shift+V` inserts plain text.
+- [ ] Linux GTK4 build (default): copy from LibreOffice Writer and from a
+      browser; menu Paste lands rich structure (HTML via the Go
+      `ReadClipboardHTML` binding); paste into a code block and with
+      `Ctrl+Shift+V` stays plain text; a text-only clipboard pastes text with no
+      error toast.
+- [ ] Linux GTK3 build (`wails3 build -tags gtk3`): menu Paste lands text only —
+      the HTML binding returns an explicit error by design and the reader
+      degrades; the UI does not hang and shows no toast while text is readable.
 
 **Smart Graph**
 - [ ] `#ns/sub/leaf` tags render as pills and aggregate hierarchically.
