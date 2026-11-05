@@ -358,9 +358,11 @@ describe('normalizePastedHTML blocks and code', () => {
 })
 
 describe('normalizePastedHTML idempotence', () => {
-  it('is stable across a second pass', () => {
-    const once = normalizePastedHTML(OUTLOOK_BODY)
-    expect(normalizePastedHTML(once)).toBe(once)
+  it('is stable across a second pass for every fixture', () => {
+    for (const fixture of ALL_FIXTURES) {
+      const once = normalizePastedHTML(fixture)
+      expect(normalizePastedHTML(once)).toBe(once)
+    }
   })
 
   it('leaves already-Silt block HTML structurally intact', () => {
