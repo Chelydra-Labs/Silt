@@ -89,7 +89,9 @@
   // Mermaid render (debounced) — only for mermaid blocks. Re-renders on source
   // or theme change; invalid source surfaces a readable error inline.
   let mermaidTimer: ReturnType<typeof setTimeout> | null = null
+  let mermaidRenderGeneration = 0
   $effect(() => {
+    const generation = ++mermaidRenderGeneration
     if (!isMermaid) {
       mermaidSvg = ''
       mermaidError = null
@@ -101,6 +103,7 @@
     const t = setTimeout(() => {
       void (async () => {
         const res = await renderMermaid(c, theme)
+        if (generation !== mermaidRenderGeneration) return
         mermaidSvg = res.svg
         mermaidError = res.error
       })()
