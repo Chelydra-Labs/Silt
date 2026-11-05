@@ -1692,6 +1692,96 @@ describe('Sidebar', () => {
     expect(mocks.deletePage).toHaveBeenCalledTimes(1)
   })
 
+  // #1024 harden: while a delete IPC hangs (a flaky root leaves a
+  // multi-second window), the user can stage a NEWER delete — the hung
+  // call's rejection must not clobber that newer target.
+  it('stale rejection does not clobber a newer staged delete target (#1024)', async () => {
+    render(ToastContainer)
+    // Expand both sections so Standup (the newer target) is rendered.
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [
+        { notebook: 'Work', path: 'Journal' },
+        { notebook: 'Work', path: 'Meetings' }
+      ],
+      recent_pages: [],
+      favorites: [],
+      sidebar_view: 'tree'
+    })
+    renderSidebarWithTree(NAV_TREE, {
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily'
+    })
+    await flush()
+
+    await openDeleteConfirm(screen.getByText('Daily').closest('button')!)
+    let rejectDaily!: (reason?: unknown) => void
+    mocks.deletePage.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectDaily = reject
+        })
+    )
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await flush()
+    // In flight: the dialog is closed and the sidebar stays interactive.
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    // The user stages a different delete while Daily's IPC hangs.
+    await openDeleteConfirm(screen.getByText('Standup').closest('button')!)
+    expect(
+      screen.getByRole('dialog', { name: 'Delete page' })
+    ).toBeInTheDocument()
+    expect(screen.getByText(/page "Standup"/)).toBeInTheDocument()
+
+    rejectDaily(
+      wailsIPCError({
+        code: 'verified_write_failed',
+        message:
+          'The delete could not be verified — the original page was kept.'
+      })
+    )
+    await flush()
+
+    // The dialog still shows the newer target (not the stale Daily) and
+    // the failure still toasts.
+    expect(screen.getByText(/page "Standup"/)).toBeInTheDocument()
+    expect(screen.queryByText(/page "Daily"/)).toBeNull()
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+  })
+
+  // #1024 harden: a partial delete (file moved, then the response errored)
+  // retries into raw Go not-found prose; the toast must carry the calm
+  // mapping instead, matching navigationActionError's voice.
+  it('partial-delete retry maps navigation_not_found to calm prose (#1024)', async () => {
+    render(ToastContainer)
+    renderSidebarWithTree(NAV_TREE, {
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily'
+    })
+    await flush()
+
+    await openDeleteConfirm(screen.getByText('Daily').closest('button')!)
+    mocks.deletePage.mockRejectedValueOnce(
+      wailsIPCError({
+        code: 'navigation_not_found',
+        message:
+          'page file not found: stat /vault/Work/Journal/Daily.md: no such file or directory'
+      })
+    )
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await flush()
+
+    expect(
+      screen.getByRole('dialog', { name: 'Delete page' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('That item is no longer available.')
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/no such file or directory/)).toBeNull()
+  })
+
   it('linked delete dialog: dialog semantics, surface focus, Esc cancels without IPC (#1006 a11y)', async () => {
     renderSidebarWithTree(LINKED_TREE, {
       notebook: 'Synced',
