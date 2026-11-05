@@ -7,6 +7,11 @@ const plainPasteKey = new PluginKey('plainPaste')
 // flag. Only the focused editor receives keydown/paste, so the flag always
 // reflects the editor about to paste — no cross-editor cross-talk.
 let shiftHeld = false
+// Shift state for the paste event being handled. The DOM `paste` hook below
+// consumes `shiftHeld` before any `handlePaste` prop runs, so the flag is
+// cleared even when another handler claims the paste (the shared block-paste
+// path in schema.ts) and this extension's handlePaste never runs.
+let shiftForPaste = false
 
 /**
  * Paste-without-formatting: when the user pastes with Shift held (Ctrl+Shift+V
@@ -17,9 +22,11 @@ let shiftHeld = false
  *
  * Modifier state is tracked from the keydown that precedes the paste event —
  * the ClipboardEvent itself carries no shift/ctrl flags. A paste follows its
- * triggering keydown with no intervening input, so the captured flag is fresh;
- * handlePaste resets it after reading so a later context-menu paste (no
- * preceding keydown) is never falsely treated as plain.
+ * triggering keydown with no intervening input, so the captured flag is fresh.
+ * The paste event's DOM hook snapshots the flag and clears it before any
+ * handlePaste handler runs, so a later context-menu paste (no preceding
+ * keydown) is never falsely treated as plain — whether that earlier paste was
+ * handled here, claimed by another handler, or left to ProseMirror.
  */
 export const PlainPaste = Extension.create({
   name: 'plainPaste',
@@ -32,11 +39,16 @@ export const PlainPaste = Extension.create({
             keydown: (_view, event) => {
               shiftHeld = event.shiftKey
               return false
+            },
+            paste: () => {
+              shiftForPaste = shiftHeld
+              shiftHeld = false
+              return false
             }
           },
           handlePaste: (view, event) => {
-            const wasShift = shiftHeld
-            shiftHeld = false
+            const wasShift = shiftForPaste
+            shiftForPaste = false
             if (!wasShift) return false
             const text = event.clipboardData?.getData('text/plain') ?? ''
             if (!text) return false

@@ -21,6 +21,7 @@
     docToBlocks
   } from '../../../../lib/editor'
   import type { ParsedBlock } from '../../../../lib/editor'
+  import { siltPasteProps } from '../../../../lib/editor/schema'
   import type { PluginContext } from '../../../sdk'
   import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
   import TaskMetadataSidebar from './TaskMetadataSidebar.svelte'
@@ -147,6 +148,8 @@
     createEditor({
       extensions,
       content: blocksToDoc([]),
+      // Same paste semantics as the page editor (shared helper).
+      editorProps: siltPasteProps,
       onUpdate: () => {
         if (suppressUpdate) return
         unsavedChanges = true
