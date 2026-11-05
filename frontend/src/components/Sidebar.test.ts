@@ -1,6 +1,12 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { tick } from 'svelte'
-import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  within
+} from '@testing-library/svelte'
 
 const mocks = vi.hoisted(() => ({
   listNavigation: vi.fn(),
@@ -1615,10 +1621,12 @@ describe('Sidebar', () => {
 
   // #1024: a failed delete IPC call must not silently close the confirm
   // dialog. The captured target is restored (retry/cancel stay deliberate)
-  // and the coerced typed prose surfaces on the app's toast stack. The
+  // and the failure prose surfaces on the app's toast stack. The delete
+  // backend has no typed envelope (app_rename.go returns plain fmt.Errorf
+  // prose), so the fixtures use realistic plain rejections; the
   // ToastContainer render proves the prose reaches the rendered surface,
   // not just the store.
-  it('vault page delete failure: dialog restored + typed prose toasted, trash copy (#1024)', async () => {
+  it('vault page delete failure: dialog restored + prose toasted, trash copy (#1024)', async () => {
     render(ToastContainer)
     renderSidebarWithTree(NAV_TREE, {
       notebook: 'Work',
@@ -1628,11 +1636,9 @@ describe('Sidebar', () => {
     await flush()
 
     await openDeleteConfirm(screen.getByText('Daily').closest('button')!)
-    const failure = wailsIPCError({
-      code: 'verified_write_failed',
-      message:
-        'The delete could not be verified — the original page was kept at .system/tmp/daily-abc.md.'
-    })
+    const failure = new Error(
+      'failed to move to trash: rename /vault/Work/Journal/Daily.md /vault/.system/trash/20261105-093000/Work/Journal/Daily.md: no such file or directory'
+    )
     mocks.deletePage.mockRejectedValueOnce(failure)
 
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
@@ -1647,7 +1653,11 @@ describe('Sidebar', () => {
     expect(
       screen.getByText(/will move the page "Daily" to/)
     ).toBeInTheDocument()
-    expect(screen.getByText(/\.system\/trash\//)).toBeInTheDocument()
+    // Scoped to the dialog's <code>: the realistic trash-rename prose in
+    // the toast also contains this path.
+    expect(
+      screen.getByText(/\.system\/trash\//, { selector: 'code' })
+    ).toBeInTheDocument()
     // The typed recovery prose reaches the user surface verbatim.
     expect(screen.getByRole('alert')).toBeInTheDocument()
     expect(screen.getByText(failure.message)).toBeInTheDocument()
@@ -1666,11 +1676,9 @@ describe('Sidebar', () => {
     await flush()
 
     await openDeleteConfirm(screen.getByText('Plan').closest('button')!)
-    const failure = wailsIPCError({
-      code: 'verified_write_failed',
-      message:
-        'The delete could not be verified — the original page was kept at /mnt/ext/Synced/Notes/.plan-abc.md.'
-    })
+    const failure = new Error(
+      'remove /mnt/ext/Synced/Notes/Plan.md: read-only file system'
+    )
     mocks.deletePage.mockRejectedValueOnce(failure)
 
     await fireEvent.click(
@@ -1684,7 +1692,11 @@ describe('Sidebar', () => {
       screen.getByRole('dialog', { name: 'Delete permanently' })
     ).toBeInTheDocument()
     expect(screen.getByText('page "Plan"')).toBeInTheDocument()
-    expect(screen.getByText('/mnt/ext/Synced')).toBeInTheDocument()
+    // Scoped to the dialog's <code>: the realistic os.Remove prose in the
+    // toast also contains this root path.
+    expect(
+      screen.getByText('/mnt/ext/Synced', { selector: 'code' })
+    ).toBeInTheDocument()
     expect(screen.getByText(/deleted in place/i)).toBeInTheDocument()
     expect(screen.getByRole('alert')).toBeInTheDocument()
     expect(screen.getByText(failure.message)).toBeInTheDocument()
@@ -1734,26 +1746,23 @@ describe('Sidebar', () => {
     ).toBeInTheDocument()
     expect(screen.getByText(/page "Standup"/)).toBeInTheDocument()
 
-    rejectDaily(
-      wailsIPCError({
-        code: 'verified_write_failed',
-        message:
-          'The delete could not be verified — the original page was kept.'
-      })
-    )
+    rejectDaily(new Error('page "Daily" not found'))
     await flush()
 
     // The dialog still shows the newer target (not the stale Daily) and
-    // the failure still toasts.
-    expect(screen.getByText(/page "Standup"/)).toBeInTheDocument()
-    expect(screen.queryByText(/page "Daily"/)).toBeNull()
+    // the failure still toasts. Scoped to the dialog: the plain not-found
+    // prose in the toast also contains the phrase.
+    const dialog = screen.getByRole('dialog', { name: 'Delete page' })
+    expect(within(dialog).getByText(/page "Standup"/)).toBeInTheDocument()
+    expect(within(dialog).queryByText(/page "Daily"/)).toBeNull()
     expect(screen.getByRole('alert')).toBeInTheDocument()
   })
 
-  // #1024 harden: a partial delete (file moved, then the response errored)
-  // retries into raw Go not-found prose; the toast must carry the calm
-  // mapping instead, matching navigationActionError's voice.
-  it('partial-delete retry maps navigation_not_found to calm prose (#1024)', async () => {
+  // #1024 review: the delete backend has no typed envelope — not-found is
+  // plain fmt.Errorf prose (app_rename.go), so a partial-delete retry
+  // surfaces it verbatim. Pins the passthrough contract (no fabricated
+  // calm mapping) until the backend types its delete errors.
+  it('plain untyped delete rejection: dialog restored + prose verbatim (#1024)', async () => {
     render(ToastContainer)
     renderSidebarWithTree(NAV_TREE, {
       notebook: 'Work',
@@ -1763,23 +1772,46 @@ describe('Sidebar', () => {
     await flush()
 
     await openDeleteConfirm(screen.getByText('Daily').closest('button')!)
-    mocks.deletePage.mockRejectedValueOnce(
-      wailsIPCError({
-        code: 'navigation_not_found',
-        message:
-          'page file not found: stat /vault/Work/Journal/Daily.md: no such file or directory'
-      })
-    )
+    mocks.deletePage.mockRejectedValueOnce(new Error('page "Daily" not found'))
+
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
     await flush()
 
     expect(
       screen.getByRole('dialog', { name: 'Delete page' })
     ).toBeInTheDocument()
+    expect(screen.getByText('page "Daily" not found')).toBeInTheDocument()
+    expect(notificationsState.items[0]?.kind).toBe('error')
+    expect(mocks.deletePage).toHaveBeenCalledTimes(1)
+  })
+
+  // #1024 review: the section branch funnels through the same catch — pin
+  // its restore + toast too.
+  it('section delete failure: dialog restored + prose toasted (#1024)', async () => {
+    render(ToastContainer)
+    renderSidebarWithTree(NAV_TREE, {
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily'
+    })
+    await flush()
+
+    await openDeleteConfirm(screen.getByRole('treeitem', { name: /Journal/ }))
+    const failure = new Error(
+      'failed to move to trash: rename /vault/Work/Journal /vault/.system/trash/20261105-093000/Work/Journal: directory not empty'
+    )
+    mocks.deleteSection.mockRejectedValueOnce(failure)
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await flush()
+
     expect(
-      screen.getByText('That item is no longer available.')
+      screen.getByRole('dialog', { name: 'Delete section' })
     ).toBeInTheDocument()
-    expect(screen.queryByText(/no such file or directory/)).toBeNull()
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+    expect(screen.getByText(failure.message)).toBeInTheDocument()
+    expect(notificationsState.items[0]?.kind).toBe('error')
+    expect(mocks.deleteSection).toHaveBeenCalledTimes(1)
   })
 
   it('linked delete dialog: dialog semantics, surface focus, Esc cancels without IPC (#1006 a11y)', async () => {

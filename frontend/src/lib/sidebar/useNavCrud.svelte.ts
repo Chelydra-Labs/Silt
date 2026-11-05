@@ -487,24 +487,19 @@ export function useNavCrud(deps: UseNavCrudDeps) {
       // A destructive action's failure must not silently dismiss its
       // confirmation (#1024): restore the captured target for a deliberate
       // retry/cancel — but never clobber a NEWER delete the user staged
-      // while this IPC hung (that would show the wrong item and allow two
-      // concurrent deletes).
+      // while this IPC hung (the dialog must keep showing the item the
+      // user is actually acting on).
       if (deleteTarget === null) deleteTarget = target
       console.error('Delete failed:', e)
-      // Typed errors (e.g. verified_write_failed) ride the v3 cause
-      // envelope; coerced.message carries the recovery prose (e.g. where a
-      // retained copy lives). A partial delete (file moved, then the
-      // response errored) retries into raw Go not-found prose (paths +
-      // errno), so it gets the same calm mapping navigationActionError
-      // uses. Error toasts are sticky + deduped, so retries can't stack
+      // The delete path (app_rename.go) has no typed error envelope yet —
+      // failures arrive as plain Go prose ('page "X" not found', trash
+      // rename wraps) and coerceIPCError passes them through verbatim;
+      // a typed envelope keeps its recovery prose if one is ever added.
+      // Error toasts are sticky + deduped, so retries can't stack
       // duplicates.
-      const parsed = coerceIPCError(e)
       pushNotification({
         kind: 'error',
-        message:
-          parsed.code === IPCErrorCode.CodeNavigationNotFound
-            ? 'That item is no longer available.'
-            : parsed.message || 'The item could not be deleted.'
+        message: coerceIPCError(e).message || 'The item could not be deleted.'
       })
     }
   }
