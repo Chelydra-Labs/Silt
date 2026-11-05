@@ -15,15 +15,28 @@
 //      only path for text-only clipboards.
 //
 // Every step is best-effort: permission denials, missing APIs and failed blob
-// reads all degrade to the next source, and the function never throws. The
-// caller (pasteFromClipboard) owns the user-visible failure toast.
+// reads all degrade to the next source, and the function never throws. Failures
+// are reported through `unavailable`, so the caller (pasteFromClipboard) can
+// toast a denied clipboard while staying silent for a readable-but-empty one.
 
-export interface ClipboardPayload {
-  /** Clipboard HTML, or '' when no source could provide it. */
-  html: string
-  /** Clipboard plain text, or '' when unavailable. */
-  text: string
+import type { PastePayload } from './paste/pastePayload'
+
+export interface ClipboardPayload extends PastePayload {
+  /**
+   * True only when every source failed (API missing, permission denied, blob
+   * read error). A clipboard that was read successfully but holds nothing
+   * stays `false` — that is an empty clipboard, not a broken one.
+   */
+  unavailable: boolean
 }
+
+/** Outcome of one source. `ok` = the read ran; `value` may still be empty. */
+interface SourceRead {
+  value: string
+  ok: boolean
+}
+
+const FAILED: SourceRead = { value: '', ok: false }
 
 /**
  * Platform clipboards hand back CRLF line endings and, occasionally, NUL
@@ -39,31 +52,34 @@ function clipboardApi(): Clipboard | undefined {
 }
 
 /**
- * Async Clipboard API HTML. Returns '' when the API is missing, the clipboard
- * holds no `text/html` item, or the read is denied (the Linux case).
+ * Async Clipboard API HTML. `ok` is false when the API is missing, the read is
+ * denied (the Linux case), or every item that advertised `text/html` failed to
+ * yield a blob. A successful read with no `text/html` item is `ok` with ''.
  */
-async function readHtmlFromNavigator(): Promise<string> {
+async function readHtmlFromNavigator(): Promise<SourceRead> {
   const clipboard = clipboardApi()
-  if (!clipboard || typeof clipboard.read !== 'function') return ''
+  if (!clipboard || typeof clipboard.read !== 'function') return FAILED
 
   let items: ClipboardItems
   try {
     items = await clipboard.read()
   } catch {
-    return ''
+    return FAILED
   }
 
+  let sawHtml = false
   for (const item of items) {
     if (!item.types?.includes('text/html')) continue
+    sawHtml = true
     try {
       const blob = await item.getType('text/html')
-      return await blob.text()
+      return { value: await blob.text(), ok: true }
     } catch {
       // Advertised the type but the read failed; keep looking at other items.
       continue
     }
   }
-  return ''
+  return { value: '', ok: !sawHtml }
 }
 
 /**
@@ -71,26 +87,26 @@ async function readHtmlFromNavigator(): Promise<string> {
  * not exist until PR-5, so an undefined export means "this platform has no Go
  * HTML source yet", not an error.
  */
-async function readHtmlFromBinding(): Promise<string> {
+async function readHtmlFromBinding(): Promise<SourceRead> {
   try {
     const app = (await import('$silt-app')) as {
       ReadClipboardHTML?: () => Promise<string>
     }
-    if (typeof app.ReadClipboardHTML !== 'function') return ''
+    if (typeof app.ReadClipboardHTML !== 'function') return FAILED
     const html = await app.ReadClipboardHTML()
-    return typeof html === 'string' ? html : ''
+    return { value: typeof html === 'string' ? html : '', ok: true }
   } catch {
-    return ''
+    return FAILED
   }
 }
 
-async function readTextFromNavigator(): Promise<string> {
+async function readTextFromNavigator(): Promise<SourceRead> {
   const clipboard = clipboardApi()
-  if (!clipboard || typeof clipboard.readText !== 'function') return ''
+  if (!clipboard || typeof clipboard.readText !== 'function') return FAILED
   try {
-    return await clipboard.readText()
+    return { value: await clipboard.readText(), ok: true }
   } catch {
-    return ''
+    return FAILED
   }
 }
 
@@ -103,7 +119,13 @@ async function readTextFromNavigator(): Promise<string> {
  * leave that fallback with nothing to insert.
  */
 export async function readClipboardPayload(): Promise<ClipboardPayload> {
-  const html = (await readHtmlFromNavigator()) || (await readHtmlFromBinding())
-  const text = await readTextFromNavigator()
-  return { html: normalizePayload(html), text: normalizePayload(text) }
+  const fromNavigator = await readHtmlFromNavigator()
+  const fromBinding = fromNavigator.value ? FAILED : await readHtmlFromBinding()
+  const fromText = await readTextFromNavigator()
+
+  return {
+    html: normalizePayload(fromNavigator.value || fromBinding.value),
+    text: normalizePayload(fromText.value),
+    unavailable: !fromNavigator.ok && !fromBinding.ok && !fromText.ok
+  }
 }
