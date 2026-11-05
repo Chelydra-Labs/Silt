@@ -33,6 +33,10 @@ the pre-push hook, and how release notes are generated.
 
 ## Quick start
 
+Frontend development and tests require Node.js `^22.12.0`, `^24.0.0`, or
+`>=26.0.0` (Vitest's supported Node releases). CI pins Node 22.12.0 so the
+minimum supported 22.x version is exercised.
+
 ```sh
 # Install hooks so every push is gated (tests, build, binding freshness):
 git config core.hooksPath .githooks
