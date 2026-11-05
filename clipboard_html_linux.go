@@ -29,7 +29,7 @@ typedef struct {
     GInputStream *stream;
     GCancellable *cancellable;
     GError *error;
-    gboolean done;
+    gint done; // atomic: written by callbacks, read by the reclaim path
 } SiltClipboardHTMLRead;
 
 static void silt_clipboard_html_free_state(SiltClipboardHTMLRead *state) {
@@ -38,6 +38,33 @@ static void silt_clipboard_html_free_state(SiltClipboardHTMLRead *state) {
     if (state->cancellable != NULL) g_object_unref(state->cancellable);
     if (state->error != NULL) g_error_free(state->error);
     g_free(state);
+}
+
+// A timed-out read cannot be freed where it is abandoned, but the state becomes
+// safe to free once its callback chain ends. Every terminal callback sets `done`
+// as its last touch of the state and no callback schedules work after it, so
+// `done` observed from a later read proves nothing is in flight.
+// Only touched from silt_clipboard_read_html_sync (the GTK main thread).
+static GPtrArray *silt_clipboard_html_abandoned = NULL;
+
+static void silt_clipboard_html_reclaim_abandoned(void) {
+    if (silt_clipboard_html_abandoned == NULL) return;
+    for (guint i = 0; i < silt_clipboard_html_abandoned->len;) {
+        SiltClipboardHTMLRead *state = g_ptr_array_index(silt_clipboard_html_abandoned, i);
+        if (!g_atomic_int_get(&state->done)) {
+            i++;
+            continue;
+        }
+        silt_clipboard_html_free_state(state);
+        g_ptr_array_remove_index_fast(silt_clipboard_html_abandoned, i);
+    }
+}
+
+static void silt_clipboard_html_abandon(SiltClipboardHTMLRead *state) {
+    if (silt_clipboard_html_abandoned == NULL) {
+        silt_clipboard_html_abandoned = g_ptr_array_new();
+    }
+    g_ptr_array_add(silt_clipboard_html_abandoned, state);
 }
 
 static void silt_clipboard_html_read_chunk(SiltClipboardHTMLRead *state);
@@ -49,7 +76,7 @@ static void silt_clipboard_html_chunk_cb(GObject *source, GAsyncResult *result, 
 
     if (bytes == NULL) {
         state->error = error;
-        state->done = TRUE;
+        g_atomic_int_set(&state->done, TRUE);
         return;
     }
 
@@ -57,14 +84,14 @@ static void silt_clipboard_html_chunk_cb(GObject *source, GAsyncResult *result, 
     const guint8 *data = g_bytes_get_data(bytes, &size);
     if (size == 0) {
         g_bytes_unref(bytes); // EOF
-        state->done = TRUE;
+        g_atomic_int_set(&state->done, TRUE);
         return;
     }
     if (state->buffer->len + size > SILT_CLIPBOARD_HTML_MAX_BYTES) {
         g_bytes_unref(bytes);
         state->error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_NO_SPACE,
                                            "clipboard HTML exceeds the size limit");
-        state->done = TRUE;
+        g_atomic_int_set(&state->done, TRUE);
         return;
     }
     g_byte_array_append(state->buffer, data, (guint)size);
@@ -89,7 +116,7 @@ static void silt_clipboard_html_read_cb(GObject *source, GAsyncResult *result, g
     state->stream = gdk_clipboard_read_finish(GDK_CLIPBOARD(source), result, &mime_type, &error);
     if (state->stream == NULL) {
         state->error = error;
-        state->done = TRUE;
+        g_atomic_int_set(&state->done, TRUE);
         return;
     }
     silt_clipboard_html_read_chunk(state);
@@ -124,6 +151,7 @@ static const char **silt_clipboard_html_targets(GdkClipboard *clipboard) {
 // returns NULL and stores a newly allocated message in *error_out.
 char *silt_clipboard_read_html_sync(char **error_out) {
     if (error_out != NULL) *error_out = NULL;
+    silt_clipboard_html_reclaim_abandoned();
 
     GdkDisplay *display = gdk_display_get_default();
     if (display == NULL) {
@@ -145,24 +173,25 @@ char *silt_clipboard_read_html_sync(char **error_out) {
 
     GMainContext *context = g_main_context_default();
     gint64 deadline = g_get_monotonic_time() + SILT_CLIPBOARD_HTML_TIMEOUT_US;
-    while (!state->done && g_get_monotonic_time() < deadline) {
+    while (!g_atomic_int_get(&state->done) && g_get_monotonic_time() < deadline) {
         // Non-blocking iteration so the deadline is actually observed; the
         // 1ms sleep keeps a waiting read from spinning a core.
         if (!g_main_context_iteration(context, FALSE)) g_usleep(1000);
     }
 
-    if (!state->done) {
+    if (!g_atomic_int_get(&state->done)) {
         g_cancellable_cancel(state->cancellable);
         gint64 grace = g_get_monotonic_time() + SILT_CLIPBOARD_HTML_GRACE_US;
-        while (!state->done && g_get_monotonic_time() < grace) {
+        while (!g_atomic_int_get(&state->done) && g_get_monotonic_time() < grace) {
             if (!g_main_context_iteration(context, FALSE)) g_usleep(1000);
         }
     }
 
-    if (!state->done) {
-        // The cancelled read still has not reported back. Freeing the state
-        // would let a late callback write into freed memory, so abandon it
-        // (one bounded leak) rather than risk a crash.
+    if (!g_atomic_int_get(&state->done)) {
+        // The cancelled read still has not reported back: freeing now would let
+        // a late callback write into freed memory. Park it so the next read can
+        // free it once its callback chain has ended.
+        silt_clipboard_html_abandon(state);
         if (error_out != NULL) *error_out = g_strdup("clipboard HTML read timed out");
         return NULL;
     }
