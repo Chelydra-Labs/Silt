@@ -149,11 +149,11 @@ these are manual by design.
 - [ ] Windows (WebView2): copy rich content from Word, from a web page, and from
       Silt itself; menu Paste and `Ctrl+V` produce the same blocks and marks
       (HTML via `navigator.clipboard.read()`); `Ctrl+Shift+V` inserts plain text.
-- [ ] Linux GTK4 build (default): copy from LibreOffice Writer and from a
-      browser; menu Paste lands rich structure (HTML via the Go
-      `ReadClipboardHTML` binding); paste into a code block and with
-      `Ctrl+Shift+V` stays plain text; a text-only clipboard pastes text with no
-      error toast.
+- [ ] Linux GTK4 build (default): copy from LibreOffice Writer, from a browser,
+      and from Silt itself; menu Paste and `Ctrl+V` produce the same blocks and
+      marks (HTML via the Go `ReadClipboardHTML` binding); paste into a code
+      block and with `Ctrl+Shift+V` stays plain text; a text-only clipboard
+      pastes text with no error toast.
 - [ ] Linux GTK3 build (`wails3 build -tags gtk3`): menu Paste lands text only —
       the HTML binding returns an explicit error by design and the reader
       degrades; the UI does not hang and shows no toast while text is readable.
