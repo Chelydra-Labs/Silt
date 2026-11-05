@@ -29,9 +29,9 @@ const bindings = vi.hoisted(() => ({
   SetOpenTabs: vi.fn(async (): Promise<void> => undefined),
   GetStartupEvents: vi.fn(async () => []),
   RecordRecentPage: vi.fn(async () => undefined),
-  // Fresh EMPTY payloads on every call: a new [] reference per resolution is
-  // what the real IPC round-trip produces and what re-triggers a tracking
-  // effect (mockResolvedValue would reuse one array ref and mask the spin).
+  // Fresh EMPTY payloads on every call — the shape real IPC produces. A
+  // shared ref would still invalidate (deep $state uses safe_not_equal for
+  // every object write); fresh arrays keep the mock faithful to production.
   GetPageType: vi.fn(async () => null),
   GetPageProperties: vi.fn(async () => []),
   GetPageCoreMetadata: vi.fn(async () => ({
