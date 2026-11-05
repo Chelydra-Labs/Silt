@@ -219,7 +219,7 @@ describe('FindBar replace disclosure (#1044)', () => {
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
   })
 
-  it('reveals replace on click without changing the query or options', async () => {
+  it('toggles replace on click without changing the query or options', async () => {
     const { getByLabelText, getByRole, queryByLabelText } = renderWithEditor()
     const toggle = getByLabelText('Toggle replace')
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
@@ -241,6 +241,13 @@ describe('FindBar replace disclosure (#1044)', () => {
     expect(
       getByLabelText('Case sensitive (Alt+C)').getAttribute('aria-pressed')
     ).toBe('true')
+
+    // Second activation must hide the row again, not pin it open.
+    await fireEvent.click(toggle)
+
+    expect(findBarMock.setReplaceOpen).toHaveBeenLastCalledWith(false)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(queryByLabelText('Replace with')).toBeNull()
   })
 
   it('does not re-run the search when revealing replace (Edit mode)', async () => {
