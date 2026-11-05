@@ -374,17 +374,36 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 			for _, r := range pageOps {
 				switch r.op.Kind {
 				case "create":
-					nb := parser.ParsedBlock{
-						ID:        r.newID,
-						Type:      r.blockType,
-						CleanText: r.text,
-						FileDate:  time.Now().Format("2006-01-02"),
-					}
+					var nb parser.ParsedBlock
 					if r.blockType == parser.BlockTask {
-						// Default TODO so GFM checkbox renders; callers that need
-						// DOING/DONE use UpdateBlockState after mint.
-						nb.Status = "TODO"
-						nb.Priority = parser.DefaultTaskPriority
+						// Canonicalize TASK creates through the parser (#1039 D2):
+						// the FIRST disk write matches every later render (no
+						// silent reorder/rewrite on the next full-page save), and
+						// tokens the model echoed into the title ([due::],
+						// [priority::], [owner::]…) become honored metadata
+						// instead of inert description text.
+						nb, _, _ = parser.ParseLine("- [ ] "+r.text, 0, a.spacesPerTab)
+						// The parse minted its own id/date for an id-less line;
+						// the pre-minted r.newID is what callers were promised.
+						nb.ID = r.newID
+						nb.RawText = ""
+						nb.FileDate = time.Now().Format("2006-01-02")
+						// `- [ ] ` pins Status=TODO; callers needing DOING/DONE
+						// use UpdateBlockState after mint. Same for priority: an
+						// explicitly echoed value survives the parse, otherwise
+						// apply the app-wide created-task default. ([priority:: 3]
+						// is indistinguishable from "no token" — the legacy
+						// missing sentinel — and defaults like a missing token.)
+						if nb.Priority == parser.LegacyMissingTaskPriority {
+							nb.Priority = parser.DefaultTaskPriority
+						}
+					} else {
+						nb = parser.ParsedBlock{
+							ID:        r.newID,
+							Type:      r.blockType,
+							CleanText: r.text,
+							FileDate:  time.Now().Format("2006-01-02"),
+						}
 					}
 					mutated = insertAfter(mutated, r.op.AfterID, nb)
 					createdIDs = append(createdIDs, r.newID)
