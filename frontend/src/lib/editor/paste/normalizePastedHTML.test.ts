@@ -198,6 +198,21 @@ describe('normalizePastedHTML lists', () => {
     ])
   })
 
+  it('resumes numbering from a mid-list li value', () => {
+    const notes = noteDivs(
+      normalizePastedHTML(
+        '<ol start="2"><li>Two</li><li value="7">Seven</li><li>Eight</li><li value="3">Three</li><li value="0">Zero</li></ol>'
+      )
+    )
+    expect(notes.map((n) => n.getAttribute('data-bullet'))).toEqual([
+      '2. ',
+      '7. ',
+      '8. ',
+      '3. ',
+      '4. '
+    ])
+  })
+
   it('turns continuation paragraphs inside an li into same-depth empty-bullet notes', () => {
     const notes = noteDivs(
       normalizePastedHTML(

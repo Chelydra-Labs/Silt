@@ -391,6 +391,13 @@ function flattenListInto(
 
   for (const child of Array.from(list.children)) {
     if (child.tagName !== 'LI') continue
+    // `<li value="N">` restarts numbering mid-list; browsers emit it when a
+    // slice of a numbered list is copied. Unrepresentable values (< 1) keep
+    // the running ordinal.
+    const explicit = Number.parseInt(child.getAttribute('value') ?? '', 10)
+    if (ordered && Number.isFinite(explicit) && explicit >= 1) {
+      ordinal = explicit
+    }
     // Only non-negative ordinals are representable in the block model; a
     // negative `<ol start>` marker would be dropped by both bullet detectors
     // on save, so fall back to the unordered marker.

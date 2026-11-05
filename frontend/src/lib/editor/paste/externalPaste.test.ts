@@ -343,6 +343,35 @@ describe('external paste through the real Silt schema', () => {
     ])
   })
 
+  it('does not inherit depth onto continuation notes of a pasted list', () => {
+    // A mixed slice (list item + marker-less continuation) must not take the
+    // empty parent's depth: the continuation would land below its own item.
+    const editor = makeEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'empty', depth: 2, bullet: '- ', quote: '' },
+          content: []
+        }
+      ]
+    })
+    editor.commands.setTextSelection(1)
+    editor.view.pasteHTML(
+      '<ol start=3><li><p>Install the app</p><p>Download the installer first.</p></li><li>Configure it</li></ol>'
+    )
+
+    const nodes = editor.getJSON().content ?? []
+    expect(
+      nodes.map((n) => [noteAttrs(n).depth, noteAttrs(n).bullet, textOf(n)])
+    ).toEqual([
+      [0, '3. ', 'Install the app'],
+      [0, '', 'Download the installer first.'],
+      [0, '4. ', 'Configure it']
+    ])
+  })
+
   it('mints fresh unique ids for every pasted block', () => {
     const nodes = meaningful(paste(makeEditor(), OUTLOOK_BODY))
     const ids = blockIds(nodes)
