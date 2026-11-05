@@ -1,6 +1,12 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { tick } from 'svelte'
-import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  within
+} from '@testing-library/svelte'
 
 const mocks = vi.hoisted(() => ({
   listNavigation: vi.fn(),
@@ -115,6 +121,11 @@ vi.mock('../plugins/context', () => ({
 
 import Sidebar from './Sidebar.svelte'
 import TasksSidebar from '../plugins/first-party/silt-tasks/Sidebar.svelte'
+import ToastContainer from './ToastContainer.svelte'
+import {
+  notificationsState,
+  _resetForTests as resetNotifications
+} from '../notifications/store.svelte'
 import { wailsIPCError } from '../lib/testing/wailsIpcError'
 
 const NAV_TREE = {
@@ -183,6 +194,9 @@ async function openDeleteConfirm(row: Element) {
 describe('Sidebar', () => {
   beforeEach(() => {
     settingsMock.config = null
+    // useNavCrud pushes delete-failure toasts to the global notification
+    // store (#1024); it is module-global, so reset it between tests.
+    resetNotifications()
     mocks.openDevTools.mockReset().mockResolvedValue(undefined)
     mocks.listNavigation.mockReset()
     mocks.createNotebook.mockReset()
@@ -1531,6 +1545,9 @@ describe('Sidebar', () => {
     await flush()
     expect(mocks.deletePage).toHaveBeenCalledTimes(1)
     expect(mocks.deletePage).toHaveBeenCalledWith('Synced', 'Notes', 'Plan')
+    // Success closes the dialog once, with no error toast (#1024).
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(notificationsState.items).toHaveLength(0)
   })
 
   it('linked page delete: cancel leaves everything untouched (#1006)', async () => {
@@ -1597,6 +1614,205 @@ describe('Sidebar', () => {
     await flush()
     expect(mocks.deletePage).toHaveBeenCalledTimes(1)
     expect(mocks.deletePage).toHaveBeenCalledWith('Work', 'Journal', 'Daily')
+    // Success closes the dialog once, with no error toast (#1024).
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(notificationsState.items).toHaveLength(0)
+  })
+
+  // #1024: a failed delete IPC call must not silently close the confirm
+  // dialog. The captured target is restored (retry/cancel stay deliberate)
+  // and the failure prose surfaces on the app's toast stack. The delete
+  // backend emits no typed envelope for runtime failures (plain fmt.Errorf
+  // prose; only path-validation is typed), so the fixtures use realistic
+  // plain rejections; the ToastContainer render proves the prose reaches
+  // the rendered surface, not just the store.
+  it('vault page delete failure: dialog restored + prose toasted, trash copy (#1024)', async () => {
+    render(ToastContainer)
+    renderSidebarWithTree(NAV_TREE, {
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily'
+    })
+    await flush()
+
+    await openDeleteConfirm(screen.getByText('Daily').closest('button')!)
+    const failure = new Error(
+      'failed to move to trash: rename /vault/Work/Journal/Daily.md /vault/.system/trash/20261105-093000/Work/Journal/Daily.md: no such file or directory'
+    )
+    mocks.deletePage.mockRejectedValueOnce(failure)
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await flush()
+
+    // Dialog restored with the same target and the trash disposition.
+    expect(
+      screen.getByRole('dialog', { name: 'Delete page' })
+    ).toBeInTheDocument()
+    // The trash copy renders the label as a bare text node inside the
+    // paragraph (no <strong> wrap like the linked copy), so match the phrase.
+    expect(
+      screen.getByText(/will move the page "Daily" to/)
+    ).toBeInTheDocument()
+    // Scoped to the dialog's <code>: the realistic trash-rename prose in
+    // the toast also contains this path.
+    expect(
+      screen.getByText(/\.system\/trash\//, { selector: 'code' })
+    ).toBeInTheDocument()
+    // The typed recovery prose reaches the user surface verbatim.
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+    expect(screen.getByText(failure.message)).toBeInTheDocument()
+    expect(notificationsState.items[0]?.kind).toBe('error')
+    // Retry stays deliberate: the destructive IPC fired exactly once.
+    expect(mocks.deletePage).toHaveBeenCalledTimes(1)
+  })
+
+  it('linked page delete failure: dialog restored + prose toasted, permanent copy (#1024)', async () => {
+    render(ToastContainer)
+    renderSidebarWithTree(LINKED_TREE, {
+      notebook: 'Synced',
+      section: 'Notes',
+      page: 'Plan'
+    })
+    await flush()
+
+    await openDeleteConfirm(screen.getByText('Plan').closest('button')!)
+    const failure = new Error(
+      'remove /mnt/ext/Synced/Notes/Plan.md: read-only file system'
+    )
+    mocks.deletePage.mockRejectedValueOnce(failure)
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Delete permanently' })
+    )
+    await flush()
+
+    // Dialog restored with the same target, the permanent disposition, and
+    // the linked root path still named.
+    expect(
+      screen.getByRole('dialog', { name: 'Delete permanently' })
+    ).toBeInTheDocument()
+    expect(screen.getByText('page "Plan"')).toBeInTheDocument()
+    // Scoped to the dialog's <code>: the realistic os.Remove prose in the
+    // toast also contains this root path.
+    expect(
+      screen.getByText('/mnt/ext/Synced', { selector: 'code' })
+    ).toBeInTheDocument()
+    expect(screen.getByText(/deleted in place/i)).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+    expect(screen.getByText(failure.message)).toBeInTheDocument()
+    expect(notificationsState.items[0]?.kind).toBe('error')
+    expect(mocks.deletePage).toHaveBeenCalledTimes(1)
+  })
+
+  // #1024 harden: while a delete IPC hangs (a flaky root leaves a
+  // multi-second window), the user can stage a NEWER delete — the hung
+  // call's rejection must not clobber that newer target.
+  it('stale rejection does not clobber a newer staged delete target (#1024)', async () => {
+    render(ToastContainer)
+    // Expand both sections so Standup (the newer target) is rendered.
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [
+        { notebook: 'Work', path: 'Journal' },
+        { notebook: 'Work', path: 'Meetings' }
+      ],
+      recent_pages: [],
+      favorites: [],
+      sidebar_view: 'tree'
+    })
+    renderSidebarWithTree(NAV_TREE, {
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily'
+    })
+    await flush()
+
+    await openDeleteConfirm(screen.getByText('Daily').closest('button')!)
+    let rejectDaily!: (reason?: unknown) => void
+    mocks.deletePage.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectDaily = reject
+        })
+    )
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await flush()
+    // In flight: the dialog is closed and the sidebar stays interactive.
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    // The user stages a different delete while Daily's IPC hangs.
+    await openDeleteConfirm(screen.getByText('Standup').closest('button')!)
+    expect(
+      screen.getByRole('dialog', { name: 'Delete page' })
+    ).toBeInTheDocument()
+    expect(screen.getByText(/page "Standup"/)).toBeInTheDocument()
+
+    rejectDaily(new Error('page "Daily" not found'))
+    await flush()
+
+    // The dialog still shows the newer target (not the stale Daily) and
+    // the failure still toasts. Scoped to the dialog: the plain not-found
+    // prose in the toast also contains the phrase.
+    const dialog = screen.getByRole('dialog', { name: 'Delete page' })
+    expect(within(dialog).getByText(/page "Standup"/)).toBeInTheDocument()
+    expect(within(dialog).queryByText(/page "Daily"/)).toBeNull()
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+  })
+
+  // #1024 review: the delete backend emits no typed envelope for runtime
+  // failures — not-found is plain fmt.Errorf prose (app_rename.go), so a
+  // partial-delete retry surfaces it verbatim. Pins the passthrough
+  // contract (no fabricated calm mapping) until the backend types its
+  // delete errors.
+  it('plain untyped delete rejection: dialog restored + prose verbatim (#1024)', async () => {
+    render(ToastContainer)
+    renderSidebarWithTree(NAV_TREE, {
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily'
+    })
+    await flush()
+
+    await openDeleteConfirm(screen.getByText('Daily').closest('button')!)
+    mocks.deletePage.mockRejectedValueOnce(new Error('page "Daily" not found'))
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await flush()
+
+    expect(
+      screen.getByRole('dialog', { name: 'Delete page' })
+    ).toBeInTheDocument()
+    expect(screen.getByText('page "Daily" not found')).toBeInTheDocument()
+    expect(notificationsState.items[0]?.kind).toBe('error')
+    expect(mocks.deletePage).toHaveBeenCalledTimes(1)
+  })
+
+  // #1024 review: the section branch funnels through the same catch — pin
+  // its restore + toast too.
+  it('section delete failure: dialog restored + prose toasted (#1024)', async () => {
+    render(ToastContainer)
+    renderSidebarWithTree(NAV_TREE, {
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily'
+    })
+    await flush()
+
+    await openDeleteConfirm(screen.getByRole('treeitem', { name: /Journal/ }))
+    const failure = new Error(
+      'failed to move to trash: rename /vault/Work/Journal /vault/.system/trash/20261105-093000/Work/Journal: directory not empty'
+    )
+    mocks.deleteSection.mockRejectedValueOnce(failure)
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await flush()
+
+    expect(
+      screen.getByRole('dialog', { name: 'Delete section' })
+    ).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+    expect(screen.getByText(failure.message)).toBeInTheDocument()
+    expect(notificationsState.items[0]?.kind).toBe('error')
+    expect(mocks.deleteSection).toHaveBeenCalledTimes(1)
   })
 
   it('linked delete dialog: dialog semantics, surface focus, Esc cancels without IPC (#1006 a11y)', async () => {

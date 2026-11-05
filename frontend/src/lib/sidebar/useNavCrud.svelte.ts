@@ -16,6 +16,7 @@ import {
   UnlinkNotebook
 } from '../../../bindings/silt/app.js'
 import { coerceIPCError } from '../ipcError'
+import { pushNotification } from '../../notifications/store.svelte'
 import { IPCErrorCode } from '../../generated/enums'
 import {
   deleteDisposition,
@@ -483,7 +484,23 @@ export function useNavCrud(deps: UseNavCrudDeps) {
         page: next.page
       })
     } catch (e) {
+      // A destructive action's failure must not silently dismiss its
+      // confirmation (#1024): restore the captured target for a deliberate
+      // retry/cancel — but never clobber a NEWER delete the user staged
+      // while this IPC hung (the dialog must keep showing the item the
+      // user is actually acting on).
+      if (deleteTarget === null) deleteTarget = target
       console.error('Delete failed:', e)
+      // The delete path's runtime failures (app_rename.go: not-found,
+      // trash-move/remove wraps) are plain Go prose with no typed
+      // envelope — coerceIPCError passes them through verbatim; the one
+      // typed code this path emits (invalid_navigation_path) keeps its
+      // message the same way. Error toasts are sticky + deduped, so
+      // retries can't stack duplicates.
+      pushNotification({
+        kind: 'error',
+        message: coerceIPCError(e).message || 'The item could not be deleted.'
+      })
     }
   }
 
