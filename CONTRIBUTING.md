@@ -33,9 +33,10 @@ the pre-push hook, and how release notes are generated.
 
 ## Quick start
 
-Frontend development and tests require Node.js `^22.12.0`, `^24.0.0`, or
-`>=26.0.0` (Vitest's supported Node releases). CI pins Node 22.12.0 so the
-minimum supported 22.x version is exercised.
+Frontend development and tests require Node.js `^22.19.0`, `^24.0.0`, or
+`>=26.0.0`. While Vitest itself supports Node 22.12+, the resolved jsdom
+dependency's Undici requires Node 22.19+. CI pins Node 22.19.0 so the minimum
+supported 22.x version is exercised.
 
 ```sh
 # Install hooks so every push is gated (tests, build, binding freshness):
