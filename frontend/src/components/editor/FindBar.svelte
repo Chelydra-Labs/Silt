@@ -120,11 +120,13 @@
   }
 
   function toggleReplace(): void {
-    const next = !findBarState.replaceOpen
-    findBarState.setReplaceOpen(next)
-    // Edit mode: push the current replacement text into the SearchQuery so
-    // replaceNextInPage uses it, without navigating the selection.
-    if (next && editor) editor.commands.setSearchQuery(searchParams())
+    findBarState.setReplaceOpen(!findBarState.replaceOpen)
+  }
+
+  // Edit-mode replace reads the stored SearchQuery, which can lag the visible
+  // input after the row was hidden (Ctrl+H, #1044). Sync at the point of use.
+  function syncEditQuery(): void {
+    editor?.commands.setSearchQuery(searchParams())
   }
 
   // Re-apply whenever the query string, replace text, or a toggle flips.
@@ -240,6 +242,7 @@
     // A conflict-held editor is non-editable (#1005): a replace would render
     // into the buffer the armed reload destroys.
     if (!editor.isEditable) return
+    syncEditQuery()
     editor.commands.replaceNextInPage()
     refreshCounts()
     inputEl?.focus()
@@ -266,6 +269,7 @@
     if (!editor) return
     // Same conflict-hold refusal as doReplace (#1005).
     if (!editor.isEditable) return
+    syncEditQuery()
     const before = matchCount
     editor.commands.replaceAllInPage()
     refreshCounts()

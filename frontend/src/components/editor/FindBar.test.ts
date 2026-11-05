@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, fireEvent, cleanup } from '@testing-library/svelte'
+import { tick } from 'svelte'
 
 // Spy the disclosure setter while delegating to the real rune-backed state, so
 // reveal tests can assert on the rendered DOM (a plain closure never re-renders).
@@ -37,6 +38,7 @@ vi.mock('../../lib/editor/search/searchExtension', () => ({
 }))
 
 import FindBar from './FindBar.svelte'
+import { findBarState } from '../../lib/editor/search/findBarState.svelte'
 
 function editorMock() {
   return {
@@ -287,6 +289,64 @@ describe('FindBar replace disclosure (#1044)', () => {
     await fireEvent.click(getByLabelText('Replace all matches'))
 
     expect(editor.commands.replaceAllInPage).toHaveBeenCalledTimes(1)
+  })
+
+  // The stale case: hiding the row lets the query effect rewrite the stored
+  // `replace` to '', so a reopened row must sync at replace time, not reveal.
+  it('keeps the replacement text current when Ctrl+H reopens the row (Edit)', async () => {
+    const editor = editorMock()
+    const { getByLabelText, getByRole } = renderWithEditor(editor)
+    const findInput = getByRole('searchbox', {
+      name: 'Find'
+    }) as HTMLInputElement
+    await fireEvent.input(findInput, { target: { value: 'foo' } })
+    await fireEvent.click(getByLabelText('Toggle replace'))
+    await fireEvent.input(getByLabelText('Replace with'), {
+      target: { value: 'baz' }
+    })
+
+    await fireEvent.click(getByLabelText('Toggle replace'))
+    await fireEvent.input(findInput, { target: { value: 'foobar' } })
+
+    // Ctrl+H while the bar is already mounted flips the row with no
+    // transition-time sync (only the ⇄ toggle used to sync).
+    findBarState.openReplace()
+    await tick()
+    expect((getByLabelText('Replace with') as HTMLInputElement).value).toBe(
+      'baz'
+    )
+
+    // Replace without retyping the replacement.
+    await fireEvent.click(getByLabelText('Replace selected match'))
+
+    expect(editor.commands.replaceNextInPage).toHaveBeenCalledTimes(1)
+    expect(editor.commands.setSearchQuery).toHaveBeenLastCalledWith(
+      expect.objectContaining({ replace: 'baz' })
+    )
+  })
+
+  it('keeps the replacement text current for replace-all after a hidden query edit', async () => {
+    const editor = editorMock()
+    const { getByLabelText, getByRole } = renderWithEditor(editor)
+    const findInput = getByRole('searchbox', {
+      name: 'Find'
+    }) as HTMLInputElement
+    await fireEvent.input(findInput, { target: { value: 'foo' } })
+    await fireEvent.click(getByLabelText('Toggle replace'))
+    await fireEvent.input(getByLabelText('Replace with'), {
+      target: { value: 'baz' }
+    })
+
+    await fireEvent.click(getByLabelText('Toggle replace'))
+    await fireEvent.input(findInput, { target: { value: 'foobar' } })
+    await fireEvent.click(getByLabelText('Toggle replace'))
+
+    await fireEvent.click(getByLabelText('Replace all matches'))
+
+    expect(editor.commands.replaceAllInPage).toHaveBeenCalledTimes(1)
+    expect(editor.commands.setSearchQuery).toHaveBeenLastCalledWith(
+      expect.objectContaining({ replace: 'baz' })
+    )
   })
 
   it('replaces the active match after revealing from find (Source)', async () => {
