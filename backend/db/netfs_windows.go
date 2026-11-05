@@ -68,3 +68,11 @@ func detectNetworkFilesystem(path string) error {
 	}
 	return nil
 }
+
+// detectNetworkFilesystemForWrite delegates to the same detector: the
+// Windows volume-name set already covers the non-atomic mounts observable
+// here, so the write path adds nothing (#1020 extended only Linux, where
+// FUSE is distinguishable via statfs magic).
+func detectNetworkFilesystemForWrite(path string) error {
+	return detectNetworkFilesystem(path)
+}
