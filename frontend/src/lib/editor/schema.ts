@@ -46,28 +46,7 @@ import { TableCell } from '@tiptap/extension-table-cell'
 import { TableHeader } from '@tiptap/extension-table-header'
 import Subscript from '@tiptap/extension-subscript'
 import Superscript from '@tiptap/extension-superscript'
-
-// CSS-wide and system color keywords carry no portable color. Storing them on
-// a mark would render the inherited color (`inherit`, `currentColor`), hide the
-// text (`transparent`), or persist a Word system color (`auto`, `windowtext`),
-// so styled page wrappers pasted as text must not turn into color marks.
-const INERT_COLOR_VALUES = new Set([
-  'inherit',
-  'initial',
-  'unset',
-  'revert',
-  'revert-layer',
-  'currentcolor',
-  'transparent',
-  'auto',
-  'windowtext'
-])
-
-function colorFromStyle(value: string | null | undefined): string | null {
-  const color = value?.trim()
-  if (!color) return null
-  return INERT_COLOR_VALUES.has(color.toLowerCase()) ? null : color
-}
+import { colorFromStyle } from './paste/styleValues'
 
 // ---- Highlight mark (==text== / background color) ------------------------
 // Inline highlight. The default (no color) renders a <mark> element whose
