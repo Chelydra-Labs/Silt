@@ -33,6 +33,11 @@ the pre-push hook, and how release notes are generated.
 
 ## Quick start
 
+Frontend development and tests require Node.js `^22.22.2`, `^24.15.0`, or
+`>=26.0.0`. These are the supported ranges shared by the resolved frontend
+dependency graph; CI pins Node 22.22.2 to exercise the minimum supported 22.x
+version.
+
 ```sh
 # Install hooks so every push is gated (tests, build, binding freshness):
 git config core.hooksPath .githooks

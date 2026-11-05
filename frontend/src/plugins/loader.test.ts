@@ -16,8 +16,15 @@ const mockRegisterSession = vi.hoisted(() =>
 const mockUnregisterSession = vi.hoisted(() =>
   vi.fn(() => Promise.resolve(undefined))
 )
+const mockLifecycle = vi.hoisted(() => ({
+  vaultClosingCb: null as (() => void) | null
+}))
 const mockEventsOn = vi.hoisted(() =>
-  vi.fn((_event: string, _cb: (payload: unknown) => void) => () => {})
+  vi.fn((event: string, cb: (payload: unknown) => void) => {
+    if (event === 'vault:closing')
+      mockLifecycle.vaultClosingCb = cb as () => void
+    return () => {}
+  })
 )
 const mockClosePluginDB = vi.hoisted(() =>
   vi.fn(() => Promise.resolve(undefined))
@@ -155,14 +162,8 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
   // the FIRST loadPlugins call in this file (likely from the integrity
   // describe block above). We capture that callback once and reuse it —
   // do NOT reset mockEventsOn or the call record is lost.
-  let vaultClosingCb: (() => void) | null = null
-
   beforeAll(async () => {
     await loadPlugins('Work', '', '')
-    const call = mockEventsOn.mock.calls.find(
-      (args: unknown[]) => args[0] === 'vault:closing'
-    )
-    vaultClosingCb = call ? (call[1] as () => void) : null
   })
 
   beforeEach(() => {
@@ -187,8 +188,8 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
     await loadPlugins('Work', '', '')
     expect(loadedPlugins.loadersReady).toBe(true)
 
-    expect(vaultClosingCb).toBeTruthy()
-    vaultClosingCb!()
+    expect(mockLifecycle.vaultClosingCb).toBeTruthy()
+    mockLifecycle.vaultClosingCb!()
 
     expect(loadedPlugins.loadersReady).toBe(false)
   })
@@ -197,8 +198,8 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
     const { loadedPlugins } = await import('./store.svelte')
 
     await loadPlugins('Work', '', '')
-    expect(vaultClosingCb).toBeTruthy()
-    vaultClosingCb!()
+    expect(mockLifecycle.vaultClosingCb).toBeTruthy()
+    mockLifecycle.vaultClosingCb!()
     expect(loadedPlugins.loadersReady).toBe(false)
 
     await loadPlugins('Personal', '', '')
@@ -300,8 +301,8 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
     setFocusDate('2026-06-28')
     setActiveFilter('today')
 
-    expect(vaultClosingCb).toBeTruthy()
-    vaultClosingCb!()
+    expect(mockLifecycle.vaultClosingCb).toBeTruthy()
+    mockLifecycle.vaultClosingCb!()
 
     const s = getTaskHubState()
     expect(s.scope).toBe('vault')

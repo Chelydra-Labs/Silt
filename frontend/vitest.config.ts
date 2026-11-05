@@ -22,6 +22,8 @@ export default defineConfig({
     }
   },
   test: {
+    // Pin per-test mock history clearing so the suite does not depend on Vitest defaults.
+    clearMocks: true,
     environment: 'jsdom',
     include: ['src/**/*.test.ts'],
     setupFiles: ['./vitest.setup.ts'],
