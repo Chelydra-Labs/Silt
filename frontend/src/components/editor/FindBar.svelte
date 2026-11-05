@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Editor } from '@tiptap/core'
+  import { untrack } from 'svelte'
   import {
     getMatchCount,
     getActiveMatchIndex,
@@ -94,22 +95,38 @@
     }
   }
 
+  function searchParams() {
+    return {
+      search: query,
+      caseSensitive,
+      wholeWord,
+      regexp,
+      // Read untracked: revealing the replace row must not re-run this effect,
+      // which would jump the selection via findNextInPage.
+      replace: untrack(() => findBarState.replaceOpen) ? replaceValue : ''
+    }
+  }
+
   function applyQuery(): void {
     if (sourceTarget) {
       applySourceQuery(true)
       return
     }
     if (!editor) return
-    editor.commands.setSearchQuery({
-      search: query,
-      caseSensitive,
-      wholeWord,
-      regexp,
-      replace: findBarState.replaceOpen ? replaceValue : ''
-    })
+    editor.commands.setSearchQuery(searchParams())
     // Jump to the nearest match so the counter reflects a real position.
     if (query) editor.commands.findNextInPage()
     refreshCounts()
+  }
+
+  function toggleReplace(): void {
+    findBarState.setReplaceOpen(!findBarState.replaceOpen)
+  }
+
+  // Edit-mode replace reads the stored SearchQuery, which can lag the visible
+  // input after the row was hidden (Ctrl+H, #1044). Sync at the point of use.
+  function syncEditQuery(): void {
+    editor?.commands.setSearchQuery(searchParams())
   }
 
   // Re-apply whenever the query string, replace text, or a toggle flips.
@@ -225,6 +242,7 @@
     // A conflict-held editor is non-editable (#1005): a replace would render
     // into the buffer the armed reload destroys.
     if (!editor.isEditable) return
+    syncEditQuery()
     editor.commands.replaceNextInPage()
     refreshCounts()
     inputEl?.focus()
@@ -251,6 +269,7 @@
     if (!editor) return
     // Same conflict-hold refusal as doReplace (#1005).
     if (!editor.isEditable) return
+    syncEditQuery()
     const before = matchCount
     editor.commands.replaceAllInPage()
     refreshCounts()
@@ -364,6 +383,14 @@
         onclick={next}>↓</button
       >
     </div>
+    <button
+      type="button"
+      class="replace-toggle"
+      aria-label="Toggle replace"
+      aria-expanded={findBarState.replaceOpen}
+      title="Toggle replace"
+      onclick={toggleReplace}>⇄</button
+    >
     <button
       type="button"
       class="close-btn"
@@ -484,6 +511,7 @@
   }
   .toggle,
   .nav-btn,
+  .replace-toggle,
   .close-btn {
     min-width: 26px;
     height: 26px;
@@ -498,9 +526,13 @@
   }
   .toggle:hover,
   .nav-btn:hover,
+  .replace-toggle:hover,
   .close-btn:hover {
     background: var(--color-hover);
     color: var(--color-text-primary);
+  }
+  .replace-toggle[aria-expanded='true'] {
+    color: var(--color-accent-primary-start);
   }
   .toggle.on {
     background: var(--color-accent-primary-start);
@@ -514,6 +546,7 @@
   }
   .toggle:focus-visible,
   .nav-btn:focus-visible,
+  .replace-toggle:focus-visible,
   .close-btn:focus-visible,
   .action-btn:focus-visible {
     outline: 2px solid var(--color-accent-primary-start);

@@ -29,6 +29,10 @@ export const findBarState = {
     open = true
     replaceOpen = true
   },
+  /** Disclosure toggle: reveal/hide the replace row without touching `open`. */
+  setReplaceOpen(next: boolean) {
+    replaceOpen = next
+  },
   /** Esc: close the bar. The caller (FindBar) clears the search query on close
    *  so decorations disappear and the editor regains its normal selection. */
   close() {

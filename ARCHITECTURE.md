@@ -1345,7 +1345,8 @@ the `link` mark (URLs); block-identity comments aren't in the editor doc (the
 id is a node attr) so they need no filter. The decoration set rebuilds only on
 doc/selection/query change (the official invalidation strategy — not every
 transaction). `FindBar.svelte` is a `role="toolbar"` overlay with a `1 of N`
-counter (aria-live), prev/next, toggles, Esc-to-close. `getMatchCount` /
+counter (aria-live), prev/next, toggles, a ⇄ replace disclosure (Ctrl+F then
+reveal, or Ctrl+H directly), and Esc-to-close. `getMatchCount` /
 `getActiveMatchIndex` read the decoration set for the counter. In **Source**
 mode the same FindBar chrome drives `sourceSearch.ts` over the textarea buffer
 (character offsets + `SourceSearchTarget` from `MarkdownSourceViewer`); Edit↔Source

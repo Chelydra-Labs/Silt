@@ -20,6 +20,8 @@ full-text content search.
 ## Find in page
 
 **Find in page** (default **Ctrl+F**) searches only the current open document.
+The **⇄** control in the find bar reveals **Replace** / **Replace All**; **Ctrl+H**
+opens them directly.
 
 ## Silt AI search (semantic / Q&A / agent)
 
