@@ -47,6 +47,8 @@ import { TableHeader } from '@tiptap/extension-table-header'
 import Subscript from '@tiptap/extension-subscript'
 import Superscript from '@tiptap/extension-superscript'
 import { colorFromStyle } from './paste/styleValues'
+import { classifyPastedHTML } from './paste/normalizePastedHTML'
+import { resetPlainPasteShiftState } from './plainPaste'
 
 // ---- Highlight mark (==text== / background color) ------------------------
 // Inline highlight. The default (no color) renders a <mark> element whose
@@ -775,10 +777,34 @@ export function siltHandlePaste(
   return true
 }
 
+// ProseMirror parses `text/html` before any `handlePaste` handler runs, so an
+// oversized payload would still build a multi-megabyte DOM on the main thread.
+// This DOM-level hook intercepts first and inserts the plain-text clipboard
+// payload instead; it must return false for every other paste so PlainPaste's
+// shift-tracking hook (a plugin prop, consulted after direct editor props) and
+// ProseMirror's own paste handler still run.
+export function siltHandlePasteEvent(
+  view: EditorView,
+  event: ClipboardEvent
+): boolean {
+  const html = event.clipboardData?.getData('text/html') ?? ''
+  if (classifyPastedHTML(html) !== 'text') return false
+  event.preventDefault()
+  // The DOM hook that snapshots the plain-paste flag is bypassed when this
+  // handler claims the event, so clear the flag explicitly.
+  resetPlainPasteShiftState()
+  const text = event.clipboardData?.getData('text/plain') ?? ''
+  // An oversized payload with no text alternative is still better dropped than
+  // parsed; browsers mirror HTML into text/plain, so this is a safety net.
+  if (text) view.pasteText(text)
+  return true
+}
+
 // One object both editor surfaces spread into `createEditor`'s editorProps.
 export const siltPasteProps = {
   clipboardTextParser: siltClipboardTextParser,
   transformPasted: siltTransformPasted,
+  handleDOMEvents: { paste: siltHandlePasteEvent },
   handlePaste: siltHandlePaste
 }
 

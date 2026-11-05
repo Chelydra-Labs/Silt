@@ -28,6 +28,7 @@ import {
 } from './schema'
 import { docToBlocks } from './converters'
 import { PlainPaste, _getShiftHeldForTests } from './plainPaste'
+import { PASTE_HTML_SIZE_CAP } from './paste/normalizePastedHTML'
 import type { DocJSON } from './types'
 
 function schemaFor() {
@@ -1182,6 +1183,36 @@ describe('plain paste flag × shared paste path', () => {
 
     // Context-menu-style rich paste, no preceding keydown: the bold mark must
     // survive rather than being inserted as raw plain text.
+    dispatchPaste(editor, { text: 'bolded', html: '<b>bolded</b>' })
+    expect(hasMarkedText(editor, 'bolded', 'bold')).toBe(true)
+  })
+})
+
+// ProseMirror parses text/html before handlePaste runs, so the size cap must be
+// enforced by a DOM `paste` hook. Without it a pathological payload is still
+// parsed on the main thread even though the normalizer returns it untouched.
+describe('oversized clipboard HTML falls back to plain text', () => {
+  const HUGE_HTML = `<h1>${'x'.repeat(PASTE_HTML_SIZE_CAP)}</h1>`
+
+  it('inserts the text/plain payload instead of parsing the HTML', () => {
+    const editor = makeLeafTagEditor()
+    editor.commands.setTextSelection(1)
+    dispatchPaste(editor, { text: 'plain fallback', html: HUGE_HTML })
+
+    expect(editor.state.doc.textContent).toBe('plain fallback')
+    expect(firstNodeOfType(editor, 'headerBlock')).toBeNull()
+  })
+
+  it('clears the shift flag so a following context-menu paste stays rich', () => {
+    const editor = makeLeafTagEditor()
+    editor.commands.setTextSelection(1)
+
+    dispatchKey(editor, 'keydown', 86, true)
+    dispatchPaste(editor, { text: 'plain fallback', html: HUGE_HTML })
+    // The DOM hook that normally consumes the flag was preempted.
+    expect(_getShiftHeldForTests()).toBe(false)
+    dispatchKey(editor, 'keyup', 16, false)
+
     dispatchPaste(editor, { text: 'bolded', html: '<b>bolded</b>' })
     expect(hasMarkedText(editor, 'bolded', 'bold')).toBe(true)
   })

@@ -27,6 +27,27 @@ export const PASTE_HTML_SIZE_CAP = 2 * 1024 * 1024
 
 const PM_SLICE_ATTR_RE = /\bdata-pm-slice\s*=/
 
+/**
+ * How the paste pipeline should treat a clipboard HTML string.
+ *
+ * - `passthrough`: internal Silt payload; hands off unchanged so block copies
+ *   keep their serialized shape.
+ * - `text`: payload is too large to parse safely on the main thread; callers
+ *   must use the plain-text clipboard payload instead.
+ * - `normalize`: external HTML that the normalizer can process.
+ */
+export type PasteHTMLDecision = 'normalize' | 'passthrough' | 'text'
+
+export function classifyPastedHTML(
+  html: string | null | undefined
+): PasteHTMLDecision {
+  // `data-pm-slice` is checked before the size cap: an internal copy must never
+  // be downgraded to plain text, whatever its length.
+  if (html && PM_SLICE_ATTR_RE.test(html)) return 'passthrough'
+  if (html && html.length > PASTE_HTML_SIZE_CAP) return 'text'
+  return 'normalize'
+}
+
 const UNSAFE_TAGS = new Set([
   'script',
   'style',
@@ -642,13 +663,12 @@ function sanitizeTree(root: HTMLElement): void {
  * Normalize externally pasted HTML into Silt-expressible containers.
  *
  * Returns the input verbatim when it is an internal Silt clipboard payload
- * (`data-pm-slice`) or larger than {@link PASTE_HTML_SIZE_CAP}; callers should
- * fall back to the plain-text paste path for the size case.
+ * (`data-pm-slice`) or too large to parse safely; callers must use
+ * {@link classifyPastedHTML} to send the size case to the plain-text path.
  */
 export function normalizePastedHTML(html: string): string {
   if (!html) return html
-  if (html.length > PASTE_HTML_SIZE_CAP) return html
-  if (PM_SLICE_ATTR_RE.test(html)) return html
+  if (classifyPastedHTML(html) !== 'normalize') return html
 
   const doc = new DOMParser().parseFromString(html, 'text/html')
   const body = doc.body
