@@ -1640,3 +1640,67 @@ func writeBenchVault(tb interface{ Fatal(args ...any) }, root string, n int) {
 		}
 	}
 }
+
+// TestTaskDueRoundTrip_ActionItemContract pins the #1008 contract at the
+// parser seam: an extracted action item written as a TASK carries its due
+// date in the DueDate field (live metadata the task hub queries), renders
+// with exactly one `- [ ]` marker, and is byte-stable across parse → render
+// passes so a re-save never rewrites the line. The NOTE contrast documents
+// why extract_and_save must emit TASK ops: a NOTE keeps `[due:: ...]` as
+// inert literal text with no DueDate, so the schedule never reaches the hub.
+func TestTaskDueRoundTrip_ActionItemContract(t *testing.T) {
+	line := "- [ ] Set up Postgres replication [due:: 2026-08-01] <!-- id: aaaa1008-1111-4111-8111-111111111111 -->"
+
+	block, _, _ := ParseLine(line, 1, 4)
+	if block.Type != BlockTask {
+		t.Fatalf("expected BlockTask, got %v", block.Type)
+	}
+	if block.DueDate != "2026-08-01" {
+		t.Errorf("expected DueDate=2026-08-01, got %q", block.DueDate)
+	}
+	if block.CleanText != "Set up Postgres replication" {
+		t.Errorf("expected due token stripped from CleanText, got %q", block.CleanText)
+	}
+
+	rendered := renderBlock(block, 4)
+	if n := strings.Count(rendered, "- [ ]"); n != 1 {
+		t.Errorf("expected exactly one task marker on render, got %d in %q", n, rendered)
+	}
+	if !strings.Contains(rendered, "[due:: 2026-08-01]") {
+		t.Errorf("rendered line dropped the due token: %q", rendered)
+	}
+
+	// Byte-stable round trip: parse → render → parse → render is identical.
+	reparsed, _, _ := ParseLine(rendered, 1, 4)
+	if reparsed.DueDate != block.DueDate {
+		t.Errorf("DueDate drifted across round trip: %q → %q", block.DueDate, reparsed.DueDate)
+	}
+	if rendered2 := renderBlock(reparsed, 4); rendered2 != rendered {
+		t.Errorf("render is not byte-stable\n pass1: %q\n pass2: %q", rendered, rendered2)
+	}
+
+	// A body carrying a second, pre-baked marker must not round-trip into
+	// the task type with a doubled marker — the defensive normalization in
+	// extract_and_save exists so this never occurs, and the parser keeping
+	// the extra marker visible as CleanText (not silently eating it) is
+	// what makes such a regression detectable.
+	doubled, _, _ := ParseLine("- [ ] - [ ] Set up Postgres replication [due:: 2026-08-01] <!-- id: bbbb1008-1111-4111-8111-111111111111 -->", 1, 4)
+	if doubled.Type != BlockTask {
+		t.Fatalf("expected BlockTask for doubled marker, got %v", doubled.Type)
+	}
+	if doubled.CleanText != "- [ ] Set up Postgres replication" {
+		t.Errorf("doubled marker must stay visible in CleanText, got %q", doubled.CleanText)
+	}
+
+	// NOTE regression: identical body as a NOTE — the token is inert text.
+	note, _, _ := ParseLine("- Set up Postgres replication [due:: 2026-08-01] <!-- id: cccc1008-1111-4111-8111-111111111111 -->", 1, 4)
+	if note.Type != BlockNote {
+		t.Fatalf("expected BlockNote, got %v", note.Type)
+	}
+	if note.DueDate != "" {
+		t.Errorf("NOTE must not absorb a task due token, got DueDate=%q", note.DueDate)
+	}
+	if !strings.Contains(note.CleanText, "[due:: 2026-08-01]") {
+		t.Errorf("NOTE keeps the due token verbatim (inert text), got %q", note.CleanText)
+	}
+}
