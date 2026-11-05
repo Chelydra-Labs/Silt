@@ -72,6 +72,7 @@ function makeEditor(overrides: Record<string, unknown> = {}): MockEditor {
       $from: {
         depth: 1,
         node: () => noteBlockNode,
+        parent: { type: { spec: { code: false } } },
         after: () => 5,
         before: () => 0
       }
@@ -88,7 +89,7 @@ function makeEditor(overrides: Record<string, unknown> = {}): MockEditor {
     },
     ...overrides
   }
-  return {
+  const editor: MockEditor = {
     state,
     view: {
       pasteHTML: vi.fn(),
@@ -106,6 +107,10 @@ function makeEditor(overrides: Record<string, unknown> = {}): MockEditor {
     }),
     ...overrides
   }
+  // `pasteClipboardPayload` reads `view.state` (as ProseMirror does); keep that
+  // in sync with the editor stub, including per-test `state` overrides.
+  Object.defineProperty(editor.view, 'state', { get: () => editor.state })
+  return editor
 }
 
 function makeDeps(
@@ -129,7 +134,11 @@ beforeEach(() => {
   writeTextSpy.mockClear()
   notifySpy.mockClear()
   readClipboardPayload.mockReset()
-  readClipboardPayload.mockResolvedValue({ html: '', text: '' })
+  readClipboardPayload.mockResolvedValue({
+    html: '',
+    text: '',
+    unavailable: false
+  })
 })
 
 describe('cutSelection', () => {
@@ -195,8 +204,53 @@ describe('pasteFromClipboard', () => {
     expect(editor.view.pasteText).toHaveBeenCalledWith('fallback')
   })
 
-  it('does nothing when clipboard is empty', async () => {
-    readClipboardPayload.mockResolvedValueOnce({ html: '', text: '' })
+  it('drops oversized HTML with no text alternative instead of parsing it', async () => {
+    // Matches the Ctrl+V DOM hook (siltHandlePasteEvent): a payload too large
+    // to parse is dropped when there is nothing safe to insert.
+    readClipboardPayload.mockResolvedValueOnce({
+      html: `<p>${'x'.repeat(2 * 1024 * 1024 + 1)}</p>`,
+      text: ''
+    })
+    const editor = makeEditor()
+    await pasteFromClipboard(makeDeps(editor))
+    expect(editor.view.pasteHTML).not.toHaveBeenCalled()
+    expect(editor.view.pasteText).not.toHaveBeenCalled()
+  })
+
+  it('pastes the text payload even when HTML is present inside a code block', async () => {
+    readClipboardPayload.mockResolvedValueOnce({
+      html: '<p>pasted</p>',
+      text: 'pasted',
+      unavailable: false
+    })
+    const editor = makeEditor({
+      state: {
+        selection: {
+          from: 2,
+          to: 2,
+          empty: true,
+          $from: {
+            depth: 1,
+            node: () => ({ type: { name: 'codeBlock' } }),
+            parent: { type: { spec: { code: true } } },
+            after: () => 5,
+            before: () => 0
+          }
+        },
+        doc: { textBetween: vi.fn(), childCount: 2, slice: vi.fn() }
+      }
+    })
+    await pasteFromClipboard(makeDeps(editor))
+    expect(editor.view.pasteHTML).not.toHaveBeenCalled()
+    expect(editor.view.pasteText).toHaveBeenCalledWith('pasted')
+  })
+
+  it('does nothing when clipboard is empty and readable', async () => {
+    readClipboardPayload.mockResolvedValueOnce({
+      html: '',
+      text: '',
+      unavailable: false
+    })
     const editor = makeEditor()
     await pasteFromClipboard(makeDeps(editor))
     expect(editor.view.pasteHTML).not.toHaveBeenCalled()
@@ -204,15 +258,40 @@ describe('pasteFromClipboard', () => {
     expect(notifySpy).not.toHaveBeenCalled()
   })
 
+  it('toasts when every clipboard source failed', async () => {
+    readClipboardPayload.mockResolvedValueOnce({
+      html: '',
+      text: '',
+      unavailable: true
+    })
+    const editor = makeEditor()
+    await pasteFromClipboard(makeDeps(editor))
+    expect(editor.view.pasteHTML).not.toHaveBeenCalled()
+    expect(editor.view.pasteText).not.toHaveBeenCalled()
+    expect(notifySpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'error',
+        message: expect.stringContaining('Paste failed')
+      })
+    )
+  })
+
   it('pushes an error notification when the paste pipeline throws', async () => {
-    readClipboardPayload.mockResolvedValueOnce({ html: '', text: 'text' })
+    readClipboardPayload.mockResolvedValueOnce({
+      html: '',
+      text: 'text',
+      unavailable: false
+    })
     const editor = makeEditor()
     editor.view.pasteText.mockImplementationOnce(() => {
       throw new Error('pipeline failed')
     })
     await pasteFromClipboard(makeDeps(editor))
     expect(notifySpy).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'error' })
+      expect.objectContaining({
+        kind: 'error',
+        message: 'Paste failed: the clipboard contents could not be inserted.'
+      })
     )
   })
 

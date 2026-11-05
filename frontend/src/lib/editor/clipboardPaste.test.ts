@@ -107,9 +107,47 @@ function stripIds(node: JSONContent): JSONContent {
   return copy
 }
 
+/** Seed a note block followed by a code block holding `code`. */
+function makeCodeEditor(code = 'abc'): Editor {
+  const editor = makeEditor()
+  editor.commands.setContent({
+    type: 'doc',
+    content: [
+      {
+        type: 'noteBlock',
+        attrs: { id: 'seed', depth: 0, bullet: '', quote: '' },
+        content: [{ type: 'text', text: 'seed' }]
+      },
+      {
+        type: 'codeBlock',
+        attrs: { language: '' },
+        content: [{ type: 'text', text: code }]
+      }
+    ]
+  })
+  return editor
+}
+
+/** Caret `offset` characters into the first code block. */
+function caretInFirstCodeBlock(editor: Editor, offset = 1): number {
+  let pos = 0
+  editor.state.doc.descendants((node, nodePos) => {
+    if (node.type.name === 'codeBlock') {
+      pos = nodePos + 1 + offset
+      return false
+    }
+    return true
+  })
+  return pos
+}
+
 beforeEach(() => {
   readClipboardPayload.mockReset()
-  readClipboardPayload.mockResolvedValue({ html: '', text: '' })
+  readClipboardPayload.mockResolvedValue({
+    html: '',
+    text: '',
+    unavailable: false
+  })
   notify.mockClear()
 })
 
@@ -183,6 +221,49 @@ describe('context-menu paste', () => {
     expect(pasted.map(textOf)).toEqual(['fallback text'])
   })
 
+  it('inserts the text payload at the caret inside a code block (HTML clipboard)', async () => {
+    // A copied code snippet arrives as `<pre>`/`<p>` HTML plus mirrored text.
+    for (const html of ['<pre>pasted</pre>', '<p>pasted</p>']) {
+      const native = makeCodeEditor()
+      native.commands.setTextSelection(caretInFirstCodeBlock(native))
+      native.view.pasteText('pasted')
+
+      const menu = makeCodeEditor()
+      menu.commands.setTextSelection(caretInFirstCodeBlock(menu))
+      readClipboardPayload.mockResolvedValueOnce({
+        html,
+        text: 'pasted',
+        unavailable: false
+      })
+      await pasteFromClipboard(deps(menu))
+
+      // Not split into [code, note, code] — the code block stays one block and
+      // the insertion matches the native pasteText baseline exactly.
+      expect(blocks(menu)).toHaveLength(2)
+      expect(blocks(menu)[1].type).toBe('codeBlock')
+      expect(textOf(blocks(menu)[1])).toBe('apastedbc')
+      expect(stripIds(menu.getJSON())).toEqual(stripIds(native.getJSON()))
+    }
+  })
+
+  it('matches the native text paste inside a code block (text-only clipboard)', async () => {
+    const native = makeCodeEditor()
+    native.commands.setTextSelection(caretInFirstCodeBlock(native))
+    native.view.pasteText('pasted')
+
+    const menu = makeCodeEditor()
+    menu.commands.setTextSelection(caretInFirstCodeBlock(menu))
+    readClipboardPayload.mockResolvedValueOnce({
+      html: '',
+      text: 'pasted',
+      unavailable: false
+    })
+    await pasteFromClipboard(deps(menu))
+
+    expect(blocks(menu)).toHaveLength(2)
+    expect(stripIds(menu.getJSON())).toEqual(stripIds(native.getJSON()))
+  })
+
   it('routes internal (data-pm-slice) HTML through pasteHTML unchanged', async () => {
     // A real internal copy: serializeForClipboard wraps the slice in the
     // data-pm-slice marker the normalizer passes through untouched.
@@ -237,14 +318,37 @@ describe('context-menu paste', () => {
     expect(pasted.some((node) => node.attrs?.bullet === '- ')).toBe(true)
   })
 
-  it('does nothing and does not toast for an empty clipboard', async () => {
+  it('does nothing and does not toast for a readable-but-empty clipboard', async () => {
     const editor = makeEditor()
     const before = editor.getJSON()
-    readClipboardPayload.mockResolvedValueOnce({ html: '', text: '' })
+    readClipboardPayload.mockResolvedValueOnce({
+      html: '',
+      text: '',
+      unavailable: false
+    })
     await pasteFromClipboard(deps(editor))
 
     expect(editor.getJSON()).toEqual(before)
     expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('toasts when every clipboard source failed', async () => {
+    const editor = makeEditor()
+    const before = editor.getJSON()
+    readClipboardPayload.mockResolvedValueOnce({
+      html: '',
+      text: '',
+      unavailable: true
+    })
+    await pasteFromClipboard(deps(editor))
+
+    expect(editor.getJSON()).toEqual(before)
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'error',
+        message: 'Paste failed: the clipboard is unavailable.'
+      })
+    )
   })
 
   it('toasts when the paste pipeline fails outside the reader', async () => {
@@ -252,11 +356,18 @@ describe('context-menu paste', () => {
     vi.spyOn(editor.view, 'pasteText').mockImplementation(() => {
       throw new Error('pipeline boom')
     })
-    readClipboardPayload.mockResolvedValueOnce({ html: '', text: 'text' })
+    readClipboardPayload.mockResolvedValueOnce({
+      html: '',
+      text: 'text',
+      unavailable: false
+    })
     await pasteFromClipboard(deps(editor))
 
     expect(notify).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'error' })
+      expect.objectContaining({
+        kind: 'error',
+        message: 'Paste failed: the clipboard contents could not be inserted.'
+      })
     )
   })
 })

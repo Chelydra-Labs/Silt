@@ -3,7 +3,7 @@ import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { serializeInlineContent } from './converters'
 import { findActiveBlock } from './keymaps'
 import { readClipboardPayload } from './clipboardHtml'
-import { classifyPastedHTML } from './paste/normalizePastedHTML'
+import { pasteClipboardPayload } from './paste/pastePayload'
 import { pushNotification } from '../../notifications/store.svelte'
 
 /**
@@ -67,26 +67,26 @@ export function copySelection(deps: ClipboardDeps): void {
 export async function pasteFromClipboard(deps: ClipboardDeps): Promise<void> {
   const { editor, notify } = deps
   try {
-    const { html, text } = await readClipboardPayload()
-    // Route through the view's paste entry points, never
-    // `insertContent({type:'text'})`: only pasteHTML/pasteText run the full
-    // paste pipeline (transformPastedHTML → transformPasted → handlePaste,
-    // `uiEvent:'paste'` rules, whitespace collapse, slice context repair), so
-    // a menu paste lands identical to Ctrl+V. `passthrough` payloads
-    // (data-pm-slice, internal copies) go through pasteHTML too — the
-    // normalizer leaves them untouched. Oversized HTML is the one case that
-    // must not be parsed: it falls back to the text payload.
-    if (html && classifyPastedHTML(html) !== 'text') {
-      editor.view.pasteHTML(html)
-    } else if (text) {
-      editor.view.pasteText(text)
+    const payload = await readClipboardPayload()
+    // `pasteClipboardPayload` picks the flavour the way Ctrl+V does (text in a
+    // code context, no HTML, or an unusable/oversized payload; HTML otherwise)
+    // and drives the view's paste entry points so the full pipeline runs.
+    const choice = pasteClipboardPayload(editor.view, payload)
+    // `unavailable` means every source failed (API absent, permission denied);
+    // a readable-but-empty clipboard stays silent, exactly like Ctrl+V.
+    if (choice.kind === 'none' && payload.unavailable) {
+      notify({
+        kind: 'error',
+        message: 'Paste failed: the clipboard is unavailable.'
+      })
     }
   } catch {
-    // readClipboardPayload() is total; this guards the paste pipeline itself
-    // so a genuine failure still tells the user nothing landed.
+    // readClipboardPayload() is total and the selection predicate does not
+    // throw, so this is a genuine paste-pipeline failure: say the paste
+    // failed rather than blaming the clipboard read.
     notify({
       kind: 'error',
-      message: 'Paste failed: clipboard could not be read.'
+      message: 'Paste failed: the clipboard contents could not be inserted.'
     })
   }
 }
