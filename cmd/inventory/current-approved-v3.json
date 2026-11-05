@@ -809,6 +809,10 @@
         "signature": "Quit()"
       },
       {
+        "name": "ReadClipboardHTML",
+        "signature": "ReadClipboardHTML() (string, error)"
+      },
+      {
         "name": "ReadPluginSource",
         "signature": "ReadPluginSource(pluginID string) (string, error)"
       },
@@ -1180,6 +1184,7 @@
       "security:event",
       "settings:fingerprint-mismatch",
       "spellcheck:download:progress",
+      "storage:verified-write",
       "templates:changed",
       "theme:changed",
       "theme:files-dropped",
@@ -1198,6 +1203,7 @@
     "frontend_binding_imports": [
       "frontend/src/App.hotkeys.test.ts",
       "frontend/src/App.menu-save.test.ts",
+      "frontend/src/App.search-jump.test.ts",
       "frontend/src/App.startup-events.test.ts",
       "frontend/src/App.svelte",
       "frontend/src/App.tabs.test.ts",
@@ -1226,6 +1232,7 @@
       "frontend/src/components/TipTapEditor.tag-suggest.test.ts",
       "frontend/src/components/TipTapEditor.template-insert.test.ts",
       "frontend/src/components/TipTapEditor.test.ts",
+      "frontend/src/components/TipTapEditor.underline.test.ts",
       "frontend/src/components/TitleBar.svelte",
       "frontend/src/components/VirtualScrollContainer.svelte",
       "frontend/src/components/VirtualScrollContainer.test.ts",
@@ -1243,6 +1250,7 @@
       "frontend/src/components/editor/TaskBlockView.test.ts",
       "frontend/src/components/editor/controllers/useSuggests.svelte.ts",
       "frontend/src/components/editor/controllers/useSuggests.test.ts",
+      "frontend/src/components/editor/nodeViewConflictGates.test.ts",
       "frontend/src/components/settings/AIProviderTab.test.ts",
       "frontend/src/components/settings/AboutTab.svelte",
       "frontend/src/components/settings/AboutTab.test.ts",
@@ -1281,6 +1289,8 @@
       "frontend/src/lib/devModeInspect.test.ts",
       "frontend/src/lib/devModeInspect.ts",
       "frontend/src/lib/editor/blockDepthDom.test.ts",
+      "frontend/src/lib/editor/clipboardHtml.test.ts",
+      "frontend/src/lib/editor/clipboardHtml.ts",
       "frontend/src/lib/editor/externalConflict.ts",
       "frontend/src/lib/editor/nodeview-test-harness.test.ts",
       "frontend/src/lib/editor/pageMarkdown.ts",
@@ -1300,6 +1310,7 @@
       "frontend/src/lib/sidebar/navOrder.ts",
       "frontend/src/lib/sidebar/useDragDrop.test.ts",
       "frontend/src/lib/sidebar/useDragDrop.ts",
+      "frontend/src/lib/sidebar/useNavCrud.svelte.test.ts",
       "frontend/src/lib/sidebar/useNavCrud.svelte.ts",
       "frontend/src/lib/sidebar/useNavLoader.svelte.ts",
       "frontend/src/lib/sidebar/useSidebarContextMenu.svelte.ts",
@@ -1353,6 +1364,7 @@
     "frontend_runtime_imports": [
       "frontend/src/App.hotkeys.test.ts",
       "frontend/src/App.menu-save.test.ts",
+      "frontend/src/App.search-jump.test.ts",
       "frontend/src/App.startup-events.test.ts",
       "frontend/src/App.tabs.test.ts",
       "frontend/src/components/BacklinksSidebarPanel.svelte",
@@ -1367,6 +1379,7 @@
       "frontend/src/components/TipTapEditor.tag-suggest.test.ts",
       "frontend/src/components/TipTapEditor.template-insert.test.ts",
       "frontend/src/components/TipTapEditor.test.ts",
+      "frontend/src/components/TipTapEditor.underline.test.ts",
       "frontend/src/components/TitleBar.svelte",
       "frontend/src/components/TitleBar.test.ts",
       "frontend/src/components/VirtualScrollContainer.svelte",
@@ -1378,6 +1391,7 @@
       "frontend/src/components/editor/SelectionBubble.test.ts",
       "frontend/src/components/editor/TaskBlockView.test.ts",
       "frontend/src/components/editor/controllers/useSuggests.test.ts",
+      "frontend/src/components/editor/nodeViewConflictGates.test.ts",
       "frontend/src/components/settings/AboutTab.svelte",
       "frontend/src/components/settings/AboutTab.test.ts",
       "frontend/src/components/settings/AppearanceTab.svelte",
@@ -1465,6 +1479,7 @@
       "security:event",
       "settings:fingerprint-mismatch",
       "spellcheck:download:progress",
+      "storage:verified-write",
       "templates:changed",
       "theme:changed",
       "theme:files-dropped",

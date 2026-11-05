@@ -1774,10 +1774,14 @@ otherwise — and calls `view.pasteHTML` / `view.pasteText`. A menu paste
 therefore matches `Ctrl+V`: rich HTML when available, plain text in a code
 context or for an oversized payload. On Windows the webview reads clipboard
 HTML via `navigator.clipboard.read()`. Wails hard-denies that call on Linux, so
-the Linux menu paste is text-only until PR-5 adds the Go `ReadClipboardHTML`
-binding, which the reader already probes for lazily and treats as absent while
-it does not exist. When every read source fails the menu surfaces a "Paste
-failed" toast; a readable-but-empty clipboard stays silent, as with `Ctrl+V`.
+there the reader falls back to the Go `ReadClipboardHTML` binding
+(`clipboard_html.go`), which reads GDK's `text/html` target on the GTK4 build.
+The opt-in GTK3 build (`-tags gtk3`) has no equivalent: it returns an explicit
+error and the reader degrades to text, so a GTK3 build pastes text only. The
+binding is also present on Windows/macOS and reports "no HTML" there, where the
+webview path is the real source. When every read source fails the menu surfaces
+a "Paste failed" toast; a readable-but-empty clipboard stays silent, as with
+`Ctrl+V`.
 
 
 9. Performance Budgets
