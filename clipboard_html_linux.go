@@ -24,8 +24,6 @@ package main
 #define SILT_CLIPBOARD_HTML_MAX_BYTES (4u * 1024u * 1024u)
 #define SILT_CLIPBOARD_HTML_CHUNK (64u * 1024u)
 
-static const char *silt_clipboard_html_mime_types[] = {"text/html", NULL};
-
 typedef struct {
     GByteArray *buffer;
     GInputStream *stream;
@@ -97,18 +95,28 @@ static void silt_clipboard_html_read_cb(GObject *source, GAsyncResult *result, g
     silt_clipboard_html_read_chunk(state);
 }
 
-// True when the clipboard advertises an HTML target. Compared by prefix because
-// owners may offer "text/html;charset=utf-8" rather than bare "text/html".
-static gboolean silt_clipboard_html_target_present(GdkClipboard *clipboard) {
+// The clipboard's HTML targets, NULL-terminated, or NULL when it advertises
+// none. Prefix match because owners may offer "text/html;charset=utf-8" rather
+// than bare "text/html"; GDK then matches formats by exact interned string, so
+// the read requests the advertised spellings instead of a fixed "text/html".
+// The strings belong to the clipboard's formats; the async read interns its
+// MIME list, so g_free the array as soon as it returns.
+static const char **silt_clipboard_html_targets(GdkClipboard *clipboard) {
     GdkContentFormats *formats = gdk_clipboard_get_formats(clipboard);
-    if (formats == NULL) return FALSE;
+    if (formats == NULL) return NULL;
 
     gsize count = 0;
     const char *const *mime_types = gdk_content_formats_get_mime_types(formats, &count);
+    const char **targets = g_new0(const char *, count + 1);
+    gsize target_count = 0;
     for (gsize i = 0; i < count; i++) {
-        if (g_str_has_prefix(mime_types[i], "text/html")) return TRUE;
+        if (g_str_has_prefix(mime_types[i], "text/html")) targets[target_count++] = mime_types[i];
     }
-    return FALSE;
+    if (target_count == 0) {
+        g_free(targets);
+        return NULL;
+    }
+    return targets;
 }
 
 // Reads the clipboard's HTML. Returns a newly allocated UTF-8 string, or NULL
@@ -124,14 +132,16 @@ char *silt_clipboard_read_html_sync(char **error_out) {
     }
 
     GdkClipboard *clipboard = gdk_display_get_clipboard(display);
-    if (!silt_clipboard_html_target_present(clipboard)) return NULL;
+    const char **targets = silt_clipboard_html_targets(clipboard);
+    if (targets == NULL) return NULL;
 
     SiltClipboardHTMLRead *state = g_new0(SiltClipboardHTMLRead, 1);
     state->buffer = g_byte_array_new();
     state->cancellable = g_cancellable_new();
 
-    gdk_clipboard_read_async(clipboard, silt_clipboard_html_mime_types, G_PRIORITY_DEFAULT,
+    gdk_clipboard_read_async(clipboard, targets, G_PRIORITY_DEFAULT,
                              state->cancellable, silt_clipboard_html_read_cb, state);
+    g_free(targets);
 
     GMainContext *context = g_main_context_default();
     gint64 deadline = g_get_monotonic_time() + SILT_CLIPBOARD_HTML_TIMEOUT_US;
@@ -141,8 +151,7 @@ char *silt_clipboard_read_html_sync(char **error_out) {
         if (!g_main_context_iteration(context, FALSE)) g_usleep(1000);
     }
 
-    gboolean timed_out = !state->done;
-    if (timed_out) {
+    if (!state->done) {
         g_cancellable_cancel(state->cancellable);
         gint64 grace = g_get_monotonic_time() + SILT_CLIPBOARD_HTML_GRACE_US;
         while (!state->done && g_get_monotonic_time() < grace) {
@@ -158,10 +167,10 @@ char *silt_clipboard_read_html_sync(char **error_out) {
         return NULL;
     }
 
+    // A read that completed inside the grace window has a whole buffer even
+    // though the deadline passed, so only the error field decides the outcome.
     char *html = NULL;
-    if (timed_out) {
-        if (error_out != NULL) *error_out = g_strdup("clipboard HTML read timed out");
-    } else if (state->error != NULL) {
+    if (state->error != NULL) {
         if (error_out != NULL) *error_out = g_strdup(state->error->message);
     } else if (state->buffer->len > 0) {
         gchar *raw = g_strndup((const gchar *)state->buffer->data, state->buffer->len);
