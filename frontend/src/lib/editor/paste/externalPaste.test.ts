@@ -26,10 +26,13 @@ import {
   CODE_BLOCK,
   CSS_ONLY_EMPHASIS,
   GENUINE_TABLE,
+  GOOGLE_DOCS_BODY,
   LAYOUT_TABLE_BODY,
+  LETTERED_MSO_LIST,
   MSO_PSEUDO_LIST,
   NESTED_ORDERED_LIST,
   OUTLOOK_BODY,
+  PRESENTATION_TABLE_2CELL,
   SHADED_CONTAINER,
   SILT_INTERNAL_CLIPBOARD
 } from './fixtures'
@@ -227,6 +230,14 @@ describe('external paste through the real Silt schema', () => {
     ).toEqual(['bold', 'italic', 'underline'])
   })
 
+  it('pastes Google Docs text without inheriting its not-bold wrapper', () => {
+    const nodes = meaningful(paste(makeEditor(), GOOGLE_DOCS_BODY))
+    expect(textOf({ type: 'doc', content: nodes })).toContain(
+      'Plain Google Docs text with a bold-looking wrapper'
+    )
+    expect(marksOf(nodes).map((m) => m.type)).not.toContain('bold')
+  })
+
   it('maps blockquotes onto note quote attrs', () => {
     const nodes = meaningful(paste(makeEditor(), BLOCKQUOTE_BODY))
     expect(
@@ -301,11 +312,14 @@ describe('external paste through the real Silt schema', () => {
       NESTED_ORDERED_LIST,
       LAYOUT_TABLE_BODY,
       MSO_PSEUDO_LIST,
+      LETTERED_MSO_LIST,
       CSS_ONLY_EMPHASIS,
       BLOCKQUOTE_BODY,
       CODE_BLOCK,
       SHADED_CONTAINER,
-      GENUINE_TABLE
+      GENUINE_TABLE,
+      GOOGLE_DOCS_BODY,
+      PRESENTATION_TABLE_2CELL
     ]
     for (const fixture of fixtures) {
       const nodes = paste(makeEditor(), fixture)

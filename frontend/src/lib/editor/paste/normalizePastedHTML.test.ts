@@ -2,11 +2,35 @@ import { describe, expect, it } from 'vitest'
 import { normalizePastedHTML, PASTE_HTML_SIZE_CAP } from './normalizePastedHTML'
 import {
   BLOCKQUOTE_BODY,
+  CODE_BLOCK,
+  CSS_ONLY_EMPHASIS,
   GENUINE_TABLE,
+  GOOGLE_DOCS_BODY,
   LAYOUT_TABLE_BODY,
+  LETTERED_MSO_LIST,
+  MSO_PSEUDO_LIST,
+  NESTED_ORDERED_LIST,
   OUTLOOK_BODY,
+  PRESENTATION_TABLE_2CELL,
+  SHADED_CONTAINER,
   SILT_INTERNAL_CLIPBOARD
 } from './fixtures'
+
+const ALL_FIXTURES = [
+  OUTLOOK_BODY,
+  NESTED_ORDERED_LIST,
+  LAYOUT_TABLE_BODY,
+  MSO_PSEUDO_LIST,
+  LETTERED_MSO_LIST,
+  CSS_ONLY_EMPHASIS,
+  BLOCKQUOTE_BODY,
+  CODE_BLOCK,
+  SHADED_CONTAINER,
+  GENUINE_TABLE,
+  GOOGLE_DOCS_BODY,
+  PRESENTATION_TABLE_2CELL,
+  SILT_INTERNAL_CLIPBOARD
+]
 
 function bodyOf(html: string): HTMLElement {
   return new DOMParser().parseFromString(html, 'text/html').body
@@ -77,12 +101,28 @@ describe('normalizePastedHTML Word artefacts', () => {
     )
   })
 
-  it('drops inert colors and normal weight/style/none decoration', () => {
+  it('drops inert colors but keeps weight/style/decoration declarations', () => {
     const out = normalizePastedHTML(
       `<p><span style='color:windowtext;background-color:transparent;font-weight:400;font-style:normal;text-decoration:none'>plain</span></p>`
     )
-    expect(bodyOf(out).querySelector('span')?.hasAttribute('style')).toBe(false)
+    // `font-weight`/`font-style`/`text-decoration` are read by TipTap's mark
+    // rules (including the clear-mark values), so they must survive even when
+    // they look inert. Only colors are value-filtered.
+    expect(bodyOf(out).querySelector('span')?.getAttribute('style')).toBe(
+      'font-weight: 400; font-style: normal; text-decoration: none'
+    )
     expect(out).toContain('plain')
+    expect(out).not.toContain('windowtext')
+    expect(out).not.toContain('transparent')
+  })
+
+  it('keeps the Google Docs not-bold wrapper declarations', () => {
+    const out = normalizePastedHTML(GOOGLE_DOCS_BODY)
+    const wrapper = bodyOf(out).querySelector('b')
+    expect(wrapper?.getAttribute('style')).toBe('font-weight: normal')
+    expect(bodyOf(out).querySelector('span')?.getAttribute('style')).toContain(
+      'font-weight: 400'
+    )
   })
 
   it('maps mso-highlight to background-color and font color to a span', () => {

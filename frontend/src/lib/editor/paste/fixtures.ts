@@ -100,3 +100,24 @@ export const GENUINE_TABLE = `<table border=1>
 // Internal Silt clipboard payload: ProseMirror marks the wrapper with
 // data-pm-slice, and the normalizer must leave it byte-for-byte untouched.
 export const SILT_INTERNAL_CLIPBOARD = `<div data-pm-slice="0 0 []"><table class=MsoTableGrid border=0><tr><td><p class=MsoNormal>Internal table must stay a table</p></td></tr></table></div>`
+
+// Google Docs wraps the entire payload in a bold tag marked "not bold" and
+// styles every run with `font-weight:400; font-style:normal`. Those
+// declarations are load-bearing: they must survive normalization so TipTap's
+// Bold/Italic clear-mark rules cancel the wrapper instead of bolding every run.
+export const GOOGLE_DOCS_BODY = `<meta charset='utf-8'><b style="font-weight:normal;" id="docs-internal-guid-1a2b3c">
+<p dir="ltr" style="line-height:1.38;margin-top:0pt;margin-bottom:0pt;"><span style="font-size:11pt;font-family:Arial;color:#000000;background-color:transparent;font-weight:400;font-style:normal;font-variant:normal;text-decoration:none;vertical-align:baseline;white-space:pre-wrap;">Plain Google Docs text with a bold-looking wrapper</span></p></b>`
+
+// Word lettered list: the marker is `a.`/`b.`, which the block model cannot
+// persist (only arabic ordinals and the unordered markers round-trip), so the
+// normalizer maps it to the unordered bullet.
+export const LETTERED_MSO_LIST = `<div class=WordSection1>
+<p class=MsoListParagraph style='margin-left:.5in;text-indent:-.25in;mso-list:l0 level1 lfo1'><span style='font-family:"Times New Roman"'><span style='mso-list:Ignore'>a.</span></span>Apple</p>
+<p class=MsoListParagraph style='margin-left:.5in;text-indent:-.25in;mso-list:l0 level1 lfo1'><span style='font-family:"Times New Roman"'><span style='mso-list:Ignore'>b.</span></span>Banana</p>
+</div>`
+
+// Two-cell presentation table (signature/newsletter wrapper). Unwrapping must
+// keep each cell's content in its own block instead of gluing "LeftRight".
+export const PRESENTATION_TABLE_2CELL = `<table role=presentation border=0 cellspacing=0 cellpadding=0>
+<tr><td valign=top>Left cell</td><td valign=top>Right cell</td></tr>
+</table>`

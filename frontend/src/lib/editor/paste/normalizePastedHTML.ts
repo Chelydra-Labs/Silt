@@ -142,24 +142,11 @@ function buildStyleMap(
       if (color) map.set(name, color)
       continue
     }
-    if (name === 'font-weight') {
-      const normalized = value.toLowerCase()
-      if (normalized === 'normal' || normalized === '400') continue
-      map.set(name, value)
-      continue
-    }
-    if (name === 'font-style') {
-      const normalized = value.toLowerCase()
-      if (normalized === 'normal' || normalized === 'initial') continue
-      map.set(name, value)
-      continue
-    }
-    if (name === 'text-decoration') {
-      const normalized = value.toLowerCase()
-      // `none`, `initial`, `inherit` and overline-only carry no Silt mark.
-      if (!/(underline|line-through)/.test(normalized)) continue
-      map.set(name, value)
-    }
+    // `font-weight`, `font-style` and `text-decoration` are NOT inert: TipTap's
+    // Bold/Italic/Underline rules read them, including the "normal" values that
+    // clear an inherited mark (Google Docs wraps its payload in
+    // `<b style="font-weight:normal">`). Keep them verbatim.
+    map.set(name, value)
   }
   return map
 }
