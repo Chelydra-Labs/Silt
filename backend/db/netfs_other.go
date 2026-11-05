@@ -7,3 +7,10 @@ package db
 func detectNetworkFilesystem(_ string) error {
 	return nil
 }
+
+// detectNetworkFilesystemForWrite is the same no-op: unsupported platforms
+// (macOS among them — Windows + Linux are the release targets) have no
+// extended write detection either (#1020 scope).
+func detectNetworkFilesystemForWrite(path string) error {
+	return detectNetworkFilesystem(path)
+}

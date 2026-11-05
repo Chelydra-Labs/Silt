@@ -500,7 +500,10 @@ the link and indexes best-effort (logged); the user can re-link once it's back.
 Sync-conflict caveat (handled case). Silt's atomic write is temp-file +
 `os.Rename`. On a network filesystem (SMB/WebDAV) `os.Rename` may not be
 atomic the way it is on a local FS, so roots are probed once per session
-(`probeRootNetworkFS` wrapping `db.IsNetworkFS`, cached per root at
+(`probeRootNetworkFS` wrapping `db.IsNetworkFSForWrite` — the write-path
+detector, extended with Linux FUSE; the SQLite index gate keeps the
+conservative `db.IsNetworkFS` set, see the coverage note below — cached per
+root at
 open/link; a root that cannot be
 probed at all — offline/unmounted — fails safe and is treated as detected)
 and page writes on a detected mount route through the verified staged
@@ -525,10 +528,15 @@ degraded crash-safety is surfaced once per root as a dismissible notice. The
 dispatch is not limited to editor saves: the rename/move frontmatter
 rewrites, the watcher's own normalization writes (via an injected
 `WritePageFile` writer), and plugin raw page-path writes all route through
-the same per-root dispatcher. Detection coverage is per-OS and explicit:
-NFS/SMB/CIFS/NCP on Linux, NFS/DFS/WebDAV/CBFS/SMB/CIFS on Windows; Linux
-FUSE mounts (sshfs, rclone) and all macOS mounts are currently undetected —
-a statable root the detector does not recognize records local (#1020), while
+the same per-root dispatcher. Detection coverage is per-OS, explicit, and
+split from the SQLite index gate (#1020): the write probe recognizes
+NFS/SMB/CIFS/NCP plus FUSE mounts (sshfs, rclone) on Linux and
+NFS/DFS/WebDAV/CBFS/SMB/CIFS on Windows, while the index gate deliberately
+keeps the narrower no-FUSE set — widening it would retroactively refuse
+vaults that open fine today, and a genuinely WAL-incompatible mount already
+fails loudly at open. macOS mounts remain undetected (macOS is not a
+supported platform — Windows + Linux only), so a statable unrecognized root
+records local, while
 a root that cannot be probed at all (offline/unmounted at open/link) fails
 safe to verified mode. The
 `WriteTracker` self-write suppression and the editor focus lock still hold,

@@ -8,12 +8,14 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"silt/backend/db"
 	"silt/backend/parser"
 	"silt/backend/vault"
 )
@@ -479,6 +481,55 @@ func TestVerifiedWrite_TipEmittedOncePerRoot(t *testing.T) {
 	}
 	if len(*got2) != 0 {
 		t.Errorf("dismissed tip re-emitted: %+v", *got2)
+	}
+}
+
+// #1020: a FUSE-classified probe (what db.IsNetworkFSForWrite now returns for
+// a sshfs/rclone root on Linux) must engage verified mode and fire the
+// degraded-safety tip like any other network mount — the machinery classifies
+// by the probe error, not by mount type. The seam carries the real extended
+// detector's error shape (ErrNetworkFilesystem-wrapped, FUSE magic) because a
+// real FUSE mount cannot be reproduced on CI.
+func TestVerifiedWrite_FUSEProbeEngagesVerifiedModeAndTip(t *testing.T) {
+	app := newTestApp(t)
+	orig := rootNetworkFSCheck
+	rootNetworkFSCheck = func(p string) error {
+		return fmt.Errorf("%w: %s is on a network filesystem (type 0x%x). Renames may not be atomic there, so page writes use the verified (backup + read-back) mode",
+			db.ErrNetworkFilesystem, p, 0x65735546)
+	}
+	t.Cleanup(func() { rootNetworkFSCheck = orig })
+	app.detectVerifiedWriteRoot(app.vaultPath)
+
+	var verifiedPasses atomic.Int64
+	origHook := parser.VerifiedWriteAfterRenameHook
+	parser.VerifiedWriteAfterRenameHook = func(path string) error {
+		verifiedPasses.Add(1)
+		return nil
+	}
+	t.Cleanup(func() { parser.VerifiedWriteAfterRenameHook = origHook })
+
+	tips := captureVerifiedTipEvents(t, app)
+
+	notebook, section, page := "VNB", "", "FuseRoot"
+	blockID := "bbbbbbb8-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "fuse body")
+	if err := app.SaveFileBlocks(notebook, section, page, editBlocks(blocks, blockID, "fuse body edited")); err != nil {
+		t.Fatalf("verified save on FUSE root: %v", err)
+	}
+
+	if n := verifiedPasses.Load(); n == 0 {
+		t.Errorf("FUSE-classified root did not engage verified mode (no rename hook fired)")
+	}
+	backup := filepath.Join(app.vaultPath, ".system", "writebackups", notebook, section, page+".md")
+	if gotBackup, err := os.ReadFile(backup); err != nil || !strings.Contains(string(gotBackup), "fuse body") {
+		t.Errorf("pre-write backup not created on FUSE root: %v", err)
+	}
+	if len(*tips) != 1 {
+		t.Fatalf("tip events = %d, want exactly one", len(*tips))
+	}
+	want := VerifiedWriteTipID(app.vaultPath)
+	if (*tips)[0].TipID != want || (*tips)[0].Root != app.vaultPath {
+		t.Errorf("tip payload = %+v, want {root: %s, tip_id: %s}", (*tips)[0], app.vaultPath, want)
 	}
 }
 

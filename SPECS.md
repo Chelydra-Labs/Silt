@@ -823,15 +823,20 @@ automatically: they are the post-failure recovery copy of text that exists
 nowhere else and are removed only by a later successful write at the same
 path or manually after recovery.
 
-Detection coverage is explicit, not universal: the detectors recognize
-NFS/SMB/CIFS/NCP mounts on Linux and NFS/DFS/WebDAV/CBFS/SMB/CIFS on
-Windows. FUSE mounts on Linux (sshfs, rclone, …) and all macOS mounts are
-currently *undetected* — a statable root the detector does not recognize is
-recorded local and keeps the plain staged protocol, unflagged, even though
-its renames may not be atomic (extending the detectors is tracked as #1020).
-A root that cannot be probed at all (offline/unmounted at open or link) is
-the one case that fails safe: it is treated as detected so the safety net is
-never silently dropped when the mount returns mid-session.
+Detection coverage is explicit, not universal, and split by consumer. The
+verified-write probe recognizes NFS/SMB/CIFS/NCP mounts plus FUSE mounts
+(FUSE_SUPER_MAGIC — sshfs, rclone, …) on Linux, and NFS/DFS/WebDAV/CBFS/
+SMB/CIFS on Windows. The SQLite index gate deliberately keeps the narrower
+set without FUSE: widening it would retroactively refuse vaults that open
+fine today, and an index that genuinely cannot run WAL on a FUSE mount
+already fails loudly at open — so only the write-path safety net takes on
+the wider set (#1020). All macOS mounts remain undetected (macOS is not a
+supported platform — Windows + Linux only): a statable root the detector
+does not recognize is recorded local and keeps the plain staged protocol,
+unflagged, even though its renames may not be atomic. A root that cannot be
+probed at all (offline/unmounted at open or link) is the one case that
+fails safe: it is treated as detected so the safety net is never silently
+dropped when the mount returns mid-session.
 
 7.1.1 Recovery and destructive operations (Tier 0)
 

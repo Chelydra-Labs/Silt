@@ -29,7 +29,7 @@ import (
 // rootNetworkFSCheck is the per-root network-filesystem probe. Package-level
 // so tests can swap it to simulate a network mount (which a CI temp dir cannot
 // reproduce), mirroring vault.networkFSCheck (#1009). The default is the
-// fail-safe wrapper below, not db.IsNetworkFS directly.
+// fail-safe wrapper below, not db.IsNetworkFSForWrite directly.
 var rootNetworkFSCheck = probeRootNetworkFS
 
 // errStorageProbeUnavailable marks a root that could not be probed at all
@@ -37,19 +37,22 @@ var rootNetworkFSCheck = probeRootNetworkFS
 // classified the root either way.
 var errStorageProbeUnavailable = errors.New("storage probe unavailable")
 
-// probeRootNetworkFS fails safe where db.IsNetworkFS stays silent: IsNetworkFS
-// returns nil not only for local filesystems but also when it cannot classify
-// the root (stat/statfs/GetVolumeInformation failure on an offline mount, or
-// a platform without a detector — #1020 tracks detector coverage). Recording
-// nil for an unprobeable root would drop the verified-write safety net for a
-// mount that may come back non-atomic mid-session, so a root that cannot
-// even be stat'd is treated as non-atomic: verified mode is strictly additive
-// (the same staged write wrapped in backup + read-back).
+// probeRootNetworkFS fails safe where db.IsNetworkFSForWrite stays silent:
+// the detector returns nil not only for local filesystems but also when it
+// cannot classify the root (stat/statfs/GetVolumeInformation failure on an
+// offline mount, or a platform without a detector — e.g. macOS, which is not
+// a supported platform and stays undetected). Recording nil for an
+// unprobeable root would drop the verified-write safety net for a mount that
+// may come back non-atomic mid-session, so a root that cannot even be
+// stat'd is treated as non-atomic: verified mode is strictly additive (the
+// same staged write wrapped in backup + read-back). The detector is the
+// WRITE set (extended with Linux FUSE, #1020), not db.IsNetworkFS — that
+// one stays conservative for the SQLite WAL gate and the vault mover.
 func probeRootNetworkFS(path string) error {
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("%w: %s: %v", errStorageProbeUnavailable, path, err)
 	}
-	return db.IsNetworkFS(path)
+	return db.IsNetworkFSForWrite(path)
 }
 
 // writeBackupDirName is the root-relative directory holding verified-write
@@ -92,11 +95,12 @@ func (a *App) detectVerifiedWriteRoots() {
 // root as NETWORK: verified mode is strictly additive (the same staged write
 // wrapped in backup + read-back), so an unprobeable root keeps writing AND
 // keeps the safety net rather than silently losing it (warn-and-continue,
-// #1009). What stays LOCAL is a root the detector positively classifies as
-// local — including statable-but-unrecognized mounts (Linux FUSE, macOS) —
-// and, on Windows, a root whose classification fails AFTER stat
-// (GetVolumePathName/GetVolumeInformation errors return nil → LOCAL). Both
-// are the detection-coverage gap tracked as #1020.
+// #1009). What stays LOCAL is a root the write detector positively
+// classifies as local — statable-but-unrecognized mounts (e.g. macOS, an
+// unsupported platform) — and, on Windows, a root whose classification fails
+// AFTER stat (GetVolumePathName/GetVolumeInformation errors return nil →
+// LOCAL). Both are the residual detection-coverage gap of #1020 (which
+// closed the Linux FUSE hole by extending the write detector).
 func (a *App) detectVerifiedWriteRoot(root string) {
 	if root == "" {
 		return

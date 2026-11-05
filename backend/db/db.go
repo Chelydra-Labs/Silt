@@ -29,8 +29,28 @@ var ErrNetworkFilesystem = errors.New("network filesystem detected")
 // on platforms without a detector. Exported so the vault mover (#141) can
 // reject a network destination with the same clear message the index-opener
 // surfaces, without re-implementing the per-platform detection.
+//
+// Deliberately NOT widened with new magics (e.g. Linux FUSE, #1020): this
+// detector gates the SQLite WAL mode and the vault-mover destination check,
+// and widening it would retroactively refuse vaults that open fine today,
+// while a genuinely WAL-incompatible mount already fails loudly at open.
+// Write-path detection uses the extended set via IsNetworkFSForWrite.
 func IsNetworkFS(path string) error {
 	return detectNetworkFilesystem(path)
+}
+
+// IsNetworkFSForWrite is the extended detector consumed by the verified-write
+// probe (#1009/#1020): everything IsNetworkFS recognizes, plus Linux FUSE
+// mounts (FUSE_SUPER_MAGIC — sshfs, rclone, …), whose renames may not be
+// atomic even though a SQLite index can often survive on them. The split is
+// the #1020 blast-radius decision: only the page-write safety net sees the
+// wider set; IsNetworkFS (the WAL gate and the vault mover) keeps the
+// conservative set so existing vaults are never retroactively refused.
+// Returns nil for local filesystems and on platforms without a detector;
+// fail-safe handling of unstatable roots lives in the probe layer
+// (probeRootNetworkFS), not here.
+func IsNetworkFSForWrite(path string) error {
+	return detectNetworkFilesystemForWrite(path)
 }
 
 // ErrWALRejected labels a structural WAL rejection: the database is on-disk

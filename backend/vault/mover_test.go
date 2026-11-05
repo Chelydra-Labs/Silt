@@ -4,10 +4,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"silt/backend/db"
 )
 
 // writeVaultFixture creates a representative vault tree at root: two
@@ -204,6 +207,20 @@ func TestValidateDestination_AcceptsEmptyDest(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "new-vault") // does not exist yet
 	if err := validateDestination(src, dest); err != nil {
 		t.Errorf("expected nil for a fresh empty dest, got %v", err)
+	}
+}
+
+// #1020 split pin: the mover's destination gate must keep consuming the
+// conservative db.IsNetworkFS, not the extended write detector — otherwise a
+// FUSE destination (fine for the vault tree itself; the WAL assert at open
+// still guards the index) would be retroactively refused. Func identity is
+// the only pin available: a real FUSE mount cannot be reproduced on CI.
+func TestValidateDestination_DetectorStaysConservative(t *testing.T) {
+	if reflect.ValueOf(networkFSCheck).Pointer() != reflect.ValueOf(db.IsNetworkFS).Pointer() {
+		t.Fatalf("networkFSCheck no longer defaults to db.IsNetworkFS — widening the mover gate breaks existing FUSE users (#1020)")
+	}
+	if reflect.ValueOf(networkFSCheck).Pointer() == reflect.ValueOf(db.IsNetworkFSForWrite).Pointer() {
+		t.Fatalf("networkFSCheck must not consume the extended write detector")
 	}
 }
 
