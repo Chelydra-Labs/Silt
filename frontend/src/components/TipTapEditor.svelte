@@ -46,6 +46,7 @@
     SiltDetailsExtensions,
     SiltTableExtensions,
     UniqueBlockIds,
+    ExternalPasteNormalizer,
     SiltHardBreak,
     SiltBlockKeymaps,
     findActiveBlock,
@@ -424,6 +425,9 @@
     SiltInlineDragHandle,
     BlockIndentOnDrop,
     SiltBlockKeymaps,
+    // Word/Outlook normalizer: extension-level transformPastedHTML, which
+    // survives setOptions() re-applying editorProps (see its module comment).
+    ExternalPasteNormalizer,
     // Ctrl+Shift+V inserts the clipboard as plain text (strips formatting);
     // Ctrl+V (no shift) falls through to ProseMirror's native rich-HTML paste.
     PlainPaste,

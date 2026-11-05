@@ -46,28 +46,9 @@ import { TableCell } from '@tiptap/extension-table-cell'
 import { TableHeader } from '@tiptap/extension-table-header'
 import Subscript from '@tiptap/extension-subscript'
 import Superscript from '@tiptap/extension-superscript'
-
-// CSS-wide and system color keywords carry no portable color. Storing them on
-// a mark would render the inherited color (`inherit`, `currentColor`), hide the
-// text (`transparent`), or persist a Word system color (`auto`, `windowtext`),
-// so styled page wrappers pasted as text must not turn into color marks.
-const INERT_COLOR_VALUES = new Set([
-  'inherit',
-  'initial',
-  'unset',
-  'revert',
-  'revert-layer',
-  'currentcolor',
-  'transparent',
-  'auto',
-  'windowtext'
-])
-
-function colorFromStyle(value: string | null | undefined): string | null {
-  const color = value?.trim()
-  if (!color) return null
-  return INERT_COLOR_VALUES.has(color.toLowerCase()) ? null : color
-}
+import { colorFromStyle } from './paste/styleValues'
+import { classifyPastedHTML } from './paste/normalizePastedHTML'
+import { resetPlainPasteShiftState } from './plainPaste'
 
 // ---- Highlight mark (==text== / background color) ------------------------
 // Inline highlight. The default (no color) renders a <mark> element whose
@@ -761,12 +742,34 @@ export function siltHandlePaste(
       inherited.align !== 'left' ||
       inherited.file_date
     if (marked) {
+      // Pasted list content carries its own markers. Inherit the empty
+      // parent's attrs only when no note in the slice has a marker of its own:
+      // overwriting markers would flatten a pasted ordered/nested list, and
+      // inheriting into a mixed slice (list plus marker-less continuation
+      // notes) would push those continuations to the parent's depth, out of
+      // step with the list items they belong to.
+      let pasteHasOwnMarkers = false
+      slice.content.forEach((node) => {
+        if (node.type.name !== 'noteBlock') return
+        if (
+          String(node.attrs.bullet ?? '') !== '' ||
+          String(node.attrs.quote ?? '') !== ''
+        ) {
+          pasteHasOwnMarkers = true
+        }
+      })
       const blocks: PMNode[] = []
       slice.content.forEach((node) => {
+        if (node.type.name !== 'noteBlock') {
+          blocks.push(node)
+          return
+        }
         blocks.push(
-          node.type.name === 'noteBlock'
-            ? node.type.create(inherited, node.content, node.marks)
-            : node
+          node.type.create(
+            pasteHasOwnMarkers ? node.attrs : inherited,
+            node.content,
+            node.marks
+          )
         )
       })
       content = Fragment.from(blocks)
@@ -783,10 +786,34 @@ export function siltHandlePaste(
   return true
 }
 
+// ProseMirror parses `text/html` before any `handlePaste` handler runs, so an
+// oversized payload would still build a multi-megabyte DOM on the main thread.
+// This DOM-level hook intercepts first and inserts the plain-text clipboard
+// payload instead; it must return false for every other paste so PlainPaste's
+// shift-tracking hook (a plugin prop, consulted after direct editor props) and
+// ProseMirror's own paste handler still run.
+export function siltHandlePasteEvent(
+  view: EditorView,
+  event: ClipboardEvent
+): boolean {
+  const html = event.clipboardData?.getData('text/html') ?? ''
+  if (classifyPastedHTML(html) !== 'text') return false
+  event.preventDefault()
+  // The DOM hook that snapshots the plain-paste flag is bypassed when this
+  // handler claims the event, so clear the flag explicitly.
+  resetPlainPasteShiftState()
+  const text = event.clipboardData?.getData('text/plain') ?? ''
+  // An oversized payload with no text alternative is still better dropped than
+  // parsed; browsers mirror HTML into text/plain, so this is a safety net.
+  if (text) view.pasteText(text)
+  return true
+}
+
 // One object both editor surfaces spread into `createEditor`'s editorProps.
 export const siltPasteProps = {
   clipboardTextParser: siltClipboardTextParser,
   transformPasted: siltTransformPasted,
+  handleDOMEvents: { paste: siltHandlePasteEvent },
   handlePaste: siltHandlePaste
 }
 

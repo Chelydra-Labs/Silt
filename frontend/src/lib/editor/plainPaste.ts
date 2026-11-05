@@ -70,3 +70,14 @@ export function _setShiftHeldForTests(v: boolean): void {
 export function _getShiftHeldForTests(): boolean {
   return shiftHeld
 }
+
+/**
+ * Clear both shift flags when another handler claims the paste event before
+ * this extension's DOM hook can snapshot them (e.g. the oversized-HTML text
+ * fallback in the shared paste props). Without this the next keydown-less
+ * paste would be misread as a plain-paste request.
+ */
+export function resetPlainPasteShiftState(): void {
+  shiftHeld = false
+  shiftForPaste = false
+}

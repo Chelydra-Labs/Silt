@@ -15,6 +15,7 @@
     SiltDetailsExtensions,
     SiltTableExtensions,
     UniqueBlockIds,
+    ExternalPasteNormalizer,
     SiltHardBreak,
     SiltBlockKeymaps,
     blocksToDoc,
@@ -121,6 +122,7 @@
     ...SiltDetailsExtensions,
     ...SiltTableExtensions,
     UniqueBlockIds,
+    ExternalPasteNormalizer,
     // Outliner Enter + Shift-Enter soft break (#828). siltSubEditorHost below
     // keeps task Shift-Enter from re-opening the modal for nested tasks.
     SiltBlockKeymaps,
