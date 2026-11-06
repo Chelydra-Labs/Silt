@@ -192,6 +192,16 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// notebooks so it never surfaces in the page browser.
 	results = append(results, parser.ScanStandaloneTasks(vaultPath, a.spacesPerTab)...)
 
+	// Cross-file duplicate block ids are detected HERE — at the scan layer,
+	// grouping every file's parse — because only the parses can distinguish
+	// a duplicate (id present in two files) from a legitimate move (id
+	// present in the new file's parse only). The database cannot: re-indexing
+	// deliberately re-homes ids on moves and renames. Reported, never
+	// rewritten.
+	for _, w := range db.ScanDuplicateIDs(results) {
+		a.onDuplicateIDWarning(w)
+	}
+
 	// Incremental re-index: keep only files whose mtime+size differ from the
 	// last recorded index (or that were never indexed). On a cold start (no
 	// index file yet) every file is "changed" and gets a full index. Pruning
@@ -419,6 +429,9 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// The handler is called from the watcher goroutine; it only emits a Wails
 	// event (safe — no vaultMu/configMu access).
 	watcher.SetReMintWarningHandler(a.onReMintWarning)
+	// Route within-file duplicate block-id detections out of the indexing
+	// transaction. Post-commit only; the handler just emits an event.
+	dbMgr.SetDuplicateIDWarningHandler(a.onDuplicateIDWarning)
 	// External fsnotify reindex delegates the index step to App's atomic
 	// block+projection publish (indexFile → IndexFileWithProjection), so an
 	// external frontmatter edit publishes blocks AND page_types/

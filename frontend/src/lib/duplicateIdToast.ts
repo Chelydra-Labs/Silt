@@ -1,0 +1,72 @@
+/**
+ * Duplicate block-id warning toast builder.
+ *
+ * Mirrors reMintToast.ts: the payload-shaping contract (message copy and the
+ * "Show file" navigation CTA) lives here so it is unit-testable without
+ * mounting the App component. The event handler in useStartupEvents injects
+ * the openPage closure as the CTA's action.
+ *
+ * Copy follows the re-mint framing: no internal jargon ("identity markers",
+ * not "block id" / "((uuid))") and it leads with the user-visible impact —
+ * links resolving to the wrong block.
+ */
+import type { PushOptions } from '../notifications/store.svelte'
+
+/** Payload of the backend `index:duplicate-id-warning` event (DuplicateIDWarning in Go). */
+export interface DuplicateIDPage {
+  source: string
+  notebook: string
+  section: string
+  page: string
+}
+
+export interface DuplicateIDWarning {
+  block_id: string
+  pages: DuplicateIDPage[]
+  within_page: boolean
+}
+
+/**
+ * The shape of the openPage entry point, narrowed to what the CTA uses.
+ * Kept structural (same as reMintToast) so this module stays decoupled from
+ * the tab state machine.
+ */
+export type OpenPageForDuplicateID = (
+  ref: { notebook: string; section: string; page: string },
+  mode: 'preview' | 'pin'
+) => void
+
+function pageLabel(p: DuplicateIDPage): string {
+  // The section is part of the page's path in the sidebar; keep the label
+  // short and let "Show file" disambiguate same-named pages.
+  return p.section ? `${p.section}/${p.page}` : p.page
+}
+
+/**
+ * Build the sticky error toast for a duplicate block-id warning. Sticky
+ * (never auto-dismisses): the collision stays until the user fixes one of
+ * the files, and repeated re-index detections must not stack — the
+ * notification store dedups on kind+message while visible.
+ */
+export function duplicateIdToast(
+  w: DuplicateIDWarning,
+  openPage: OpenPageForDuplicateID
+): PushOptions {
+  const first = w.pages[0]
+  const message = w.within_page
+    ? `The page “${pageLabel(first)}” contains the same identity marker twice, so links to it may open the wrong block. Delete one copy or give one a fresh marker.`
+    : `The pages “${pageLabel(first)}” and “${pageLabel(w.pages[1] ?? first)}” carry the same identity marker, so links to it may open the wrong block. Delete one copy or give one a fresh marker.`
+  return {
+    kind: 'error',
+    message,
+    autoDismissMs: 0,
+    action: {
+      label: 'Show file',
+      run: () =>
+        openPage(
+          { notebook: first.notebook, section: first.section, page: first.page },
+          'preview'
+        )
+    }
+  }
+}

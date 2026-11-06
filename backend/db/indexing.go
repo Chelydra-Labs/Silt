@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"regexp"
@@ -10,6 +11,9 @@ import (
 
 	"silt/backend/dependencies"
 	"silt/backend/parser"
+
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // tagRegex matches inline tags starting with # followed by a letter.
@@ -278,6 +282,29 @@ func (s *blockIndexStmts) close() {
 	}
 }
 
+// isBlocksIDConstraint reports whether err is the blocks.id primary-key
+// constraint firing. Inside an indexing transaction the per-file clear has
+// already removed every prior row for the incoming ids, so this violation
+// can only mean the SAME id occurs twice in one file's parsed block list —
+// a hand-edited file or a stale-list splice, never a cross-file collision
+// (those are reported at the scan layer; see ScanDuplicateIDs).
+func isBlocksIDConstraint(err error) bool {
+	var sqliteErr *sqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	// blocks.id is declared PRIMARY KEY, so its violation arrives as
+	// CONSTRAINT_PRIMARYKEY; UNIQUE covers a hypothetical secondary unique
+	// index on the same column.
+	if sqliteErr.Code() != sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY && sqliteErr.Code() != sqlite3.SQLITE_CONSTRAINT_UNIQUE {
+		return false
+	}
+	// The UNIQUE code alone could name any unique index; scope to blocks.id
+	// so a future constraint elsewhere never silently degrades into a
+	// skipped block.
+	return strings.Contains(sqliteErr.Error(), "blocks.id")
+}
+
 // indexBlocks runs the shared per-block insert loop for one file's blocks:
 // blocks, tasks (+ derived caches), tags (with frontmatter attach to the first
 // block), block_references, page_links (CODE excluded), and block_meta. The
@@ -285,7 +312,7 @@ func (s *blockIndexStmts) close() {
 // source/notebook/section/page. fileTags are the file-level frontmatter tags
 // (attached to the first parsed block); logTag prefixes diagnostic logs so
 // failures stay attributable to the originating indexer.
-func (s *blockIndexStmts) indexBlocks(source, notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, logTag string) error {
+func (s *blockIndexStmts) indexBlocks(source, notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, logTag string, dups *duplicateIDCollector) error {
 	// Derived task caches: descendant NOTE comments, direct subtask rollups
 	// (#434), plus modified_at / estimate_minutes projections (#439/#440).
 	commentsByTask, subtaskTotalByTask, subtaskDoneByTask := taskDerivedCounts(blocks)
@@ -301,6 +328,26 @@ func (s *blockIndexStmts) indexBlocks(source, notebook, section, page string, bl
 			fileDate = time.Now().Format("2006-01-02")
 		}
 		if _, err := s.block.Exec(block.ID, parentID, source, notebook, section, page, pageFoldKey(page), fileDate, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber); err != nil {
+			if isBlocksIDConstraint(err) {
+				// Second occurrence of an id already inserted from this
+				// file's list. The first occurrence owns the row; skip the
+				// duplicate's secondary inserts and keep indexing the rest
+				// of the file rather than aborting the whole re-index.
+				log.Printf("db.%s: duplicate block id %s in %s/%s/%s/%s — skipping second occurrence, indexing continues", logTag, block.ID, source, notebook, section, page)
+				if dups != nil {
+					dups.add(DuplicateIDWarning{
+						BlockID: block.ID,
+						Pages: []DuplicateIDPage{{
+							Source:   source,
+							Notebook: notebook,
+							Section:  section,
+							Page:     page,
+						}},
+						WithinPage: true,
+					})
+				}
+				continue
+			}
 			return fmt.Errorf("failed to insert block %s: %w", block.ID, err)
 		}
 
@@ -733,8 +780,9 @@ func (dm *DatabaseManager) FindPageByLeaf(source, page string) (notebook, sectio
 // Shared by IndexFileBlocks and IndexFileWithProjection so the block half of
 // the publish cannot drift between them. Empty blocks clears only; the caller
 // still owns the test-seam hook + commit (so the projection step in
-// IndexFileWithProjection runs after this returns).
-func (dm *DatabaseManager) indexFileBlocksStage(tx *sql.Tx, source, notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, logTag string) error {
+// IndexFileWithProjection runs after this returns). Within-file duplicate ids
+// are appended to dups for the caller's post-commit dispatch.
+func (dm *DatabaseManager) indexFileBlocksStage(tx *sql.Tx, source, notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, logTag string, dups *duplicateIDCollector) error {
 	if len(blocks) > 0 {
 		placeholders := make([]string, len(blocks))
 		args := make([]interface{}, len(blocks))
@@ -766,7 +814,7 @@ func (dm *DatabaseManager) indexFileBlocksStage(tx *sql.Tx, source, notebook, se
 	}
 	defer stmts.close()
 
-	if err := stmts.indexBlocks(source, notebook, section, page, blocks, fileTags, logTag); err != nil {
+	if err := stmts.indexBlocks(source, notebook, section, page, blocks, fileTags, logTag, dups); err != nil {
 		return err
 	}
 
@@ -806,7 +854,8 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 	}
 	defer tx.Rollback()
 
-	if err := dm.indexFileBlocksStage(tx, source, notebook, section, page, blocks, fileTags, "IndexFileBlocks"); err != nil {
+	dups := &duplicateIDCollector{}
+	if err := dm.indexFileBlocksStage(tx, source, notebook, section, page, blocks, fileTags, "IndexFileBlocks", dups); err != nil {
 		return err
 	}
 
@@ -826,6 +875,7 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	dm.dispatchDuplicateIDWarnings(dups.drain())
 	// Residual unlinked FTS windows must not survive block membership changes.
 	dm.invalidateUnlinkedScanCache()
 	return nil
@@ -876,7 +926,8 @@ func (dm *DatabaseManager) IndexFileWithProjection(
 	}
 	defer tx.Rollback()
 
-	if err := dm.indexFileBlocksStage(tx, source, notebook, section, page, blocks, fileTags, "IndexFileWithProjection"); err != nil {
+	dups := &duplicateIDCollector{}
+	if err := dm.indexFileBlocksStage(tx, source, notebook, section, page, blocks, fileTags, "IndexFileWithProjection", dups); err != nil {
 		return err
 	}
 	// Projection clear/insert runs in the SAME tx as the block publish. A
@@ -909,6 +960,7 @@ func (dm *DatabaseManager) IndexFileWithProjection(
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	dm.dispatchDuplicateIDWarnings(dups.drain())
 	dm.invalidateUnlinkedScanCache()
 	return nil
 }
@@ -941,7 +993,8 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 	}
 	defer stmts.close()
 
-	indexedCount, skipped, err := dm.indexScanResultsStage(tx, stmts, results, nil)
+	dups := &duplicateIDCollector{}
+	indexedCount, skipped, err := dm.indexScanResultsStage(tx, stmts, results, nil, dups)
 	if err != nil {
 		return 0, skipped, err
 	}
@@ -957,6 +1010,7 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 	if err := tx.Commit(); err != nil {
 		return 0, skipped, fmt.Errorf("failed to commit transaction: %w", err)
 	}
+	dm.dispatchDuplicateIDWarnings(dups.drain())
 	// Batch commit may have cleared/inserted blocks even when indexedCount is 0.
 	dm.invalidateUnlinkedScanCache()
 
@@ -1008,7 +1062,8 @@ func (dm *DatabaseManager) IndexScanResultsWithProjection(results []parser.ScanR
 	}
 	defer stmts.close()
 
-	indexedCount, skipped, err := dm.indexScanResultsStage(tx, stmts, results, projections)
+	dups := &duplicateIDCollector{}
+	indexedCount, skipped, err := dm.indexScanResultsStage(tx, stmts, results, projections, dups)
 	if err != nil {
 		return 0, skipped, err
 	}
@@ -1024,6 +1079,7 @@ func (dm *DatabaseManager) IndexScanResultsWithProjection(results []parser.ScanR
 	if err := tx.Commit(); err != nil {
 		return 0, skipped, fmt.Errorf("failed to commit transaction: %w", err)
 	}
+	dm.dispatchDuplicateIDWarnings(dups.drain())
 	dm.invalidateUnlinkedScanCache()
 
 	return indexedCount, skipped, nil
@@ -1034,7 +1090,9 @@ func (dm *DatabaseManager) IndexScanResultsWithProjection(results []parser.ScanR
 // result, runs the cross-file dependency pass, and (when projections != nil)
 // applies each result's projection payload on the same tx. Skipped files
 // (res.Err or empty Notebook) bypass both the block and projection work.
-func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexStmts, results []parser.ScanResult, projections []ScanProjection) (int, []string, error) {
+// Within-file duplicate ids land in dups for the caller's post-commit
+// dispatch (cross-file duplicates are the scan layer's job — ScanDuplicateIDs).
+func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexStmts, results []parser.ScanResult, projections []ScanProjection, dups *duplicateIDCollector) (int, []string, error) {
 	indexedCount := 0
 	var skipped []string
 
@@ -1091,7 +1149,7 @@ func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexSt
 			return indexedCount, skipped, fmt.Errorf("failed to clear blocks for %s: %w", res.Path, err)
 		}
 
-		if err := stmts.indexBlocks(source, res.Notebook, res.Section, res.Page, res.Blocks, res.Tags, "IndexScanResults"); err != nil {
+		if err := stmts.indexBlocks(source, res.Notebook, res.Section, res.Page, res.Blocks, res.Tags, "IndexScanResults", dups); err != nil {
 			return indexedCount, skipped, err
 		}
 

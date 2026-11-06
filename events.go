@@ -79,8 +79,9 @@ const (
 	EventStorageVerifiedWrite EventName = "storage:verified-write"
 
 	// Index / page links.
-	EventIndexReMintWarning EventName = "index:re-mint-warning"
-	EventPageLinksRewritten EventName = "page-links:rewritten"
+	EventIndexReMintWarning      EventName = "index:re-mint-warning"
+	EventIndexDuplicateIDWarning EventName = "index:duplicate-id-warning"
+	EventPageLinksRewritten      EventName = "page-links:rewritten"
 
 	// Self-update / spellcheck download progress.
 	EventUpdateDownloadProgress     EventName = "update:download:progress"
