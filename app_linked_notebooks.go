@@ -541,6 +541,14 @@ func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 		results = append(results, res)
 	}
 
+	// Cross-file duplicate block ids: the linked tree's parses are all in
+	// hand here, so the same exact grouping as the vault startup scan
+	// applies (a duplicate between two linked pages is indistinguishable
+	// from a move at the row level — see ScanDuplicateIDs).
+	for _, w := range db.ScanDuplicateIDs(results) {
+		a.onDuplicateIDWarning(w)
+	}
+
 	// Atomic batch: each linked file's typed projection is published in the
 	// SAME transaction as its blocks (IndexScanResultsWithProjection), so a
 	// reader can never see a freshly-linked typed page without its

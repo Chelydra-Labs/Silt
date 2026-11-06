@@ -83,9 +83,9 @@ func TestSpliceSubtree_ReplacesChildRange(t *testing.T) {
 		{ID: "cccccccc-1111-0000-0000-000000000001", Type: parser.BlockNote, Depth: 1, CleanText: "new child"},
 	}
 
-	got, ok := spliceSubtree(blocks, parent, newChildren)
-	if !ok {
-		t.Fatal("spliceSubtree returned ok=false for an existing parent")
+	got, err := spliceSubtree(blocks, parent, newChildren)
+	if err != nil {
+		t.Fatal(err)
 	}
 	// Expected order: before, parent, new child, after.
 	if len(got) != 4 {
@@ -116,9 +116,9 @@ func TestSpliceSubtree_EmptyChildrenRemovesOldSubtree(t *testing.T) {
 		{ID: "aaaaaaaa-1111-0000-0000-000000000001", Type: parser.BlockNote, Depth: 1, ParentID: parent},
 		{ID: "bbbbbbbb-0000-0000-0000-000000000000", Type: parser.BlockTask, Depth: 0},
 	}
-	got, ok := spliceSubtree(blocks, parent, nil)
-	if !ok {
-		t.Fatal("spliceSubtree returned ok=false")
+	got, err := spliceSubtree(blocks, parent, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if len(got) != 2 {
 		t.Fatalf("expected 2 blocks after clearing children, got %d: %+v", len(got), got)
@@ -150,9 +150,9 @@ func TestSpliceSubtree_DeletesByMembershipAroundRegion(t *testing.T) {
 
 	// The sub-editor deletes reply two: the splice receives the fetched
 	// subtree minus it.
-	got, ok := spliceSubtree(blocks, parent, blocks[1:2])
-	if !ok {
-		t.Fatal("spliceSubtree returned ok=false for an existing parent")
+	got, err := spliceSubtree(blocks, parent, blocks[1:2])
+	if err != nil {
+		t.Fatal(err)
 	}
 	seen := make(map[string]int, len(got))
 	for _, b := range got {
@@ -374,6 +374,76 @@ func TestSaveSubtreeBlocks_RejectsOutOfRangePriority(t *testing.T) {
 	}
 }
 
+// TestSpliceSubtree_RefusesChildIDCollisionWithKeptBlock: an incoming child
+// whose id matches a block that SURVIVES the splice (a kept non-member) would
+// render the same UUID twice in one file — a stale-list race or plugin caller
+// can produce it, and writing it degrades the index (duplicate blocks.id).
+// The splice refuses loudly instead; the file stays untouched.
+func TestSpliceSubtree_RefusesChildIDCollisionWithKeptBlock(t *testing.T) {
+	const (
+		parent  = "aaaaaaaa-0000-0000-0000-000000000000"
+		kept    = "bbbbbbbb-0000-0000-0000-000000000099"
+		freshID = "cccccccc-0000-0000-0000-000000000001"
+	)
+	blocks := []parser.ParsedBlock{
+		{ID: parent, Type: parser.BlockTask, Depth: 0, CleanText: "parent"},
+		{ID: kept, Type: parser.BlockTask, Depth: 0, CleanText: "kept sibling elsewhere in the page"},
+	}
+	// Stale-list shape: the caller fetched a subtree listing that included the
+	// kept block's id and re-submits it as a child of parent.
+	children := []parser.ParsedBlock{
+		{ID: freshID, Type: parser.BlockNote, Depth: 1, CleanText: "legit new child"},
+		{ID: kept, Type: parser.BlockNote, Depth: 1, CleanText: "colliding child"},
+	}
+	if _, err := spliceSubtree(blocks, parent, children); err == nil {
+		t.Fatal("spliceSubtree accepted a child id that a kept block already owns; want refusal")
+	}
+}
+
+// TestSpliceSubtree_RefusesDuplicateChildren: two incoming children sharing
+// one id are equally a duplicate-UUID write; refused.
+func TestSpliceSubtree_RefusesDuplicateChildren(t *testing.T) {
+	const (
+		parent = "aaaaaaaa-0000-0000-0000-000000000000"
+		dup    = "cccccccc-0000-0000-0000-000000000042"
+	)
+	blocks := []parser.ParsedBlock{
+		{ID: parent, Type: parser.BlockTask, Depth: 0, CleanText: "parent"},
+	}
+	children := []parser.ParsedBlock{
+		{ID: dup, Type: parser.BlockNote, Depth: 1, CleanText: "first"},
+		{ID: dup, Type: parser.BlockNote, Depth: 2, CleanText: "second"},
+	}
+	if _, err := spliceSubtree(blocks, parent, children); err == nil {
+		t.Fatal("spliceSubtree accepted two children sharing one id; want refusal")
+	}
+}
+
+// TestSpliceSubtree_AllowsReusingDeletedMemberID: replacing the subtree with
+// children whose ids match the OLD members is the normal update flow — those
+// ids are deleted by the splice, so no collision. Pins that the guard does
+// not over-refuse.
+func TestSpliceSubtree_AllowsReusingDeletedMemberID(t *testing.T) {
+	const (
+		parent = "aaaaaaaa-0000-0000-0000-000000000000"
+		member = "aaaaaaaa-1111-0000-0000-000000000001"
+	)
+	blocks := []parser.ParsedBlock{
+		{ID: parent, Type: parser.BlockTask, Depth: 0, CleanText: "parent"},
+		{ID: member, Type: parser.BlockNote, Depth: 1, ParentID: parent, CleanText: "old child"},
+	}
+	updated := []parser.ParsedBlock{
+		{ID: member, Type: parser.BlockNote, Depth: 1, ParentID: parent, CleanText: "edited in place"},
+	}
+	got, err := spliceSubtree(blocks, parent, updated)
+	if err != nil {
+		t.Fatalf("spliceSubtree refused a legitimate member update: %v", err)
+	}
+	if len(got) != 2 || got[1].ID != member {
+		t.Fatalf("splice result = %+v, want parent + updated member", got)
+	}
+}
+
 // TestSpliceSubtree_NormalizesIncomingDepths verifies a plugin caller passing
 // children with Depth <= parentDepth can't corrupt the file hierarchy: the
 // splice forces every child strictly beneath the parent, preserving relative
@@ -389,9 +459,9 @@ func TestSpliceSubtree_NormalizesIncomingDepths(t *testing.T) {
 		{ID: "child-a-0000-0000-0000-000000000061", Type: parser.BlockNote, Depth: 0, CleanText: "child a"},
 		{ID: "child-b-0000-0000-0000-000000000062", Type: parser.BlockNote, Depth: 1, CleanText: "child b"},
 	}
-	got, ok := spliceSubtree(blocks, parent, badChildren)
-	if !ok {
-		t.Fatal("spliceSubtree returned ok=false for an existing parent")
+	got, err := spliceSubtree(blocks, parent, badChildren)
+	if err != nil {
+		t.Fatal(err)
 	}
 	// Both children must end up strictly deeper than the parent (Depth 2).
 	for i, b := range got {

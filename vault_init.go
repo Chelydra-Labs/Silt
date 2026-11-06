@@ -169,6 +169,12 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	}
 	storageWarnings = append(storageWarnings, dbMgr.Warnings()...)
 
+	// Route within-file duplicate block-id detections out of the indexing
+	// transaction. Must be registered BEFORE the scan below: the startup
+	// batch index is the first detection point for a hand-edited file, and a
+	// warning dispatched before registration is silently dropped.
+	dbMgr.SetDuplicateIDWarningHandler(a.onDuplicateIDWarning)
+
 	// SQLDB() only at vault open: handle is live and single-threaded here.
 	// Query/write paths must use DatabaseManager package methods (handle/
 	// withDB) so Close returns ErrDBClosed instead of nil-derefing.
@@ -191,6 +197,16 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// notebook=".silt" from the path; ListNavigation hides dot-prefixed
 	// notebooks so it never surfaces in the page browser.
 	results = append(results, parser.ScanStandaloneTasks(vaultPath, a.spacesPerTab)...)
+
+	// Cross-file duplicate block ids are detected HERE — at the scan layer,
+	// grouping every file's parse — because only the parses can distinguish
+	// a duplicate (id present in two files) from a legitimate move (id
+	// present in the new file's parse only). The database cannot: re-indexing
+	// deliberately re-homes ids on moves and renames. Reported, never
+	// rewritten.
+	for _, w := range db.ScanDuplicateIDs(results) {
+		a.onDuplicateIDWarning(w)
+	}
 
 	// Incremental re-index: keep only files whose mtime+size differ from the
 	// last recorded index (or that were never indexed). On a cold start (no

@@ -51,6 +51,10 @@ import { clearAllEditors } from '../lib/editor/editorRegistry.svelte'
 import { routeJumpTarget, isStandaloneTaskRef } from '../lib/standaloneTasksNav'
 import { enterTaskPageRoute } from '../plugins/first-party/silt-tasks/state.svelte'
 import { reMintToast, type ReMintWarning } from '../lib/reMintToast'
+import {
+  duplicateIdToast,
+  type DuplicateIDWarning
+} from '../lib/duplicateIdToast'
 import { findBarState } from '../lib/editor/search/findBarState.svelte'
 import {
   OPEN_TASKS_FOR_PAGE_EVENT,
@@ -250,6 +254,20 @@ export function createStartupEvents(
     })
   }
 
+  // Duplicate block-id warning: shared by the live listener and the queued
+  // startup replay (the vault scan emits before the frontend mounts).
+  function handleDuplicateIDWarning(w: DuplicateIDWarning | undefined): void {
+    // Guard the full shape: a non-string block_id would throw in the toast
+    // builder's markerTail, and the live Events.On listener has no catch.
+    if (!w || !w.pages?.length || typeof w.block_id !== 'string') return
+    // Same refused-open funnel as the re-mint CTA (#1005).
+    pushNotification(
+      duplicateIdToast(w, (ref, mode) => {
+        deps.openPageOrNotify(ref, mode)
+      })
+    )
+  }
+
   // The replay router: fans a queued startup event out to the SAME named
   // handler its live Events.On listener uses, so a startup event is
   // indistinguishable from a live one to the handler.
@@ -277,6 +295,12 @@ export function createStartupEvents(
         handleStorageVerifiedWrite(
           data as { root?: string; tip_id?: string } | undefined
         )
+        break
+      // Emitted during the vault startup scan (before these listeners
+      // attach), so unlike the watcher-driven re-mint event this one really
+      // does travel the queued-event replay path.
+      case EventName.EventIndexDuplicateIDWarning:
+        handleDuplicateIDWarning(data as DuplicateIDWarning | undefined)
         break
       default:
         break
@@ -547,6 +571,11 @@ export function createStartupEvents(
       })
     )
     off.push(
+      Events.On(EventName.EventIndexDuplicateIDWarning, (ev) => {
+        handleDuplicateIDWarning(ev.data)
+      })
+    )
+    off.push(
       Events.On(EventName.EventPageLinksRewritten, (ev) => {
         const d = ev?.data as
           { rewritten?: number; failed?: number } | undefined
@@ -647,7 +676,13 @@ export function createStartupEvents(
         const missed = await GetStartupEvents()
         if (disposed) return
         for (const ev of missed ?? []) {
-          dispatchStartupEvent(ev.Name, ev.Payload)
+          try {
+            dispatchStartupEvent(ev.Name, ev.Payload)
+          } catch (e) {
+            // One bad entry must not abort the rest of the backlog; log it
+            // (fail loud) and keep draining.
+            console.error('Startup event replay failed:', ev.Name, e)
+          }
         }
       } catch (e) {
         console.error('Startup event replay failed:', e)

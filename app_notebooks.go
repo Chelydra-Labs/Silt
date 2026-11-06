@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"silt/backend/db"
 	"silt/backend/history"
 	"silt/backend/monitor"
 	"silt/backend/parser"
@@ -152,6 +153,17 @@ func (a *App) nameCollidesWithLink(name, excludeID string) bool {
 // emitter (no locks).
 func (a *App) onReMintWarning(w monitor.ReMintWarning) {
 	a.emit(EventIndexReMintWarning, w)
+}
+
+// onDuplicateIDWarning is the sink for duplicate block-id detections: the db
+// layer's within-file constraint catch (via SetDuplicateIDWarningHandler) and
+// the scan layer's cross-file grouping (ScanDuplicateIDs). A block id is a
+// global primary key, so two pages (or one page, twice) carrying it make
+// every ((uuid)) reference to it ambiguous. emitOrQueue (not plain emit)
+// because the startup scan fires before the frontend has mounted its
+// listeners. Files are never rewritten — report-only posture.
+func (a *App) onDuplicateIDWarning(w db.DuplicateIDWarning) {
+	a.emitOrQueue(EventIndexDuplicateIDWarning, w)
 }
 
 // CreateSection creates a section folder under an explicit parent section.

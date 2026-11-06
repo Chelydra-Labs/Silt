@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"regexp"
@@ -10,6 +11,9 @@ import (
 
 	"silt/backend/dependencies"
 	"silt/backend/parser"
+
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // tagRegex matches inline tags starting with # followed by a letter.
@@ -25,6 +29,23 @@ func nullIfEmpty(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+// firstBlockOccurrences drops second-and-later occurrences of a block id —
+// the same first-wins rule the insert loop applies when blocks.id rejects a
+// duplicate — so derived caches aggregate exactly the rows that survive
+// indexing.
+func firstBlockOccurrences(blocks []parser.ParsedBlock) []parser.ParsedBlock {
+	seen := make(map[string]struct{}, len(blocks))
+	uniq := make([]parser.ParsedBlock, 0, len(blocks))
+	for _, b := range blocks {
+		if _, dup := seen[b.ID]; dup {
+			continue
+		}
+		seen[b.ID] = struct{}{}
+		uniq = append(uniq, b)
+	}
+	return uniq
 }
 
 // taskDerivedCounts precomputes per-task derived cache columns for one file's
@@ -278,6 +299,29 @@ func (s *blockIndexStmts) close() {
 	}
 }
 
+// isBlocksIDConstraint reports whether err is the blocks.id primary-key
+// constraint firing. Inside an indexing transaction the per-file clear has
+// already removed every prior row for the incoming ids, so this violation
+// can only mean the SAME id occurs twice in one file's parsed block list —
+// a hand-edited file or a stale-list splice, never a cross-file collision
+// (those are reported at the scan layer; see ScanDuplicateIDs).
+func isBlocksIDConstraint(err error) bool {
+	var sqliteErr *sqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	// blocks.id is declared PRIMARY KEY, so its violation arrives as
+	// CONSTRAINT_PRIMARYKEY; UNIQUE covers a hypothetical secondary unique
+	// index on the same column.
+	if sqliteErr.Code() != sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY && sqliteErr.Code() != sqlite3.SQLITE_CONSTRAINT_UNIQUE {
+		return false
+	}
+	// The UNIQUE code alone could name any unique index; scope to blocks.id
+	// so a future constraint elsewhere never silently degrades into a
+	// skipped block.
+	return strings.Contains(sqliteErr.Error(), "blocks.id")
+}
+
 // indexBlocks runs the shared per-block insert loop for one file's blocks:
 // blocks, tasks (+ derived caches), tags (with frontmatter attach to the first
 // block), block_references, page_links (CODE excluded), and block_meta. The
@@ -285,10 +329,13 @@ func (s *blockIndexStmts) close() {
 // source/notebook/section/page. fileTags are the file-level frontmatter tags
 // (attached to the first parsed block); logTag prefixes diagnostic logs so
 // failures stay attributable to the originating indexer.
-func (s *blockIndexStmts) indexBlocks(source, notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, logTag string) error {
+func (s *blockIndexStmts) indexBlocks(source, notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, logTag string, dups *duplicateIDCollector) error {
 	// Derived task caches: descendant NOTE comments, direct subtask rollups
 	// (#434), plus modified_at / estimate_minutes projections (#439/#440).
-	commentsByTask, subtaskTotalByTask, subtaskDoneByTask := taskDerivedCounts(blocks)
+	// Deduped first-occurrence-wins to mirror the insert loop's duplicate
+	// skip below: a skipped occurrence writes no row, so its descendants
+	// must not inflate the surviving row's caches.
+	commentsByTask, subtaskTotalByTask, subtaskDoneByTask := taskDerivedCounts(firstBlockOccurrences(blocks))
 
 	for blockIdx, block := range blocks {
 		// 1. Insert into blocks — each block carries its own file_date.
@@ -301,6 +348,26 @@ func (s *blockIndexStmts) indexBlocks(source, notebook, section, page string, bl
 			fileDate = time.Now().Format("2006-01-02")
 		}
 		if _, err := s.block.Exec(block.ID, parentID, source, notebook, section, page, pageFoldKey(page), fileDate, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber); err != nil {
+			if isBlocksIDConstraint(err) {
+				// Second occurrence of an id already inserted from this
+				// file's list. The first occurrence owns the row; skip the
+				// duplicate's secondary inserts and keep indexing the rest
+				// of the file rather than aborting the whole re-index.
+				log.Printf("db.%s: duplicate block id %s in %s/%s/%s/%s — skipping second occurrence, indexing continues", logTag, block.ID, source, notebook, section, page)
+				if dups != nil {
+					dups.add(DuplicateIDWarning{
+						BlockID: block.ID,
+						Pages: []DuplicateIDPage{{
+							Source:   source,
+							Notebook: notebook,
+							Section:  section,
+							Page:     page,
+						}},
+						WithinPage: true,
+					})
+				}
+				continue
+			}
 			return fmt.Errorf("failed to insert block %s: %w", block.ID, err)
 		}
 
@@ -733,8 +800,9 @@ func (dm *DatabaseManager) FindPageByLeaf(source, page string) (notebook, sectio
 // Shared by IndexFileBlocks and IndexFileWithProjection so the block half of
 // the publish cannot drift between them. Empty blocks clears only; the caller
 // still owns the test-seam hook + commit (so the projection step in
-// IndexFileWithProjection runs after this returns).
-func (dm *DatabaseManager) indexFileBlocksStage(tx *sql.Tx, source, notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, logTag string) error {
+// IndexFileWithProjection runs after this returns). Within-file duplicate ids
+// are appended to dups for the caller's post-commit dispatch.
+func (dm *DatabaseManager) indexFileBlocksStage(tx *sql.Tx, source, notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, logTag string, dups *duplicateIDCollector) error {
 	if len(blocks) > 0 {
 		placeholders := make([]string, len(blocks))
 		args := make([]interface{}, len(blocks))
@@ -766,7 +834,7 @@ func (dm *DatabaseManager) indexFileBlocksStage(tx *sql.Tx, source, notebook, se
 	}
 	defer stmts.close()
 
-	if err := stmts.indexBlocks(source, notebook, section, page, blocks, fileTags, logTag); err != nil {
+	if err := stmts.indexBlocks(source, notebook, section, page, blocks, fileTags, logTag, dups); err != nil {
 		return err
 	}
 
@@ -774,7 +842,10 @@ func (dm *DatabaseManager) indexFileBlocksStage(tx *sql.Tx, source, notebook, se
 	// detects within-file cycles only. The batched indexer's cross-file
 	// check catches cycles that span files.
 	warnOnDependencyCycle(blocks)
-	return indexTaskDependencies(tx, stmts.taskDep, blocks, logTag)
+	// First-occurrence-wins like the insert loop: a skipped duplicate's
+	// [blocked_by::] tokens must not attach to the surviving row as edges
+	// its own raw_content does not contain.
+	return indexTaskDependencies(tx, stmts.taskDep, firstBlockOccurrences(blocks), logTag)
 }
 
 // IndexFileBlocks updates the index with one file's blocks in a single
@@ -806,7 +877,8 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 	}
 	defer tx.Rollback()
 
-	if err := dm.indexFileBlocksStage(tx, source, notebook, section, page, blocks, fileTags, "IndexFileBlocks"); err != nil {
+	dups := &duplicateIDCollector{}
+	if err := dm.indexFileBlocksStage(tx, source, notebook, section, page, blocks, fileTags, "IndexFileBlocks", dups); err != nil {
 		return err
 	}
 
@@ -826,6 +898,7 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	dm.dispatchDuplicateIDWarnings(dups.drain())
 	// Residual unlinked FTS windows must not survive block membership changes.
 	dm.invalidateUnlinkedScanCache()
 	return nil
@@ -876,7 +949,8 @@ func (dm *DatabaseManager) IndexFileWithProjection(
 	}
 	defer tx.Rollback()
 
-	if err := dm.indexFileBlocksStage(tx, source, notebook, section, page, blocks, fileTags, "IndexFileWithProjection"); err != nil {
+	dups := &duplicateIDCollector{}
+	if err := dm.indexFileBlocksStage(tx, source, notebook, section, page, blocks, fileTags, "IndexFileWithProjection", dups); err != nil {
 		return err
 	}
 	// Projection clear/insert runs in the SAME tx as the block publish. A
@@ -909,6 +983,7 @@ func (dm *DatabaseManager) IndexFileWithProjection(
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	dm.dispatchDuplicateIDWarnings(dups.drain())
 	dm.invalidateUnlinkedScanCache()
 	return nil
 }
@@ -941,7 +1016,8 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 	}
 	defer stmts.close()
 
-	indexedCount, skipped, err := dm.indexScanResultsStage(tx, stmts, results, nil)
+	dups := &duplicateIDCollector{}
+	indexedCount, skipped, err := dm.indexScanResultsStage(tx, stmts, results, nil, dups)
 	if err != nil {
 		return 0, skipped, err
 	}
@@ -957,6 +1033,7 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 	if err := tx.Commit(); err != nil {
 		return 0, skipped, fmt.Errorf("failed to commit transaction: %w", err)
 	}
+	dm.dispatchDuplicateIDWarnings(dups.drain())
 	// Batch commit may have cleared/inserted blocks even when indexedCount is 0.
 	dm.invalidateUnlinkedScanCache()
 
@@ -1008,7 +1085,8 @@ func (dm *DatabaseManager) IndexScanResultsWithProjection(results []parser.ScanR
 	}
 	defer stmts.close()
 
-	indexedCount, skipped, err := dm.indexScanResultsStage(tx, stmts, results, projections)
+	dups := &duplicateIDCollector{}
+	indexedCount, skipped, err := dm.indexScanResultsStage(tx, stmts, results, projections, dups)
 	if err != nil {
 		return 0, skipped, err
 	}
@@ -1024,6 +1102,7 @@ func (dm *DatabaseManager) IndexScanResultsWithProjection(results []parser.ScanR
 	if err := tx.Commit(); err != nil {
 		return 0, skipped, fmt.Errorf("failed to commit transaction: %w", err)
 	}
+	dm.dispatchDuplicateIDWarnings(dups.drain())
 	dm.invalidateUnlinkedScanCache()
 
 	return indexedCount, skipped, nil
@@ -1034,7 +1113,9 @@ func (dm *DatabaseManager) IndexScanResultsWithProjection(results []parser.ScanR
 // result, runs the cross-file dependency pass, and (when projections != nil)
 // applies each result's projection payload on the same tx. Skipped files
 // (res.Err or empty Notebook) bypass both the block and projection work.
-func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexStmts, results []parser.ScanResult, projections []ScanProjection) (int, []string, error) {
+// Within-file duplicate ids land in dups for the caller's post-commit
+// dispatch (cross-file duplicates are the scan layer's job — ScanDuplicateIDs).
+func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexStmts, results []parser.ScanResult, projections []ScanProjection, dups *duplicateIDCollector) (int, []string, error) {
 	indexedCount := 0
 	var skipped []string
 
@@ -1091,7 +1172,7 @@ func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexSt
 			return indexedCount, skipped, fmt.Errorf("failed to clear blocks for %s: %w", res.Path, err)
 		}
 
-		if err := stmts.indexBlocks(source, res.Notebook, res.Section, res.Page, res.Blocks, res.Tags, "IndexScanResults"); err != nil {
+		if err := stmts.indexBlocks(source, res.Notebook, res.Section, res.Page, res.Blocks, res.Tags, "IndexScanResults", dups); err != nil {
 			return indexedCount, skipped, err
 		}
 
@@ -1131,11 +1212,23 @@ func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexSt
 		log.Printf("db: task_dependencies cycle detected across indexed files — a hand-edited or externally-synced file introduced a circular dependency; the setter normally prevents this")
 	}
 
-	// Dependency second pass over EVERY indexed file's blocks (flattened),
-	// AFTER all block rows are inserted. Edges may cross file boundaries (#301).
-	var allBlocks []parser.ParsedBlock
-	for _, res := range results {
-		allBlocks = append(allBlocks, res.Blocks...)
+	// Dependency second pass over EVERY indexed file's blocks, AFTER all
+	// block rows are inserted. Edges may cross file boundaries (#301).
+	// Deduped to the occurrence that owns the surviving row — the by-id
+	// clear re-homes a cross-file duplicate to the LAST carrier, while
+	// within one file the insert loop's first occurrence wins — so iterate
+	// results in reverse and keep each id's first (row-owning) occurrence;
+	// a skipped copy's edges must not attach to the surviving row.
+	allBlocks := make([]parser.ParsedBlock, 0, len(results))
+	seenIDs := make(map[string]struct{})
+	for i := len(results) - 1; i >= 0; i-- {
+		for _, b := range firstBlockOccurrences(results[i].Blocks) {
+			if _, dup := seenIDs[b.ID]; dup {
+				continue
+			}
+			seenIDs[b.ID] = struct{}{}
+			allBlocks = append(allBlocks, b)
+		}
 	}
 	if err := indexTaskDependencies(tx, stmts.taskDep, allBlocks, "IndexScanResults"); err != nil {
 		return indexedCount, skipped, err

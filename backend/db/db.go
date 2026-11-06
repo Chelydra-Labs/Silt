@@ -90,6 +90,12 @@ type DatabaseManager struct {
 	// via setIndexerTestingHook to force mid-transaction failures so they
 	// can prove atomic visibility and rollback. See index_hook.go.
 	indexerTestingHook indexerTestingHook
+
+	// duplicateIDHandler surfaces within-file duplicate block ids detected
+	// inside an indexing transaction (see duplicate_ids.go). Guarded by
+	// duplicateIDHandlerMu; invoked post-commit only.
+	duplicateIDHandlerMu sync.Mutex
+	duplicateIDHandler   func(DuplicateIDWarning)
 }
 
 // FileStat records the last-seen filesystem attributes of an indexed file, used

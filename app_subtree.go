@@ -218,9 +218,9 @@ func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock, r
 				return
 			}
 
-			merged, ok := spliceSubtree(parsedBlocks, blockID, children)
-			if !ok {
-				writeErr = fmt.Errorf("parent block %s not found in file %s", blockID, filePath)
+			merged, err := spliceSubtree(parsedBlocks, blockID, children)
+			if err != nil {
+				writeErr = fmt.Errorf("splice sub-tree under %s in %s: %w", blockID, filePath, err)
 				return
 			}
 
@@ -479,9 +479,9 @@ func (a *App) appendTaskComment(taskID, text, author, ts, parentCommentID, reaso
 				newSubtree = append(newSubtree, existing[insertAt:]...)
 			}
 
-			merged, ok := spliceSubtree(parsedBlocks, taskID, newSubtree)
-			if !ok {
-				writeErr = fmt.Errorf("parent block %s not found in file %s", taskID, filePath)
+			merged, err := spliceSubtree(parsedBlocks, taskID, newSubtree)
+			if err != nil {
+				writeErr = fmt.Errorf("splice sub-tree under %s in %s: %w", taskID, filePath, err)
 				return
 			}
 
@@ -556,8 +556,10 @@ func (a *App) appendTaskComment(taskID, text, author, ts, parentCommentID, reaso
 // primary key.
 // The incoming children keep their own depth (the serializer re-indents), and
 // their ParentID is defensively set to parentID so the re-parse resolves the
-// hierarchy correctly. Returns ok=false if the parent wasn't found.
-func spliceSubtree(blocks []parser.ParsedBlock, parentID string, children []parser.ParsedBlock) ([]parser.ParsedBlock, bool) {
+// hierarchy correctly. Returns an error when the parent wasn't found, or when
+// an incoming child id collides with a kept block (or another child) — a
+// splice that would write one UUID twice must be refused, not written.
+func spliceSubtree(blocks []parser.ParsedBlock, parentID string, children []parser.ParsedBlock) ([]parser.ParsedBlock, error) {
 	byID := make(map[string]parser.ParsedBlock, len(blocks))
 	parentIdx := -1
 	parentDepth := 0
@@ -569,7 +571,11 @@ func spliceSubtree(blocks []parser.ParsedBlock, parentID string, children []pars
 		}
 	}
 	if parentIdx < 0 {
-		return nil, false
+		return nil, fmt.Errorf("parent block %s not found", parentID)
+	}
+
+	if collidingID := spliceChildIDCollision(blocks, parentIdx, byID, parentID, children); collidingID != "" {
+		return nil, fmt.Errorf("subtree save would write block id %s twice — the page already carries it outside this sub-tree; re-fetch the sub-tree and retry", collidingID)
 	}
 
 	// Defensive: stamp ParentID on every incoming child so the re-parse
@@ -610,5 +616,32 @@ func spliceSubtree(blocks []parser.ParsedBlock, parentID string, children []pars
 			out = append(out, b)
 		}
 	}
-	return out, true
+	return out, nil
+}
+
+// spliceChildIDCollision reports an incoming child id that would render twice
+// in the spliced page: it matches a block that SURVIVES the splice (the
+// parent, anything before it, or any non-member after it), or another
+// incoming child. Ids matching the DELETED old members are fine — replacing
+// a child with an edited copy that keeps its id is the normal update flow.
+// Only collisions the splice itself introduces count, so a page that already
+// carries a duplicate elsewhere does not lock its sub-trees against edits.
+func spliceChildIDCollision(blocks []parser.ParsedBlock, parentIdx int, byID map[string]parser.ParsedBlock, parentID string, children []parser.ParsedBlock) string {
+	keptIDs := make(map[string]bool, len(blocks))
+	for i, b := range blocks {
+		if i <= parentIdx || !hasAncestor(byID, b, parentID) {
+			keptIDs[b.ID] = true
+		}
+	}
+	seenChildren := make(map[string]bool, len(children))
+	for _, c := range children {
+		if c.ID == "" {
+			continue
+		}
+		if keptIDs[c.ID] || seenChildren[c.ID] {
+			return c.ID
+		}
+		seenChildren[c.ID] = true
+	}
+	return ""
 }
