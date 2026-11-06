@@ -16,6 +16,7 @@ import {
   applyDepthChangeOnTransaction,
   formatOrderedBullet
 } from './orderedList'
+import { MAX_DEPTH } from './constants'
 
 const UNORDERED_BULLETS = new Set(['- ', '* ', '+ '])
 
@@ -32,7 +33,8 @@ const siltConfigKeymapsKey = new PluginKey('siltConfigDrivenKeymaps')
 //   - Delete at end: merge a same-type sibling below into this block (or drop
 //     this block if it's empty and a same-type sibling follows).
 //   - indent_block / unindent_block (config-driven, defaults Tab / Shift-Tab):
-//     indent / unindent (bounded by previous sibling's depth + 1).
+//     indent / unindent the active block AND its contiguous subtree, bounded
+//     by previous sibling's depth + 1 and the shared MAX_DEPTH cap.
 //   - ArrowUp / ArrowDown at block boundary: move focus to the previous/next block.
 //
 // Visual indent requires data-depth on the outer NodeView root (see
@@ -54,13 +56,18 @@ export const BLOCK_TYPES = [
 ] as const
 
 /**
- * Block node types that carry a `depth` attr and participate in the outliner's
- * indent/outdent model. Callout blocks (and other new container/atomic types)
- * are intentionally excluded: they have no depth attr, so indenting them would
- * be silently dropped on save. Tab/Shift+Tab fall through for those so TipTap's
- * default (e.g. table cell navigation) applies.
+ * Block node types that carry an outliner `depth` attr and participate in
+ * the indent/outdent model. Two exclusions, both deliberate:
+ * - `headerBlock`: its `depth` attr is the heading LEVEL (1-6), not an
+ *   indent — Tab on H6 used to write level 7, which serializes as
+ *   `#######` (not a heading). Heading level changes stay on the heading
+ *   commands / slash menu; Tab/Shift+Tab are consumed no-ops on headers.
+ * - callout/code/table/details (and other container/atomic types): no
+ *   depth attr, so indenting them would be silently dropped on save.
+ *   Tab/Shift+Tab fall through for those so TipTap's default (e.g. table
+ *   cell navigation) applies.
  */
-const DEPTH_BLOCK_TYPES = new Set(['noteBlock', 'taskBlock', 'headerBlock'])
+const DEPTH_BLOCK_TYPES = new Set(['noteBlock', 'taskBlock'])
 
 /**
  * Walk up from the editor's current selection to the nearest enclosing block
@@ -187,18 +194,84 @@ function setBlockDepth(
 }
 
 /**
- * Indent the active depth-bearing block by one level, capped at previous
- * same-parent sibling depth + 1. Uses nodeBefore (not a top-level doc scan) so
- * blocks nested in callouts/details indent relative to their container siblings.
- * Returns true when the chord was consumed (including no-op at max depth /
- * first child) so Tab does not move browser focus. Returns false outside depth
- * blocks so table cell nav etc. can run.
+ * Positions of the selected block plus every following same-parent sibling
+ * in its subtree: the contiguous run of depth-bearing outline blocks whose
+ * depth is greater than the selected block's. The first sibling at or
+ * shallower than the selected depth, or of a non-outline type (a header —
+ * its depth is a level; a callout/table — no depth attr), ends the run.
+ *
+ * Sibling boundaries come from resolved `nodeAfter` at node-boundary
+ * positions, which never crosses into a different parent — so a block
+ * nested inside a callout/details collects its run relative to container
+ * siblings, exactly like `getSibling`/`indentActiveBlock` do.
+ */
+function depthRunPositions(
+  editor: Editor,
+  info: { node: ProseMirrorNode; pos: number; depth: number }
+): number[] {
+  const positions = [info.pos]
+  const { doc } = editor.state
+  let pos = info.pos
+  let node = info.node
+  while (pos + node.nodeSize < doc.content.size) {
+    const next = doc.resolve(pos + node.nodeSize).nodeAfter
+    if (!next) break // parent's last child — never cross the container
+    if (
+      !DEPTH_BLOCK_TYPES.has(next.type.name) ||
+      ((next.attrs.depth as number) || 0) <= info.depth
+    ) {
+      break
+    }
+    pos += node.nodeSize
+    positions.push(pos)
+    node = next
+  }
+  return positions
+}
+
+/**
+ * Shift the depth of every block at `positions` (document order, from
+ * depthRunPositions) by `delta` in ONE transaction, so a whole-subtree move
+ * is a single undo step and fires a single autosave. The steps are attr-only
+ * (no node moves), so positions stay valid as they chain.
+ */
+function shiftDepthRun(
+  editor: Editor,
+  positions: number[],
+  delta: 1 | -1
+): void {
+  let tr = editor.state.tr
+  for (const pos of positions) {
+    const node = tr.doc.nodeAt(pos)
+    if (!node) continue
+    tr = applyDepthChangeOnTransaction(
+      tr,
+      pos,
+      ((node.attrs.depth as number) || 0) + delta
+    )
+  }
+  if (tr.docChanged) editor.view.dispatch(tr)
+}
+
+/**
+ * Indent the active depth-bearing block and its whole subtree by one level,
+ * capped at previous same-parent sibling depth + 1 (an indent must keep the
+ * block a child of some preceding sibling) and at the shared MAX_DEPTH (no
+ * depth the renderer cannot draw is ever written). Uses nodeBefore (not a
+ * top-level doc scan) so blocks nested in callouts/details indent relative
+ * to their container siblings. Returns true when the chord was consumed
+ * (including no-ops at the caps / first child) so Tab does not move browser
+ * focus. Returns false outside depth blocks so table cell nav etc. can run.
  *
  * Ordered noteBlocks restart at `1` under the parent and renumber peers (#837).
  */
 export function indentActiveBlock(editor: Editor): boolean {
   const info = currentBlockInfo(editor)
   if (!info) return false
+  // Headers are a consumed no-op (not a fall-through): consuming keeps Tab
+  // from moving focus out of the outliner mid-edit, while falling through
+  // would let the browser's Tab default steal focus from the editor.
+  if (info.node.type.name === 'headerBlock') return true
   // Only the depth-bearing prose blocks support indent. Letting the chord fall
   // through for callout/code/table/details keeps TipTap's default (table cell
   // nav, etc.) instead of silently no-op'ing.
@@ -207,22 +280,35 @@ export function indentActiveBlock(editor: Editor): boolean {
   // Same-parent previous sibling — works at doc root and inside callout/details.
   const prev = editor.state.doc.resolve(info.pos).nodeBefore
   const maxDepth = prev ? (prev.attrs.depth || 0) + 1 : 0
-  if (info.depth < maxDepth) {
-    setBlockDepth(editor, info.pos, info.depth + 1)
+  if (info.depth >= maxDepth) return true
+
+  const positions = depthRunPositions(editor, info)
+  // Whole-run clamp: if ANY member would pass MAX_DEPTH the entire indent
+  // no-ops. Clamping per-block instead would flatten the subtree's relative
+  // depths — the exact corruption the subtree transform exists to prevent.
+  const overCap = positions.some((pos) => {
+    const node = editor.state.doc.nodeAt(pos)
+    return node ? ((node.attrs.depth as number) || 0) + 1 > MAX_DEPTH : false
+  })
+  if (!overCap) {
+    shiftDepthRun(editor, positions, 1)
   }
   return true
 }
 
 /**
- * Unindent the active depth-bearing block by one level (floor 0).
- * Ordered noteBlocks rejoin the parent-level sequence without gaps (#837).
+ * Unindent the active depth-bearing block and its subtree by one level — the
+ * exact inverse of indentActiveBlock, so children taken down come back up
+ * together (floor 0). Ordered noteBlocks rejoin the parent-level sequence
+ * without gaps (#837).
  */
 export function unindentActiveBlock(editor: Editor): boolean {
   const info = currentBlockInfo(editor)
   if (!info) return false
+  if (info.node.type.name === 'headerBlock') return true
   if (!DEPTH_BLOCK_TYPES.has(info.node.type.name)) return false
   if (info.depth > 0) {
-    setBlockDepth(editor, info.pos, info.depth - 1)
+    shiftDepthRun(editor, depthRunPositions(editor, info), -1)
   }
   return true
 }
