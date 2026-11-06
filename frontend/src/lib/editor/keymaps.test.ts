@@ -1329,6 +1329,98 @@ describe('Tab / Shift-Tab depth indent (outliner)', () => {
   })
 })
 
+describe('subtree-aware indent + depth clamp (#1002)', () => {
+  const note = (id: string, text: string, depth: number) => ({
+    type: 'noteBlock' as const,
+    attrs: { id, depth, bullet: '- ' },
+    content: [{ type: 'text' as const, text }]
+  })
+
+  function focusBlockIndex(editor: Editor, index: number): void {
+    let pos = 0
+    for (let i = 0; i < index; i++) pos += editor.state.doc.child(i).nodeSize
+    editor.commands.setTextSelection(pos + 1)
+  }
+
+  function depthsOf(editor: Editor): number[] {
+    return Array.from({ length: editor.state.doc.childCount }, (_, i) =>
+      Number(editor.state.doc.child(i).attrs.depth ?? 0)
+    )
+  }
+
+  it('indenting a parent moves its whole subtree (relative depths preserved)', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('root', 'root', 0),
+        note('parent', 'parent', 0),
+        note('child', 'child', 1),
+        note('grandchild', 'grandchild', 2),
+        note('tail', 'tail', 0)
+      ]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    // Parent, child, grandchild all shift +1; the depth-0 tail is untouched
+    // (no block changes parent: relative depth differences are preserved).
+    expect(depthsOf(editor)).toEqual([0, 1, 2, 3, 0])
+    editor.destroy()
+  })
+
+  it('indent at the deepest rendered depth is a no-op (never writes depth 7)', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('a0', 'l0', 0),
+        note('a1', 'l1', 1),
+        note('a2', 'l2', 2),
+        note('a3', 'l3', 3),
+        note('a4', 'l4', 4),
+        note('a5', 'l5', 5),
+        note('a6', 'l6', 6),
+        note('b6', 'target', 6)
+      ]
+    })
+    focusBlockIndex(editor, 7)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    // The editor CSS has indent rules only for [data-depth='1'..'6']; a 7th
+    // level would render at depth-0 width while still changing the file.
+    expect(editor.state.doc.child(7).attrs.depth).toBe(6)
+    // The serializer output is what reaches disk.
+    const saved = docToBlocks(editor.getJSON() as DocJSON)
+    expect(saved.every((b) => b.depth <= 6)).toBe(true)
+    editor.destroy()
+  })
+
+  it('Tab on an H6 heading never writes level 7 (no #######)', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('a5', 'l5', 5),
+        note('a6', 'l6', 6),
+        {
+          type: 'headerBlock',
+          attrs: { id: 'h6', depth: 6 },
+          content: [{ type: 'text', text: 'Deep heading' }]
+        }
+      ]
+    })
+    focusBlockIndex(editor, 2)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    // A headerBlock's depth attr is the heading level, not an indent.
+    expect(editor.state.doc.child(2).attrs.depth).toBe(6)
+    const saved = docToBlocks(editor.getJSON() as DocJSON)
+    const header = saved.find((b) => b.type === 'HEADER')
+    expect(header).toBeDefined()
+    // 7 hashes are not a CommonMark heading.
+    expect(header!.raw_text).toMatch(/^#{1,6} /)
+    editor.destroy()
+  })
+})
+
 describe('moveActiveBlock — drag-handle keyboard complement (#181)', () => {
   function multiBlockDoc(texts: string[]): DocJSON {
     return {
