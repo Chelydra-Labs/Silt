@@ -1026,12 +1026,6 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 		}
 	}
 
-	// activeIDs tracks the most recent block ID at each indent level so we
-	// can wire parent_id for nested blocks. We grow it dynamically instead
-	// of fixing the size at 100, which previously caused silent parent_id
-	// loss for any block past depth 99.
-	activeIDs := []string{}
-
 	// taskCounter is the running 1-based count of TASK blocks seen so far
 	// in the file. It backs ManualOrder for newly-minted tasks (#417): a
 	// genuinely-new task (one whose line lacked a block-identity comment,
@@ -1140,24 +1134,6 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 				}
 			}
 
-			// Resolve Parent ID
-			depth := block.Depth
-			if depth > 0 && depth-1 < len(activeIDs) {
-				block.ParentID = activeIDs[depth-1]
-			}
-
-			// Grow the stack so depth is always a valid index.
-			if depth >= 0 {
-				for len(activeIDs) <= depth {
-					activeIDs = append(activeIDs, "")
-				}
-				activeIDs[depth] = block.ID
-				// Clear deeper active IDs
-				for d := depth + 1; d < len(activeIDs); d++ {
-					activeIDs[d] = ""
-				}
-			}
-
 			blocks = append(blocks, block)
 		}
 
@@ -1173,6 +1149,17 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 			outputLines = append(outputLines, renderBlock(block, spacesPerTab))
 		} else {
 			outputLines = append(outputLines, newLine)
+		}
+	}
+
+	// Derive the hierarchy (ParentID) in one validated pass now that the
+	// block list is complete. This is the single derivation every reader
+	// consumes. Violations ride the per-file warnings channel: the repair
+	// applies to the in-memory model on load, and the warning is reported
+	// again on every save-side re-parse of the same indentation.
+	if violations := DeriveHierarchy(blocks); len(violations) > 0 {
+		for _, v := range violations {
+			meta.Warnings = append(meta.Warnings, v.String())
 		}
 	}
 
