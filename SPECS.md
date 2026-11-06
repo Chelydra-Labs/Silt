@@ -823,6 +823,23 @@ automatically: they are the post-failure recovery copy of text that exists
 nowhere else and are removed only by a later successful write at the same
 path or manually after recovery.
 
+Moves dispatch per root through the same probe (#1021): page
+renames/moves, section/notebook tree renames (and their rollback), and
+vault-to-trash deletes copy through the verified machinery on a detected
+non-atomic root and remove the source only after the copy is verified
+durable — every copy-side failure leaves the original intact at its old
+path, and the typed `verified_write_failed` error names both the retained
+copies and the intact original. Directory moves are two-phase: every file
+in the tree (attachments included) is copied and verified before any source
+is removed, so a mid-tree failure leaves the tree whole at its origin; the
+emptied origin is then removed with empty-directory-only deletes, never a
+recursive destroy. Between the two phases the tree exists at both paths: a
+crash there — or a removal failure whose rollback cannot complete on the
+same failing mount — leaves verified-identical copies behind (the index
+degrades non-destructively, duplicate block UUIDs collapsing last-wins; the
+operator reconciles by deleting one copy). Local roots keep the plain
+`os.Rename`, unchanged.
+
 Detection coverage is explicit, not universal, and split by consumer. The
 verified-write probe recognizes NFS/SMB/CIFS/NCP mounts plus FUSE mounts
 (FUSE_SUPER_MAGIC — sshfs, rclone, …) on Linux, and NFS/DFS/WebDAV/CBFS/

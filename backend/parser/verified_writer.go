@@ -427,3 +427,73 @@ func pendingPath(backupPath string) string {
 	}
 	return backupPath + ".pending"
 }
+
+// Verified-move layer (#1021): os.Rename is the one page operation that never
+// went through the verified machinery. On a non-atomic root a torn rename can
+// consume the source while the destination holds partial bytes — unrecoverable
+// page loss, not just a torn write. The primitives below re-shape a move as
+// copy-then-verify-then-remove, building on the write ladder unchanged:
+//
+//   - CopyFileVerified never touches the source, so the tree mover can copy a
+//     whole directory before removing anything.
+//   - MoveFileVerified removes the source only after its copy is verified
+//     durable; every copy-side failure leaves the source intact.
+
+// VerifiedMoveError is the move layer's hard failure: the copy could not be
+// verified, and — the fact that separates a move from a write — the SOURCE
+// was never touched. Error() keeps the copy's recovery prose (retention
+// state, torn-target state, all single-sourced in VerifiedWriteError.Error())
+// verbatim and appends only the old-path fact, so the wording cannot fork.
+type VerifiedMoveError struct {
+	// OldPath is the source the move was attempting; it is intact on disk.
+	OldPath string
+	// Err is the copy's hard verified-write failure.
+	Err *VerifiedWriteError
+}
+
+func (e *VerifiedMoveError) Error() string {
+	return fmt.Sprintf("%s; the original file was not moved and is still at %s", e.Err.Error(), e.OldPath)
+}
+
+func (e *VerifiedMoveError) Unwrap() error { return e.Err }
+
+// CopyFileVerified copies src to dst through the verified staged machinery
+// (pre-write backup of any existing dst at backupPath, staged write, read-back
+// verify, retry + restore ladder). The source is never touched — the property
+// the two-phase directory move builds on: copies land for the whole tree
+// before any source is removed, so a mid-tree failure leaves the tree whole at
+// its origin. The source bytes are buffered once (O(content), like the
+// incoming bytes of every whole-page write); the backup and read-back stream.
+func CopyFileVerified(src, dst, backupPath string) error {
+	content, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", src, err)
+	}
+	return WriteFileAtomicVerified(dst, backupPath, content)
+}
+
+// MoveFileVerified moves oldPath to newPath with copy-and-verify semantics
+// for roots where os.Rename may tear: copy through the verified machinery,
+// and remove the source only after the copy is verified durable. Every
+// copy-side failure is a *VerifiedMoveError (source intact, recovery copies
+// named); a source-removal failure after a verified copy returns a plain
+// error with BOTH complete copies on disk — surfaced rather than retried,
+// because proceeding would index a duplicate and deleting either copy from
+// here would be a destructive guess.
+func MoveFileVerified(oldPath, newPath, backupPath string) error {
+	if err := CopyFileVerified(oldPath, newPath, backupPath); err != nil {
+		var vwe *VerifiedWriteError
+		if errors.As(err, &vwe) {
+			return &VerifiedMoveError{OldPath: oldPath, Err: vwe}
+		}
+		return err
+	}
+	if err := os.Remove(oldPath); err != nil {
+		return fmt.Errorf("remove %s after verified copy to %s: %w", oldPath, newPath, err)
+	}
+	// Best-effort durability of the removal: without the directory fsync a
+	// crash can resurrect the old entry — a verified-identical duplicate,
+	// clutter rather than loss, so a sync failure is not a move failure.
+	_ = syncDirEntry(filepath.Dir(oldPath))
+	return nil
+}

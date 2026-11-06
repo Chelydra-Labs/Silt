@@ -268,6 +268,246 @@ func (a *App) writePageStaged(filePath string, content []byte) error {
 	return err
 }
 
+// verifiedMoveFile is the verified-move primitive seam (the move counterpart
+// of atomicPageWrite): production forwards to parser.MoveFileVerified; tests
+// swap it to count dispatches or inject failures. Only the verified branch of
+// the dispatch below ever calls it.
+var verifiedMoveFile = parser.MoveFileVerified
+
+// verifiedMoveCopy is the tree mover's copy step: CopyFileVerified, not
+// MoveFileVerified — the tree must copy EVERY file before removing any source
+// (see moveTreeDispatch). Seam-swappable for the same reasons.
+var verifiedMoveCopy = parser.CopyFileVerified
+
+// verifiedMoveRemoveSource is the tree mover's phase-2 source-removal step.
+// Seam-swappable so tests can simulate a mount that rejects removals (the
+// split-tree state a CI temp dir cannot reproduce).
+var verifiedMoveRemoveSource = os.Remove
+
+// verifiedMoveLocalRename is the plain-rename seam for the local (atomic)
+// branch of moveTreeDispatch, so tests can drive its failure tagging — a
+// mundane local failure (EPERM/EBUSY) must abort like any phase-1 failure,
+// never reach rollbackRename.
+var verifiedMoveLocalRename = os.Rename
+
+// verifiedBackupPathFor keys the backup/.pending slot for a verified write or
+// move target under root: <root>/.system/writebackups/<rel> — the same
+// convention writePageStaged applies to writes. target must be under root
+// (verifiedWriteScope's containment check, or the tree walk's Rel, prove it
+// at every call site).
+func verifiedBackupPathFor(root, target string) string {
+	rel, _ := filepath.Rel(root, target)
+	return filepath.Join(root, filepath.FromSlash(writeBackupDirName), rel)
+}
+
+// verifiedMoveSurface maps the verified-move primitive's failures to the IPC
+// boundary, mirroring writePageStaged: a hard verified failure keeps the
+// typed code and its recovery prose (the move layer's prose adds only the
+// old-path fact — the source is intact — to the single-sourced wording); the
+// OS-level cause is logged here because the serialized error carries only
+// the prose, and a field report of a failed move on a mount must stay
+// diagnosable.
+func (a *App) verifiedMoveSurface(oldPath string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var vme *parser.VerifiedMoveError
+	if errors.As(err, &vme) {
+		log.Printf("verified-move %s -> %s failed (restored=%v): %v (retention: %v)",
+			vme.OldPath, vme.Err.Target, vme.Err.Restored, vme.Err.Err, vme.Err.RetentionErr)
+		return NewIPCError(CodeVerifiedWriteFailed, vme.Error())
+	}
+	var vwe *parser.VerifiedWriteError
+	if errors.As(err, &vwe) {
+		log.Printf("verified-move copy to %s failed: %v (retention: %v)", vwe.Target, vwe.Err, vwe.RetentionErr)
+		return verifiedWriteFailedError(vwe)
+	}
+	return err
+}
+
+// moveFileDispatch is the per-root move dispatch for single files, mirroring
+// writePageStaged (#1021): a detected non-atomic root moves by copy + verify
+// (the source survives every copy-side failure and is removed only after the
+// copy is verified durable); a local root keeps the plain os.Rename,
+// byte-identical to the pre-dispatch behavior. Runs under the caller's
+// LockPathsWrite coverage like the bare rename it replaces, and registers
+// both paths with the tracker so the watcher suppresses the removal and the
+// landing copy on every branch.
+func (a *App) moveFileDispatch(oldPath, newPath string) error {
+	a.tracker.RegisterWrite(oldPath)
+	a.tracker.RegisterWrite(newPath)
+	root, _, verified := a.verifiedWriteScope(newPath)
+	if !verified {
+		return os.Rename(oldPath, newPath)
+	}
+	a.notifyVerifiedWriteOnce(root)
+	err := verifiedMoveFile(oldPath, newPath, verifiedBackupPathFor(root, newPath))
+	return a.verifiedMoveSurface(oldPath, err)
+}
+
+// errTreeMoveAborted marks a moveTreeDispatch abort that left the tree WHOLE
+// at its origin: a phase-1 failure of the verified two-phase move (walk
+// error, copy failure with its landed copies cleaned up — sources untouched)
+// or a failed atomic rename on a local root (nothing moved). The rename core
+// keys its abort-vs-rollback decision on it: rollback exists to undo a
+// PARTIAL move, and running it over an intact origin would write snapshot
+// bytes under the new path and fail to move them back — manufacturing the
+// split tree the rollback exists to prevent.
+var errTreeMoveAborted = errors.New("tree move aborted with the tree whole at its origin")
+
+// abortTreeMove tags a moveTreeDispatch failure with errTreeMoveAborted. The
+// marker is control flow for the rename core, not prose: the underlying
+// error (typed verified prose, plus any surviving-destination clause) stays
+// the surfaced wording.
+func abortTreeMove(err error) error {
+	return fmt.Errorf("%w: %w", errTreeMoveAborted, err)
+}
+
+// appendErrorClause appends a clause to err's user-facing message while
+// preserving any typed IPC error code: the Wails boundary serializes the
+// innermost *IPCError's Message verbatim (formatIPCError), so a plain
+// fmt.Errorf wrap would leave the clause invisible to the frontend.
+func appendErrorClause(err error, clause string) error {
+	var ipc *IPCError
+	if errors.As(err, &ipc) {
+		return NewIPCError(ipc.Code, ipc.Message+". "+clause)
+	}
+	return fmt.Errorf("%w. %s", err, clause)
+}
+
+// moveTreeDispatch is the per-root move dispatch for directories (section and
+// notebook renames, the rename rollback, and section/notebook deletes into
+// trash). Local root: the plain os.Rename, byte-identical. Detected non-atomic
+// root — chosen directory semantics (#1021): a directory rename has no
+// per-file ladder, so the move is a TWO-PHASE per-file copy+verify.
+//
+//  1. Every regular file under the tree — pages AND non-page attachments; a
+//     directory move is whole-tree — is copied through the verified machinery
+//     with sources untouched. A failure mid-walk removes the landed copies
+//     (verified duplicates of intact originals) so the tree survives WHOLE at
+//     its origin, and the error surfaces tagged with errTreeMoveAborted.
+//  2. Only after every copy verified are the sources removed and the emptied
+//     origin husk deleted bottom-up with os.Remove only (never RemoveAll — a
+//     file that landed in the tree outside the structural locks is left in
+//     place rather than destroyed). A removal failure here returns an error
+//     with every file verified at the destination and stragglers at the
+//     origin: no data is lost, and the rename core's rollback converges the
+//     split tree back to its origin. Only a crash (or a rollback that itself
+//     fails on the same mount) leaves the split for the operator to
+//     reconcile.
+//
+// The caller holds the structural LockPathsWrite coverage over the tree's .md
+// descendants; per-file tracker registrations below cover the removal and
+// landing events for both phases.
+func (a *App) moveTreeDispatch(oldDir, newDir string) error {
+	a.tracker.RegisterWrite(oldDir)
+	a.tracker.RegisterWrite(newDir)
+	root, _, verified := a.verifiedWriteScope(newDir)
+	if !verified {
+		if err := verifiedMoveLocalRename(oldDir, newDir); err != nil {
+			// The atomic rename failed: nothing moved — the same
+			// whole-at-origin abort semantics as a phase-1 failure.
+			return abortTreeMove(err)
+		}
+		return nil
+	}
+	a.notifyVerifiedWriteOnce(root)
+
+	type treeFile struct{ oldPath, newPath string }
+	var files []treeFile
+	if err := filepath.WalkDir(oldDir, func(p string, d fs.DirEntry, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(oldDir, p)
+		if relErr != nil {
+			return relErr
+		}
+		files = append(files, treeFile{oldPath: p, newPath: filepath.Join(newDir, rel)})
+		return nil
+	}); err != nil {
+		return abortTreeMove(err)
+	}
+
+	var copied []string
+	for _, f := range files {
+		a.tracker.RegisterWrite(f.oldPath)
+		a.tracker.RegisterWrite(f.newPath)
+		err := verifiedMoveCopy(f.oldPath, f.newPath, verifiedBackupPathFor(root, f.newPath))
+		if serr := a.verifiedMoveSurface(f.oldPath, err); serr != nil {
+			// Phase-1 abort: drop the landed copies so the failure leaves the
+			// tree whole at oldDir. A copy that will not come off is clutter
+			// beside intact originals — and it blocks a retry (the
+			// destination-exists pre-validation refuses until it is removed
+			// manually), so the surviving destination must be named in the
+			// surfaced error, not just logged.
+			orphaned := false
+			for _, dst := range copied {
+				if rmErr := os.Remove(dst); rmErr != nil {
+					log.Printf("verified-move: could not remove landed copy %s after failed tree move: %v", dst, rmErr)
+					orphaned = true
+				}
+			}
+			removeEmptyDirHusk(newDir)
+			if orphaned {
+				serr = appendErrorClause(serr, fmt.Sprintf("A verified partial copy remains at %s alongside the untouched original", newDir))
+			}
+			return abortTreeMove(serr)
+		}
+		copied = append(copied, f.newPath)
+	}
+
+	for _, f := range files {
+		if err := verifiedMoveRemoveSource(f.oldPath); err != nil {
+			return fmt.Errorf("verified tree move %s -> %s: remove source %s: %w", oldDir, newDir, f.oldPath, err)
+		}
+	}
+	removeEmptyDirHusk(oldDir)
+	return nil
+}
+
+// movePathDispatch routes a file-or-directory move to its dispatch by kind
+// (the trash funnel receives either).
+func (a *App) movePathDispatch(source, dest string) error {
+	if fi, err := os.Stat(source); err == nil && fi.IsDir() {
+		return a.moveTreeDispatch(source, dest)
+	}
+	return a.moveFileDispatch(source, dest)
+}
+
+// removeEmptyDirHusk deletes a directory tree bottom-up using os.Remove only:
+// every directory that is still empty goes, and the first non-empty directory
+// stops its branch — unlike RemoveAll it can never destroy a file. The tree
+// mover uses it after a verified move emptied the origin (or after a failed
+// copy walk cleaned its copies), so a file that landed mid-move outside the
+// structural locks survives at the origin instead of being silently deleted.
+func removeEmptyDirHusk(dir string) {
+	var dirs []string
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			dirs = append(dirs, p)
+		}
+		return nil // keep walking; removal happens post-order below
+	})
+	// WalkDir yields pre-order (parent before children); reversing gives
+	// children before parents, a valid bottom-up removal order.
+	logged := false
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if err := os.Remove(dirs[i]); err != nil && !logged {
+			// First failure only: an unremovable child makes every ancestor
+			// fail the same way, and one line is enough for field diagnosis —
+			// a surviving husk is harmless, but WHY it survived (a file that
+			// landed outside the structural locks, a mount rejecting removes)
+			// is otherwise unknowable from the surfaced move error.
+			log.Printf("verified-move: could not remove empty directory %s: %v", dirs[i], err)
+			logged = true
+		}
+	}
+}
+
 // forgetVerifiedWriteRoot drops a root's detection state (unlink). A stale
 // entry would keep routing writes through the verified mode for a root Silt
 // can no longer write at all; a re-link re-probes.

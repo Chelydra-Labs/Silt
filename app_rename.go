@@ -355,7 +355,7 @@ func (a *App) rollbackRename(
 			rollbackErrs = append(rollbackErrs, fmt.Errorf("restore %s: %w", file.relPath, err))
 		}
 	}
-	if err := os.Rename(newDir, oldDir); err != nil {
+	if err := a.moveTreeDispatch(newDir, oldDir); err != nil {
 		rollbackErrs = append(rollbackErrs, fmt.Errorf("restore renamed directory: %w", err))
 	}
 
@@ -406,7 +406,12 @@ func (a *App) moveToTrash(source string) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 		return "", fmt.Errorf("failed to create trash directory: %w", err)
 	}
-	if err := os.Rename(source, dest); err != nil {
+	// Per-root move dispatch (#1021): on a torn-risk mount a bare rename into
+	// trash could consume the file while leaving a partial copy — the delete
+	// would strand it. The verified branch copies + verifies before removing
+	// the source, so the file is either intact at its origin or complete in
+	// the trash, never lost between them.
+	if err := a.movePathDispatch(source, dest); err != nil {
 		return "", fmt.Errorf("failed to move to trash: %w", err)
 	}
 	return dest, nil
@@ -526,10 +531,14 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 					return err
 				}
 				// Rename old → new FIRST: if this fails nothing was modified,
-				// avoiding stale-frontmatter-at-old-path inconsistency.
+				// avoiding stale-frontmatter-at-old-path inconsistency. The
+				// move dispatches per root (#1021): a detected non-atomic one
+				// copies through the verified machinery (the old path
+				// survives every copy-side failure), a local one keeps the
+				// plain rename.
 				a.tracker.RegisterWrite(oldFile)
 				a.tracker.RegisterWrite(newFile)
-				if err := os.Rename(oldFile, newFile); err != nil {
+				if err := a.moveFileDispatch(oldFile, newFile); err != nil {
 					return err
 				}
 				content := updateFrontmatterField(string(contentBytes), "page", safeNewPage)
@@ -629,7 +638,10 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 				}
 				a.tracker.RegisterWrite(oldFile)
 				a.tracker.RegisterWrite(newFile)
-				if err := os.Rename(oldFile, newFile); err != nil {
+				// Per-root move dispatch, as in RenamePage's renameStep (#1021):
+				// a non-atomic root copies + verifies before removing the old
+				// path; a local root keeps the plain rename.
+				if err := a.moveFileDispatch(oldFile, newFile); err != nil {
 					return err
 				}
 				content := updateFrontmatterField(string(contentBytes), "section", safeTo)
@@ -716,6 +728,16 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 		newDir := filepath.Join(notebookDir, safeNewSection)
 		if !isPathWithinRoot(oldDir, notebookDir) || !isCreationPathWithinRoot(newDir, notebookDir) {
 			return renameTreeStrategy{}, fmt.Errorf("path escapes notebook root")
+		}
+		// A section cannot be renamed into its own subtree (or vice versa):
+		// the tree move would create newDir inside oldDir's hierarchy — the
+		// origin husk could never be emptied (verified mode strands it
+		// containing the destination) and the reverse rename is refused
+		// forever after. The resolving containment helpers (not a lexical
+		// prefix test) also catch symlink aliases and Windows case variants.
+		if isCreationPathWithinRoot(newDir, oldDir) || isPathWithinRoot(oldDir, newDir) {
+			return renameTreeStrategy{}, invalidNavigationPath(fmt.Errorf(
+				"section %q cannot be renamed to %q", safeOldSection, safeNewSection))
 		}
 		if _, err := os.Stat(newDir); err == nil {
 			return renameTreeStrategy{}, fmt.Errorf("a section named %q already exists", safeNewSection)
@@ -820,6 +842,7 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 				}
 			},
 			rollbackSource: source,
+			treeNoun:       "section",
 			rollbackReconcileHookEnabled: func(configAttempted bool) bool {
 				return configAttempted && a.renameHooks != nil && a.renameHooks.reconcileSection != nil
 			},
@@ -954,6 +977,7 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 				}
 			},
 			rollbackSource: "vault",
+			treeNoun:       "notebook",
 			rollbackReconcileHookEnabled: func(configAttempted bool) bool {
 				return configAttempted && a.renameHooks != nil && a.renameHooks.reconcileNotebook != nil
 			},

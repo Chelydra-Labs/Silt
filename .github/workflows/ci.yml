@@ -23,6 +23,10 @@ on:
 env:
   # Shared apt package set for Wails v3 CGO (GTK4 + WebKitGTK 6.0).
   WEBVIEW_APT_PACKAGES: libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev
+  # Linux jobs are pinned to ubuntu-24.04: ubuntu-latest now serves 26.04,
+  # where awalsh128/cache-apt-pkgs-action@v1.6.3 silently saves an empty
+  # (~5KB) cache and every job dies pre-test on missing GTK/pkg-config
+  # packages. Revisit when the action supports the new image.
 
 jobs:
   # -------------------------------------------------------------------------
@@ -31,7 +35,7 @@ jobs:
   # -------------------------------------------------------------------------
   changes:
     name: Detect app-relevant paths
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       app: ${{ steps.filter.outputs.app }}
     steps:
@@ -60,7 +64,7 @@ jobs:
   # -------------------------------------------------------------------------
   frontend:
     name: Frontend (format + lint + build + check + vitest)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
@@ -133,7 +137,7 @@ jobs:
   # -------------------------------------------------------------------------
   go-test:
     name: Go (build + vet + race)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
@@ -210,7 +214,7 @@ jobs:
     if: >
       github.event_name == 'push' ||
       needs.changes.outputs.app == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
@@ -264,7 +268,7 @@ jobs:
     name: Build & test (Go -race + frontend check/build)
     needs: [frontend, go-test, wails-smoke]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Require frontend + go-test; allow skipped wails-smoke
         run: |
@@ -295,7 +299,7 @@ jobs:
   # checks). The job name below is what to look for in the picker.
   security:
     name: Dependency + secret scanning
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:

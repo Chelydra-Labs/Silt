@@ -528,7 +528,13 @@ degraded crash-safety is surfaced once per root as a dismissible notice. The
 dispatch is not limited to editor saves: the rename/move frontmatter
 rewrites, the watcher's own normalization writes (via an injected
 `WritePageFile` writer), and plugin raw page-path writes all route through
-the same per-root dispatcher. Detection coverage is per-OS, explicit, and
+the same per-root dispatcher — and so, since #1021, do the structural moves
+themselves: page/section/notebook renames and moves, their rollback, and
+vault-to-trash deletes copy through the same verified machinery before
+removing the source (directories file-by-file, whole tree copied and verified
+before any removal), so a torn rename can never strand a page between two
+paths; local roots keep the plain rename. Detection coverage is per-OS,
+explicit, and
 split from the SQLite index gate (#1020): the write probe recognizes
 NFS/SMB/CIFS/NCP plus FUSE mounts (sshfs, rclone) on Linux and
 NFS/DFS/WebDAV/CBFS/SMB/CIFS on Windows, while the index gate deliberately
