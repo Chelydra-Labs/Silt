@@ -733,12 +733,9 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 		// the tree move would create newDir inside oldDir's hierarchy — the
 		// origin husk could never be emptied (verified mode strands it
 		// containing the destination) and the reverse rename is refused
-		// forever after.
-		oldSlash := filepath.ToSlash(safeOldSection)
-		newSlash := filepath.ToSlash(safeNewSection)
-		if oldSlash == newSlash ||
-			strings.HasPrefix(newSlash, oldSlash+"/") ||
-			strings.HasPrefix(oldSlash, newSlash+"/") {
+		// forever after. The resolving containment helpers (not a lexical
+		// prefix test) also catch symlink aliases and Windows case variants.
+		if isCreationPathWithinRoot(newDir, oldDir) || isPathWithinRoot(oldDir, newDir) {
 			return renameTreeStrategy{}, invalidNavigationPath(fmt.Errorf(
 				"section %q cannot be renamed to %q", safeOldSection, safeNewSection))
 		}

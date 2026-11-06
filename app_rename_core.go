@@ -307,6 +307,8 @@ func (a *App) renameTree(prepare func() (renameTreeStrategy, error)) error {
 						// rollback diagnostic exists.
 						log.Printf("%s: rollback after failed forward write of %s: %v", s.label, file.relPath, rollbackErr)
 						runErr = fmt.Errorf("%w (rollback failed: %v)", runErr, rollbackErr)
+					} else {
+						runErr = appendErrorClause(runErr, fmt.Sprintf("The %s is unchanged at %s", s.treeNoun, s.oldDir))
 					}
 					return
 				}
@@ -333,6 +335,8 @@ func (a *App) renameTree(prepare func() (renameTreeStrategy, error)) error {
 					// above: only the log preserves the rollback failure.
 					log.Printf("%s: rollback after rename step failure (%v): %v", s.label, runErr, rollbackErr)
 					runErr = fmt.Errorf("%w (rollback failed: %v)", runErr, rollbackErr)
+				} else {
+					runErr = appendErrorClause(runErr, fmt.Sprintf("The %s is unchanged at %s", s.treeNoun, s.oldDir))
 				}
 			}
 		})

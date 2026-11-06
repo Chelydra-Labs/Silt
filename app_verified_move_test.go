@@ -532,6 +532,26 @@ func TestVerifiedMove_NestedSectionRenameRefused(t *testing.T) {
 	if got, rerr := os.ReadFile(alphaPath); rerr != nil || string(got) != string(alphaOrig) {
 		t.Errorf("Alpha not intact after refused renames (err=%v)", rerr)
 	}
+
+	// Symlink alias (iter-2 finding): newDir through a symlink that resolves
+	// inside oldDir must be refused by the resolving predicate — a lexical
+	// prefix check misses it and the move strands the origin husk.
+	oldDir := filepath.Join(app.vaultPath, notebook, "OldSec")
+	aliasDir := filepath.Join(app.vaultPath, notebook, "Alias")
+	if err := os.Symlink(oldDir, aliasDir); err != nil {
+		t.Skipf("symlinks unavailable on this platform: %v", err)
+	}
+	err := app.RenameSection(notebook, "OldSec", "Alias/Sub")
+	if err == nil {
+		t.Fatal("rename through a symlink alias into the section's own subtree must be refused")
+	}
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeInvalidNavigationPath {
+		t.Errorf("symlink-alias rename: want invalid_navigation_path, got %v", err)
+	}
+	if _, serr := os.Stat(filepath.Join(oldDir, "Sub")); !os.IsNotExist(serr) {
+		t.Errorf("OldSec/Sub exists after refused symlink-alias rename (stat err = %v)", serr)
+	}
 }
 
 // 11. #1049 iter-1: a LOCAL atomic-rename failure (EPERM/EBUSY class) must
