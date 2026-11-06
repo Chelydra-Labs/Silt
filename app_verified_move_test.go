@@ -427,8 +427,8 @@ func TestVerifiedMove_SourceRemovalFailureSplitTreeRollsBack(t *testing.T) {
 	if !strings.Contains(err.Error(), "remove source") {
 		t.Errorf("surfaced error must name the failed source removal: %v", err)
 	}
-	if strings.Contains(err.Error(), "is unchanged at") {
-		t.Errorf("phase-2 split must not claim the tree is unchanged: %v", err)
+	if !strings.Contains(err.Error(), "is unchanged at") {
+		t.Errorf("converged rollback must state the tree is unchanged at its origin: %v", err)
 	}
 	// Rollback converged the split tree: whole at oldDir, nothing at newDir.
 	if got, rerr := os.ReadFile(alphaPath); rerr != nil || string(got) != string(alphaOrig) {
@@ -491,5 +491,93 @@ func TestVerifiedMove_TreeRenameOnNetworkRootSucceeds(t *testing.T) {
 	}
 	if idx, ferr := app.FetchPageBlocks(notebook, "OldSec", "Alpha"); ferr == nil && len(idx) > 0 {
 		t.Errorf("old section still indexed after verified tree move: %d blocks", len(idx))
+	}
+}
+
+// 10. #1049 iter-1: a section rename into its own subtree (or onto its own
+// ancestor, or onto itself) must be refused in prepare — the verified tree
+// move would create newDir inside oldDir's hierarchy, stranding an origin
+// husk that can never be emptied, and the reverse rename would be refused
+// forever after.
+func TestVerifiedMove_NestedSectionRenameRefused(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	notebook := "VMNB"
+	alphaID := "6b6b6b6b-7c7c-4d8d-9e3f-8a8a8a8a8a8a"
+	seedConflictPage(t, app, notebook, "OldSec", "Alpha", alphaID, "alpha body")
+	alphaPath := conflictPagePath(app, notebook, "OldSec", "Alpha")
+	alphaOrig, _ := os.ReadFile(alphaPath)
+
+	for _, tc := range []struct{ oldSec, newSec string }{
+		{"OldSec", "OldSec/Sub"},  // into its own subtree
+		{"OldSec/Deep", "OldSec"}, // onto its own ancestor
+		// (old == new is short-circuited to a no-op success by RenameSection
+		// before prepare — not a nesting case.)
+	} {
+		err := app.RenameSection(notebook, tc.oldSec, tc.newSec)
+		if err == nil {
+			t.Fatalf("rename %q → %q must be refused", tc.oldSec, tc.newSec)
+		}
+		var ipc *IPCError
+		if !errors.As(err, &ipc) || ipc.Code != CodeInvalidNavigationPath {
+			t.Errorf("rename %q → %q: want invalid_navigation_path, got %v", tc.oldSec, tc.newSec, err)
+		}
+	}
+
+	// Nothing moved, nothing created.
+	if _, serr := os.Stat(filepath.Join(app.vaultPath, notebook, "OldSec", "Sub")); !os.IsNotExist(serr) {
+		t.Errorf("OldSec/Sub exists after refused rename (stat err = %v)", serr)
+	}
+	if got, rerr := os.ReadFile(alphaPath); rerr != nil || string(got) != string(alphaOrig) {
+		t.Errorf("Alpha not intact after refused renames (err=%v)", rerr)
+	}
+}
+
+// 11. #1049 iter-1: a LOCAL atomic-rename failure (EPERM/EBUSY class) must
+// abort with the same whole-at-origin semantics as a verified phase-1
+// failure — never reach rollbackRename, which would rewrite the intact
+// originals and strand a duplicate tree at newDir.
+func TestVerifiedMove_LocalRenameFailureAborts(t *testing.T) {
+	app := newTestApp(t)
+	// Deliberately NOT forceNetworkRoot: local root, plain-rename branch.
+
+	notebook := "VMNB"
+	alphaID := "7c7c7c7c-8d8d-4e9e-8f4a-9b9b9b9b9b9b"
+	seedConflictPage(t, app, notebook, "OldSec", "Alpha", alphaID, "alpha body")
+	oldDir := filepath.Join(app.vaultPath, notebook, "OldSec")
+	newDir := filepath.Join(app.vaultPath, notebook, "NewSec")
+	alphaPath := conflictPagePath(app, notebook, "OldSec", "Alpha")
+	alphaOrig, _ := os.ReadFile(alphaPath)
+
+	copies := swapVerifiedMoveSeam(t)
+	origLocal := verifiedMoveLocalRename
+	verifiedMoveLocalRename = func(_, _ string) error {
+		return fmt.Errorf("rename: device or resource busy")
+	}
+	t.Cleanup(func() { verifiedMoveLocalRename = origLocal })
+
+	err := app.RenameSection(notebook, "OldSec", "NewSec")
+	if err == nil {
+		t.Fatal("local rename failure must surface an error")
+	}
+	var ipc *IPCError
+	if errors.As(err, &ipc) {
+		t.Fatalf("local rename failure must stay a plain error, got typed %s: %v", ipc.Code, err)
+	}
+	if !strings.Contains(err.Error(), "device or resource busy") {
+		t.Errorf("surfaced error lost the real cause: %v", err)
+	}
+	if !strings.Contains(err.Error(), "The section is unchanged at "+oldDir) {
+		t.Errorf("tree-level abort clause missing: %v", err)
+	}
+	if *copies != 0 {
+		t.Errorf("verified file moves = %d, want 0 on a local root (a rollback would rewrite the intact originals)", *copies)
+	}
+	if got, rerr := os.ReadFile(alphaPath); rerr != nil || string(got) != string(alphaOrig) {
+		t.Errorf("Alpha not intact at old dir after local abort (err=%v)", rerr)
+	}
+	if _, serr := os.Stat(newDir); !os.IsNotExist(serr) {
+		t.Errorf("NewSec exists after local abort (stat err = %v)", serr)
 	}
 }

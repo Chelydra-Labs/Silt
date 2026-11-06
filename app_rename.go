@@ -729,6 +729,19 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 		if !isPathWithinRoot(oldDir, notebookDir) || !isCreationPathWithinRoot(newDir, notebookDir) {
 			return renameTreeStrategy{}, fmt.Errorf("path escapes notebook root")
 		}
+		// A section cannot be renamed into its own subtree (or vice versa):
+		// the tree move would create newDir inside oldDir's hierarchy — the
+		// origin husk could never be emptied (verified mode strands it
+		// containing the destination) and the reverse rename is refused
+		// forever after.
+		oldSlash := filepath.ToSlash(safeOldSection)
+		newSlash := filepath.ToSlash(safeNewSection)
+		if oldSlash == newSlash ||
+			strings.HasPrefix(newSlash, oldSlash+"/") ||
+			strings.HasPrefix(oldSlash, newSlash+"/") {
+			return renameTreeStrategy{}, invalidNavigationPath(fmt.Errorf(
+				"section %q cannot be renamed to %q", safeOldSection, safeNewSection))
+		}
 		if _, err := os.Stat(newDir); err == nil {
 			return renameTreeStrategy{}, fmt.Errorf("a section named %q already exists", safeNewSection)
 		}

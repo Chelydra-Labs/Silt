@@ -282,6 +282,10 @@ func (a *App) renameTree(prepare func() (renameTreeStrategy, error)) error {
 				if rollbackErr := a.rollbackRename(s.oldDir, s.newDir, files, s.rollbackSource, linkJournal, configSnapshot, false); rollbackErr != nil {
 					log.Printf("%s: rollback after failed tree move (%v): %v", s.label, runErr, rollbackErr)
 					runErr = fmt.Errorf("%w (rollback failed: %v)", runErr, rollbackErr)
+				} else {
+					// Converged: say so — the raw removal error alone implies
+					// worse damage than the restored-on-original truth.
+					runErr = appendErrorClause(runErr, fmt.Sprintf("The %s is unchanged at %s", s.treeNoun, s.oldDir))
 				}
 				return
 			}

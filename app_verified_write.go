@@ -284,6 +284,12 @@ var verifiedMoveCopy = parser.CopyFileVerified
 // split-tree state a CI temp dir cannot reproduce).
 var verifiedMoveRemoveSource = os.Remove
 
+// verifiedMoveLocalRename is the plain-rename seam for the local (atomic)
+// branch of moveTreeDispatch, so tests can drive its failure tagging — a
+// mundane local failure (EPERM/EBUSY) must abort like any phase-1 failure,
+// never reach rollbackRename.
+var verifiedMoveLocalRename = os.Rename
+
 // verifiedBackupPathFor keys the backup/.pending slot for a verified write or
 // move target under root: <root>/.system/writebackups/<rel> — the same
 // convention writePageStaged applies to writes. target must be under root
@@ -398,7 +404,7 @@ func (a *App) moveTreeDispatch(oldDir, newDir string) error {
 	a.tracker.RegisterWrite(newDir)
 	root, _, verified := a.verifiedWriteScope(newDir)
 	if !verified {
-		if err := os.Rename(oldDir, newDir); err != nil {
+		if err := verifiedMoveLocalRename(oldDir, newDir); err != nil {
 			// The atomic rename failed: nothing moved — the same
 			// whole-at-origin abort semantics as a phase-1 failure.
 			return abortTreeMove(err)
