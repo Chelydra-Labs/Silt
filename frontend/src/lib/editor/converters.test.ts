@@ -2088,3 +2088,37 @@ describe('depth clamp on import (repair on load)', () => {
     expect(Number(attrs.depth)).toBe(6)
   })
 })
+
+// Region blocks (code/table/callout/details) sit inside a task's subtree by
+// on-disk indentation; losing their depth on save re-emits them at column 0,
+// which de-indents the file and reshuffles which task owns the lines that
+// follow. Depth is the only hierarchy signal the editor sends (regions carry
+// no parent_id), so the round-trip must preserve it.
+describe('region-block depth round-trip (#1003)', () => {
+  it('an indented code fence under a task keeps its depth across save', () => {
+    const blocks = [
+      mkBlock('TASK', { clean_text: 'task', depth: 0 }),
+      mkBlock('NOTE', { clean_text: 'reply', depth: 1, line_number: 2 }),
+      mkBlock('CODE', {
+        clean_text: 'code',
+        depth: 1,
+        language: 'js',
+        line_number: 3
+      }),
+      mkBlock('NOTE', {
+        clean_text: 'still the task',
+        depth: 1,
+        line_number: 4
+      })
+    ]
+    const back = docToBlocks(blocksToDoc(blocks))
+    // The fence stays inside the task's depth band; the blocks after it are
+    // asserted so the ownership the depths imply is pinned too.
+    expect(back.map((b) => [b.type, b.depth])).toEqual([
+      ['TASK', 0],
+      ['NOTE', 1],
+      ['CODE', 1],
+      ['NOTE', 1]
+    ])
+  })
+})
