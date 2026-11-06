@@ -7,7 +7,9 @@
 //   start_date, due_date, priority, clean_text. raw_text is a serialization
 //   artifact (produced by Go's RenderFileContent from clean_text + attrs), so
 //   it is NOT compared in the identity tests. parent_id and line_number are
-//   derived (from depth and doc order respectively), not stored as node attrs.
+//   not compared either: parentage is derived once by the Go parser (the
+//   single validated hierarchy derivation) and consumed as-is from the IPC
+//   payload, and line_number comes from doc order.
 //
 // Go's parser.RenderFileContent remains the single on-disk serializer (#40).
 // The frontend never produces markdown.
@@ -86,23 +88,6 @@ export function stripAlignmentMarker(cleanText: string): {
 
 export function emitAlignmentMarker(align: string): string {
   return align && align !== 'left' ? ` <!-- silt-align: ${align} -->` : ''
-}
-
-// Derive parent_id from block depths via the stack-walk algorithm used by the
-// Go parser (parser.go activeIDs) and the legacy BlockRenderer (getUpdatedParentIDs).
-// parent_id = the id of the nearest preceding block at depth-1.
-function deriveParentIDs(blocks: ParsedBlock[]): void {
-  const activeIDs: string[] = []
-  for (const b of blocks) {
-    if (b.depth > 0) {
-      b.parent_id = b.depth - 1 < activeIDs.length ? activeIDs[b.depth - 1] : ''
-    } else {
-      b.parent_id = ''
-    }
-    while (activeIDs.length <= b.depth) activeIDs.push('')
-    activeIDs[b.depth] = b.id
-    activeIDs.splice(b.depth + 1)
-  }
 }
 
 // Match a clean_text that is solely a {{embed:uuid}} token (the entire
@@ -1029,9 +1014,10 @@ export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
 }
 
 // docToBlocks is the inverse of blocksToDoc: it walks a ProseMirror doc JSON
-// and reconstructs the ordered ParsedBlock list for SaveFileBlocks. It derives
-// parent_id (from depth) and line_number (from doc order) and reconstructs
-// raw_text sufficiently for Go's renderBlock to detect the bullet style.
+// and reconstructs the ordered ParsedBlock list for SaveFileBlocks. It sets
+// line_number (from doc order) and emits parent_id: '' — the Go parser's
+// DeriveHierarchy owns parentage — and reconstructs raw_text sufficiently for
+// Go's renderBlock to detect the bullet style.
 export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
   const content = doc.content || []
   const blocks: ParsedBlock[] = []
@@ -1302,6 +1288,5 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
     blocks.push(block)
   }
 
-  deriveParentIDs(blocks)
   return blocks
 }

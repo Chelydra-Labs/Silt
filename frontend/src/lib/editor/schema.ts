@@ -10,10 +10,10 @@
 // - `id` is the block UUID (parser.ParsedBlock.ID). It is the node identity, NOT
 //   content. Pasted/duplicated nodes get a fresh UUID via uniqueIdPlugin.ts so
 //   the blocks-table PK and embed/reference resolution stay consistent.
-// - `parent_id` is NOT a node attr: it is derived from `depth` via the same
-//   stack-walk algorithm the Go parser uses (parser.go activeIDs). Keeping a
-//   single source of truth (depth) avoids drift between stored parent_id and
-//   actual nesting.
+// - `parent_id` is NOT a node attr: parentage is derived once by the Go
+//   parser (its single validated hierarchy derivation) and consumed as-is
+//   from the block payload. The editor keeps `depth` as the only structural
+//   attr it owns, so stored depth and server-side parentage cannot drift.
 // - `line_number` is NOT a node attr: it is reassigned by doc order in
 //   docToBlocks. Line numbers are positional, not semantic.
 // - Notes carry a `bullet` attr ('- ', '* ', '+ ', or '' for plain prose) so

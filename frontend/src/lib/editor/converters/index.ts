@@ -12,7 +12,8 @@
 //   start_date, due_date, priority, clean_text. raw_text is a serialization
 //   artifact (produced by Go's RenderFileContent from clean_text + attrs), so
 //   it is NOT compared in the identity tests. parent_id and line_number are
-//   derived (from depth and doc order respectively), not stored as node attrs.
+//   not stored as node attrs: parentage is derived once by the Go parser and
+//   consumed as-is; line_number comes from doc order.
 //
 // --- Inline grammar pipeline (#198) ---
 // The inline pipeline is split into three discrete stages:

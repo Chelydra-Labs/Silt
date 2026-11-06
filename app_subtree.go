@@ -15,12 +15,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// FetchSubtree returns a task block's child sub-tree — the contiguous run of
-// indented blocks beneath the parent task (#305). The sub-tree is every block
-// whose Depth is strictly greater than the parent's, up to (but not including)
-// the next block at or above the parent's depth, in file/slice order. An empty
-// slice means the task has no children (the modal opens with an empty editor so
-// the user can add sub-notes inline). Read-only: no locks beyond vaultMu.
+// FetchSubtree returns a task block's child sub-tree: every block whose
+// validated ParentID ancestor chain contains the task (#305). The hierarchy
+// comes from the parser's single derivation, so this is a pure graph
+// membership check — no depth-run recomputation. An empty slice means the
+// task has no children (the modal opens with an empty editor so the user can
+// add sub-notes inline). Read-only: no locks beyond vaultMu.
 func (a *App) FetchSubtree(blockID string) ([]parser.ParsedBlock, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -71,20 +71,19 @@ func (a *App) FetchSubtree(blockID string) ([]parser.ParsedBlock, error) {
 	return extractSubtree(parsedBlocks, blockID), nil
 }
 
-// extractSubtree walks the parsed-block slice in order and collects the child
-// sub-tree of the parent block: the parent itself is NOT included; every
-// following block at Depth > parent.Depth is, until the first block at or
-// below the parent's depth ends the run. This mirrors the parser's activeIDs
-// stack-clearing rule (parser.go:841-857): once indentation returns to the
-// parent's level (or above), the sub-tree is closed.
+// extractSubtree collects the child sub-tree of parentID by parent-graph
+// membership: every block after the parent whose ParentID ancestor chain
+// contains the parent's id. The parent itself is NOT included. Parentage is
+// whatever the parser's single validated derivation (parser.DeriveHierarchy)
+// produced, so the sub-editor and the derived task counts can never disagree
+// about a block's membership.
 func extractSubtree(blocks []parser.ParsedBlock, parentID string) []parser.ParsedBlock {
+	byID := make(map[string]parser.ParsedBlock, len(blocks))
 	parentIdx := -1
-	parentDepth := 0
 	for i, b := range blocks {
+		byID[b.ID] = b
 		if b.ID == parentID {
 			parentIdx = i
-			parentDepth = b.Depth
-			break
 		}
 	}
 	// Return an empty (non-nil) slice when there are no children so the
@@ -95,13 +94,32 @@ func extractSubtree(blocks []parser.ParsedBlock, parentID string) []parser.Parse
 	if parentIdx < 0 {
 		return subtree
 	}
-	for i := parentIdx + 1; i < len(blocks); i++ {
-		if blocks[i].Depth <= parentDepth {
-			break
+	for _, b := range blocks[parentIdx+1:] {
+		if hasAncestor(byID, b, parentID) {
+			subtree = append(subtree, b)
 		}
-		subtree = append(subtree, blocks[i])
 	}
 	return subtree
+}
+
+// hasAncestor reports whether b's ParentID chain contains ancestorID. The
+// step cap survives a cyclic ParentID graph, which the parser's derivation
+// cannot produce but a defensive splice (SaveSubtreeBlocks stamps ParentID
+// directly) could — a step cap, like taskDerivedCounts' fixed 64-step guard
+// (backend/db/indexing.go).
+func hasAncestor(byID map[string]parser.ParsedBlock, b parser.ParsedBlock, ancestorID string) bool {
+	pid := b.ParentID
+	for steps := 0; pid != "" && steps <= len(byID); steps++ {
+		if pid == ancestorID {
+			return true
+		}
+		parent, ok := byID[pid]
+		if !ok || parent.ParentID == pid {
+			return false
+		}
+		pid = parent.ParentID
+	}
+	return false
 }
 
 // SaveSubtreeBlocks is the app-level entry point for the sub-editor splice
@@ -127,9 +145,9 @@ func (a *App) PluginSaveSubtreeBlocks(pluginID, sessionToken, blockID string, ch
 }
 
 // saveSubtreeBlocks is the shared core for the app-level and plugin-level entry
-// points. It re-parses the whole file, replaces the contiguous
-// child range (depth > parent depth) with the incoming children, then runs the
-// canonical write chain: RenderFileContent → WriteFileAtomic → re-parse →
+// points. It re-parses the whole file, replaces the parent's child sub-tree
+// (parent-graph membership — the exact set extractSubtree computes) with the
+// incoming children, then runs the canonical write chain: RenderFileContent → WriteFileAtomic → re-parse →
 // IndexFileBlocks → emit block:changed. The parent task and all surrounding
 // content (unmanaged prose, sibling blocks, other tasks) are preserved verbatim
 // because RenderFileContent re-serializes the full slice. Holds both
@@ -527,28 +545,31 @@ func (a *App) appendTaskComment(taskID, text, author, ts, parentCommentID, reaso
 }
 
 // spliceSubtree replaces the child sub-tree of parentID in blocks with the
-// incoming children. It locates the parent, identifies the contiguous child
-// range (depth > parent depth, per extractSubtree's rule), and substitutes it.
+// incoming children. It locates the parent, deletes every block after it by
+// parent-graph membership (hasAncestor — the exact inverse of extractSubtree),
+// and inserts the normalized children at parentIdx+1. The delete is
+// deliberately non-contiguous: managed regions are transparent to the
+// hierarchy (no depth, no parent), so a parent's children can straddle a
+// region — a depth-run delete would stop at the region and leave a
+// post-region child on disk while the normalized list already carries it,
+// rendering the same UUID twice and breaking IndexFileBlocks on the blocks.id
+// primary key.
 // The incoming children keep their own depth (the serializer re-indents), and
 // their ParentID is defensively set to parentID so the re-parse resolves the
 // hierarchy correctly. Returns ok=false if the parent wasn't found.
 func spliceSubtree(blocks []parser.ParsedBlock, parentID string, children []parser.ParsedBlock) ([]parser.ParsedBlock, bool) {
+	byID := make(map[string]parser.ParsedBlock, len(blocks))
 	parentIdx := -1
 	parentDepth := 0
 	for i, b := range blocks {
+		byID[b.ID] = b
 		if b.ID == parentID {
 			parentIdx = i
 			parentDepth = b.Depth
-			break
 		}
 	}
 	if parentIdx < 0 {
 		return nil, false
-	}
-	// Find the end of the existing child run.
-	childEnd := parentIdx + 1
-	for childEnd < len(blocks) && blocks[childEnd].Depth > parentDepth {
-		childEnd++
 	}
 
 	// Defensive: stamp ParentID on every incoming child so the re-parse
@@ -579,9 +600,15 @@ func spliceSubtree(blocks []parser.ParsedBlock, parentID string, children []pars
 		}
 	}
 
-	out := make([]parser.ParsedBlock, 0, len(blocks)-(childEnd-(parentIdx+1))+len(normalized))
+	out := make([]parser.ParsedBlock, 0, len(blocks)+len(normalized))
 	out = append(out, blocks[:parentIdx+1]...)
 	out = append(out, normalized...)
-	out = append(out, blocks[childEnd:]...)
+	// Non-members keep their file order — a region between two members
+	// stays on the page, now after the replaced child run.
+	for _, b := range blocks[parentIdx+1:] {
+		if !hasAncestor(byID, b, parentID) {
+			out = append(out, b)
+		}
+	}
 	return out, true
 }

@@ -31,6 +31,10 @@ func nullIfEmpty(s string) interface{} {
 // block slice (#434 / #439 / comments descendants):
 //   - comments: ALL NOTE descendants under a task (walk ParentID until TASK)
 //   - subtaskTotal / subtaskDone: direct TASK children only
+//
+// It is a pure consumer of the ParentID the parser's single validated
+// derivation (parser.DeriveHierarchy) assigned — no independent hierarchy
+// computation happens here.
 func taskDerivedCounts(blocks []parser.ParsedBlock) (comments, subtaskTotal, subtaskDone map[string]int) {
 	parentOf := make(map[string]string, len(blocks))
 	typeOf := make(map[string]parser.BlockType, len(blocks))
@@ -1076,6 +1080,12 @@ func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexSt
 		source := res.Source
 		if source == "" {
 			source = "vault"
+		}
+		// The per-file indexers log file warnings (see IndexFileBlocks); the
+		// batched scan used to drop them, so a hierarchy repair found on the
+		// cold-start scan was reported nowhere. Keep the per-file log shape.
+		for _, w := range res.Warnings {
+			log.Printf("db.IndexScanResults(%s/%s/%s/%s): %s", source, res.Notebook, res.Section, res.Page, w)
 		}
 		if err := dm.ClearFileBlocks(tx, source, res.Notebook, res.Section, res.Page); err != nil {
 			return indexedCount, skipped, fmt.Errorf("failed to clear blocks for %s: %w", res.Path, err)
