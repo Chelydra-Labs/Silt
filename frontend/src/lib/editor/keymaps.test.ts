@@ -1419,6 +1419,115 @@ describe('subtree-aware indent + depth clamp (#1002)', () => {
     expect(header!.raw_text).toMatch(/^#{1,6} /)
     editor.destroy()
   })
+  it('unindent is the inverse: the subtree comes back up together', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('root', 'root', 0),
+        note('parent', 'parent', 1),
+        note('child', 'child', 2),
+        note('tail', 'tail', 0)
+      ]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Tab', { shiftKey: true })).toBe(true)
+    expect(depthsOf(editor)).toEqual([0, 0, 1, 0])
+    // Re-indenting restores the exact prior shape.
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    expect(depthsOf(editor)).toEqual([0, 1, 2, 0])
+    editor.destroy()
+  })
+
+  it('whole-run clamp: a parent whose child sits at depth 6 does not indent', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('a4', 'l4', 4),
+        note('a5', 'parent', 5),
+        note('a6', 'child', 6)
+      ]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    // Indenting the parent alone would strand the child at the old depth;
+    // moving both would write depth 7 — so nothing moves.
+    expect(depthsOf(editor)).toEqual([4, 5, 6])
+    const saved = docToBlocks(editor.getJSON() as DocJSON)
+    expect(saved.every((b) => b.depth <= 6)).toBe(true)
+    editor.destroy()
+  })
+
+  it('the run ends at a following header — its level is never shifted', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('root', 'root', 0),
+        note('parent', 'parent', 0),
+        note('child', 'child', 1),
+        {
+          type: 'headerBlock',
+          attrs: { id: 'h1', depth: 1 },
+          content: [{ type: 'text', text: 'Section' }]
+        }
+      ]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    expect(depthsOf(editor)).toEqual([0, 1, 2, 1])
+    editor.destroy()
+  })
+
+  it('indenting an ordered parent keeps its ordered children sequential', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'one' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '2. ' },
+          content: [{ type: 'text', text: 'two' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2a', depth: 1, bullet: '1. ' },
+          content: [{ type: 'text', text: 'child-a' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2b', depth: 1, bullet: '2. ' },
+          content: [{ type: 'text', text: 'child-b' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '3. ' },
+          content: [{ type: 'text', text: 'three' }]
+        }
+      ]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    expect(
+      Array.from({ length: editor.state.doc.childCount }, (_, i) => ({
+        bullet: editor.state.doc.child(i).attrs.bullet,
+        depth: editor.state.doc.child(i).attrs.depth
+      }))
+    ).toEqual([
+      { bullet: '1. ', depth: 0 },
+      { bullet: '1. ', depth: 1 },
+      { bullet: '1. ', depth: 2 },
+      { bullet: '2. ', depth: 2 },
+      { bullet: '2. ', depth: 0 }
+    ])
+    editor.destroy()
+  })
 })
 
 describe('moveActiveBlock — drag-handle keyboard complement (#181)', () => {
