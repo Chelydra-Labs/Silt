@@ -1,7 +1,11 @@
 package db
 
 import (
+	"bytes"
 	"errors"
+	"log"
+	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -481,6 +485,41 @@ func TestIndexScanResultsWithProjection_LengthMismatch(t *testing.T) {
 	// Wrong length: 0 vs 1.
 	if _, _, err := dm.IndexScanResultsWithProjection(results, nil); err == nil {
 		t.Fatal("expected length-mismatch error, got nil")
+	}
+}
+
+// TestIndexScanResultsWithProjection_ForwardsWarnings pins the batched-scan
+// warning forwarding: every res.Warnings entry is logged with the file's
+// coordinates, in the per-file indexer's shape. The batched cold-start stage
+// used to drop warnings entirely — a hierarchy repair found on the scan was
+// reported nowhere — so a refactor of the stage must not silently re-drop
+// them.
+func TestIndexScanResultsWithProjection_ForwardsWarnings(t *testing.T) {
+	dm := newTestDB(t)
+
+	const warning = "hierarchy violation (repaired): NOTE block 5f0c0a11-0000-4000-8000-000000000002 (line 2) at depth 4 has no block at depth 3"
+	results := []parser.ScanResult{{
+		Path:     "/vault/Work/Sprint/2026-01-01.md",
+		Notebook: "Work", Section: "Sprint", Page: "2026-01-01",
+		Blocks:   []parser.ParsedBlock{sampleNoteBlock("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1)},
+		Warnings: []string{warning},
+	}}
+	// Zero-value projection: an untyped page carrying a repair warning is the
+	// ordinary cold-start shape for a note file with an indentation jump.
+	projections := []ScanProjection{{}}
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr) // restore default
+	count, skipped, err := dm.IndexScanResultsWithProjection(results, projections)
+	if err != nil {
+		t.Fatalf("IndexScanResultsWithProjection: %v", err)
+	}
+	if count != 1 || len(skipped) != 0 {
+		t.Fatalf("indexedCount=%d skipped=%v, want 1 indexed and none skipped", count, skipped)
+	}
+	if out := buf.String(); !strings.Contains(out, "db.IndexScanResults(vault/Work/Sprint/2026-01-01): "+warning) {
+		t.Errorf("scan warning not forwarded with file coordinates; log output:\n%s", out)
 	}
 }
 

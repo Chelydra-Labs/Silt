@@ -157,6 +157,49 @@ func TestDeriveHierarchy_RepairsOrphanDepthJump(t *testing.T) {
 			t.Fatalf("violations = %+v, want only the depth-4 jump (the depth-5 parent resolves)", violations)
 		}
 	})
+	// The two sequences below pin the stack bookkeeping around repairs: a
+	// block at depth d evicts every deeper slot (stack[d+1:] = ""), so a
+	// repaired deep block must never survive as a stale ancestor for later
+	// jumps. Dropping that eviction would silently re-parent deeper blocks
+	// to a block the shallower return already displaced.
+	t.Run("shallower block after a repair invalidates deeper slots", func(t *testing.T) {
+		const (
+			midID  = "44444444-4444-4444-8444-444444444444"
+			deepID = "55555555-5555-4555-8555-555555555555"
+		)
+		blocks := []ParsedBlock{
+			{ID: rootID, Type: BlockTask, Depth: 0},
+			{ID: orphanID, Type: BlockNote, Depth: 4}, // repaired → rootID
+			{ID: midID, Type: BlockNote, Depth: 1},    // must evict stack[2..4]
+			{ID: deepID, Type: BlockNote, Depth: 5},
+		}
+		violations := DeriveHierarchy(blocks)
+		if blocks[3].ParentID != midID {
+			t.Errorf("depth-5 block ParentID = %q, want the depth-1 block %q (the repaired depth-4 entry was not evicted)", blocks[3].ParentID, midID)
+		}
+		if len(violations) != 2 || violations[0].BlockID != orphanID || violations[1].BlockID != deepID {
+			t.Fatalf("violations = %+v, want repairs for the depth-4 and depth-5 jumps only", violations)
+		}
+	})
+	t.Run("repair of a shallower block evicts stale deeper ancestors", func(t *testing.T) {
+		const (
+			midID  = "44444444-4444-4444-8444-444444444444"
+			deepID = "55555555-5555-4555-8555-555555555555"
+		)
+		blocks := []ParsedBlock{
+			{ID: rootID, Type: BlockTask, Depth: 0},
+			{ID: orphanID, Type: BlockNote, Depth: 4}, // repaired → rootID, sits at stack[4]
+			{ID: midID, Type: BlockNote, Depth: 2},    // repaired → rootID, must evict stack[4]
+			{ID: deepID, Type: BlockNote, Depth: 5},
+		}
+		violations := DeriveHierarchy(blocks)
+		if blocks[3].ParentID != midID {
+			t.Errorf("depth-5 block ParentID = %q, want the depth-2 block %q (the depth-4 entry survived the shallower repair)", blocks[3].ParentID, midID)
+		}
+		if len(violations) != 3 || violations[0].BlockID != orphanID || violations[1].BlockID != midID || violations[2].BlockID != deepID {
+			t.Fatalf("violations = %+v, want repairs for the depth-4, depth-2, and depth-5 jumps", violations)
+		}
+	})
 }
 
 // TestDeriveHierarchy_HeaderLevelJumpsAreNotViolations pins the header
