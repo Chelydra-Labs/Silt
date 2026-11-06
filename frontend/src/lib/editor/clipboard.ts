@@ -100,6 +100,8 @@ export function cutSelection(deps: ClipboardDeps): void {
     (written) => {
       if (
         written &&
+        !editor.isDestroyed &&
+        editor.isEditable &&
         editor.state.doc === captured.doc &&
         editor.state.selection.eq(captured.selection)
       ) {

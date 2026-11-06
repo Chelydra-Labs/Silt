@@ -61,6 +61,8 @@ type MockEditor = {
     deleteSelection: ReturnType<typeof vi.fn>
     focus: ReturnType<typeof vi.fn>
   }
+  isDestroyed: boolean
+  isEditable: boolean
   chain: () => {
     insertContentAt: ReturnType<typeof vi.fn>
     deleteRange: ReturnType<typeof vi.fn>
@@ -115,6 +117,8 @@ function makeEditor(overrides: Record<string, unknown> = {}): MockEditor {
       deleteSelection: vi.fn(),
       focus: vi.fn()
     },
+    isDestroyed: false,
+    isEditable: true,
     chain: () => ({
       insertContentAt: vi.fn().mockReturnThis(),
       deleteRange: vi.fn().mockReturnThis(),
@@ -147,6 +151,15 @@ function makeDeps(
 }
 
 beforeEach(() => {
+  Object.defineProperty(navigator, 'clipboard', {
+    value: { writeText: writeTextSpy, write: writeSpy },
+    configurable: true,
+    writable: true
+  })
+  Object.defineProperty(globalThis, 'ClipboardItem', {
+    value: MockClipboardItem,
+    configurable: true
+  })
   writeTextSpy.mockClear()
   writeSpy.mockClear()
   notifySpy.mockClear()
@@ -197,6 +210,57 @@ describe('cutSelection', () => {
     await Promise.resolve()
     expect(editor.commands.deleteSelection).not.toHaveBeenCalled()
   })
+
+  it('does not delete if the document changes while the write is pending', async () => {
+    let resolveWrite!: () => void
+    writeSpy.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveWrite = resolve
+        })
+    )
+    const editor = makeEditor()
+    cutSelection(makeDeps(editor))
+    ;(editor.state as { doc: unknown }).doc = { replaced: true }
+    resolveWrite()
+    await vi.waitFor(() => expect(writeSpy).toHaveBeenCalledOnce())
+    await Promise.resolve()
+    expect(editor.commands.deleteSelection).not.toHaveBeenCalled()
+  })
+
+  it('does not delete if the editor becomes read-only while the write is pending', async () => {
+    let resolveWrite!: () => void
+    writeSpy.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveWrite = resolve
+        })
+    )
+    const editor = makeEditor()
+    cutSelection(makeDeps(editor))
+    editor.isEditable = false
+    resolveWrite()
+    await vi.waitFor(() => expect(writeSpy).toHaveBeenCalledOnce())
+    await Promise.resolve()
+    expect(editor.commands.deleteSelection).not.toHaveBeenCalled()
+  })
+
+  it('does not delete if the editor is destroyed while the write is pending', async () => {
+    let resolveWrite!: () => void
+    writeSpy.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveWrite = resolve
+        })
+    )
+    const editor = makeEditor()
+    cutSelection(makeDeps(editor))
+    editor.isDestroyed = true
+    resolveWrite()
+    await vi.waitFor(() => expect(writeSpy).toHaveBeenCalledOnce())
+    await Promise.resolve()
+    expect(editor.commands.deleteSelection).not.toHaveBeenCalled()
+  })
 })
 
 describe('copySelection', () => {
@@ -217,6 +281,59 @@ describe('copySelection', () => {
       expect(writeTextSpy).toHaveBeenCalledWith('rich text')
     )
     expect(writeSpy).not.toHaveBeenCalled()
+  })
+
+  it('uses writeText when ClipboardItem is unavailable', async () => {
+    const item = globalThis.ClipboardItem
+    Object.defineProperty(globalThis, 'ClipboardItem', {
+      value: undefined,
+      configurable: true
+    })
+    copySelection(makeDeps(makeEditor()))
+    await vi.waitFor(() =>
+      expect(writeTextSpy).toHaveBeenCalledWith('rich text')
+    )
+    expect(writeSpy).not.toHaveBeenCalled()
+    Object.defineProperty(globalThis, 'ClipboardItem', {
+      value: item,
+      configurable: true
+    })
+  })
+
+  it('uses writeText when ClipboardItem does not support HTML', async () => {
+    MockClipboardItem.supports.mockReturnValueOnce(false)
+    copySelection(makeDeps(makeEditor()))
+    await vi.waitFor(() =>
+      expect(writeTextSpy).toHaveBeenCalledWith('rich text')
+    )
+    expect(writeSpy).not.toHaveBeenCalled()
+  })
+
+  it('reports a rejected text fallback with the failure message', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: writeTextSpy },
+      configurable: true
+    })
+    writeTextSpy.mockRejectedValueOnce(new Error('denied'))
+    copySelection(makeDeps(makeEditor()))
+    await vi.waitFor(() =>
+      expect(notifySpy).toHaveBeenCalledWith({
+        kind: 'error',
+        message: 'Copy failed: clipboard could not be written.'
+      })
+    )
+  })
+
+  it('does not retry a rejected rich write as text and reports failure', async () => {
+    writeSpy.mockRejectedValueOnce(new Error('denied'))
+    copySelection(makeDeps(makeEditor()))
+    await vi.waitFor(() =>
+      expect(notifySpy).toHaveBeenCalledWith({
+        kind: 'error',
+        message: 'Copy failed: clipboard could not be written.'
+      })
+    )
+    expect(writeTextSpy).not.toHaveBeenCalled()
   })
 })
 

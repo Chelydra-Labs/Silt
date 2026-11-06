@@ -31,7 +31,11 @@ import { CodeBlock, siltPasteProps } from './schema'
 import { PlainPaste, _setShiftHeldForTests } from './plainPaste'
 import { PASTE_HTML_SIZE_CAP } from './paste/normalizePastedHTML'
 import { GENUINE_TABLE, OUTLOOK_BODY } from './paste/fixtures'
-import { pasteFromClipboard, type ClipboardDeps } from './clipboard'
+import {
+  copySelection,
+  pasteFromClipboard,
+  type ClipboardDeps
+} from './clipboard'
 
 const editors: Editor[] = []
 const notify = vi.fn()
@@ -306,20 +310,50 @@ describe('context-menu paste', () => {
     source.view.pasteHTML(OUTLOOK_BODY)
     source.view.pasteHTML(GENUINE_TABLE)
     source.commands.selectAll()
-    const { dom, text } = source.view.serializeForClipboard(
-      source.state.selection.content()
-    )
+    const { dom: nativeDom, text: nativeText } =
+      source.view.serializeForClipboard(source.state.selection.content())
 
     const native = makeEditor()
     native.commands.selectAll()
-    native.view.pasteHTML(dom.innerHTML)
+    native.view.pasteHTML(nativeDom.innerHTML)
+
+    let writtenItem: { data: Record<string, Blob> } | undefined
+    class TestClipboardItem {
+      static supports = () => true
+      constructor(data: Record<string, Blob>) {
+        this.data = data
+      }
+      data: Record<string, Blob>
+    }
+    const originalItem = globalThis.ClipboardItem
+    const originalClipboard = navigator.clipboard
+    Object.defineProperty(globalThis, 'ClipboardItem', {
+      value: TestClipboardItem,
+      configurable: true
+    })
+    Object.defineProperty(navigator, 'clipboard', {
+      value: {
+        write: vi.fn(async (items: { data: Record<string, Blob> }[]) => {
+          writtenItem = items[0]
+        })
+      },
+      configurable: true
+    })
+    copySelection(deps(source))
+    await vi.waitFor(() => expect(writtenItem).toBeDefined())
+    const copiedHtml = await writtenItem!.data['text/html'].text()
+    const copiedText = await writtenItem!.data['text/plain'].text()
 
     const menu = makeEditor()
     menu.commands.selectAll()
-    readClipboardPayload.mockResolvedValueOnce({ html: dom.innerHTML, text })
+    readClipboardPayload.mockResolvedValueOnce({
+      html: copiedHtml,
+      text: copiedText
+    })
     await pasteFromClipboard(deps(menu))
 
-    expect(dom.innerHTML).toContain('data-pm-slice')
+    expect(copiedHtml).toContain('data-pm-slice')
+    expect(copiedText).toBe(nativeText)
     expect(stripIds(menu.getJSON())).toEqual(stripIds(native.getJSON()))
     expect(menu.getJSON()).toMatchObject({
       content: expect.arrayContaining([
@@ -331,6 +365,14 @@ describe('context-menu paste', () => {
     })
     expect(JSON.stringify(menu.getJSON())).toContain('"type":"table"')
     expect(JSON.stringify(menu.getJSON())).toContain('"type":"bold"')
+    Object.defineProperty(globalThis, 'ClipboardItem', {
+      value: originalItem,
+      configurable: true
+    })
+    Object.defineProperty(navigator, 'clipboard', {
+      value: originalClipboard,
+      configurable: true
+    })
   })
 
   it('takes the rich path even when a stale shift flag is set (Mod-Shift-v regression)', async () => {
