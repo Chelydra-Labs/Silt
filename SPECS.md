@@ -833,7 +833,12 @@ copies and the intact original. Directory moves are two-phase: every file
 in the tree (attachments included) is copied and verified before any source
 is removed, so a mid-tree failure leaves the tree whole at its origin; the
 emptied origin is then removed with empty-directory-only deletes, never a
-recursive destroy. Local roots keep the plain `os.Rename`, unchanged.
+recursive destroy. Between the two phases the tree exists at both paths: a
+crash there — or a removal failure whose rollback cannot complete on the
+same failing mount — leaves verified-identical copies behind (the index
+degrades non-destructively, duplicate block UUIDs collapsing last-wins; the
+operator reconciles by deleting one copy). Local roots keep the plain
+`os.Rename`, unchanged.
 
 Detection coverage is explicit, not universal, and split by consumer. The
 verified-write probe recognizes NFS/SMB/CIFS/NCP mounts plus FUSE mounts
