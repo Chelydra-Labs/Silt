@@ -196,9 +196,17 @@ function setBlockDepth(
 /**
  * Positions of the selected block plus every following same-parent sibling
  * in its subtree: the contiguous run of depth-bearing outline blocks whose
- * depth is greater than the selected block's. The first sibling at or
- * shallower than the selected depth, or of a non-outline type (a header —
- * its depth is a level; a callout/table — no depth attr), ends the run.
+ * depth is greater than the selected block's. The run ends at a header (its
+ * depth attr is a heading level, not an indent) or at the first sibling at
+ * or shallower than the selected depth.
+ *
+ * Region blocks (code/table/callout/details) are transparent to the
+ * hierarchy — nothing parents to them — so a deeper sibling AFTER a region
+ * still belongs to the run: the scan advances past regions without
+ * collecting them. Terminating at a region instead would strand those
+ * siblings (their parent indents away while they stay put). Once regions
+ * derive a save-depth from their neighbors, skipping stays correct — a
+ * region's derived depth must never shift with a sibling's subtree.
  *
  * Sibling boundaries come from resolved `nodeAfter` at node-boundary
  * positions, which never crosses into a different parent — so a block
@@ -216,14 +224,13 @@ function depthRunPositions(
   while (pos + node.nodeSize < doc.content.size) {
     const next = doc.resolve(pos + node.nodeSize).nodeAfter
     if (!next) break // parent's last child — never cross the container
-    if (
-      !DEPTH_BLOCK_TYPES.has(next.type.name) ||
-      ((next.attrs.depth as number) || 0) <= info.depth
-    ) {
-      break
+    if (next.type.name === 'headerBlock') break
+    if (DEPTH_BLOCK_TYPES.has(next.type.name)) {
+      if (((next.attrs.depth as number) || 0) <= info.depth) break
+      positions.push(pos + node.nodeSize)
     }
+    // Region siblings fall through to here: advance past without collecting.
     pos += node.nodeSize
-    positions.push(pos)
     node = next
   }
   return positions

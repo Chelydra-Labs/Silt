@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { Editor } from '@tiptap/core'
+import { Editor, type AnyExtension } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import {
   SiltBlockExtensions,
@@ -10,7 +10,12 @@ import {
   SiltBlockKeymaps
 } from './index'
 import { docToBlocks } from './converters'
-import { EmbedNode, BlockReferenceNode, CalloutBlock } from './schema'
+import {
+  EmbedNode,
+  BlockReferenceNode,
+  CalloutBlock,
+  CodeBlock
+} from './schema'
 import {
   setBlockAlign,
   moveActiveBlock,
@@ -57,7 +62,9 @@ function makeEditor(): Editor {
 // Backspace / Tab outliner semantics are exercised (Tab indent cases live in
 // the "Tab / Shift-Tab depth" describe below). The base makeEditor()
 // omits it to keep the converter/align tests focused on pure state.
-function makeEditorWithKeymaps(): Editor {
+// `extraExtensions` adds region node types (codeBlock, calloutBlock, …) for
+// tests that interleave region siblings between depth blocks.
+function makeEditorWithKeymaps(extraExtensions: AnyExtension[] = []): Editor {
   return new Editor({
     extensions: [
       StarterKit.configure({
@@ -79,7 +86,8 @@ function makeEditorWithKeymaps(): Editor {
       EmbedNode,
       BlockReferenceNode,
       UniqueBlockIds,
-      SiltBlockKeymaps
+      SiltBlockKeymaps,
+      ...extraExtensions
     ]
   })
 }
@@ -1477,6 +1485,69 @@ describe('subtree-aware indent + depth clamp (#1002)', () => {
     focusBlockIndex(editor, 1)
     expect(pressKey(editor, 'Tab')).toBe(true)
     expect(depthsOf(editor)).toEqual([0, 1, 2, 1])
+    editor.destroy()
+  })
+
+  it('the depth run stays contiguous across a region sibling (code block)', () => {
+    // Regions are transparent to the hierarchy: nothing parents to them, so
+    // a note after a region parents to the preceding block. Ending the run
+    // at the region would strand that note — its parent indents away while
+    // it stays put, leaving it parentless on the next parse.
+    const editor = makeEditorWithKeymaps([CodeBlock])
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('root', 'root', 0),
+        note('a', 'A', 0),
+        {
+          type: 'codeBlock',
+          attrs: { id: 'c1', language: 'ts', file_date: '' },
+          content: [{ type: 'text', text: 'const x = 1' }]
+        },
+        note('b', 'B', 1)
+      ]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    // The codeBlock reports 0 only because it carries no depth attr — it is
+    // skipped, not shifted; B (A's child across the region) comes along.
+    expect(depthsOf(editor)).toEqual([0, 1, 0, 2])
+    // Symmetric: unindenting A brings the region-separated child back too.
+    expect(pressKey(editor, 'Tab', { shiftKey: true })).toBe(true)
+    expect(depthsOf(editor)).toEqual([0, 0, 0, 1])
+    editor.destroy()
+  })
+
+  it('a run started inside a callout never crosses into top-level siblings', () => {
+    // Pin the container isolation: nodeAfter at a node boundary never
+    // crosses into a different parent, so the run collects callout children
+    // only — even when a deeper top-level block follows the container.
+    const editor = makeEditorWithKeymaps([CalloutBlock])
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'calloutBlock',
+          attrs: { variant: 'info', id: 'c1' },
+          content: [
+            note('pre', 'first', 0),
+            note('a', 'A', 0),
+            note('b', 'B', 1)
+          ]
+        },
+        note('t', 'top-level', 2)
+      ]
+    })
+    // Caret in the middle nested note (A): callout@0 → first child at 1,
+    // A's content at 1 + firstChildSize + 1.
+    const callout = editor.state.doc.child(0)
+    editor.commands.setTextSelection(1 + callout.child(0).nodeSize + 1)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    const nested = editor.state.doc.child(0)
+    expect(nested.child(1).attrs.depth).toBe(1)
+    expect(nested.child(2).attrs.depth).toBe(2)
+    // The deeper top-level sibling after the callout is untouched.
+    expect(editor.state.doc.child(1).attrs.depth).toBe(2)
     editor.destroy()
   })
 
