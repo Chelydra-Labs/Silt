@@ -49,19 +49,71 @@ async function writeTextOrNotify(
   }
 }
 
+async function writeSelectionOrNotify(
+  deps: ClipboardDeps,
+  html: string,
+  text: string
+): Promise<boolean> {
+  try {
+    const clipboard =
+      typeof navigator === 'undefined' ? undefined : navigator.clipboard
+    const ClipboardItemConstructor = globalThis.ClipboardItem
+    const supportsHtml =
+      typeof ClipboardItemConstructor?.supports !== 'function' ||
+      ClipboardItemConstructor.supports('text/html')
+    if (
+      clipboard &&
+      typeof clipboard.write === 'function' &&
+      ClipboardItemConstructor &&
+      supportsHtml
+    ) {
+      await clipboard.write([
+        new ClipboardItemConstructor({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([text], { type: 'text/plain' })
+        })
+      ])
+    } else {
+      await clipboard!.writeText(text)
+    }
+    return true
+  } catch {
+    deps.notify({
+      kind: 'error',
+      message: 'Copy failed: clipboard could not be written.'
+    })
+    return false
+  }
+}
+
+function captureSelection(editor: Editor) {
+  const { state } = editor
+  const selection = state.selection
+  const { dom, text } = editor.view.serializeForClipboard(selection.content())
+  return { doc: state.doc, selection, html: dom.innerHTML, text }
+}
+
 export function cutSelection(deps: ClipboardDeps): void {
   const { editor } = deps
-  const { selection } = editor.state
-  const text = editor.state.doc.textBetween(selection.from, selection.to, '\n')
-  void writeTextOrNotify(deps, text)
-  editor.commands.deleteSelection()
+  const captured = captureSelection(editor)
+  void writeSelectionOrNotify(deps, captured.html, captured.text).then(
+    (written) => {
+      if (
+        written &&
+        !editor.isDestroyed &&
+        editor.isEditable &&
+        editor.state.doc === captured.doc &&
+        editor.state.selection.eq(captured.selection)
+      ) {
+        editor.commands.deleteSelection()
+      }
+    }
+  )
 }
 
 export function copySelection(deps: ClipboardDeps): void {
-  const { editor } = deps
-  const { selection } = editor.state
-  const text = editor.state.doc.textBetween(selection.from, selection.to, '\n')
-  void writeTextOrNotify(deps, text)
+  const captured = captureSelection(deps.editor)
+  void writeSelectionOrNotify(deps, captured.html, captured.text)
 }
 
 export async function pasteFromClipboard(deps: ClipboardDeps): Promise<void> {

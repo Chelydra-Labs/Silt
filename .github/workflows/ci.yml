@@ -65,11 +65,12 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Linux webview dependencies
-        # wails3 generate bindings (npm prepare) loads Wails CGO packages.
-        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
-        with:
-          packages: ${{ env.WEBVIEW_APT_PACKAGES }}
-          version: webview-1
+        # Resolve against the current runner mirror; cached apt archives can
+        # retain package versions that have since been removed from Ubuntu.
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y $WEBVIEW_APT_PACKAGES
+          pkg-config --exists gtk4 webkitgtk-6.0 libsoup-3.0
 
       - uses: actions/setup-go@v7
         with:
@@ -137,10 +138,10 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Linux webview dependencies
-        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
-        with:
-          packages: ${{ env.WEBVIEW_APT_PACKAGES }}
-          version: webview-1
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y $WEBVIEW_APT_PACKAGES
+          pkg-config --exists gtk4 webkitgtk-6.0 libsoup-3.0
 
       - uses: actions/setup-go@v7
         with:
@@ -159,12 +160,11 @@ jobs:
         run: go vet ./...
 
       - name: Install GTK3 build dependencies
-        # The opt-in -tags gtk3 lane (legacy WebKit2GTK) needs a different
-        # toolchain from the GTK4 default, so it gets its own cached apt set.
-        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
-        with:
-          packages: libgtk-3-dev libwebkit2gtk-4.1-dev
-          version: gtk3-1
+        # The opt-in -tags gtk3 lane needs a separate legacy toolchain.
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libgtk-3-dev libwebkit2gtk-4.1-dev
+          pkg-config --exists gtk+-3.0 webkit2gtk-4.1
 
       - name: Build and vet Go (gtk3 variant)
         # Nothing else in CI compiles the linux && gtk3 combination, which
@@ -215,10 +215,10 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Linux webview dependencies
-        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
-        with:
-          packages: ${{ env.WEBVIEW_APT_PACKAGES }}
-          version: webview-1
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y $WEBVIEW_APT_PACKAGES
+          pkg-config --exists gtk4 webkitgtk-6.0 libsoup-3.0
 
       - uses: actions/setup-go@v7
         with:
@@ -304,10 +304,10 @@ jobs:
       - name: Install Linux webview dependencies
         # govulncheck analyzes Wails v3's CGO packages, which need the same
         # GTK4 / WebKitGTK 6.0 dev headers as the build jobs.
-        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
-        with:
-          packages: ${{ env.WEBVIEW_APT_PACKAGES }}
-          version: webview-1
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y $WEBVIEW_APT_PACKAGES
+          pkg-config --exists gtk4 webkitgtk-6.0 libsoup-3.0
 
       - uses: actions/setup-go@v7
         with:
