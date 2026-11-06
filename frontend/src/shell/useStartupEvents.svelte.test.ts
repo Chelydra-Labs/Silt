@@ -219,6 +219,101 @@ describe('useStartupEvents (#768)', () => {
     expect(mocks.GetStartupEvents).toHaveBeenCalledOnce()
   })
 
+  // #1004: the vault scan emits duplicate-id warnings before the frontend
+  // mounts, so they arrive as queued startup events — the replay hop is the
+  // PR's only user-facing delivery path and must reach the toast builder.
+  it('replays a queued duplicate-id warning as one sticky error toast', async () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    mocks.GetStartupEvents.mockResolvedValue([
+      {
+        Name: EventName.EventIndexDuplicateIDWarning,
+        Payload: {
+          block_id: '11111111-1111-1111-1111-111111111111',
+          pages: [
+            {
+              source: 'vault',
+              notebook: 'Work',
+              section: '',
+              page: 'Meetings'
+            },
+            {
+              source: 'vault',
+              notebook: 'Personal',
+              section: '',
+              page: 'Meetings'
+            }
+          ],
+          within_page: false
+        }
+      }
+    ])
+    const { deps } = makeDeps()
+    controller = createStartupEvents(deps)
+    controller.attach()
+
+    // attach() drains the backlog asynchronously (MarkFrontendReady →
+    // GetStartupEvents → dispatchStartupEvent).
+    await vi.waitFor(() => {
+      expect(mocks.pushNotification).toHaveBeenCalledOnce()
+    })
+    // One sticky error toast naming BOTH page paths (the carriers differ
+    // only by notebook — the label must keep them distinguishable).
+    expect(mocks.pushNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'error',
+        autoDismissMs: 0,
+        message: expect.stringContaining('“Work/Meetings”'),
+        action: expect.objectContaining({ label: 'Show file' })
+      })
+    )
+    expect(mocks.pushNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('“Personal/Meetings”')
+      })
+    )
+  })
+
+  // The watcher/save path delivers the same warning live (no queue): the
+  // Events.On handler must fan out to the same toast builder as the replay.
+  it('a live duplicate-id warning emit pushes the same sticky error toast', () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    const { deps } = makeDeps()
+    controller = createStartupEvents(deps)
+    controller.attach()
+
+    const handler = bus.handlers.get(EventName.EventIndexDuplicateIDWarning)!
+    // Malformed payloads are dropped silently — no throw, no toast.
+    handler({ data: undefined })
+    handler({ data: { block_id: 'x', pages: [], within_page: true } })
+    expect(mocks.pushNotification).not.toHaveBeenCalled()
+
+    handler({
+      data: {
+        block_id: '11111111-1111-1111-1111-111111111111',
+        pages: [
+          {
+            source: 'vault',
+            notebook: 'Work',
+            section: 'Sprint',
+            page: 'Board'
+          }
+        ],
+        within_page: true
+      }
+    })
+    expect(mocks.pushNotification).toHaveBeenCalledOnce()
+    expect(mocks.pushNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'error',
+        autoDismissMs: 0,
+        message: expect.stringContaining('“Work/Sprint/Board”'),
+        action: expect.objectContaining({ label: 'Show file' })
+      })
+    )
+  })
+
   it('does not replay queued events when dispose() races the replay drain', async () => {
     const bus = makeBus()
     wireEventsOn(bus)

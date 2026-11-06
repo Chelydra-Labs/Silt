@@ -241,6 +241,126 @@ func TestIndexPaths_CleanVaultNoWarnings(t *testing.T) {
 	}
 }
 
+// TestIndexFileBlocks_DuplicateTaskDoesNotGainSkippedEdges pins the
+// dependency half of first-occurrence-wins: a duplicated task line whose two
+// copies carry different [blocked_by::] tokens must leave only the FIRST
+// copy's edge on the surviving row — the skipped copy's token would reference
+// text the survivor's raw_content does not contain (a phantom blocked-by on
+// the dashboard).
+func TestIndexFileBlocks_DuplicateTaskDoesNotGainSkippedEdges(t *testing.T) {
+	dm := newTestDB(t)
+
+	const (
+		taskID      = "11111111-1111-1111-1111-111111111111"
+		firstTarget = "22222222-2222-2222-2222-222222222222"
+		skipTarget  = "33333333-3333-3333-3333-333333333333"
+	)
+	first := sampleTaskBlock(taskID, 1)
+	first.BlockedBy = []string{firstTarget}
+	second := sampleTaskBlock(taskID, 3)
+	second.BlockedBy = []string{skipTarget}
+
+	blocks := []parser.ParsedBlock{
+		first,
+		sampleTaskBlock(firstTarget, 2),
+		second,
+		sampleTaskBlock(skipTarget, 4),
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Sprint", "Board", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks with a duplicated task: %v", err)
+	}
+
+	var edges int
+	if err := dm.SQLDB().QueryRow(
+		"SELECT COUNT(*) FROM task_dependencies WHERE block_id = ?", taskID,
+	).Scan(&edges); err != nil {
+		t.Fatalf("count surviving task edges: %v", err)
+	}
+	if edges != 1 {
+		t.Errorf("task_dependencies for surviving task = %d, want 1 (only the first occurrence's [blocked_by::] token)", edges)
+	}
+	var leaked int
+	if err := dm.SQLDB().QueryRow(
+		"SELECT COUNT(*) FROM task_dependencies WHERE block_id = ? AND blocked_by_id = ?",
+		taskID, skipTarget,
+	).Scan(&leaked); err != nil {
+		t.Fatalf("probe skipped copy's edge: %v", err)
+	}
+	if leaked != 0 {
+		t.Errorf("skipped occurrence's edge %s leaked onto the surviving row", skipTarget)
+	}
+}
+
+// TestIndexScanResults_DuplicateTaskEdgesFollowSurvivingRow pins the batched
+// path's dedupe against the row-owning occurrence: the by-id clear re-homes a
+// cross-file duplicate to the LAST carrier, so a diverged earlier copy's edge
+// must not attach to the surviving row — and within that last file the insert
+// loop's first occurrence wins, so a skipped in-file copy's edge must not
+// either.
+func TestIndexScanResults_DuplicateTaskEdgesFollowSurvivingRow(t *testing.T) {
+	dm := newTestDB(t)
+	got := captureDuplicateIDs(t, dm)
+
+	const (
+		taskID        = "11111111-1111-1111-1111-111111111111"
+		earlierTarget = "22222222-2222-2222-2222-222222222222"
+		survivingTgt  = "33333333-3333-3333-3333-333333333333"
+		skippedInFile = "44444444-4444-4444-4444-444444444444"
+	)
+	earlier := sampleTaskBlock(taskID, 1)
+	earlier.BlockedBy = []string{earlierTarget}
+	surviving := sampleTaskBlock(taskID, 1)
+	surviving.BlockedBy = []string{survivingTgt}
+	skipped := sampleTaskBlock(taskID, 2)
+	skipped.BlockedBy = []string{skippedInFile}
+
+	results := []parser.ScanResult{
+		{
+			Notebook: "Work", Section: "Sprint", Page: "Board",
+			Blocks: []parser.ParsedBlock{earlier, sampleTaskBlock(earlierTarget, 2)},
+		},
+		{
+			Notebook: "Work", Section: "Projects", Page: "Roadmap",
+			Blocks: []parser.ParsedBlock{
+				surviving,
+				skipped,
+				sampleTaskBlock(survivingTgt, 3),
+				sampleTaskBlock(skippedInFile, 4),
+			},
+		},
+	}
+	if _, _, err := dm.IndexScanResults(results); err != nil {
+		t.Fatalf("IndexScanResults with a duplicated task: %v", err)
+	}
+	if len(*got) != 1 || !(*got)[0].WithinPage {
+		t.Errorf("handler warnings = %+v, want 1 within-page warning for the skipped in-file copy", *got)
+	}
+
+	// The surviving row belongs to the LAST carrier's first occurrence, so
+	// exactly its edge may exist.
+	var edges int
+	if err := dm.SQLDB().QueryRow(
+		"SELECT COUNT(*) FROM task_dependencies WHERE block_id = ?", taskID,
+	).Scan(&edges); err != nil {
+		t.Fatalf("count surviving task edges: %v", err)
+	}
+	if edges != 1 {
+		t.Errorf("task_dependencies for surviving task = %d, want 1 (the row-owning occurrence's [blocked_by::] token only)", edges)
+	}
+	for _, phantom := range []string{earlierTarget, skippedInFile} {
+		var leaked int
+		if err := dm.SQLDB().QueryRow(
+			"SELECT COUNT(*) FROM task_dependencies WHERE block_id = ? AND blocked_by_id = ?",
+			taskID, phantom,
+		).Scan(&leaked); err != nil {
+			t.Fatalf("probe phantom edge %s: %v", phantom, err)
+		}
+		if leaked != 0 {
+			t.Errorf("non-owning copy's edge %s attached to the surviving row", phantom)
+		}
+	}
+}
+
 // TestIndexScanResults_DuplicateIDStillIndexesBothFiles pins that a
 // cross-file duplicate in the batched scan path does not abort the batch:
 // both files' non-colliding blocks index (the id itself lands on whichever

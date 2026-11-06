@@ -842,7 +842,10 @@ func (dm *DatabaseManager) indexFileBlocksStage(tx *sql.Tx, source, notebook, se
 	// detects within-file cycles only. The batched indexer's cross-file
 	// check catches cycles that span files.
 	warnOnDependencyCycle(blocks)
-	return indexTaskDependencies(tx, stmts.taskDep, blocks, logTag)
+	// First-occurrence-wins like the insert loop: a skipped duplicate's
+	// [blocked_by::] tokens must not attach to the surviving row as edges
+	// its own raw_content does not contain.
+	return indexTaskDependencies(tx, stmts.taskDep, firstBlockOccurrences(blocks), logTag)
 }
 
 // IndexFileBlocks updates the index with one file's blocks in a single
@@ -1209,11 +1212,23 @@ func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexSt
 		log.Printf("db: task_dependencies cycle detected across indexed files — a hand-edited or externally-synced file introduced a circular dependency; the setter normally prevents this")
 	}
 
-	// Dependency second pass over EVERY indexed file's blocks (flattened),
-	// AFTER all block rows are inserted. Edges may cross file boundaries (#301).
-	var allBlocks []parser.ParsedBlock
-	for _, res := range results {
-		allBlocks = append(allBlocks, res.Blocks...)
+	// Dependency second pass over EVERY indexed file's blocks, AFTER all
+	// block rows are inserted. Edges may cross file boundaries (#301).
+	// Deduped to the occurrence that owns the surviving row — the by-id
+	// clear re-homes a cross-file duplicate to the LAST carrier, while
+	// within one file the insert loop's first occurrence wins — so iterate
+	// results in reverse and keep each id's first (row-owning) occurrence;
+	// a skipped copy's edges must not attach to the surviving row.
+	allBlocks := make([]parser.ParsedBlock, 0, len(results))
+	seenIDs := make(map[string]struct{})
+	for i := len(results) - 1; i >= 0; i-- {
+		for _, b := range firstBlockOccurrences(results[i].Blocks) {
+			if _, dup := seenIDs[b.ID]; dup {
+				continue
+			}
+			seenIDs[b.ID] = struct{}{}
+			allBlocks = append(allBlocks, b)
+		}
 	}
 	if err := indexTaskDependencies(tx, stmts.taskDep, allBlocks, "IndexScanResults"); err != nil {
 		return indexedCount, skipped, err

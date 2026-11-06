@@ -37,9 +37,11 @@ export type OpenPageForDuplicateID = (
 ) => void
 
 function pageLabel(p: DuplicateIDPage): string {
-  // The section is part of the page's path in the sidebar; keep the label
-  // short and let "Show file" disambiguate same-named pages.
-  return p.section ? `${p.section}/${p.page}` : p.page
+  // Full sidebar path, notebook included: carriers differing only by
+  // notebook (Work/Meetings vs Personal/Meetings) must stay distinguishable,
+  // and the "Show file" CTA opens only the first carrier, so it cannot
+  // disambiguate them either.
+  return [p.notebook, p.section, p.page].filter(Boolean).join('/')
 }
 
 function markerTail(blockId: string): string {

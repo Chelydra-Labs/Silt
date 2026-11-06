@@ -37,8 +37,24 @@ describe('duplicateIdToast', () => {
 
   it('names BOTH carrier pages for a cross-file duplicate', () => {
     const n = duplicateIdToast(crossFile, () => {})
-    expect(n.message).toContain('“Sprint/Board”')
-    expect(n.message).toContain('“Projects/Roadmap”')
+    expect(n.message).toContain('“Work/Sprint/Board”')
+    expect(n.message).toContain('“Work/Projects/Roadmap”')
+  })
+
+  it('distinguishes carriers that differ only by notebook', () => {
+    // Two notebooks carrying the same page name is the normal cross-notebook
+    // collision (copying Work/Meetings.md to Personal/Meetings.md); without
+    // the notebook in the label both carriers render as "Meetings".
+    const w: DuplicateIDWarning = {
+      ...crossFile,
+      pages: [
+        { source: 'vault', notebook: 'Work', section: '', page: 'Meetings' },
+        { source: 'vault', notebook: 'Personal', section: '', page: 'Meetings' }
+      ]
+    }
+    const n = duplicateIdToast(w, () => {})
+    expect(n.message).toContain('“Work/Meetings”')
+    expect(n.message).toContain('“Personal/Meetings”')
   })
 
   it('counts further carrier pages instead of silently dropping them', () => {
@@ -55,7 +71,7 @@ describe('duplicateIdToast', () => {
 
   it('uses within-page copy when both occurrences live in one page', () => {
     const n = duplicateIdToast(withinPage, () => {})
-    expect(n.message).toContain('“Board”')
+    expect(n.message).toContain('“Work/Board”')
     expect(n.message).toContain('twice')
     // One page only — must not claim a second page.
     expect(n.message).not.toContain('Roadmap')
@@ -86,8 +102,8 @@ describe('duplicateIdToast', () => {
 
   it('prefers the cross-page copy when a two-page collision also has a doubled page', () => {
     const n = duplicateIdToast(crossAndWithin, () => {})
-    expect(n.message).toContain('“Board”')
-    expect(n.message).toContain('“Projects/Roadmap”')
+    expect(n.message).toContain('“Work/Board”')
+    expect(n.message).toContain('“Work/Projects/Roadmap”')
     expect(n.message).not.toContain('twice')
   })
 
