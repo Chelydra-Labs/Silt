@@ -152,6 +152,45 @@ func TestScanDuplicateIDs_SkipsUnresolvableResults(t *testing.T) {
 	}
 }
 
+// TestIndexPaths_CleanVaultNoWarnings pins the noise floor for the
+// transaction-internal detector: indexing clean files through BOTH paths
+// (single-file and batched scan) dispatches nothing. The within-file check
+// is error-path-only (the constraint firing) and the cross-file check is a
+// scan-side pure pass — no clean-vault query or per-block probe exists on
+// the hot path.
+func TestIndexPaths_CleanVaultNoWarnings(t *testing.T) {
+	dm := newTestDB(t)
+	got := captureDuplicateIDs(t, dm)
+
+	pageA := []parser.ScanResult{{
+		Notebook: "Work", Section: "Sprint", Page: "Board",
+		Blocks: []parser.ParsedBlock{
+			sampleTaskBlock("11111111-1111-1111-1111-111111111111", 1),
+			sampleNoteBlock("22222222-2222-2222-2222-222222222222", 2),
+		},
+	}}
+	pageB := []parser.ScanResult{{
+		Notebook: "Work", Section: "Projects", Page: "Roadmap",
+		Blocks: []parser.ParsedBlock{
+			sampleNoteBlock("33333333-3333-3333-3333-333333333333", 1),
+		},
+	}}
+
+	if _, _, err := dm.IndexScanResults(append(pageA, pageB...)); err != nil {
+		t.Fatalf("IndexScanResults: %v", err)
+	}
+	if err := dm.IndexFileWithProjection("vault", "Work", "Sprint", "Board",
+		pageA[0].Blocks, nil, "", nil, PageCoreFields{}); err != nil {
+		t.Fatalf("IndexFileWithProjection: %v", err)
+	}
+	if warnings := ScanDuplicateIDs(append(pageA, pageB...)); len(warnings) != 0 {
+		t.Errorf("scan grouping warnings = %+v, want none", warnings)
+	}
+	if len(*got) != 0 {
+		t.Errorf("dispatched warnings = %+v, want none on a clean vault", *got)
+	}
+}
+
 // TestIndexScanResults_DuplicateIDStillIndexesBothFiles pins that a
 // cross-file duplicate in the batched scan path does not abort the batch:
 // both files' non-colliding blocks index (the id itself lands on whichever

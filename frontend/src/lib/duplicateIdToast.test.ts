@@ -25,6 +25,13 @@ describe('duplicateIdToast', () => {
     pages: [{ source: 'vault', notebook: 'Work', section: '', page: 'Board' }]
   }
 
+  // Scan-detected combo: two carrier pages AND one of them doubled — the
+  // cross-page copy must win.
+  const crossAndWithin: DuplicateIDWarning = {
+    ...withinPage,
+    pages: [withinPage.pages[0], crossFile.pages[1]]
+  }
+
   it('builds a sticky error notification (no auto-dismiss)', () => {
     const n = duplicateIdToast(crossFile, () => {})
     expect(n.kind).toBe('error')
@@ -37,6 +44,15 @@ describe('duplicateIdToast', () => {
     expect(n.message).toContain('“Projects/Roadmap”')
   })
 
+  it('counts further carrier pages instead of silently dropping them', () => {
+    const threePages: DuplicateIDWarning = {
+      ...crossFile,
+      pages: [...crossFile.pages, { source: 'vault', notebook: 'Work', section: '', page: 'Notes' }]
+    }
+    const n = duplicateIdToast(threePages, () => {})
+    expect(n.message).toContain('and 1 more page')
+  })
+
   it('uses within-page copy when both occurrences live in one page', () => {
     const n = duplicateIdToast(withinPage, () => {})
     expect(n.message).toContain('“Board”')
@@ -45,8 +61,15 @@ describe('duplicateIdToast', () => {
     expect(n.message).not.toContain('Roadmap')
   })
 
+  it('prefers the cross-page copy when a two-page collision also has a doubled page', () => {
+    const n = duplicateIdToast(crossAndWithin, () => {})
+    expect(n.message).toContain('“Board”')
+    expect(n.message).toContain('“Projects/Roadmap”')
+    expect(n.message).not.toContain('twice')
+  })
+
   it('leads with the user-visible impact and avoids internal jargon', () => {
-    for (const w of [crossFile, withinPage]) {
+    for (const w of [crossFile, withinPage, crossAndWithin]) {
       const n = duplicateIdToast(w, () => {})
       expect(n.message).toContain('may open the wrong block')
       expect(n.message).not.toContain('((uuid))')

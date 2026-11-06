@@ -53,9 +53,17 @@ export function duplicateIdToast(
   openPage: OpenPageForDuplicateID
 ): PushOptions {
   const first = w.pages[0]
-  const message = w.within_page
-    ? `The page “${pageLabel(first)}” contains the same identity marker twice, so links to it may open the wrong block. Delete one copy or give one a fresh marker.`
-    : `The pages “${pageLabel(first)}” and “${pageLabel(w.pages[1] ?? first)}” carry the same identity marker, so links to it may open the wrong block. Delete one copy or give one a fresh marker.`
+  const second = w.pages[1] ?? first
+  const more =
+    w.pages.length > 2
+      ? ` and ${w.pages.length - 2} more page${w.pages.length === 3 ? '' : 's'}`
+      : ''
+  // Two or more carrier pages always use the cross-page copy — even when one
+  // page also holds the id twice, the cross-file half is the bigger problem.
+  const message =
+    w.pages.length === 1
+      ? `The page “${pageLabel(first)}” contains the same identity marker twice, so links to it may open the wrong block. Delete one copy or give one a fresh marker.`
+      : `The pages “${pageLabel(first)}” and “${pageLabel(second)}”${more} carry the same identity marker, so links to it may open the wrong block. Delete one copy or give one a fresh marker.`
   return {
     kind: 'error',
     message,
