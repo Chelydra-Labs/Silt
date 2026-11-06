@@ -1,3 +1,0 @@
-- Red CI on verified head: apt install must refresh package indexes and verify required development packages (.github/workflows/ci.yml:67) — fixed in ce111b27
-- ARCHITECTURE.md "There is no Go clipboard write binding" is overbroad (ARCHITECTURE.md:1805) — fixed in d02bd5b8
-- Real-editor menu Copy → Paste preserves nested list depth (frontend/src/lib/editor/clipboardPaste.test.ts:382) — fixed in ce111b27
