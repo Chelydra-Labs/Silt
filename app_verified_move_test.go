@@ -1,0 +1,370 @@
+package main
+
+// Verified-move tests (#1021): moves dispatch per root like writes — on a
+// detected non-atomic root every rename/move/tree/trash operation copies
+// through the verified machinery (the source survives every copy-side
+// failure and is removed only after the copy is verified durable), while
+// local roots keep the plain os.Rename. Torn copies are simulated with the
+// VerifiedWriteAfterRenameHook seam, as in the verified-write tests.
+
+import (
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"silt/backend/parser"
+)
+
+// swapVerifiedMoveSeam counts verifiedMoveFile calls while delegating to the
+// real primitive (the dispatch's verified branch is what must fire).
+func swapVerifiedMoveSeam(t *testing.T) *int {
+	t.Helper()
+	calls := 0
+	orig := verifiedMoveFile
+	verifiedMoveFile = func(oldPath, newPath, backupPath string) error {
+		calls++
+		return parser.MoveFileVerified(oldPath, newPath, backupPath)
+	}
+	t.Cleanup(func() { verifiedMoveFile = orig })
+	return &calls
+}
+
+// 1. Torn copy mid-move: the old path must stay intact (a bare rename would
+// have consumed it before any verification — the #1021 data-loss shape), the
+// new path must never hold a partial file, and the typed error must name
+// where the original still lives.
+func TestVerifiedMove_TornCopyMidMoveKeepsOriginal(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	notebook, page := "VMNB", "TornMove"
+	blockID := "3a3a3a3a-4b4b-4c5c-8d6d-7e7e7e7e7e7e"
+	seedConflictPage(t, app, notebook, "", page, blockID, "precious move body")
+	oldPath := conflictPagePath(app, notebook, "", page)
+	original, err := os.ReadFile(oldPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPath := conflictPagePath(app, notebook, "", "TornMoveNew")
+
+	renames := 0
+	origHook := parser.VerifiedWriteAfterRenameHook
+	parser.VerifiedWriteAfterRenameHook = func(path string) error {
+		renames++
+		if strings.HasSuffix(path, "TornMoveNew.md") && renames <= 2 {
+			// move copy + retry torn; the restore rename stays clean
+			return os.WriteFile(path, []byte("TORN-PARTIAL"), 0o644)
+		}
+		return nil
+	}
+	t.Cleanup(func() { parser.VerifiedWriteAfterRenameHook = origHook })
+
+	err = app.RenamePage(notebook, "", page, "TornMoveNew")
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeVerifiedWriteFailed {
+		t.Fatalf("want typed %s error, got %v", CodeVerifiedWriteFailed, err)
+	}
+
+	got, rerr := os.ReadFile(oldPath)
+	if rerr != nil {
+		t.Fatalf("original vanished after torn move: %v", rerr)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("original bytes altered by a torn move:\n got: %q\nwant: %q", got, original)
+	}
+	if _, serr := os.Stat(newPath); !os.IsNotExist(serr) {
+		t.Errorf("new path holds a file after a failed move (stat err = %v) — a partial must never present as the page", serr)
+	}
+	pending := filepath.Join(app.vaultPath, ".system", "writebackups", notebook, "TornMoveNew.md.pending")
+	gotPending, perr := os.ReadFile(pending)
+	if perr != nil || !strings.Contains(string(gotPending), "precious move body") {
+		t.Errorf("pending copy = %q (err = %v), want the pre-move bytes retained", gotPending, perr)
+	}
+	if !strings.Contains(ipc.Message, oldPath) {
+		t.Errorf("typed error must name the intact original: %q", ipc.Message)
+	}
+	// The abort landed before clearAndReindex: the page is still loadable at
+	// its old locator (fail-safe — the next scan reconciles, nothing more).
+	if blocks, ferr := app.FetchPageBlocks(notebook, "", page); ferr != nil || len(blocks) == 0 {
+		t.Errorf("old locator must stay indexed after a failed move (blocks=%d err=%v)", len(blocks), ferr)
+	}
+}
+
+// 2. Local root: the plain rename path — no verified-move calls, no backup
+// churn, and the file identity survives the move into trash (a copy would
+// change it; DeletePage's trash move does no content rewrite, so identity
+// isolates the move mechanism itself).
+func TestVerifiedMove_LocalRootTakesPlainRename(t *testing.T) {
+	app := newTestApp(t)
+	orig := rootNetworkFSCheck
+	rootNetworkFSCheck = func(string) error { return nil }
+	t.Cleanup(func() { rootNetworkFSCheck = orig })
+	app.detectVerifiedWriteRoot(app.vaultPath)
+
+	moveCalls := swapVerifiedMoveSeam(t)
+
+	notebook, page := "VMNB", "LocalMove"
+	blockID := "4b4b4b4b-5c5c-4d6d-8e7e-8f8f8f8f8f8f"
+	seedConflictPage(t, app, notebook, "", page, blockID, "local body")
+	src := conflictPagePath(app, notebook, "", page)
+	before, err := os.Stat(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.DeletePage(notebook, "", page); err != nil {
+		t.Fatalf("local delete: %v", err)
+	}
+	if n := *moveCalls; n != 0 {
+		t.Errorf("local root took the verified move path (%d primitive calls)", n)
+	}
+	var trashed string
+	_ = filepath.WalkDir(app.trashBase(), func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(p, page+".md") {
+			trashed = p
+		}
+		return nil
+	})
+	if trashed == "" {
+		t.Fatal("no trashed copy found under .system/trash")
+	}
+	after, err := os.Stat(trashed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Errorf("local trash move changed the file identity — the plain rename must be preserved")
+	}
+	if _, err := os.Stat(filepath.Join(app.vaultPath, ".system", "writebackups")); !os.IsNotExist(err) {
+		t.Errorf("local move created backup churn: %v", err)
+	}
+}
+
+// 3. moveToTrash on a forced-network root takes the copy+verify path and the
+// trashed copy holds the exact original bytes — the manual trash restore
+// stays possible.
+func TestVerifiedMove_TrashOnNetworkRootCopiesVerified(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	notebook, page := "VMNB", "TrashMe"
+	blockID := "5c5c5c5c-6d6d-4e7e-8f8f-9a9a9a9a9a9a"
+	seedConflictPage(t, app, notebook, "", page, blockID, "trash me safely")
+	src := conflictPagePath(app, notebook, "", page)
+	original, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	moveCalls := swapVerifiedMoveSeam(t)
+	if err := app.DeletePage(notebook, "", page); err != nil {
+		t.Fatalf("delete via verified move: %v", err)
+	}
+	if n := *moveCalls; n != 1 {
+		t.Errorf("verified move primitive calls = %d, want 1 (copy+verify into trash)", n)
+	}
+	if _, serr := os.Stat(src); !os.IsNotExist(serr) {
+		t.Errorf("source not removed after the verified copy landed (stat err = %v)", serr)
+	}
+
+	var trashed string
+	_ = filepath.WalkDir(app.trashBase(), func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(p, page+".md") {
+			trashed = p
+		}
+		return nil
+	})
+	if trashed == "" {
+		t.Fatal("no trashed copy found under .system/trash")
+	}
+	got, rerr := os.ReadFile(trashed)
+	if rerr != nil || string(got) != string(original) {
+		t.Errorf("trashed copy = %q (err = %v), want the exact original bytes for manual restore", got, rerr)
+	}
+	if idx, ferr := app.FetchPageBlocks(notebook, "", page); ferr == nil && len(idx) > 0 {
+		t.Errorf("deleted page still indexed: %d blocks", len(idx))
+	}
+}
+
+// 4. Torn trash move: the delete must fail loud with the typed error and the
+// page must survive intact at its origin — a bare rename torn mid-move would
+// strand the file between the vault and the trash.
+func TestVerifiedMove_TornTrashMoveKeepsOriginal(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	notebook, page := "VMNB", "TornTrash"
+	blockID := "6d6d6d6d-7e7e-4f8f-9a0a-0b0b0b0b0b0b"
+	seedConflictPage(t, app, notebook, "", page, blockID, "do not strand me")
+	src := conflictPagePath(app, notebook, "", page)
+	original, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	origHook := parser.VerifiedWriteAfterRenameHook
+	parser.VerifiedWriteAfterRenameHook = func(path string) error {
+		if strings.Contains(path, filepath.Join(".system", "trash")) {
+			return os.WriteFile(path, []byte("TORN-PARTIAL"), 0o644)
+		}
+		return nil
+	}
+	t.Cleanup(func() { parser.VerifiedWriteAfterRenameHook = origHook })
+
+	err = app.DeletePage(notebook, "", page)
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeVerifiedWriteFailed {
+		t.Fatalf("want typed %s error (wrapped by the trash funnel), got %v", CodeVerifiedWriteFailed, err)
+	}
+	got, rerr := os.ReadFile(src)
+	if rerr != nil {
+		t.Fatalf("page vanished after a torn trash move: %v", rerr)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("page bytes altered by a torn trash move:\n got: %q\nwant: %q", got, original)
+	}
+	if blocks, ferr := app.FetchPageBlocks(notebook, "", page); ferr != nil || len(blocks) == 0 {
+		t.Errorf("page must stay indexed after a failed delete (blocks=%d err=%v)", len(blocks), ferr)
+	}
+}
+
+// 5. Torn tree move mid-walk: the whole section — nested pages and non-page
+// attachments included — must survive byte-identical at the old directory,
+// with nothing landed at the new one. Pre-#1021 the bare directory rename
+// followed by torn forward writes left the rolled-back pages holding torn
+// bytes.
+func TestVerifiedMove_TornTreeMoveKeepsTreeWhole(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	notebook := "VMNB"
+	alphaID := "7e7e7e7e-8f8f-4a9a-0b1b-1c1c1c1c1c1c"
+	betaID := "8f8f8f8f-9a9a-4b0b-1c2c-2d2d2d2d2d2d"
+	seedConflictPage(t, app, notebook, "OldSec", "Alpha", alphaID, "alpha body")
+	seedConflictPage(t, app, notebook, "OldSec/Deep", "Beta", betaID, "beta body")
+	attach := filepath.Join(app.vaultPath, notebook, "OldSec", "att.bin")
+	attachBytes := []byte("attachment-bytes-\x00\x01")
+	if err := os.WriteFile(attach, attachBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	alphaPath := conflictPagePath(app, notebook, "OldSec", "Alpha")
+	betaPath := conflictPagePath(app, notebook, "OldSec/Deep", "Beta")
+	alphaOrig, _ := os.ReadFile(alphaPath)
+	betaOrig, _ := os.ReadFile(betaPath)
+
+	origHook := parser.VerifiedWriteAfterRenameHook
+	parser.VerifiedWriteAfterRenameHook = func(path string) error {
+		if strings.Contains(path, "NewSec") {
+			return os.WriteFile(path, []byte("TORN-PARTIAL"), 0o644)
+		}
+		return nil
+	}
+	t.Cleanup(func() { parser.VerifiedWriteAfterRenameHook = origHook })
+
+	err := app.RenameSection(notebook, "OldSec", "NewSec")
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeVerifiedWriteFailed {
+		t.Fatalf("want typed %s error, got %v", CodeVerifiedWriteFailed, err)
+	}
+
+	if got, rerr := os.ReadFile(alphaPath); rerr != nil || string(got) != string(alphaOrig) {
+		t.Errorf("Alpha not intact at old dir after torn tree move (err=%v):\n got: %q\nwant: %q", rerr, got, alphaOrig)
+	}
+	if got, rerr := os.ReadFile(betaPath); rerr != nil || string(got) != string(betaOrig) {
+		t.Errorf("Beta not intact at old dir after torn tree move (err=%v):\n got: %q\nwant: %q", rerr, got, betaOrig)
+	}
+	if got, rerr := os.ReadFile(attach); rerr != nil || string(got) != string(attachBytes) {
+		t.Errorf("attachment not intact at old dir (err=%v)", rerr)
+	}
+	// Nothing landed at the new directory: not even an empty husk.
+	if _, serr := os.Stat(filepath.Join(app.vaultPath, notebook, "NewSec")); !os.IsNotExist(serr) {
+		t.Errorf("NewSec exists after a failed tree move (stat err = %v)", serr)
+	}
+	if blocks, ferr := app.FetchPageBlocks(notebook, "OldSec", "Alpha"); ferr != nil || len(blocks) == 0 {
+		t.Errorf("old section must stay indexed after a failed tree move (blocks=%d err=%v)", len(blocks), ferr)
+	}
+}
+
+// 6. Index coherence after a verified move that succeeds: the old locator's
+// rows are cleared, the new one indexed with block IDs preserved, and the
+// file lives only at the new path.
+func TestVerifiedMove_RenamePageOnNetworkRootIndexesNewPath(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	notebook, page := "VMNB", "IdxMove"
+	blockID := "9a9a9a9a-0b0b-4c1c-2d3d-3e3e3e3e3e3e"
+	seedConflictPage(t, app, notebook, "", page, blockID, "index me after the move")
+
+	if err := app.RenamePage(notebook, "", page, "IdxMoveNew"); err != nil {
+		t.Fatalf("verified rename on network root: %v", err)
+	}
+	if _, serr := os.Stat(conflictPagePath(app, notebook, "", page)); !os.IsNotExist(serr) {
+		t.Errorf("old path still holds a file (stat err = %v)", serr)
+	}
+	if _, serr := os.Stat(conflictPagePath(app, notebook, "", "IdxMoveNew")); serr != nil {
+		t.Fatalf("new path missing after verified move: %v", serr)
+	}
+	blocks, err := app.FetchPageBlocks(notebook, "", "IdxMoveNew")
+	if err != nil || len(blocks) == 0 {
+		t.Fatalf("new locator not indexed after verified move (blocks=%d err=%v)", len(blocks), err)
+	}
+	if blocks[0].ID != blockID {
+		t.Errorf("block ID not preserved across the verified move: %q", blocks[0].ID)
+	}
+	if idx, ferr := app.FetchPageBlocks(notebook, "", page); ferr == nil && len(idx) > 0 {
+		t.Errorf("old locator still indexed after verified move: %d blocks", len(idx))
+	}
+}
+
+// 7. A verified tree move that succeeds: the whole tree (pages with updated
+// frontmatter, attachments byte-identical) lands at the new directory, the
+// old directory is gone (empty husk removed), and the index follows.
+func TestVerifiedMove_TreeRenameOnNetworkRootSucceeds(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	notebook := "VMNB"
+	alphaID := "0b0b0b0b-1c1c-4d2d-3e4e-4f4f4f4f4f4f"
+	betaID := "1c1c1c1c-2d2d-4e3e-4f5f-5a5a5a5a5a5a"
+	seedConflictPage(t, app, notebook, "OldSec", "Alpha", alphaID, "alpha body")
+	seedConflictPage(t, app, notebook, "OldSec/Deep", "Beta", betaID, "beta body")
+	attach := filepath.Join(app.vaultPath, notebook, "OldSec", "att.bin")
+	attachBytes := []byte("attachment-bytes-\x00\x02")
+	if err := os.WriteFile(attach, attachBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.RenameSection(notebook, "OldSec", "NewSec"); err != nil {
+		t.Fatalf("verified tree rename on network root: %v", err)
+	}
+
+	if _, serr := os.Stat(filepath.Join(app.vaultPath, notebook, "OldSec")); !os.IsNotExist(serr) {
+		t.Errorf("old section directory still exists after verified tree move (stat err = %v)", serr)
+	}
+	newAlpha, err := os.ReadFile(conflictPagePath(app, notebook, "NewSec", "Alpha"))
+	if err != nil {
+		t.Fatalf("Alpha missing at new dir: %v", err)
+	}
+	if !strings.Contains(string(newAlpha), "NewSec") {
+		t.Errorf("Alpha frontmatter not rewritten to the new section: %q", newAlpha)
+	}
+	if got, rerr := os.ReadFile(filepath.Join(app.vaultPath, notebook, "NewSec", "Deep", "Beta.md")); rerr != nil || !strings.Contains(string(got), "NewSec/Deep") {
+		t.Errorf("nested Beta missing or not rewritten at new dir (err=%v): %q", rerr, got)
+	}
+	if got, rerr := os.ReadFile(filepath.Join(app.vaultPath, notebook, "NewSec", "att.bin")); rerr != nil || string(got) != string(attachBytes) {
+		t.Errorf("attachment not copied byte-identical into the new tree (err=%v)", rerr)
+	}
+	if blocks, ferr := app.FetchPageBlocks(notebook, "NewSec", "Alpha"); ferr != nil || len(blocks) == 0 {
+		t.Errorf("new section not indexed after verified tree move (blocks=%d err=%v)", len(blocks), ferr)
+	}
+	if blocks, ferr := app.FetchPageBlocks(notebook, "NewSec/Deep", "Beta"); ferr != nil || len(blocks) == 0 {
+		t.Errorf("nested new section not indexed after verified tree move (blocks=%d err=%v)", len(blocks), ferr)
+	}
+	if idx, ferr := app.FetchPageBlocks(notebook, "OldSec", "Alpha"); ferr == nil && len(idx) > 0 {
+		t.Errorf("old section still indexed after verified tree move: %d blocks", len(idx))
+	}
+}
