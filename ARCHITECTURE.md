@@ -1802,10 +1802,11 @@ retry a failed rich write as text. Clipboard permissions and user-activation
 requirements vary by runtime, so a rejected write surfaces a “Copy failed”
 toast. Cut deletes only after a successful write and only while the document
 and selection still match those captured synchronously for serialization.
-There is no Go clipboard write binding. In particular, GTK/WebKit rich write
-support is not guaranteed on Linux; feature detection selects the text-only
-fallback there when needed. These write-side limitations are separate from the
-read-side Linux fallback described above.
+The editor menu has no Go clipboard write binding; the plugin `os-clipboard`
+API's text-only write is a separate surface. In particular, GTK/WebKit rich
+write support is not guaranteed on Linux; feature detection selects the
+text-only fallback there when needed. These write-side limitations are
+separate from the read-side Linux fallback described above.
 
 
 9. Performance Budgets
