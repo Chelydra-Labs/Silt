@@ -279,6 +279,11 @@ var verifiedMoveFile = parser.MoveFileVerified
 // (see moveTreeDispatch). Seam-swappable for the same reasons.
 var verifiedMoveCopy = parser.CopyFileVerified
 
+// verifiedMoveRemoveSource is the tree mover's phase-2 source-removal step.
+// Seam-swappable so tests can simulate a mount that rejects removals (the
+// split-tree state a CI temp dir cannot reproduce).
+var verifiedMoveRemoveSource = os.Remove
+
 // verifiedBackupPathFor keys the backup/.pending slot for a verified write or
 // move target under root: <root>/.system/writebackups/<rel> — the same
 // convention writePageStaged applies to writes. target must be under root
