@@ -1057,6 +1057,10 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 				if regionBlock.FileDate == "" {
 					regionBlock.FileDate = meta.Date
 				}
+				// The region's Depth is serialization-only: the opener's
+				// leading indent, re-applied by renderBlock's region branches.
+				// DeriveHierarchy ignores it (regions stay parentless).
+				regionBlock.Depth = parseLeadingIndent(lines[i], spacesPerTab)
 				blocks = append(blocks, *regionBlock)
 				// Collect old inline ids for Migration B remapping. Any
 				// old-format inline ids mean the file was modified (migrated).
@@ -1347,7 +1351,7 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		// comment lives on its own line, not appended to the fence).
 		idLine := ""
 		if idSuffix != "" {
-			idLine = "\n" + strings.TrimSpace(idSuffix)
+			idLine = "\n" + indent + strings.TrimSpace(idSuffix)
 		}
 		// Fence length grows to 4 backticks if the body itself contains a
 		// ``` line, so a code sample that includes a triple-backtick fence
@@ -1359,7 +1363,11 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 				fence += "`"
 			}
 		}
-		return fmt.Sprintf("%s%s\n%s\n%s%s", fence, block.Language, block.CleanText, fence, idLine)
+		// The region indent lands on the boundary lines (both fences + the id
+		// line) only: parse keeps body lines verbatim, so indenting them here
+		// would double-indent on every cycle. Fence-only indenting is
+		// idempotent.
+		return fmt.Sprintf("%s%s%s\n%s\n%s%s%s", indent, fence, block.Language, block.CleanText, indent, fence, idLine)
 	}
 
 	// BlockTable and BlockDetails are multi-line: the clean_text IS the
@@ -1369,9 +1377,22 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 	if block.Type == BlockTable || block.Type == BlockDetails || block.Type == BlockCallout {
 		idLine := ""
 		if idSuffix != "" {
-			idLine = "\n" + strings.TrimSpace(idSuffix)
+			idLine = "\n" + indent + strings.TrimSpace(idSuffix)
 		}
-		return block.CleanText + idLine
+		// Unlike code, these regions' clean_text lines are TrimSpace'd on
+		// parse, so the region indent is re-applied to every content line —
+		// also idempotent. Blank lines stay bare (no trailing whitespace).
+		body := block.CleanText
+		if indent != "" {
+			bodyLines := strings.Split(body, "\n")
+			for j := range bodyLines {
+				if bodyLines[j] != "" {
+					bodyLines[j] = indent + bodyLines[j]
+				}
+			}
+			body = strings.Join(bodyLines, "\n")
+		}
+		return body + idLine
 	}
 
 	if block.Type == BlockTask {

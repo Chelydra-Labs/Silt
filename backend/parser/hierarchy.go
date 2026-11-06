@@ -46,12 +46,11 @@ func (v HierarchyViolation) String() string {
 //     stays parentless.
 //
 // Region blocks (CODE/TABLE/DETAILS/CALLOUT) are transparent to the
-// hierarchy: the parser constructs them without a Depth — they render at
-// column 0 — so admitting one to the stack would let it steal the children
-// of the block it follows (a fenced code block between a task and its
-// indented reply would parent the reply to the code). Regions parent to
-// nothing and nothing parents to them; derived region parentage is a
-// separately sequenced change (#1003).
+// hierarchy: they carry a Depth for serialization only (their on-disk
+// indentation), and admitting one to the stack would let it steal the
+// children of the block it follows (a fenced code block between a task and
+// its indented reply would parent the reply to the code). Regions parent to
+// nothing and nothing parents to them.
 //
 // HEADER blocks are exempt from violation reporting: their Depth is the
 // heading level (1–6), not indentation, so a parentless top heading or a
@@ -130,9 +129,10 @@ func DeriveHierarchy(blocks []ParsedBlock) []HierarchyViolation {
 }
 
 // isRegionBlock reports whether bt is a managed multi-line region type
-// (fenced code, GFM table, <details> HTML, callout). accumulateRegion
-// constructs these without a Depth, so DeriveHierarchy treats them as
-// transparent — see the region paragraph in its doc comment.
+// (fenced code, GFM table, <details> HTML, callout). These carry a
+// serialization-only Depth (the opener's leading indent); DeriveHierarchy
+// treats them as transparent regardless — see the region paragraph in its
+// doc comment.
 func isRegionBlock(bt BlockType) bool {
 	return bt == BlockCode || bt == BlockTable || bt == BlockDetails || bt == BlockCallout
 }
