@@ -9,7 +9,8 @@
 // block lists. `raw_text` is included here (unlike converters.test.ts) because
 // for pasted content it is what carries the bullet/quote marker on disk — a
 // marker the model cannot re-detect disappears from raw_text on reload.
-// `parent_id`/`line_number` are excluded as they are derived from depth/order.
+// `parent_id`/`line_number` are excluded: parentage is assigned by the Go
+// parser's DeriveHierarchy, and line_number follows doc order.
 
 import { afterEach, describe, expect, it } from 'vitest'
 import { Editor } from '@tiptap/core'

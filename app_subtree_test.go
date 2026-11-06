@@ -8,9 +8,8 @@ import (
 	"silt/backend/parser"
 )
 
-// TestExtractSubtree verifies the sub-tree boundary rule: every block at
-// Depth > parent depth following the parent, up to the next block at or below
-// the parent's depth (#305).
+// TestExtractSubtree verifies the sub-tree membership rule: every block whose
+// ParentID ancestor chain contains the parent (#305).
 func TestExtractSubtree(t *testing.T) {
 	// Layout (depth in parens):
 	//   parent task (0)

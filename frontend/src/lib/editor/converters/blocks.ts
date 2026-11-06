@@ -1014,9 +1014,10 @@ export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
 }
 
 // docToBlocks is the inverse of blocksToDoc: it walks a ProseMirror doc JSON
-// and reconstructs the ordered ParsedBlock list for SaveFileBlocks. It derives
-// parent_id (from depth) and line_number (from doc order) and reconstructs
-// raw_text sufficiently for Go's renderBlock to detect the bullet style.
+// and reconstructs the ordered ParsedBlock list for SaveFileBlocks. It sets
+// line_number (from doc order) and emits parent_id: '' — the Go parser's
+// DeriveHierarchy owns parentage — and reconstructs raw_text sufficiently for
+// Go's renderBlock to detect the bullet style.
 export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
   const content = doc.content || []
   const blocks: ParsedBlock[] = []
