@@ -284,6 +284,21 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     back.forEach((b, i) => expectSemanticEqual(b, blocks[i]))
   })
 
+  // SEMANTIC_FIELDS excludes parent_id by design, so the round-trip tests
+  // above would not catch a docToBlocks regression to client-derived
+  // parentage. This pins the single-derivation contract at its frontend
+  // edge: the converter emits parent_id '' — Go's DeriveHierarchy owns it.
+  it('docToBlocks emits parent_id "" for a nested doc — parentage is the Go parser\'s (#1012)', () => {
+    const blocks = [
+      mkBlock('TASK', { clean_text: 'parent', depth: 0 }),
+      mkBlock('NOTE', { clean_text: 'child', depth: 1 }),
+      mkBlock('NOTE', { clean_text: 'grandchild', depth: 2 })
+    ]
+    const back = docToBlocks(blocksToDoc(blocks))
+    expect(back).toHaveLength(3)
+    expect(back.every((b) => b.parent_id === '')).toBe(true)
+  })
+
   it('round-trips all three task statuses', () => {
     for (const status of ['TODO', 'DOING', 'DONE'] as const) {
       const blocks = [mkBlock('TASK', { status, clean_text: `task ${status}` })]

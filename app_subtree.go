@@ -105,7 +105,8 @@ func extractSubtree(blocks []parser.ParsedBlock, parentID string) []parser.Parse
 // hasAncestor reports whether b's ParentID chain contains ancestorID. The
 // step cap survives a cyclic ParentID graph, which the parser's derivation
 // cannot produce but a defensive splice (SaveSubtreeBlocks stamps ParentID
-// directly) could — the same guard taskDerivedCounts applies.
+// directly) could — a step cap, like taskDerivedCounts' fixed 64-step guard
+// (backend/db/indexing.go).
 func hasAncestor(byID map[string]parser.ParsedBlock, b parser.ParsedBlock, ancestorID string) bool {
 	pid := b.ParentID
 	for steps := 0; pid != "" && steps <= len(byID); steps++ {

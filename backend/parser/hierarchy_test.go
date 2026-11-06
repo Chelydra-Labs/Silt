@@ -6,11 +6,14 @@ import (
 )
 
 // TestDeriveHierarchy_ConsistentParentEveryType is the regression net for the
-// invariant "depth > 0 implies a consistent parent": for every block type, a
-// block at depth 1 parents to the preceding depth-0 block and a block at
-// depth 2 parents to the preceding depth-1 block, with no violations.
+// invariant "depth > 0 implies a consistent parent": for every line-managed
+// block type, a block at depth 1 parents to the preceding depth-0 block and a
+// block at depth 2 parents to the preceding depth-1 block, with no
+// violations. Region types (CODE/TABLE/DETAILS/CALLOUT) are excluded — the
+// parser never produces them at depth > 0, and DeriveHierarchy treats them as
+// transparent (see TestDeriveHierarchy_RegionBlocksTransparent).
 func TestDeriveHierarchy_ConsistentParentEveryType(t *testing.T) {
-	types := []BlockType{BlockTask, BlockNote, BlockHeader, BlockCode, BlockTable, BlockDetails, BlockCallout}
+	types := []BlockType{BlockTask, BlockNote, BlockHeader}
 	for _, bt := range types {
 		t.Run(string(bt), func(t *testing.T) {
 			blocks := []ParsedBlock{
@@ -29,6 +32,79 @@ func TestDeriveHierarchy_ConsistentParentEveryType(t *testing.T) {
 				t.Errorf("depth-2 %s ParentID = %q, want %q", bt, blocks[2].ParentID, blocks[1].ID)
 			}
 		})
+	}
+}
+
+// TestDeriveHierarchy_RegionBlocksTransparent pins the region-parentage
+// contract on the derivation itself: a region block between a parent and its
+// indented children must not intercept their parentage, and the region
+// itself parents to nothing — for every managed region kind. Regions are
+// transparent, matching the pre-single-derivation behavior; giving regions
+// derived depth/parentage is separately sequenced (#1003).
+func TestDeriveHierarchy_RegionBlocksTransparent(t *testing.T) {
+	regionTypes := []BlockType{BlockCode, BlockTable, BlockDetails, BlockCallout}
+	const (
+		taskID   = "11111111-1111-4111-8111-111111111111"
+		regionID = "22222222-2222-4222-8222-222222222222"
+		replyID  = "33333333-3333-4333-8333-333333333333"
+		deepID   = "44444444-4444-4444-8444-444444444444"
+	)
+	for _, rt := range regionTypes {
+		t.Run(string(rt), func(t *testing.T) {
+			blocks := []ParsedBlock{
+				{ID: taskID, Type: BlockTask, Depth: 0},
+				{ID: regionID, Type: rt, Depth: 0},
+				{ID: replyID, Type: BlockNote, Depth: 1},
+				{ID: deepID, Type: BlockNote, Depth: 2},
+			}
+			violations := DeriveHierarchy(blocks)
+			if len(violations) != 0 {
+				t.Fatalf("transparent %s produced violations: %+v", rt, violations)
+			}
+			if blocks[1].ParentID != "" {
+				t.Errorf("region %s ParentID = %q, want empty (regions parent to nothing)", rt, blocks[1].ParentID)
+			}
+			if blocks[2].ParentID != taskID {
+				t.Errorf("reply ParentID = %q, want the task %q (region must not steal it)", blocks[2].ParentID, taskID)
+			}
+			if blocks[3].ParentID != replyID {
+				t.Errorf("depth-2 block ParentID = %q, want the reply %q", blocks[3].ParentID, replyID)
+			}
+		})
+	}
+}
+
+// TestParseFileContent_RegionBlocksAreTransparent pins the same contract end
+// to end through a real parse, the shape the regression shipped in: a fenced
+// code block between a task and its indented reply must not re-parent the
+// reply, and the file must parse warning-free (the region legitimately sits
+// at column 0 — this is not a hierarchy violation).
+func TestParseFileContent_RegionBlocksAreTransparent(t *testing.T) {
+	const (
+		taskID  = "5f0c0a11-0000-4000-8000-000000000001"
+		codeID  = "5f0c0a11-0000-4000-8000-000000000003"
+		replyID = "5f0c0a11-0000-4000-8000-000000000002"
+	)
+	src := "- [ ] root task <!-- id: 5f0c0a11-0000-4000-8000-000000000001 -->\n" +
+		"```go\nfmt.Println(1)\n```\n" +
+		"<!-- id: 5f0c0a11-0000-4000-8000-000000000003 -->\n" +
+		"    - reply note <!-- id: 5f0c0a11-0000-4000-8000-000000000002 -->\n"
+
+	blocks, meta, _, _, err := ParseFileContent(src, "nb", "sec", "pg", "2026-01-01", 4)
+	if err != nil {
+		t.Fatalf("ParseFileContent failed: %v", err)
+	}
+	if len(blocks) != 3 || blocks[1].ID != codeID || blocks[2].ID != replyID {
+		t.Fatalf("blocks = %+v, want task, code region, reply", blocks)
+	}
+	if blocks[1].Type != BlockCode || blocks[1].ParentID != "" {
+		t.Errorf("code region (type %s) ParentID = %q, want empty", blocks[1].Type, blocks[1].ParentID)
+	}
+	if blocks[2].ParentID != taskID {
+		t.Errorf("reply ParentID = %q, want the task %q (region must stay transparent)", blocks[2].ParentID, taskID)
+	}
+	if hierarchyWarningPresent(meta.Warnings) {
+		t.Errorf("meta.Warnings = %v, want no hierarchy violations for a transparent region", meta.Warnings)
 	}
 }
 

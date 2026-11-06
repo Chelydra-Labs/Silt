@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -88,4 +89,63 @@ func TestSubtreeReader_IndentedNoteReply(t *testing.T) {
 			t.Fatalf("extractSubtree = %+v, want the repaired orphan reply %s", sub, hierarchyReplyID)
 		}
 	})
+}
+
+// TestSaveFileBlocks_DerivesParentageOnIndex pins the IPC/DB boundary of the
+// single-derivation contract (#1012): the frontend submits blocks with
+// parent_id ” (docToBlocks derives no parentage), and the save funnel
+// re-parses the rendered file before indexing — so blocks.parent_id in the
+// database is always the parser-derived value, never the client's. A save
+// path that indexed the submitted blocks directly would wipe all DB
+// parentage; this test is what fails if that ever regresses.
+func TestSaveFileBlocks_DerivesParentageOnIndex(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "Work", "Journal", "Hierarchy"
+	content := "---\nnotebook: Work\nsection: Journal\ndate: 2026-01-01\ntags: []\n---\n" + indentedReplyDoc
+	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	writeFile(t, filePath, content)
+
+	parsed, _, _, _, err := parser.ParseFileContent(content, notebook, section, page, "2026-01-01", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent failed: %v", err)
+	}
+	// Frontend shape: docToBlocks emits parent_id '' for every block — the
+	// submitted slice carries depth but no parentage.
+	submitted := make([]parser.ParsedBlock, len(parsed))
+	for i, b := range parsed {
+		b.ParentID = ""
+		submitted[i] = b
+	}
+	if err := app.SaveFileBlocks(notebook, section, page, submitted); err != nil {
+		t.Fatalf("SaveFileBlocks: %v", err)
+	}
+
+	rows, err := app.db.SQLDB().Query(
+		`SELECT id, COALESCE(parent_id, '') FROM blocks WHERE notebook = ? AND section = ? AND page = ?`,
+		notebook, section, page)
+	if err != nil {
+		t.Fatalf("query blocks: %v", err)
+	}
+	defer rows.Close()
+	parent := map[string]string{}
+	for rows.Next() {
+		var id, parentID string
+		if err := rows.Scan(&id, &parentID); err != nil {
+			t.Fatalf("scan block row: %v", err)
+		}
+		parent[id] = parentID
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate block rows: %v", err)
+	}
+	if len(parent) != 2 {
+		t.Fatalf("indexed %d blocks for %q, want the task and the reply", len(parent), indentedReplyDoc)
+	}
+	if parent[hierarchyTaskID] != "" {
+		t.Errorf("task parent_id = %q, want empty (depth-0 root)", parent[hierarchyTaskID])
+	}
+	if parent[hierarchyReplyID] != hierarchyTaskID {
+		t.Errorf("reply parent_id = %q, want the parser-derived task %q — the save funnel must re-parse, not index client parentage",
+			parent[hierarchyReplyID], hierarchyTaskID)
+	}
 }

@@ -38,17 +38,30 @@ func (v HierarchyViolation) String() string {
 //   - when no block sits at depth-1 (an indentation jump — e.g. an external
 //     edit landing at depth 4 straight after a depth-0 block), the block is
 //     repaired: attached to the nearest resolvable ancestor, the deepest
-//     preceding block at a shallower depth. Depth itself is never rewritten,
-//     so the repair touches only the in-memory model and a repaired file
-//     round-trips byte-stably.
+//     preceding block at a shallower depth. Depth is never rewritten by the
+//     repair — the negative-depth clamp below is the sole, defensive
+//     exception, unreachable from the parser — so the repair touches only
+//     the in-memory model and a repaired file round-trips byte-stably.
 //   - when no ancestor exists at all (the file opens indented), the block
 //     stays parentless.
+//
+// Region blocks (CODE/TABLE/DETAILS/CALLOUT) are transparent to the
+// hierarchy: the parser constructs them without a Depth — they render at
+// column 0 — so admitting one to the stack would let it steal the children
+// of the block it follows (a fenced code block between a task and its
+// indented reply would parent the reply to the code). Regions parent to
+// nothing and nothing parents to them; derived region parentage is a
+// separately sequenced change (#1003).
 //
 // HEADER blocks are exempt from violation reporting: their Depth is the
 // heading level (1–6), not indentation, so a parentless top heading or a
 // level jump (`#` straight to `###`) is idiomatic markdown rather than
 // structural corruption. They still receive ParentID from the same walk so
-// every reader sees one hierarchy.
+// every reader sees one hierarchy. The exemption covers only the header's
+// own shape: a non-header block indented under a headers-only file prefix
+// finds no block at depth 0 (a header's Depth is its level ≥ 1) and is
+// reported as unresolvable on every parse — expected, log-only noise for
+// header-led files, not structural corruption.
 //
 // Every repair and every unresolvable non-HEADER block is returned as a
 // HierarchyViolation so callers report the malformed structure instead of
@@ -65,6 +78,9 @@ func DeriveHierarchy(blocks []ParsedBlock) []HierarchyViolation {
 	for i := range blocks {
 		b := &blocks[i]
 		if b.ID == "" {
+			// The derivation owns parentage: a block it skips must not keep
+			// a caller-stamped ParentID inside the single authority for it.
+			b.ParentID = ""
 			continue
 		}
 		if b.Depth < 0 {
@@ -74,6 +90,9 @@ func DeriveHierarchy(blocks []ParsedBlock) []HierarchyViolation {
 			b.Depth = 0
 		}
 		b.ParentID = ""
+		if isRegionBlock(b.Type) {
+			continue
+		}
 		if b.Depth > 0 {
 			parentID := ""
 			parentDepth := -1
@@ -108,4 +127,12 @@ func DeriveHierarchy(blocks []ParsedBlock) []HierarchyViolation {
 		}
 	}
 	return violations
+}
+
+// isRegionBlock reports whether bt is a managed multi-line region type
+// (fenced code, GFM table, <details> HTML, callout). accumulateRegion
+// constructs these without a Depth, so DeriveHierarchy treats them as
+// transparent — see the region paragraph in its doc comment.
+func isRegionBlock(bt BlockType) bool {
+	return bt == BlockCode || bt == BlockTable || bt == BlockDetails || bt == BlockCallout
 }
