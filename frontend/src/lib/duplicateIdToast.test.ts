@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import {
-  duplicateIdToast,
-  type DuplicateIDWarning
-} from './duplicateIdToast'
+import { duplicateIdToast, type DuplicateIDWarning } from './duplicateIdToast'
 
 describe('duplicateIdToast', () => {
   const crossFile: DuplicateIDWarning = {
@@ -47,7 +44,10 @@ describe('duplicateIdToast', () => {
   it('counts further carrier pages instead of silently dropping them', () => {
     const threePages: DuplicateIDWarning = {
       ...crossFile,
-      pages: [...crossFile.pages, { source: 'vault', notebook: 'Work', section: '', page: 'Notes' }]
+      pages: [
+        ...crossFile.pages,
+        { source: 'vault', notebook: 'Work', section: '', page: 'Notes' }
+      ]
     }
     const n = duplicateIdToast(threePages, () => {})
     expect(n.message).toContain('and 1 more page')
@@ -59,6 +59,29 @@ describe('duplicateIdToast', () => {
     expect(n.message).toContain('twice')
     // One page only — must not claim a second page.
     expect(n.message).not.toContain('Roadmap')
+  })
+
+  it('names the marker so diverged copies can be located by text search', () => {
+    // The fragment is a real substring of the id, so searching it in the
+    // editor finds the `<!-- id: ... -->` comment even when both copies'
+    // prose has diverged.
+    for (const w of [crossFile, withinPage, crossAndWithin]) {
+      const n = duplicateIdToast(w, () => {})
+      expect(n.message).toContain('the marker ends …11111111')
+      expect(w.block_id).toContain('11111111')
+    }
+  })
+
+  it('distinct collisions on the same page pair do not collapse into one message', () => {
+    // The store dedups visible toasts on kind+message; without the marker
+    // fragment two different ids on the same page pair were indistinguishable.
+    const a = duplicateIdToast(crossFile, () => {})
+    const other: DuplicateIDWarning = {
+      ...crossFile,
+      block_id: '22222222-2222-2222-2222-222222222222'
+    }
+    const b = duplicateIdToast(other, () => {})
+    expect(a.message).not.toBe(b.message)
   })
 
   it('prefers the cross-page copy when a two-page collision also has a doubled page', () => {

@@ -42,6 +42,13 @@ function pageLabel(p: DuplicateIDPage): string {
   return p.section ? `${p.section}/${p.page}` : p.page
 }
 
+function markerTail(blockId: string): string {
+  // The last 8 id chars: long enough to find the `<!-- id: ... -->` comment
+  // via text search even when the copies' prose has diverged, short enough
+  // not to read as a hex blob. The ellipsis marks it as a fragment.
+  return `…${blockId.slice(-8)}`
+}
+
 /**
  * Build the sticky error toast for a duplicate block-id warning. Sticky
  * (never auto-dismisses): the collision stays until the user fixes one of
@@ -60,10 +67,14 @@ export function duplicateIdToast(
       : ''
   // Two or more carrier pages always use the cross-page copy — even when one
   // page also holds the id twice, the cross-file half is the bigger problem.
+  // The marker fragment also keeps distinct collisions on the same page pair
+  // from collapsing into one indistinguishable toast (store dedups on
+  // kind+message).
+  const tail = markerTail(w.block_id)
   const message =
     w.pages.length === 1
-      ? `The page “${pageLabel(first)}” contains the same identity marker twice, so links to it may open the wrong block. Delete one copy or give one a fresh marker.`
-      : `The pages “${pageLabel(first)}” and “${pageLabel(second)}”${more} carry the same identity marker, so links to it may open the wrong block. Delete one copy or give one a fresh marker.`
+      ? `The page “${pageLabel(first)}” contains the same identity marker twice, so links to it may open the wrong block. Delete one copy or give one a fresh marker (the marker ends ${tail}).`
+      : `The pages “${pageLabel(first)}” and “${pageLabel(second)}”${more} carry the same identity marker, so links to it may open the wrong block. Delete one copy or give one a fresh marker (the marker ends ${tail}).`
   return {
     kind: 'error',
     message,
@@ -72,7 +83,11 @@ export function duplicateIdToast(
       label: 'Show file',
       run: () =>
         openPage(
-          { notebook: first.notebook, section: first.section, page: first.page },
+          {
+            notebook: first.notebook,
+            section: first.section,
+            page: first.page
+          },
           'preview'
         )
     }
