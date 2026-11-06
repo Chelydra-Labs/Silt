@@ -832,6 +832,7 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 				}
 			},
 			rollbackSource: source,
+			treeNoun:       "section",
 			rollbackReconcileHookEnabled: func(configAttempted bool) bool {
 				return configAttempted && a.renameHooks != nil && a.renameHooks.reconcileSection != nil
 			},
@@ -966,6 +967,7 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 				}
 			},
 			rollbackSource: "vault",
+			treeNoun:       "notebook",
 			rollbackReconcileHookEnabled: func(configAttempted bool) bool {
 				return configAttempted && a.renameHooks != nil && a.renameHooks.reconcileNotebook != nil
 			},

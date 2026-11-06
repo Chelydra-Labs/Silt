@@ -162,6 +162,10 @@ type renameTreeStrategy struct {
 	staleSweepFile func(file renameFileSnapshot)
 	// relocateHistory moves path-keyed page history after a successful tree rename.
 	relocateHistory func(files []renameFileSnapshot)
+	// treeNoun names the moved tree kind ("section"/"notebook") for the
+	// tree-level clause surfaced when the tree move aborts with the tree
+	// whole at oldDir.
+	treeNoun string
 	// rollbackSource is the source arg to rollbackRename (resolved source for
 	// Section; literal "vault" for Notebook).
 	rollbackSource string
@@ -213,7 +217,6 @@ func (a *App) renameTree(prepare func() (renameTreeStrategy, error)) error {
 		files = nil
 		runErr = nil
 		configAttempted := false
-		verifiedMoveAborted := false
 		linkJournal := make(map[string]renameLinkJournalEntry)
 		// Lock every descendant page path + inbound sources so concurrent
 		// saves cannot interleave with the directory rename.
@@ -255,15 +258,30 @@ func (a *App) renameTree(prepare func() (renameTreeStrategy, error)) error {
 			// after every copy verified).
 			if err := a.moveTreeDispatch(s.oldDir, s.newDir); err != nil {
 				runErr = err
-				if verifiedWriteFailed(err) {
-					// The verified tree move failed with the tree WHOLE at
-					// oldDir (landed copies removed, sources untouched).
-					// rollbackRename would write snapshot bytes under newDir
-					// and then fail to rename it back over the intact oldDir
-					// — manufacturing the split-tree duplicate state the
-					// rollback exists to prevent. Nothing was modified:
-					// abort with the typed error, no rollback.
-					verifiedMoveAborted = true
+				if errors.Is(err, errTreeMoveAborted) {
+					// The tree move aborted with the tree WHOLE at oldDir (a
+					// phase-1 failure with its landed copies cleaned up, or a
+					// failed atomic rename — sources untouched). Nothing was
+					// modified: rollback would write snapshot bytes under
+					// newDir and fail to move them back over the intact
+					// oldDir, manufacturing the split-tree duplicate state
+					// the rollback exists to prevent. Abort, no rollback —
+					// and surface the tree-level fact: the per-file verified
+					// prose names one file's recovery copies, while the
+					// load-bearing clause for a tree op is that the whole
+					// tree stayed at its origin.
+					runErr = appendErrorClause(runErr, fmt.Sprintf("The %s is unchanged at %s", s.treeNoun, s.oldDir))
+					return
+				}
+				// Phase-2 failure (a source would not come off): every file
+				// is verified at newDir with removal stragglers at oldDir —
+				// the tree is split and the rename cannot continue (the
+				// forward writes and reindex below assume a clean move). Roll
+				// back to converge on the original, mirroring the
+				// forward-write failure path below.
+				if rollbackErr := a.rollbackRename(s.oldDir, s.newDir, files, s.rollbackSource, linkJournal, configSnapshot, false); rollbackErr != nil {
+					log.Printf("%s: rollback after failed tree move (%v): %v", s.label, runErr, rollbackErr)
+					runErr = fmt.Errorf("%w (rollback failed: %v)", runErr, rollbackErr)
 				}
 				return
 			}
@@ -305,7 +323,7 @@ func (a *App) renameTree(prepare func() (renameTreeStrategy, error)) error {
 					runErr = err
 				}
 			}
-			if runErr != nil && !verifiedMoveAborted {
+			if runErr != nil {
 				if rollbackErr := a.rollbackRename(s.oldDir, s.newDir, files, s.rollbackSource, linkJournal, configSnapshot, s.rollbackReconcileHookEnabled(configAttempted)); rollbackErr != nil {
 					// Same serialization drop as the forward-write rollback
 					// above: only the log preserves the rollback failure.

@@ -9,6 +9,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -320,7 +321,131 @@ func TestVerifiedMove_RenamePageOnNetworkRootIndexesNewPath(t *testing.T) {
 	}
 }
 
-// 7. A verified tree move that succeeds: the whole tree (pages with updated
+// 7. Plain-error phase-1 abort (harden PR #1049, D1): a copy that fails with
+// a PLAIN error (a source read failing mid-copy — stale NFS handle) leaves
+// the tree whole at oldDir, and rollback must NOT run: it would write
+// snapshot bytes under newDir and copy them back over the intact originals —
+// verified rewrites of untouched bytes on an already-failing mount. Pinned by
+// the copy-seam call count (a rollback's move-back would add a second copy
+// wave), the absence of backup churn under the ORIGINAL tree, and the
+// tree-level abort clause.
+func TestVerifiedMove_PlainErrorTreeAbortSkipsRollback(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	notebook := "VMNB"
+	alphaID := "2d2d2d2d-3e3e-4f4f-8a1a-4c4c4c4c4c4c"
+	betaID := "3e3e3e3e-4f4f-4a5a-8b2b-5d5d5d5d5d5d"
+	seedConflictPage(t, app, notebook, "OldSec", "Alpha", alphaID, "alpha body")
+	seedConflictPage(t, app, notebook, "OldSec/Deep", "Beta", betaID, "beta body")
+	oldDir := filepath.Join(app.vaultPath, notebook, "OldSec")
+	newDir := filepath.Join(app.vaultPath, notebook, "NewSec")
+	alphaPath := conflictPagePath(app, notebook, "OldSec", "Alpha")
+	betaPath := conflictPagePath(app, notebook, "OldSec/Deep", "Beta")
+	alphaOrig, _ := os.ReadFile(alphaPath)
+	betaOrig, _ := os.ReadFile(betaPath)
+
+	calls := 0
+	origCopy := verifiedMoveCopy
+	verifiedMoveCopy = func(src, dst, backup string) error {
+		calls++
+		if strings.HasSuffix(src, "Beta.md") {
+			return fmt.Errorf("read %s: stale NFS file handle", src)
+		}
+		return parser.CopyFileVerified(src, dst, backup)
+	}
+	t.Cleanup(func() { verifiedMoveCopy = origCopy })
+
+	err := app.RenameSection(notebook, "OldSec", "NewSec")
+	if err == nil {
+		t.Fatal("plain-error tree abort must surface an error")
+	}
+	var ipc *IPCError
+	if errors.As(err, &ipc) {
+		t.Fatalf("plain phase-1 abort must stay a plain error, got typed %s: %v", ipc.Code, err)
+	}
+	if !strings.Contains(err.Error(), "stale NFS file handle") {
+		t.Errorf("surfaced error lost the real cause: %v", err)
+	}
+	if !strings.Contains(err.Error(), "The section is unchanged at "+oldDir) {
+		t.Errorf("tree-level abort clause missing: %v", err)
+	}
+	// Rollback must not run: one copy wave only. A rollback would rewrite
+	// the snapshot bytes under newDir and verified-copy them back over the
+	// intact originals (calls → 4).
+	if calls != 2 {
+		t.Errorf("verifiedMoveCopy calls = %d, want 2 (each file attempted once; a rollback would add a copy-back wave)", calls)
+	}
+	if got, rerr := os.ReadFile(alphaPath); rerr != nil || string(got) != string(alphaOrig) {
+		t.Errorf("Alpha not intact at old dir after plain-error abort (err=%v)", rerr)
+	}
+	if got, rerr := os.ReadFile(betaPath); rerr != nil || string(got) != string(betaOrig) {
+		t.Errorf("Beta not intact at old dir after plain-error abort (err=%v)", rerr)
+	}
+	if _, serr := os.Stat(newDir); !os.IsNotExist(serr) {
+		t.Errorf("NewSec exists after an aborted tree move (stat err = %v)", serr)
+	}
+	if blocks, ferr := app.FetchPageBlocks(notebook, "OldSec", "Alpha"); ferr != nil || len(blocks) == 0 {
+		t.Errorf("old section must stay indexed after an aborted tree move (blocks=%d err=%v)", len(blocks), ferr)
+	}
+}
+
+// 8. Phase-2 source-removal failure (harden PR #1049): a mount rejecting a
+// source removal mid-phase-2 leaves the tree SPLIT (every file verified at
+// newDir, stragglers at oldDir). The abort is not phase-1, so the rename core
+// rolls back: snapshot bytes rewritten under newDir, tree moved back —
+// converging on the intact original, nothing left at the new directory.
+func TestVerifiedMove_SourceRemovalFailureSplitTreeRollsBack(t *testing.T) {
+	app := newTestApp(t)
+	forceNetworkRoot(t, app, app.vaultPath)
+
+	notebook := "VMNB"
+	alphaID := "4f4f4f4f-5a5a-4b6b-8c3c-6e6e6e6e6e6e"
+	betaID := "5a5a5a5a-6b6b-4c7c-8d4d-7f7f7f7f7f7f"
+	seedConflictPage(t, app, notebook, "OldSec", "Alpha", alphaID, "alpha body")
+	seedConflictPage(t, app, notebook, "OldSec/Deep", "Beta", betaID, "beta body")
+	oldDir := filepath.Join(app.vaultPath, notebook, "OldSec")
+	newDir := filepath.Join(app.vaultPath, notebook, "NewSec")
+	alphaPath := conflictPagePath(app, notebook, "OldSec", "Alpha")
+	betaPath := conflictPagePath(app, notebook, "OldSec/Deep", "Beta")
+	alphaOrig, _ := os.ReadFile(alphaPath)
+	betaOrig, _ := os.ReadFile(betaPath)
+
+	origRemove := verifiedMoveRemoveSource
+	verifiedMoveRemoveSource = func(p string) error {
+		if strings.HasPrefix(p, oldDir) && strings.HasSuffix(p, "Beta.md") {
+			return fmt.Errorf("remove %s: mount is read-only", p)
+		}
+		return os.Remove(p)
+	}
+	t.Cleanup(func() { verifiedMoveRemoveSource = origRemove })
+
+	err := app.RenameSection(notebook, "OldSec", "NewSec")
+	if err == nil {
+		t.Fatal("phase-2 removal failure must surface an error")
+	}
+	if !strings.Contains(err.Error(), "remove source") {
+		t.Errorf("surfaced error must name the failed source removal: %v", err)
+	}
+	if strings.Contains(err.Error(), "is unchanged at") {
+		t.Errorf("phase-2 split must not claim the tree is unchanged: %v", err)
+	}
+	// Rollback converged the split tree: whole at oldDir, nothing at newDir.
+	if got, rerr := os.ReadFile(alphaPath); rerr != nil || string(got) != string(alphaOrig) {
+		t.Errorf("Alpha not converged back to old dir (err=%v):\n got: %q\nwant: %q", rerr, got, alphaOrig)
+	}
+	if got, rerr := os.ReadFile(betaPath); rerr != nil || string(got) != string(betaOrig) {
+		t.Errorf("Beta not converged back to old dir (err=%v):\n got: %q\nwant: %q", rerr, got, betaOrig)
+	}
+	if _, serr := os.Stat(newDir); !os.IsNotExist(serr) {
+		t.Errorf("NewSec exists after rollback (stat err = %v) — the split tree did not converge", serr)
+	}
+	if blocks, ferr := app.FetchPageBlocks(notebook, "OldSec", "Alpha"); ferr != nil || len(blocks) == 0 {
+		t.Errorf("old section must be re-indexed after rollback (blocks=%d err=%v)", len(blocks), ferr)
+	}
+}
+
+// 9. A verified tree move that succeeds: the whole tree (pages with updated
 // frontmatter, attachments byte-identical) lands at the new directory, the
 // old directory is gone (empty husk removed), and the index follows.
 func TestVerifiedMove_TreeRenameOnNetworkRootSucceeds(t *testing.T) {
