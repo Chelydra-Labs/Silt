@@ -31,6 +31,10 @@ func nullIfEmpty(s string) interface{} {
 // block slice (#434 / #439 / comments descendants):
 //   - comments: ALL NOTE descendants under a task (walk ParentID until TASK)
 //   - subtaskTotal / subtaskDone: direct TASK children only
+//
+// It is a pure consumer of the ParentID the parser's single validated
+// derivation (parser.DeriveHierarchy) assigned — no independent hierarchy
+// computation happens here.
 func taskDerivedCounts(blocks []parser.ParsedBlock) (comments, subtaskTotal, subtaskDone map[string]int) {
 	parentOf := make(map[string]string, len(blocks))
 	typeOf := make(map[string]parser.BlockType, len(blocks))

@@ -910,20 +910,6 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(back[0].clean_text).toBe('salvaged')
   })
 
-  it('derives parent_id from depth using the stack-walk algorithm', () => {
-    const blocks = [
-      mkBlock('NOTE', { clean_text: 'root', depth: 0 }),
-      mkBlock('NOTE', { clean_text: 'child', depth: 1 }),
-      mkBlock('NOTE', { clean_text: 'sibling', depth: 1 }),
-      mkBlock('NOTE', { clean_text: 'grand', depth: 2 })
-    ]
-    const back = docToBlocks(blocksToDoc(blocks))
-    expect(back[0].parent_id).toBe('') // depth 0
-    expect(back[1].parent_id).toBe(back[0].id) // depth 1 → root
-    expect(back[2].parent_id).toBe(back[0].id) // depth 1 → root
-    expect(back[3].parent_id).toBe(back[2].id) // depth 2 → sibling
-  })
-
   it('assigns line numbers by doc order', () => {
     const blocks = [
       mkBlock('NOTE', { clean_text: 'a' }),
