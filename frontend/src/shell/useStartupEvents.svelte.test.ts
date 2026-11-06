@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventName } from '../generated/enums'
+import type { PushOptions } from '../notifications/store.svelte'
 import type { SystemConfig } from '../settings/store.svelte'
 import type { SettingsDialogsController } from './useSettingsDialogs.svelte'
 import type { TabManagerController } from '../lib/tabs/useTabManager.svelte'
@@ -276,7 +277,7 @@ describe('useStartupEvents (#768)', () => {
 
   // The watcher/save path delivers the same warning live (no queue): the
   // Events.On handler must fan out to the same toast builder as the replay.
-  it('a live duplicate-id warning emit pushes the same sticky error toast', () => {
+  it('a live duplicate-id warning emit pushes the same sticky error toast', async () => {
     const bus = makeBus()
     wireEventsOn(bus)
     const { deps } = makeDeps()
@@ -284,9 +285,25 @@ describe('useStartupEvents (#768)', () => {
     controller.attach()
 
     const handler = bus.handlers.get(EventName.EventIndexDuplicateIDWarning)!
-    // Malformed payloads are dropped silently — no throw, no toast.
+    // Malformed payloads are dropped silently — no throw, no toast. Includes
+    // a non-string/missing block_id with non-empty pages: the guard must
+    // reject it before the toast builder's markerTail can throw (the live
+    // listener has no catch around it).
     handler({ data: undefined })
     handler({ data: { block_id: 'x', pages: [], within_page: true } })
+    handler({
+      data: {
+        block_id: 42,
+        pages: [{ source: 'vault', notebook: 'Work', section: '', page: 'X' }],
+        within_page: true
+      }
+    })
+    handler({
+      data: {
+        pages: [{ source: 'vault', notebook: 'Work', section: '', page: 'X' }],
+        within_page: true
+      }
+    })
     expect(mocks.pushNotification).not.toHaveBeenCalled()
 
     handler({
@@ -312,6 +329,88 @@ describe('useStartupEvents (#768)', () => {
         action: expect.objectContaining({ label: 'Show file' })
       })
     )
+
+    // The CTA rides the same refused-open funnel as the re-mint toast
+    // (#1005): run() must hop to deps.openPageOrNotify with the first
+    // carrier in preview mode.
+    const toast = mocks.pushNotification.mock.calls[0][0] as PushOptions
+    if (!toast.action)
+      throw new Error('duplicate-id toast is missing its CTA action')
+    await toast.action.run()
+    expect(deps.openPageOrNotify).toHaveBeenCalledWith(
+      { notebook: 'Work', section: 'Sprint', page: 'Board' },
+      'preview'
+    )
+  })
+
+  // A malformed queued duplicate-id payload must be dropped silently by the
+  // handler guard, and the drain must continue to later queued events (the
+  // outer catch would otherwise swallow the whole backlog).
+  it('a malformed queued duplicate-id warning is dropped without aborting the drain', async () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mocks.GetStartupEvents.mockResolvedValue([
+      {
+        Name: EventName.EventIndexDuplicateIDWarning,
+        Payload: {
+          block_id: 42,
+          pages: [
+            { source: 'vault', notebook: 'Work', section: '', page: 'X' }
+          ],
+          within_page: true
+        }
+      },
+      { Name: EventName.EventSettingsFingerprintMismatch, Payload: undefined }
+    ])
+    const { deps, settingsDialogs } = makeDeps()
+    controller = createStartupEvents(deps)
+    controller.attach()
+
+    await vi.waitFor(() => {
+      expect(settingsDialogs.openSettingsMismatch).toHaveBeenCalledOnce()
+    })
+    expect(mocks.pushNotification).not.toHaveBeenCalled()
+    expect(errorSpy).not.toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+
+  // Per-event isolation in the replay loop: one throwing dispatch (here a
+  // toast push that explodes) must not abort the rest of the backlog.
+  it('a throwing dispatch during replay does not abort later queued events', async () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mocks.pushNotification.mockImplementationOnce(() => {
+      throw new Error('toast push exploded')
+    })
+    mocks.GetStartupEvents.mockResolvedValue([
+      {
+        Name: EventName.EventIndexDuplicateIDWarning,
+        Payload: {
+          block_id: '11111111-1111-1111-1111-111111111111',
+          pages: [
+            {
+              source: 'vault',
+              notebook: 'Work',
+              section: 'Sprint',
+              page: 'Board'
+            }
+          ],
+          within_page: true
+        }
+      },
+      { Name: EventName.EventSettingsFingerprintMismatch, Payload: undefined }
+    ])
+    const { deps, settingsDialogs } = makeDeps()
+    controller = createStartupEvents(deps)
+    controller.attach()
+
+    await vi.waitFor(() => {
+      expect(settingsDialogs.openSettingsMismatch).toHaveBeenCalledOnce()
+    })
+    expect(errorSpy).toHaveBeenCalledOnce()
+    errorSpy.mockRestore()
   })
 
   it('does not replay queued events when dispose() races the replay drain', async () => {

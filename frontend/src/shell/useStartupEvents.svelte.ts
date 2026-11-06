@@ -257,7 +257,9 @@ export function createStartupEvents(
   // Duplicate block-id warning: shared by the live listener and the queued
   // startup replay (the vault scan emits before the frontend mounts).
   function handleDuplicateIDWarning(w: DuplicateIDWarning | undefined): void {
-    if (!w || !w.pages?.length) return
+    // Guard the full shape: a non-string block_id would throw in the toast
+    // builder's markerTail, and the live Events.On listener has no catch.
+    if (!w || !w.pages?.length || typeof w.block_id !== 'string') return
     // Same refused-open funnel as the re-mint CTA (#1005).
     pushNotification(
       duplicateIdToast(w, (ref, mode) => {
@@ -674,7 +676,13 @@ export function createStartupEvents(
         const missed = await GetStartupEvents()
         if (disposed) return
         for (const ev of missed ?? []) {
-          dispatchStartupEvent(ev.Name, ev.Payload)
+          try {
+            dispatchStartupEvent(ev.Name, ev.Payload)
+          } catch (e) {
+            // One bad entry must not abort the rest of the backlog; log it
+            // (fail loud) and keep draining.
+            console.error('Startup event replay failed:', ev.Name, e)
+          }
         }
       } catch (e) {
         console.error('Startup event replay failed:', e)

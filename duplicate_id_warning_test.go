@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -170,5 +171,33 @@ func TestDuplicateIDWarning_StartupBatchReachesQueue(t *testing.T) {
 	}
 	if got.BlockID != dup || !got.WithinPage {
 		t.Errorf("queued warning = %+v, want within-page warning for %s", *got, dup)
+	}
+}
+
+// TestDuplicateIDWarning_WireContract pins the exact JSON keys the frontend
+// parses: DuplicateIDWarning in frontend/src/lib/duplicateIdToast.ts, reached
+// through the replayed startup-event envelope's Name/Payload (capitalized —
+// startupEvent has no json tags). The Go and TS suites are otherwise
+// independent, so a renamed json tag would keep every typed Go test and every
+// hand-built-payload TS test green while silently breaking live and replayed
+// delivery (the FE handler drops payloads with empty/missing pages).
+func TestDuplicateIDWarning_WireContract(t *testing.T) {
+	ev := startupEvent{
+		Name: EventIndexDuplicateIDWarning,
+		Payload: db.DuplicateIDWarning{
+			BlockID: "11111111-1111-1111-1111-111111111111",
+			Pages: []db.DuplicateIDPage{
+				{Source: "vault", Notebook: "Work", Section: "Sprint", Page: "Board"},
+			},
+			WithinPage: true,
+		},
+	}
+	got, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	want := `{"Name":"index:duplicate-id-warning","Payload":{"block_id":"11111111-1111-1111-1111-111111111111","pages":[{"source":"vault","notebook":"Work","section":"Sprint","page":"Board"}],"within_page":true}}`
+	if string(got) != want {
+		t.Errorf("wire JSON:\n got %s\nwant %s", got, want)
 	}
 }
