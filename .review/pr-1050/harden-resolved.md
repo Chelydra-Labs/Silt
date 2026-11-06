@@ -1,0 +1,3 @@
+- Real-editor menu Copy → Paste round-trip exercises the clipboard payload and nested depth (`frontend/src/lib/editor/clipboardPaste.test.ts:307`) — fixed in c82817e4
+- Clipboard capability, failure, and stale-document contract coverage (`frontend/src/lib/editor/clipboard.test.ts:214`) — fixed in c82817e4
+- Pending Cut preserves selection if editor becomes read-only or is destroyed (`frontend/src/lib/editor/clipboard.ts:101`) — fixed in c82817e4
