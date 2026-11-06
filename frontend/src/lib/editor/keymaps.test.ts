@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { Editor } from '@tiptap/core'
+import { Editor, type AnyExtension } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import {
   SiltBlockExtensions,
@@ -10,7 +10,12 @@ import {
   SiltBlockKeymaps
 } from './index'
 import { docToBlocks } from './converters'
-import { EmbedNode, BlockReferenceNode, CalloutBlock } from './schema'
+import {
+  EmbedNode,
+  BlockReferenceNode,
+  CalloutBlock,
+  CodeBlock
+} from './schema'
 import {
   setBlockAlign,
   moveActiveBlock,
@@ -57,7 +62,9 @@ function makeEditor(): Editor {
 // Backspace / Tab outliner semantics are exercised (Tab indent cases live in
 // the "Tab / Shift-Tab depth" describe below). The base makeEditor()
 // omits it to keep the converter/align tests focused on pure state.
-function makeEditorWithKeymaps(): Editor {
+// `extraExtensions` adds region node types (codeBlock, calloutBlock, …) for
+// tests that interleave region siblings between depth blocks.
+function makeEditorWithKeymaps(extraExtensions: AnyExtension[] = []): Editor {
   return new Editor({
     extensions: [
       StarterKit.configure({
@@ -79,7 +86,8 @@ function makeEditorWithKeymaps(): Editor {
       EmbedNode,
       BlockReferenceNode,
       UniqueBlockIds,
-      SiltBlockKeymaps
+      SiltBlockKeymaps,
+      ...extraExtensions
     ]
   })
 }
@@ -1325,6 +1333,270 @@ describe('Tab / Shift-Tab depth indent (outliner)', () => {
     expect(indentActiveBlock(editor)).toBe(true)
     const nested = editor.state.doc.child(0)
     expect(nested.child(1).attrs.depth).toBe(1)
+    editor.destroy()
+  })
+})
+
+describe('subtree-aware indent + depth clamp (#1002)', () => {
+  const note = (id: string, text: string, depth: number) => ({
+    type: 'noteBlock' as const,
+    attrs: { id, depth, bullet: '- ' },
+    content: [{ type: 'text' as const, text }]
+  })
+
+  function focusBlockIndex(editor: Editor, index: number): void {
+    let pos = 0
+    for (let i = 0; i < index; i++) pos += editor.state.doc.child(i).nodeSize
+    editor.commands.setTextSelection(pos + 1)
+  }
+
+  function depthsOf(editor: Editor): number[] {
+    return Array.from({ length: editor.state.doc.childCount }, (_, i) =>
+      Number(editor.state.doc.child(i).attrs.depth ?? 0)
+    )
+  }
+
+  it('indenting a parent moves its whole subtree (relative depths preserved)', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('root', 'root', 0),
+        note('parent', 'parent', 0),
+        note('child', 'child', 1),
+        note('grandchild', 'grandchild', 2),
+        note('tail', 'tail', 0)
+      ]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    // Parent, child, grandchild all shift +1; the depth-0 tail is untouched
+    // (no block changes parent: relative depth differences are preserved).
+    expect(depthsOf(editor)).toEqual([0, 1, 2, 3, 0])
+    editor.destroy()
+  })
+
+  it('indent at the deepest rendered depth is a no-op (never writes depth 7)', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('a0', 'l0', 0),
+        note('a1', 'l1', 1),
+        note('a2', 'l2', 2),
+        note('a3', 'l3', 3),
+        note('a4', 'l4', 4),
+        note('a5', 'l5', 5),
+        note('a6', 'l6', 6),
+        note('b6', 'target', 6)
+      ]
+    })
+    focusBlockIndex(editor, 7)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    // The editor CSS has indent rules only for [data-depth='1'..'6']; a 7th
+    // level would render at depth-0 width while still changing the file.
+    expect(editor.state.doc.child(7).attrs.depth).toBe(6)
+    // The serializer output is what reaches disk.
+    const saved = docToBlocks(editor.getJSON() as DocJSON)
+    expect(saved.every((b) => b.depth <= 6)).toBe(true)
+    editor.destroy()
+  })
+
+  it('Tab on an H6 heading never writes level 7 (no #######)', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('a5', 'l5', 5),
+        note('a6', 'l6', 6),
+        {
+          type: 'headerBlock',
+          attrs: { id: 'h6', depth: 6 },
+          content: [{ type: 'text', text: 'Deep heading' }]
+        }
+      ]
+    })
+    focusBlockIndex(editor, 2)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    // A headerBlock's depth attr is the heading level, not an indent.
+    expect(editor.state.doc.child(2).attrs.depth).toBe(6)
+    const saved = docToBlocks(editor.getJSON() as DocJSON)
+    const header = saved.find((b) => b.type === 'HEADER')
+    expect(header).toBeDefined()
+    // 7 hashes are not a CommonMark heading.
+    expect(header!.raw_text).toMatch(/^#{1,6} /)
+    editor.destroy()
+  })
+  it('unindent is the inverse: the subtree comes back up together', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('root', 'root', 0),
+        note('parent', 'parent', 1),
+        note('child', 'child', 2),
+        note('tail', 'tail', 0)
+      ]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Tab', { shiftKey: true })).toBe(true)
+    expect(depthsOf(editor)).toEqual([0, 0, 1, 0])
+    // Re-indenting restores the exact prior shape.
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    expect(depthsOf(editor)).toEqual([0, 1, 2, 0])
+    editor.destroy()
+  })
+
+  it('whole-run clamp: a parent whose child sits at depth 6 does not indent', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('a4', 'l4', 4),
+        note('a5', 'parent', 5),
+        note('a6', 'child', 6)
+      ]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    // Indenting the parent alone would strand the child at the old depth;
+    // moving both would write depth 7 — so nothing moves.
+    expect(depthsOf(editor)).toEqual([4, 5, 6])
+    const saved = docToBlocks(editor.getJSON() as DocJSON)
+    expect(saved.every((b) => b.depth <= 6)).toBe(true)
+    editor.destroy()
+  })
+
+  it('the run ends at a following header — its level is never shifted', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('root', 'root', 0),
+        note('parent', 'parent', 0),
+        note('child', 'child', 1),
+        {
+          type: 'headerBlock',
+          attrs: { id: 'h1', depth: 1 },
+          content: [{ type: 'text', text: 'Section' }]
+        }
+      ]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    expect(depthsOf(editor)).toEqual([0, 1, 2, 1])
+    editor.destroy()
+  })
+
+  it('the depth run stays contiguous across a region sibling (code block)', () => {
+    // Regions are transparent to the hierarchy: nothing parents to them, so
+    // a note after a region parents to the preceding block. Ending the run
+    // at the region would strand that note — its parent indents away while
+    // it stays put, leaving it parentless on the next parse.
+    const editor = makeEditorWithKeymaps([CodeBlock])
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('root', 'root', 0),
+        note('a', 'A', 0),
+        {
+          type: 'codeBlock',
+          attrs: { id: 'c1', language: 'ts', file_date: '' },
+          content: [{ type: 'text', text: 'const x = 1' }]
+        },
+        note('b', 'B', 1)
+      ]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    // The codeBlock reports 0 only because it carries no depth attr — it is
+    // skipped, not shifted; B (A's child across the region) comes along.
+    expect(depthsOf(editor)).toEqual([0, 1, 0, 2])
+    // Symmetric: unindenting A brings the region-separated child back too.
+    expect(pressKey(editor, 'Tab', { shiftKey: true })).toBe(true)
+    expect(depthsOf(editor)).toEqual([0, 0, 0, 1])
+    editor.destroy()
+  })
+
+  it('a run started inside a callout never crosses into top-level siblings', () => {
+    // Pin the container isolation: nodeAfter at a node boundary never
+    // crosses into a different parent, so the run collects callout children
+    // only — even when a deeper top-level block follows the container.
+    const editor = makeEditorWithKeymaps([CalloutBlock])
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'calloutBlock',
+          attrs: { variant: 'info', id: 'c1' },
+          content: [
+            note('pre', 'first', 0),
+            note('a', 'A', 0),
+            note('b', 'B', 1)
+          ]
+        },
+        note('t', 'top-level', 2)
+      ]
+    })
+    // Caret in the middle nested note (A): callout@0 → first child at 1,
+    // A's content at 1 + firstChildSize + 1.
+    const callout = editor.state.doc.child(0)
+    editor.commands.setTextSelection(1 + callout.child(0).nodeSize + 1)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    const nested = editor.state.doc.child(0)
+    expect(nested.child(1).attrs.depth).toBe(1)
+    expect(nested.child(2).attrs.depth).toBe(2)
+    // The deeper top-level sibling after the callout is untouched.
+    expect(editor.state.doc.child(1).attrs.depth).toBe(2)
+    editor.destroy()
+  })
+
+  it('indenting an ordered parent keeps its ordered children sequential', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'one' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '2. ' },
+          content: [{ type: 'text', text: 'two' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2a', depth: 1, bullet: '1. ' },
+          content: [{ type: 'text', text: 'child-a' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2b', depth: 1, bullet: '2. ' },
+          content: [{ type: 'text', text: 'child-b' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '3. ' },
+          content: [{ type: 'text', text: 'three' }]
+        }
+      ]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    expect(
+      Array.from({ length: editor.state.doc.childCount }, (_, i) => ({
+        bullet: editor.state.doc.child(i).attrs.bullet,
+        depth: editor.state.doc.child(i).attrs.depth
+      }))
+    ).toEqual([
+      { bullet: '1. ', depth: 0 },
+      { bullet: '1. ', depth: 1 },
+      { bullet: '1. ', depth: 2 },
+      { bullet: '2. ', depth: 2 },
+      { bullet: '2. ', depth: 0 }
+    ])
     editor.destroy()
   })
 })

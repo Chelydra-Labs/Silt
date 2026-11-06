@@ -2054,3 +2054,37 @@ describe('tokenize / validate pipeline (#198)', () => {
     expect(countMarks(tokens)).toBeGreaterThanOrEqual(2)
   })
 })
+
+describe('depth clamp on import (repair on load)', () => {
+  it('a depth-7 chain from a pre-fix build loads and re-saves at ≤ 6', () => {
+    // Pre-fix indent's only cap was prev.depth + 1, so files with depth ≥ 7
+    // exist on disk; the deepest rendered level is 6 (no CSS rule beyond
+    // data-depth='6'). Loading verbatim would render the block at depth-0
+    // width and autosave would write the over-deep value back out.
+    const depths = [0, 1, 2, 3, 4, 5, 6, 7]
+    const blocks = depths.map((d, i) =>
+      mkBlock('NOTE', { clean_text: `line ${i}`, depth: d, line_number: i + 1 })
+    )
+    const doc = blocksToDoc(blocks)
+    const attrDepths = (doc.content ?? []).map((n) =>
+      Number((n.attrs as Record<string, unknown>).depth ?? 0)
+    )
+    // The depth-7 note folds to the deepest rendered level.
+    expect(attrDepths).toEqual([0, 1, 2, 3, 4, 5, 6, 6])
+
+    // The editor doc (what every autosave serializes) never exceeds it.
+    const editor = makeEditor()
+    editor.commands.setContent(doc)
+    const saved = docToBlocks(editor.getJSON() as DocJSON)
+    expect(saved.map((b) => b.depth)).toEqual([0, 1, 2, 3, 4, 5, 6, 6])
+    editor.destroy()
+  })
+
+  it('clamps an over-deep TASK import (both depth-bearing attr sites)', () => {
+    const doc = blocksToDoc([
+      mkBlock('TASK', { clean_text: 'deep task', depth: 9 })
+    ])
+    const attrs = doc.content[0].attrs as Record<string, unknown>
+    expect(Number(attrs.depth)).toBe(6)
+  })
+})

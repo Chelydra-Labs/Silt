@@ -6,9 +6,9 @@ import {
   resolveDropDepth,
   resolveIndentStepFromEl,
   BlockIndentOnDrop,
-  INDENT_STEP_PX,
-  MAX_DEPTH
+  INDENT_STEP_PX
 } from './dragIndentDrop'
+import { MAX_DEPTH } from './constants'
 
 // resolveDropDepth is the ONLY logic this phase can prove correct in jsdom.
 // The HTML5 drag/drop pipeline (DataTransfer + layout-driven posAtCoords +
@@ -22,11 +22,21 @@ describe('resolveDropDepth — pure math', () => {
   describe('default Silt constants (INDENT_STEP_PX=24, MAX_DEPTH=6)', () => {
     it('exposes the editor CSS constants verbatim', () => {
       // INDENT_STEP_PX mirrors `--indent-unit` in frontend/src/index.css:103.
-      // MAX_DEPTH mirrors the deepest `[data-depth='N']` rule in index.css.
-      // If either changes, dragIndentDrop.ts MUST be updated to match —
-      // pinning them here makes a silent drift a test failure.
+      // MAX_DEPTH (from ./constants, shared with the Tab indent keymap)
+      // mirrors the deepest `[data-depth='N']` rule in index.css. If either
+      // changes, the constants module MUST be updated to match — pinning
+      // them here makes a silent drift a test failure.
       expect(INDENT_STEP_PX).toBe(24)
       expect(MAX_DEPTH).toBe(6)
+    })
+
+    it('clamps the drag path with the shared MAX_DEPTH constant', () => {
+      // The same constant the Tab keymap clamps against caps the drop
+      // resolver, so neither depth writer can exceed the rendered maximum.
+      expect(resolveDropDepth(1e6, 100, 24, MAX_DEPTH)).toBe(MAX_DEPTH)
+      expect(resolveDropDepth(100 + 24 * MAX_DEPTH, 100, 24, MAX_DEPTH)).toBe(
+        MAX_DEPTH
+      )
     })
 
     it('returns 0 at exactly contentLeft', () => {

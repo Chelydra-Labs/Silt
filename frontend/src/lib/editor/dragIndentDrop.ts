@@ -4,6 +4,7 @@ import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state'
 import { Fragment, Slice } from '@tiptap/pm/model'
 import { dropPoint } from '@tiptap/pm/transform'
 import { parseOrderedBullet, applyDropDepthFixup } from './orderedList'
+import { MAX_DEPTH } from './constants'
 
 // Indent-on-drop for the Silt block drag handle (#330, #181
 // follow-up; drag-init moved to SiltInlineDragHandle in #339). Native
@@ -30,14 +31,9 @@ import { parseOrderedBullet, applyDropDepthFixup } from './orderedList'
 // runtime read makes the CSS the single source of truth.
 export const INDENT_STEP_PX = 24
 
-// MAX_DEPTH matches the deepest `[data-depth='N']` rule in the editor CSS
-// (frontend/src/index.css — `.ProseMirror > div[data-depth='6']`). The Tab-indent keymap
-// bounds indent by previous-sibling-depth + 1 (a relative cap), not an
-// absolute constant, so this is the only absolute cap in the outliner —
-// and it is driven by where the renderer stops drawing indent padding.
-// Beyond depth 6 the block would render at depth-0 width (no matching CSS
-// rule), so deeper indents would be invisible to the user.
-export const MAX_DEPTH = 6
+// MAX_DEPTH (the absolute indent cap passed to resolveDropDepth) lives in
+// ./constants — shared with the Tab indent keymap so both depth writers clamp
+// against the same rendered maximum.
 
 /**
  * Pure depth resolver: given the drop's clientX, the depth-0 content left
