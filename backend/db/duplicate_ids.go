@@ -1,6 +1,8 @@
 package db
 
 import (
+	"log"
+
 	"silt/backend/parser"
 )
 
@@ -55,6 +57,9 @@ func (dm *DatabaseManager) dispatchDuplicateIDWarnings(warnings []DuplicateIDWar
 	fn := dm.duplicateIDHandler
 	dm.duplicateIDHandlerMu.Unlock()
 	if fn == nil {
+		// A silent drop here left startup warnings invisible until someone
+		// traced the wiring — always leave a trace when there is no sink.
+		log.Printf("db: dropping %d duplicate-id warning(s): no handler registered", len(warnings))
 		return
 	}
 	for _, w := range warnings {

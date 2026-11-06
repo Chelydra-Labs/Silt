@@ -169,6 +169,12 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	}
 	storageWarnings = append(storageWarnings, dbMgr.Warnings()...)
 
+	// Route within-file duplicate block-id detections out of the indexing
+	// transaction. Must be registered BEFORE the scan below: the startup
+	// batch index is the first detection point for a hand-edited file, and a
+	// warning dispatched before registration is silently dropped.
+	dbMgr.SetDuplicateIDWarningHandler(a.onDuplicateIDWarning)
+
 	// SQLDB() only at vault open: handle is live and single-threaded here.
 	// Query/write paths must use DatabaseManager package methods (handle/
 	// withDB) so Close returns ErrDBClosed instead of nil-derefing.
@@ -429,9 +435,6 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// The handler is called from the watcher goroutine; it only emits a Wails
 	// event (safe — no vaultMu/configMu access).
 	watcher.SetReMintWarningHandler(a.onReMintWarning)
-	// Route within-file duplicate block-id detections out of the indexing
-	// transaction. Post-commit only; the handler just emits an event.
-	dbMgr.SetDuplicateIDWarningHandler(a.onDuplicateIDWarning)
 	// External fsnotify reindex delegates the index step to App's atomic
 	// block+projection publish (indexFile → IndexFileWithProjection), so an
 	// external frontmatter edit publishes blocks AND page_types/
