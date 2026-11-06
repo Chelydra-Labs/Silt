@@ -43,6 +43,42 @@ func (a *App) mutateConfigWithResult(mut func(*config.SystemConfig) error) (conf
 	return next, true, nil
 }
 
+// mutateConfigFresh applies a targeted single-field delta after re-reading
+// config.yaml under configMu. Targeted setters use this so an external edit to
+// an unrelated section that landed after the last config.Load is merged into
+// the save rather than clobbered by stale memory, shrinking the loss window to
+// the lock-hold duration. The mutator returns changed=false for idempotent
+// no-ops, which skips the write. A re-read failure refuses loudly — overwriting
+// a corrupt file with stale memory would destroy the user's only signal.
+//
+// Deliberate exceptions: whole-config writers (SaveSystemConfig), and writers
+// whose in-memory state must win over disk (backend-owned navigation/registry
+// reconciliation, vault-init migration). The AI/keyring/MCP config patchers
+// share this defect class but are deferred to a follow-up issue, not exempted.
+func (a *App) mutateConfigFresh(mut func(*config.SystemConfig) (changed bool, err error)) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	fresh, loadErr := config.Load(a.vaultPath)
+	if loadErr != nil {
+		return fmt.Errorf("cannot read config.yaml before update: %w", loadErr)
+	}
+	changed, err := mut(&fresh)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	a.cfg = fresh
+	return a.saveConfigTracked(a.cfg)
+}
+
 // mutateConfigLocked is the lifecycle-locked form used by content mutations
 // that already hold vaultMu.RLock. Re-entering an RWMutex read lock is unsafe
 // when a lifecycle writer is queued, so those callers use this variant.

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"strings"
 
@@ -18,49 +17,33 @@ import (
 // config.yaml. It exists so the global format-toolbar toggle (hotkey / floating
 // button) does NOT route through the frontend's saveConfig — that path clears
 // the settings dirty flag and would silently clobber a user's unsaved EditorTab
-// draft. Mirrors AppendDismissedTip: lock, mutate the one field, self-write
-// suppress, save. The frontend mirrors the field into its config snapshot
-// without touching dirty.
+// draft. mutateConfigFresh merges any concurrent external edit. The frontend
+// mirrors the field into its config snapshot without touching dirty.
 func (a *App) SetShowFormatToolbar(value bool) error {
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.vaultPath == "" {
-		return fmt.Errorf("vault not loaded")
-	}
-	a.configMu.Lock()
-	defer a.configMu.Unlock()
-	a.cfg.UI.ShowFormatToolbar = &value
-	return a.saveConfigTracked(a.cfg)
+	return a.mutateConfigFresh(func(cfg *config.SystemConfig) (bool, error) {
+		cfg.UI.ShowFormatToolbar = &value
+		return true, nil
+	})
 }
 
 // SetNoteZoom atomically writes the per-vault note content zoom factor (#849).
 // Same rationale as SetShowFormatToolbar — wheel/GUI must not clobber an
 // unsaved settings draft. Value is clamped to [0.7, 2.0] on 0.1 steps.
 func (a *App) SetNoteZoom(value float64) error {
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.vaultPath == "" {
-		return fmt.Errorf("vault not loaded")
-	}
-	a.configMu.Lock()
-	defer a.configMu.Unlock()
-	// Clamp via the same normalize helper used on load.
-	a.cfg.UI.NoteZoom = config.NormalizeNoteZoomForSet(value)
-	return a.saveConfigTracked(a.cfg)
+	return a.mutateConfigFresh(func(cfg *config.SystemConfig) (bool, error) {
+		// Clamp via the same normalize helper used on load.
+		cfg.UI.NoteZoom = config.NormalizeNoteZoomForSet(value)
+		return true, nil
+	})
 }
 
 // SetFocusMode atomically writes the editor focus-mode flag. Same rationale as
 // SetShowFormatToolbar — avoids clobbering an unsaved settings draft.
 func (a *App) SetFocusMode(value bool) error {
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.vaultPath == "" {
-		return fmt.Errorf("vault not loaded")
-	}
-	a.configMu.Lock()
-	defer a.configMu.Unlock()
-	a.cfg.Editor.FocusMode = &value
-	return a.saveConfigTracked(a.cfg)
+	return a.mutateConfigFresh(func(cfg *config.SystemConfig) (bool, error) {
+		cfg.Editor.FocusMode = &value
+		return true, nil
+	})
 }
 
 // SetOpenDevtoolsOnStartup atomically writes the Dev Mode (open DevTools on
@@ -70,20 +53,14 @@ func (a *App) SetFocusMode(value bool) error {
 // swallowed) and would clobber an unsaved EditorTab draft. Mirrors
 // SetShowFormatToolbar.
 func (a *App) SetOpenDevtoolsOnStartup(value bool) error {
-	a.vaultMu.RLock()
-	if a.vaultPath == "" {
-		a.vaultMu.RUnlock()
-		return fmt.Errorf("vault not loaded")
-	}
-	a.configMu.Lock()
-	a.cfg.UI.OpenDevtoolsOnStartup = &value
-	err := a.saveConfigTracked(a.cfg)
-	a.configMu.Unlock()
-	a.vaultMu.RUnlock()
-	if err != nil {
+	if err := a.mutateConfigFresh(func(cfg *config.SystemConfig) (bool, error) {
+		cfg.UI.OpenDevtoolsOnStartup = &value
+		return true, nil
+	}); err != nil {
 		return err
 	}
-	// After locks released — sync takes vaultMu/configMu via devToolsRuntimeEnabled.
+	// Helper has released vaultMu/configMu; sync re-enters both via
+	// devToolsRuntimeEnabled.
 	a.syncOpenDevToolsMenuItem()
 	return nil
 }

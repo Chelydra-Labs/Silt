@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"silt/backend/config"
 	"silt/backend/spellcheck"
 )
 
@@ -56,19 +57,14 @@ func (a *App) CancelSpellcheckDownload() {
 }
 
 // SetTypewriterMode atomically toggles editor.typewriter_mode (#187), mirroring
-// SetFocusMode: vaultMu.RLock + configMu.Lock + saveConfigTracked. Used by the
-// toggle_typewriter_mode hotkey (default Ctrl+Shift+Y) so a single-field write
-// doesn't clobber an unsaved Settings draft.
+// SetFocusMode. Used by the toggle_typewriter_mode hotkey (default Ctrl+Shift+Y)
+// so a single-field write doesn't clobber an unsaved Settings draft; the fresh
+// re-read in mutateConfigFresh also preserves concurrent external edits.
 func (a *App) SetTypewriterMode(value bool) error {
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.vaultPath == "" {
-		return fmt.Errorf("vault not loaded")
-	}
-	a.configMu.Lock()
-	defer a.configMu.Unlock()
-	a.cfg.Editor.TypewriterMode = &value
-	return a.saveConfigTracked(a.cfg)
+	return a.mutateConfigFresh(func(cfg *config.SystemConfig) (bool, error) {
+		cfg.Editor.TypewriterMode = &value
+		return true, nil
+	})
 }
 
 // GetCustomDictionary returns the per-vault custom spellcheck word list. Empty
@@ -92,60 +88,53 @@ func (a *App) GetCustomDictionary() ([]string, error) {
 // AddCustomDictionaryWord appends a word to the per-vault custom dictionary.
 // The word is trimmed + lowercased; empty/whitespace-only input is rejected.
 // config.Save runs normalize (de-dup + sort + lowercase), so the on-disk list
-// stays canonical. Returns the resolved list.
+// stays canonical. Duplicate adds are no-ops (no write). Returns the resolved
+// list; mutateConfigFresh preserves concurrent external edits.
 func (a *App) AddCustomDictionaryWord(word string) ([]string, error) {
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.vaultPath == "" {
-		return nil, fmt.Errorf("vault not loaded")
-	}
 	w := strings.ToLower(strings.TrimSpace(word))
 	if w == "" {
 		return nil, fmt.Errorf("word is required")
 	}
-	a.configMu.Lock()
-	defer a.configMu.Unlock()
-	for _, existing := range a.cfg.Editor.CustomDictionary {
-		if existing == w {
-			out := make([]string, len(a.cfg.Editor.CustomDictionary))
-			copy(out, a.cfg.Editor.CustomDictionary)
-			return out, nil
+	var out []string
+	err := a.mutateConfigFresh(func(cfg *config.SystemConfig) (bool, error) {
+		for _, existing := range cfg.Editor.CustomDictionary {
+			if existing == w {
+				out = append([]string(nil), cfg.Editor.CustomDictionary...)
+				return false, nil
+			}
 		}
+		cfg.Editor.CustomDictionary = append(cfg.Editor.CustomDictionary, w)
+		out = append([]string(nil), cfg.Editor.CustomDictionary...)
+		return true, nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	a.cfg.Editor.CustomDictionary = append(a.cfg.Editor.CustomDictionary, w)
-	if err := a.saveConfigTracked(a.cfg); err != nil {
-		return nil, fmt.Errorf("save custom dictionary: %w", err)
-	}
-	out := make([]string, len(a.cfg.Editor.CustomDictionary))
-	copy(out, a.cfg.Editor.CustomDictionary)
 	return out, nil
 }
 
 // RemoveCustomDictionaryWord removes a word from the per-vault custom
 // dictionary. The word is trimmed + lowercased to match normalize's casing.
 // Removing a word that isn't present is a no-op (idempotent). Returns the
-// resolved list.
+// resolved list; mutateConfigFresh preserves concurrent external edits.
 func (a *App) RemoveCustomDictionaryWord(word string) ([]string, error) {
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.vaultPath == "" {
-		return nil, fmt.Errorf("vault not loaded")
-	}
 	w := strings.ToLower(strings.TrimSpace(word))
-	a.configMu.Lock()
-	defer a.configMu.Unlock()
-	next := make([]string, 0, len(a.cfg.Editor.CustomDictionary))
-	for _, existing := range a.cfg.Editor.CustomDictionary {
-		if existing != w {
-			next = append(next, existing)
+	var out []string
+	err := a.mutateConfigFresh(func(cfg *config.SystemConfig) (bool, error) {
+		next := make([]string, 0, len(cfg.Editor.CustomDictionary))
+		for _, existing := range cfg.Editor.CustomDictionary {
+			if existing != w {
+				next = append(next, existing)
+			}
 		}
+		cfg.Editor.CustomDictionary = next
+		out = append([]string(nil), next...)
+		// Always persist, matching the pre-helper behaviour even when absent.
+		return true, nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	a.cfg.Editor.CustomDictionary = next
-	if err := a.saveConfigTracked(a.cfg); err != nil {
-		return nil, fmt.Errorf("save custom dictionary: %w", err)
-	}
-	out := make([]string, len(a.cfg.Editor.CustomDictionary))
-	copy(out, a.cfg.Editor.CustomDictionary)
 	return out, nil
 }
 
@@ -299,37 +288,32 @@ func (a *App) ImportCustomDictionary(path string) (spellcheck.ImportSummary, err
 		return spellcheck.ImportSummary{}, fmt.Errorf("import exceeds %d word limit", spellcheck.MaxImportWords)
 	}
 
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.vaultPath == "" {
-		return spellcheck.ImportSummary{}, fmt.Errorf("vault not loaded")
-	}
-	a.configMu.Lock()
-	defer a.configMu.Unlock()
-
-	existing := make(map[string]struct{}, len(a.cfg.Editor.CustomDictionary))
-	for _, w := range a.cfg.Editor.CustomDictionary {
-		existing[w] = struct{}{}
-	}
-	added := 0
-	skipped := 0
-	for _, w := range incoming {
-		if _, ok := existing[w]; ok {
-			skipped++
-			continue
+	var summary spellcheck.ImportSummary
+	err = a.mutateConfigFresh(func(cfg *config.SystemConfig) (bool, error) {
+		existing := make(map[string]struct{}, len(cfg.Editor.CustomDictionary))
+		for _, w := range cfg.Editor.CustomDictionary {
+			existing[w] = struct{}{}
 		}
-		a.cfg.Editor.CustomDictionary = append(a.cfg.Editor.CustomDictionary, w)
-		existing[w] = struct{}{}
-		added++
-	}
-	if added > 0 {
-		if err := a.saveConfigTracked(a.cfg); err != nil {
-			return spellcheck.ImportSummary{}, fmt.Errorf("save custom dictionary: %w", err)
+		added := 0
+		skipped := 0
+		for _, w := range incoming {
+			if _, ok := existing[w]; ok {
+				skipped++
+				continue
+			}
+			cfg.Editor.CustomDictionary = append(cfg.Editor.CustomDictionary, w)
+			existing[w] = struct{}{}
+			added++
 		}
+		summary = spellcheck.ImportSummary{
+			Added:     added,
+			Skipped:   skipped,
+			TotalRead: len(incoming),
+		}
+		return added > 0, nil
+	})
+	if err != nil {
+		return spellcheck.ImportSummary{}, err
 	}
-	return spellcheck.ImportSummary{
-		Added:     added,
-		Skipped:   skipped,
-		TotalRead: len(incoming),
-	}, nil
+	return summary, nil
 }
