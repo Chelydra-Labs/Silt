@@ -25,13 +25,14 @@ type DuplicateIDPage struct {
 }
 
 // DuplicateIDWarning describes one block id carried by more than one page
-// (Pages has 2+ entries) or twice within one page (WithinPage is true, Pages
-// names that page once).
+// (Pages has 2+ entries), twice within one page, or both at once.
 type DuplicateIDWarning struct {
 	BlockID string            `json:"block_id"`
 	Pages   []DuplicateIDPage `json:"pages"`
-	// WithinPage is true when every occurrence lives in the same page — a
-	// hand-edited or plugin-raced file, not a cross-file copy.
+	// WithinPage is true when at least one carrier page holds the id more
+	// than once — a hand-edited or plugin-raced file, possibly on top of a
+	// cross-file collision. The pure within-page case is a single-entry
+	// Pages, not this flag alone.
 	WithinPage bool `json:"within_page"`
 }
 

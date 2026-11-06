@@ -119,12 +119,20 @@ describe('uniqueIdPlugin — within-document duplicate repair', () => {
       content: [
         {
           type: 'taskBlock',
-          attrs: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', depth: 0, status: 'TODO' },
+          attrs: {
+            id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            depth: 0,
+            status: 'TODO'
+          },
           content: [{ type: 'text', text: 'fine' }]
         },
         {
           type: 'noteBlock',
-          attrs: { id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', depth: 0, bullet: '- ' },
+          attrs: {
+            id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+            depth: 0,
+            bullet: '- '
+          },
           content: [{ type: 'text', text: 'also fine' }]
         }
       ]

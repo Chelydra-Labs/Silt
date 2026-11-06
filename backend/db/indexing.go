@@ -31,6 +31,23 @@ func nullIfEmpty(s string) interface{} {
 	return s
 }
 
+// firstBlockOccurrences drops second-and-later occurrences of a block id —
+// the same first-wins rule the insert loop applies when blocks.id rejects a
+// duplicate — so derived caches aggregate exactly the rows that survive
+// indexing.
+func firstBlockOccurrences(blocks []parser.ParsedBlock) []parser.ParsedBlock {
+	seen := make(map[string]struct{}, len(blocks))
+	uniq := make([]parser.ParsedBlock, 0, len(blocks))
+	for _, b := range blocks {
+		if _, dup := seen[b.ID]; dup {
+			continue
+		}
+		seen[b.ID] = struct{}{}
+		uniq = append(uniq, b)
+	}
+	return uniq
+}
+
 // taskDerivedCounts precomputes per-task derived cache columns for one file's
 // block slice (#434 / #439 / comments descendants):
 //   - comments: ALL NOTE descendants under a task (walk ParentID until TASK)
@@ -315,7 +332,10 @@ func isBlocksIDConstraint(err error) bool {
 func (s *blockIndexStmts) indexBlocks(source, notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, logTag string, dups *duplicateIDCollector) error {
 	// Derived task caches: descendant NOTE comments, direct subtask rollups
 	// (#434), plus modified_at / estimate_minutes projections (#439/#440).
-	commentsByTask, subtaskTotalByTask, subtaskDoneByTask := taskDerivedCounts(blocks)
+	// Deduped first-occurrence-wins to mirror the insert loop's duplicate
+	// skip below: a skipped occurrence writes no row, so its descendants
+	// must not inflate the surviving row's caches.
+	commentsByTask, subtaskTotalByTask, subtaskDoneByTask := taskDerivedCounts(firstBlockOccurrences(blocks))
 
 	for blockIdx, block := range blocks {
 		// 1. Insert into blocks — each block carries its own file_date.

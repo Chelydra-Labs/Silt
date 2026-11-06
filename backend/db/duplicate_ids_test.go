@@ -67,6 +67,56 @@ func TestIndexFileBlocks_WithinFileDuplicateWarnsAndSkips(t *testing.T) {
 	}
 }
 
+// TestIndexFileBlocks_DuplicateSubtreeDoesNotInflateTaskRollups pins that a
+// hand-pasted task subtree (same ids twice in one page) writes derived caches
+// for the surviving occurrence only: the duplicate's descendants are skipped
+// by the insert loop, so comments_count / subtask_total / subtask_done must
+// not aggregate both occurrences' children into one row.
+func TestIndexFileBlocks_DuplicateSubtreeDoesNotInflateTaskRollups(t *testing.T) {
+	dm := newTestDB(t)
+
+	const (
+		taskID = "11111111-1111-1111-1111-111111111111"
+		subID  = "22222222-2222-2222-2222-222222222222"
+		noteID = "33333333-3333-3333-3333-333333333333"
+	)
+	task := sampleTaskBlock(taskID, 1)
+	sub := sampleTaskBlock(subID, 2)
+	sub.ParentID = taskID
+	sub.Status = "DONE"
+	comment := sampleNoteBlock(noteID, 3)
+	comment.ParentID = taskID
+	blocks := []parser.ParsedBlock{task, sub, comment, task, sub, comment}
+
+	if err := dm.IndexFileBlocks("vault", "Work", "Sprint", "Board", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks with a duplicated task subtree: %v", err)
+	}
+
+	var total int
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM blocks").Scan(&total); err != nil {
+		t.Fatalf("count blocks: %v", err)
+	}
+	if total != 3 {
+		t.Errorf("indexed blocks = %d, want 3 (each id once, first occurrence wins)", total)
+	}
+
+	var comments, subtaskTotal, subtaskDone int
+	if err := dm.SQLDB().QueryRow(
+		"SELECT comments_count, subtask_total, subtask_done FROM tasks WHERE block_id = ?", taskID,
+	).Scan(&comments, &subtaskTotal, &subtaskDone); err != nil {
+		t.Fatalf("query surviving task row: %v", err)
+	}
+	if comments != 1 {
+		t.Errorf("comments_count = %d, want 1 (only the surviving note child counts)", comments)
+	}
+	if subtaskTotal != 1 {
+		t.Errorf("subtask_total = %d, want 1 (only the surviving subtask child counts)", subtaskTotal)
+	}
+	if subtaskDone != 1 {
+		t.Errorf("subtask_done = %d, want 1 (the one surviving subtask is DONE)", subtaskDone)
+	}
+}
+
 // TestScanDuplicateIDs_ReportsCrossFileDuplicates pins the cross-file half:
 // when a scan parses two pages carrying the same block id, the grouping pass
 // reports one structured warning naming BOTH page paths. This is the exact
