@@ -1815,15 +1815,36 @@ func TestSaveConfigTracked_FailedSaveClearsSuppression(t *testing.T) {
 	// edit so it cannot mask the assertion below.
 	time.Sleep(config.SelfWriteSuppressionTimeout)
 
-	// The setter routes through saveConfigTracked; Save must fail (config.yaml
-	// is a directory), and the failed path must clear the suppression window.
-	if err := app.SetShowFormatToolbar(true); err == nil {
-		t.Fatalf("SetShowFormatToolbar should have failed (config.yaml is a directory)")
+	// SaveSystemConfig is the whole-config writer: it reaches saveConfigTracked
+	// through mutateConfig without re-reading config.yaml first, so the
+	// sabotage fails the save itself rather than an upfront config.Load.
+	// FontSizePx differs so the mutation is not a DeepEqual no-op.
+	cfg, err := app.GetSystemConfig()
+	if err != nil {
+		t.Fatalf("GetSystemConfig: %v", err)
+	}
+	cfg.Editor.FontSizePx = 42
+	saveErr := app.SaveSystemConfig(cfg)
+	if saveErr == nil {
+		t.Fatalf("SaveSystemConfig should have failed (config.yaml is a directory)")
+	}
+	if strings.Contains(saveErr.Error(), "cannot read config.yaml before update") {
+		t.Fatalf("failed-save path not exercised — error came from a pre-save re-read: %v", saveErr)
 	}
 
 	// Restore a writable config.yaml and simulate a legitimate external edit.
 	if err := os.RemoveAll(cfgPath); err != nil {
 		t.Fatalf("remove config.yaml dir: %v", err)
+	}
+	// Drop events queued by the sabotage/restore so the assertion below can
+	// only pass on an event emitted after the external write.
+drain:
+	for {
+		select {
+		case <-changed:
+		default:
+			break drain
+		}
 	}
 	ext := config.Defaults()
 	ext.Editor.FontSizePx = 42

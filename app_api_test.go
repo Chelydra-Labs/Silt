@@ -2339,6 +2339,61 @@ func TestSetTypewriterMode_PreservesConcurrentExternalEdit(t *testing.T) {
 	}
 }
 
+// TestMutateConfigFresh_RefusesCorruptConfig covers the re-read failure branch
+// shared by every migrated setter: a corrupt config.yaml must surface the
+// refusal and stay byte-identical on disk rather than being overwritten with
+// the stale in-memory config.
+func TestMutateConfigFresh_RefusesCorruptConfig(t *testing.T) {
+	corrupt := []byte("ui: [unclosed\n")
+	for _, tc := range []struct {
+		name string
+		call func(*App) error
+	}{
+		{"SetTypewriterMode", func(a *App) error { return a.SetTypewriterMode(true) }},
+		{"AddCustomDictionaryWord", func(a *App) error {
+			_, err := a.AddCustomDictionaryWord("noteworthy")
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newTestApp(t)
+			before, err := app.GetSystemConfig()
+			if err != nil {
+				t.Fatalf("GetSystemConfig: %v", err)
+			}
+
+			cfgPath := config.ConfigPath(app.vaultPath)
+			if err := os.WriteFile(cfgPath, corrupt, 0o600); err != nil {
+				t.Fatalf("write corrupt config.yaml: %v", err)
+			}
+
+			err = tc.call(app)
+			if err == nil {
+				t.Fatalf("%s should fail on a corrupt config.yaml", tc.name)
+			}
+			if !strings.Contains(err.Error(), "cannot read config.yaml before update") {
+				t.Fatalf("%s error = %v, want the re-read refusal", tc.name, err)
+			}
+
+			got, readErr := os.ReadFile(cfgPath)
+			if readErr != nil {
+				t.Fatalf("read config.yaml after refusal: %v", readErr)
+			}
+			if string(got) != string(corrupt) {
+				t.Fatalf("corrupt config.yaml was rewritten:\n got  %q\n want %q", got, corrupt)
+			}
+
+			after, err := app.GetSystemConfig()
+			if err != nil {
+				t.Fatalf("GetSystemConfig after refusal: %v", err)
+			}
+			if !reflect.DeepEqual(after, before) {
+				t.Errorf("in-memory config changed on a refused update: got %+v, want %+v", after, before)
+			}
+		})
+	}
+}
+
 // TestSetFocusMode_PreservesConcurrentExternalEdit covers the focus-mode setter
 // against a stale in-memory config.
 func TestSetFocusMode_PreservesConcurrentExternalEdit(t *testing.T) {
