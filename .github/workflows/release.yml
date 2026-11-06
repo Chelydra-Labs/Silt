@@ -2,7 +2,7 @@
 #   1. prepare — bumps the patch version in VERSION, commits it back to main
 #      ([skip ci]), and creates a `v<version>` tag. Runs once so both platforms
 #      build the SAME version (no per-machine coordination).
-#   2. build  — matrix over ubuntu-latest + windows-latest, checking out the
+#   2. build  — matrix over ubuntu-24.04 + windows-latest, checking out the
 #      tag, building the platform's distribution files with --no-bump.
 #   3. release — creates a GitHub Release on the tag with all assets attached.
 #
@@ -27,7 +27,7 @@ jobs:
   prepare:
     # Skip the workflow's own VERSION-bump commit to avoid a loop.
     if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.bump.outputs.version }}
       tag: ${{ steps.bump.outputs.tag }}
@@ -192,7 +192,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             script: ./build-linux.sh
             artifact: linux
           - os: windows-latest
@@ -379,7 +379,7 @@ jobs:
     # no-op in that case — the bumped commit+tag will still be on main from
     # the next user-facing release.
     if: ${{ needs.prepare.outputs.skipped != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       id-token: write # cosign keyless signing via GitHub OIDC (#253, F18)
