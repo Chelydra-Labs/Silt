@@ -16,6 +16,7 @@
 
 import { asString } from '../../asString'
 import { serializeInlineContent, legacyTokenizeInline } from './serialize'
+import { MAX_DEPTH } from '../constants'
 import {
   DEFAULT_TASK_PRIORITY,
   type ParsedBlock,
@@ -23,6 +24,14 @@ import {
   type NodeJSON,
   type BlockType
 } from '../types'
+
+// Files written by pre-fix builds can carry outline depths the editor cannot
+// render (the deepest CSS rule is depth 6) — the old indent's only cap was
+// prev.depth + 1. Repair on load: fold anything deeper to MAX_DEPTH so no
+// writer (autosave included) can ever re-emit the over-deep value.
+function clampDepth(depth: number | undefined | null): number {
+  return Math.min(depth ?? 0, MAX_DEPTH)
+}
 
 // Concatenate the text descendants of a NodeJSON[] (used for code blocks,
 // whose content is plain `text*` with no marks). Newlines inside a text node
@@ -277,7 +286,7 @@ function blockToNode(block: ParsedBlock): NodeJSON {
         type: 'taskBlock',
         attrs: {
           id: block.id,
-          depth: block.depth,
+          depth: clampDepth(block.depth),
           status: block.status || 'TODO',
           owner: block.owner || '',
           start_date: block.start_date || '',
@@ -318,7 +327,7 @@ function blockToNode(block: ParsedBlock): NodeJSON {
         type: 'noteBlock',
         attrs: {
           id: block.id,
-          depth: block.depth,
+          depth: clampDepth(block.depth),
           bullet: quote ? '' : detectBullet(block.raw_text),
           quote,
           align,
