@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"path/filepath"
 )
 
@@ -214,6 +213,7 @@ func (a *App) renameTree(prepare func() (renameTreeStrategy, error)) error {
 		files = nil
 		runErr = nil
 		configAttempted := false
+		verifiedMoveAborted := false
 		linkJournal := make(map[string]renameLinkJournalEntry)
 		// Lock every descendant page path + inbound sources so concurrent
 		// saves cannot interleave with the directory rename.
@@ -249,8 +249,22 @@ func (a *App) renameTree(prepare func() (renameTreeStrategy, error)) error {
 			files = walked
 			a.tracker.RegisterWrite(s.oldDir)
 			a.tracker.RegisterWrite(s.newDir)
-			if err := os.Rename(s.oldDir, s.newDir); err != nil {
+			// Per-root dispatch (#1021): local roots keep the plain rename; a
+			// detected non-atomic root moves the tree file-by-file through
+			// the verified machinery (copies first, sources removed only
+			// after every copy verified).
+			if err := a.moveTreeDispatch(s.oldDir, s.newDir); err != nil {
 				runErr = err
+				if verifiedWriteFailed(err) {
+					// The verified tree move failed with the tree WHOLE at
+					// oldDir (landed copies removed, sources untouched).
+					// rollbackRename would write snapshot bytes under newDir
+					// and then fail to rename it back over the intact oldDir
+					// — manufacturing the split-tree duplicate state the
+					// rollback exists to prevent. Nothing was modified:
+					// abort with the typed error, no rollback.
+					verifiedMoveAborted = true
+				}
 				return
 			}
 			for _, file := range files {
@@ -291,7 +305,7 @@ func (a *App) renameTree(prepare func() (renameTreeStrategy, error)) error {
 					runErr = err
 				}
 			}
-			if runErr != nil {
+			if runErr != nil && !verifiedMoveAborted {
 				if rollbackErr := a.rollbackRename(s.oldDir, s.newDir, files, s.rollbackSource, linkJournal, configSnapshot, s.rollbackReconcileHookEnabled(configAttempted)); rollbackErr != nil {
 					// Same serialization drop as the forward-write rollback
 					// above: only the log preserves the rollback failure.

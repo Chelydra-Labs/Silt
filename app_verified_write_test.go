@@ -554,7 +554,11 @@ func TestVerifiedWrite_MovePageTornFrontmatterRewriteFailsLoud(t *testing.T) {
 	origHook := parser.VerifiedWriteAfterRenameHook
 	parser.VerifiedWriteAfterRenameHook = func(path string) error {
 		renames++
-		if renames <= 2 { // write + retry torn; the restore rename stays clean
+		// Rename #1 is the verified MOVE's staged write (clean — the move
+		// must land so this test stays on its scenario: a torn FRONTMATTER
+		// rewrite behind a completed move). Renames #2–3 tear the rewrite +
+		// its retry; the restore rename stays clean.
+		if renames >= 2 && renames <= 3 {
 			return os.WriteFile(path, []byte("TORN-PARTIAL"), 0o644)
 		}
 		return nil
@@ -665,7 +669,11 @@ func TestVerifiedWrite_RenamePageTornFrontmatterRewriteRestores(t *testing.T) {
 	origHook := parser.VerifiedWriteAfterRenameHook
 	parser.VerifiedWriteAfterRenameHook = func(path string) error {
 		renames++
-		if renames <= 2 { // write + retry torn; the restore rename stays clean
+		// Rename #1 is the verified MOVE's staged write (clean — the move
+		// must land so this test stays on its scenario: a torn FRONTMATTER
+		// rewrite behind a completed rename). Renames #2–3 tear the rewrite +
+		// its retry; the restore rename stays clean.
+		if renames >= 2 && renames <= 3 {
 			return os.WriteFile(path, []byte("TORN-PARTIAL"), 0o644)
 		}
 		return nil
