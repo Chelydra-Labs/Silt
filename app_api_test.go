@@ -92,6 +92,45 @@ func newTestApp(t *testing.T) *App {
 	return app
 }
 
+// seedStaleConfigWithExternalFont puts staleFont in a.cfg and config.yaml, then
+// rewrites config.yaml with externalFont so disk is ahead of memory — the state
+// left by an external edit that landed after the last config.Load.
+func seedStaleConfigWithExternalFont(t *testing.T, app *App, staleFont, externalFont string) {
+	t.Helper()
+	app.configMu.Lock()
+	cfg := config.Clone(app.cfg)
+	cfg.Editor.FontFamily = staleFont
+	app.cfg = cfg
+	app.configMu.Unlock()
+	if err := config.Save(app.vaultPath, cfg); err != nil {
+		t.Fatalf("seed config.Save: %v", err)
+	}
+	external := config.Clone(cfg)
+	external.Editor.FontFamily = externalFont
+	if err := config.Save(app.vaultPath, external); err != nil {
+		t.Fatalf("external edit config.Save: %v", err)
+	}
+}
+
+// assertExternalFontSurvived checks that both disk and the refreshed in-memory
+// config still carry the external edit.
+func assertExternalFontSurvived(t *testing.T, app *App, want string) {
+	t.Helper()
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("reload config.Load: %v", err)
+	}
+	if loaded.Editor.FontFamily != want {
+		t.Errorf("external Editor.FontFamily edit lost on disk: got %q, want %q", loaded.Editor.FontFamily, want)
+	}
+	app.configMu.RLock()
+	mem := app.cfg.Editor.FontFamily
+	app.configMu.RUnlock()
+	if mem != want {
+		t.Errorf("a.cfg not refreshed with external edit: got %q, want %q", mem, want)
+	}
+}
+
 // flushReprojection blocks until the App's reprojection worker has processed
 // every enqueue made before this call (Phase 5 / #866). Production never
 // calls this — it exists for tests that need to assert post-reprojection
@@ -2243,6 +2282,220 @@ func TestAppendDismissedTip_PreservesOtherFields(t *testing.T) {
 	}
 	if !reflect.DeepEqual(loaded.UI.DismissedTips, []string{"other_tip", "formatting_tip_v1"}) {
 		t.Errorf("on-disk DismissedTips = %v, want [other_tip formatting_tip_v1]", loaded.UI.DismissedTips)
+	}
+}
+
+// TestAppendDismissedTip_PreservesConcurrentExternalEdit verifies the STALE
+// MEMORY case (not just the on-disk merge case above): a.cfg still holds the
+// old font while config.yaml holds an external edit, and the setter must merge
+// rather than write memory back.
+func TestAppendDismissedTip_PreservesConcurrentExternalEdit(t *testing.T) {
+	app := newTestApp(t)
+	seedStaleConfigWithExternalFont(t, app, "StaleFont", "ExternalEditFont")
+
+	if err := app.AppendDismissedTip("external_edit_tip"); err != nil {
+		t.Fatalf("AppendDismissedTip: %v", err)
+	}
+	assertExternalFontSurvived(t, app, "ExternalEditFont")
+
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !reflect.DeepEqual(loaded.UI.DismissedTips, []string{"external_edit_tip"}) {
+		t.Errorf("on-disk DismissedTips = %v, want [external_edit_tip]", loaded.UI.DismissedTips)
+	}
+	app.configMu.RLock()
+	memTips := append([]string{}, app.cfg.UI.DismissedTips...)
+	app.configMu.RUnlock()
+	if !reflect.DeepEqual(memTips, []string{"external_edit_tip"}) {
+		t.Errorf("in-memory DismissedTips = %v, want [external_edit_tip]", memTips)
+	}
+}
+
+// TestSetTypewriterMode_PreservesConcurrentExternalEdit covers the #187 hotkey
+// setter against a stale in-memory config.
+func TestSetTypewriterMode_PreservesConcurrentExternalEdit(t *testing.T) {
+	app := newTestApp(t)
+	seedStaleConfigWithExternalFont(t, app, "StaleFont", "ExternalEditFont")
+
+	if err := app.SetTypewriterMode(true); err != nil {
+		t.Fatalf("SetTypewriterMode: %v", err)
+	}
+	assertExternalFontSurvived(t, app, "ExternalEditFont")
+
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if loaded.Editor.TypewriterMode == nil || !*loaded.Editor.TypewriterMode {
+		t.Errorf("on-disk TypewriterMode = %v, want true", loaded.Editor.TypewriterMode)
+	}
+	app.configMu.RLock()
+	mem := app.cfg.Editor.TypewriterMode
+	app.configMu.RUnlock()
+	if mem == nil || !*mem {
+		t.Errorf("in-memory TypewriterMode = %v, want true", mem)
+	}
+}
+
+// TestMutateConfigFresh_RefusesCorruptConfig covers the re-read failure branch
+// shared by every migrated setter: a corrupt config.yaml must surface the
+// refusal and stay byte-identical on disk rather than being overwritten with
+// the stale in-memory config.
+func TestMutateConfigFresh_RefusesCorruptConfig(t *testing.T) {
+	corrupt := []byte("ui: [unclosed\n")
+	for _, tc := range []struct {
+		name string
+		call func(*App) error
+	}{
+		{"SetTypewriterMode", func(a *App) error { return a.SetTypewriterMode(true) }},
+		{"AddCustomDictionaryWord", func(a *App) error {
+			_, err := a.AddCustomDictionaryWord("noteworthy")
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newTestApp(t)
+			before, err := app.GetSystemConfig()
+			if err != nil {
+				t.Fatalf("GetSystemConfig: %v", err)
+			}
+
+			cfgPath := config.ConfigPath(app.vaultPath)
+			if err := os.WriteFile(cfgPath, corrupt, 0o600); err != nil {
+				t.Fatalf("write corrupt config.yaml: %v", err)
+			}
+
+			err = tc.call(app)
+			if err == nil {
+				t.Fatalf("%s should fail on a corrupt config.yaml", tc.name)
+			}
+			if !strings.Contains(err.Error(), "cannot read config.yaml before update") {
+				t.Fatalf("%s error = %v, want the re-read refusal", tc.name, err)
+			}
+
+			got, readErr := os.ReadFile(cfgPath)
+			if readErr != nil {
+				t.Fatalf("read config.yaml after refusal: %v", readErr)
+			}
+			if string(got) != string(corrupt) {
+				t.Fatalf("corrupt config.yaml was rewritten:\n got  %q\n want %q", got, corrupt)
+			}
+
+			after, err := app.GetSystemConfig()
+			if err != nil {
+				t.Fatalf("GetSystemConfig after refusal: %v", err)
+			}
+			if !reflect.DeepEqual(after, before) {
+				t.Errorf("in-memory config changed on a refused update: got %+v, want %+v", after, before)
+			}
+		})
+	}
+}
+
+// TestSetFocusMode_PreservesConcurrentExternalEdit covers the focus-mode setter
+// against a stale in-memory config.
+func TestSetFocusMode_PreservesConcurrentExternalEdit(t *testing.T) {
+	app := newTestApp(t)
+	seedStaleConfigWithExternalFont(t, app, "StaleFont", "ExternalEditFont")
+
+	if err := app.SetFocusMode(true); err != nil {
+		t.Fatalf("SetFocusMode: %v", err)
+	}
+	assertExternalFontSurvived(t, app, "ExternalEditFont")
+
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if loaded.Editor.FocusMode == nil || !*loaded.Editor.FocusMode {
+		t.Errorf("on-disk FocusMode = %v, want true", loaded.Editor.FocusMode)
+	}
+	app.configMu.RLock()
+	mem := app.cfg.Editor.FocusMode
+	app.configMu.RUnlock()
+	if mem == nil || !*mem {
+		t.Errorf("in-memory FocusMode = %v, want true", mem)
+	}
+}
+
+// TestSetShowFormatToolbar_PreservesConcurrentExternalEdit covers the global
+// format-toolbar toggle against a stale in-memory config.
+func TestSetShowFormatToolbar_PreservesConcurrentExternalEdit(t *testing.T) {
+	app := newTestApp(t)
+	seedStaleConfigWithExternalFont(t, app, "StaleFont", "ExternalEditFont")
+
+	if err := app.SetShowFormatToolbar(false); err != nil {
+		t.Fatalf("SetShowFormatToolbar: %v", err)
+	}
+	assertExternalFontSurvived(t, app, "ExternalEditFont")
+
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if loaded.UI.ShowFormatToolbar == nil || *loaded.UI.ShowFormatToolbar {
+		t.Errorf("on-disk ShowFormatToolbar = %v, want false", loaded.UI.ShowFormatToolbar)
+	}
+	app.configMu.RLock()
+	mem := app.cfg.UI.ShowFormatToolbar
+	app.configMu.RUnlock()
+	if mem == nil || *mem {
+		t.Errorf("in-memory ShowFormatToolbar = %v, want false", mem)
+	}
+}
+
+// TestSetNoteZoom_PreservesConcurrentExternalEdit covers the clamped zoom
+// setter against a stale in-memory config.
+func TestSetNoteZoom_PreservesConcurrentExternalEdit(t *testing.T) {
+	app := newTestApp(t)
+	seedStaleConfigWithExternalFont(t, app, "StaleFont", "ExternalEditFont")
+
+	if err := app.SetNoteZoom(1.74); err != nil {
+		t.Fatalf("SetNoteZoom: %v", err)
+	}
+	assertExternalFontSurvived(t, app, "ExternalEditFont")
+
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if loaded.UI.NoteZoom == nil || *loaded.UI.NoteZoom != 1.7 {
+		t.Errorf("on-disk NoteZoom = %v, want 1.7", loaded.UI.NoteZoom)
+	}
+	app.configMu.RLock()
+	mem := app.cfg.UI.NoteZoom
+	app.configMu.RUnlock()
+	if mem == nil || *mem != 1.7 {
+		t.Errorf("in-memory NoteZoom = %v, want 1.7", mem)
+	}
+}
+
+// TestSetOpenDevtoolsOnStartup_PreservesConcurrentExternalEdit covers the Dev
+// Mode toggle against a stale in-memory config, including the post-lock menu
+// sync path.
+func TestSetOpenDevtoolsOnStartup_PreservesConcurrentExternalEdit(t *testing.T) {
+	app := newTestApp(t)
+	seedStaleConfigWithExternalFont(t, app, "StaleFont", "ExternalEditFont")
+
+	if err := app.SetOpenDevtoolsOnStartup(true); err != nil {
+		t.Fatalf("SetOpenDevtoolsOnStartup: %v", err)
+	}
+	assertExternalFontSurvived(t, app, "ExternalEditFont")
+
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if loaded.UI.OpenDevtoolsOnStartup == nil || !*loaded.UI.OpenDevtoolsOnStartup {
+		t.Errorf("on-disk OpenDevtoolsOnStartup = %v, want true", loaded.UI.OpenDevtoolsOnStartup)
+	}
+	app.configMu.RLock()
+	mem := app.cfg.UI.OpenDevtoolsOnStartup
+	app.configMu.RUnlock()
+	if mem == nil || !*mem {
+		t.Errorf("in-memory OpenDevtoolsOnStartup = %v, want true", mem)
 	}
 }
 
