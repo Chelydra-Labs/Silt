@@ -30,8 +30,17 @@ vi.mock('./converters', () => ({
 // Mock navigator.clipboard (jsdom doesn't provide one). Only the write side is
 // exercised here — the read side is mocked at ./clipboardHtml.
 const writeTextSpy = vi.fn().mockResolvedValue(undefined)
+const writeSpy = vi.fn().mockResolvedValue(undefined)
+class MockClipboardItem {
+  static supports = vi.fn(() => true)
+  constructor(readonly data: Record<string, Blob>) {}
+}
+Object.defineProperty(globalThis, 'ClipboardItem', {
+  value: MockClipboardItem,
+  configurable: true
+})
 Object.defineProperty(navigator, 'clipboard', {
-  value: { writeText: writeTextSpy },
+  value: { writeText: writeTextSpy, write: writeSpy },
   configurable: true,
   writable: true
 })
@@ -44,6 +53,7 @@ const notifySpy = vi.fn()
 type MockEditor = {
   state: unknown
   view: {
+    serializeForClipboard: ReturnType<typeof vi.fn>
     pasteHTML: ReturnType<typeof vi.fn>
     pasteText: ReturnType<typeof vi.fn>
   }
@@ -69,6 +79,8 @@ function makeEditor(overrides: Record<string, unknown> = {}): MockEditor {
       from: 0,
       to: 0,
       empty: true,
+      eq: vi.fn((other: unknown) => other === state.selection),
+      content: vi.fn(() => ({})),
       $from: {
         depth: 1,
         node: () => noteBlockNode,
@@ -92,6 +104,10 @@ function makeEditor(overrides: Record<string, unknown> = {}): MockEditor {
   const editor: MockEditor = {
     state,
     view: {
+      serializeForClipboard: vi.fn(() => ({
+        dom: { innerHTML: '<p data-pm-slice="1 1 []">rich</p>' },
+        text: 'rich text'
+      })),
       pasteHTML: vi.fn(),
       pasteText: vi.fn()
     },
@@ -132,6 +148,7 @@ function makeDeps(
 
 beforeEach(() => {
   writeTextSpy.mockClear()
+  writeSpy.mockClear()
   notifySpy.mockClear()
   readClipboardPayload.mockReset()
   readClipboardPayload.mockResolvedValue({
@@ -142,20 +159,64 @@ beforeEach(() => {
 })
 
 describe('cutSelection', () => {
-  it('writes the selected text and deletes the selection', () => {
+  it('writes rich and plain clipboard flavours then deletes after success', async () => {
     const editor = makeEditor()
     cutSelection(makeDeps(editor))
-    expect(writeTextSpy).toHaveBeenCalledWith('plain text')
+    expect(editor.view.serializeForClipboard).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(writeSpy).toHaveBeenCalledOnce())
+    const item = writeSpy.mock.calls[0][0][0] as MockClipboardItem
+    expect(await item.data['text/html'].text()).toContain('data-pm-slice')
+    expect(await item.data['text/plain'].text()).toBe('rich text')
+    expect(writeTextSpy).not.toHaveBeenCalled()
     expect(editor.commands.deleteSelection).toHaveBeenCalledOnce()
+  })
+
+  it('does not delete if the rich write fails', async () => {
+    writeSpy.mockRejectedValueOnce(new Error('denied'))
+    const editor = makeEditor()
+    cutSelection(makeDeps(editor))
+    await vi.waitFor(() => expect(notifySpy).toHaveBeenCalledOnce())
+    expect(editor.commands.deleteSelection).not.toHaveBeenCalled()
+  })
+
+  it('does not delete a newer selection while the write is pending', async () => {
+    let resolveWrite!: () => void
+    writeSpy.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveWrite = resolve
+        })
+    )
+    const editor = makeEditor()
+    cutSelection(makeDeps(editor))
+    ;(
+      editor.state as { selection: { eq: (other: unknown) => boolean } }
+    ).selection.eq = () => false
+    resolveWrite()
+    await vi.waitFor(() => expect(writeSpy).toHaveBeenCalledOnce())
+    await Promise.resolve()
+    expect(editor.commands.deleteSelection).not.toHaveBeenCalled()
   })
 })
 
 describe('copySelection', () => {
-  it('writes the selected text but does NOT delete', () => {
+  it('writes rich and plain flavours but does NOT delete', async () => {
     const editor = makeEditor()
     copySelection(makeDeps(editor))
-    expect(writeTextSpy).toHaveBeenCalledWith('plain text')
+    await vi.waitFor(() => expect(writeSpy).toHaveBeenCalledOnce())
     expect(editor.commands.deleteSelection).not.toHaveBeenCalled()
+  })
+
+  it('uses writeText when rich clipboard APIs are unavailable', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: writeTextSpy },
+      configurable: true
+    })
+    copySelection(makeDeps(makeEditor()))
+    await vi.waitFor(() =>
+      expect(writeTextSpy).toHaveBeenCalledWith('rich text')
+    )
+    expect(writeSpy).not.toHaveBeenCalled()
   })
 })
 

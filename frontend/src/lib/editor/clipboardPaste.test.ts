@@ -30,7 +30,7 @@ import {
 import { CodeBlock, siltPasteProps } from './schema'
 import { PlainPaste, _setShiftHeldForTests } from './plainPaste'
 import { PASTE_HTML_SIZE_CAP } from './paste/normalizePastedHTML'
-import { OUTLOOK_BODY } from './paste/fixtures'
+import { GENUINE_TABLE, OUTLOOK_BODY } from './paste/fixtures'
 import { pasteFromClipboard, type ClipboardDeps } from './clipboard'
 
 const editors: Editor[] = []
@@ -298,6 +298,39 @@ describe('context-menu paste', () => {
         }
       ]
     })
+  })
+
+  it('round-trips an editor selection through serialized internal HTML like native copy/paste', async () => {
+    const source = makeEditor()
+    source.commands.selectAll()
+    source.view.pasteHTML(OUTLOOK_BODY)
+    source.view.pasteHTML(GENUINE_TABLE)
+    source.commands.selectAll()
+    const { dom, text } = source.view.serializeForClipboard(
+      source.state.selection.content()
+    )
+
+    const native = makeEditor()
+    native.commands.selectAll()
+    native.view.pasteHTML(dom.innerHTML)
+
+    const menu = makeEditor()
+    menu.commands.selectAll()
+    readClipboardPayload.mockResolvedValueOnce({ html: dom.innerHTML, text })
+    await pasteFromClipboard(deps(menu))
+
+    expect(dom.innerHTML).toContain('data-pm-slice')
+    expect(stripIds(menu.getJSON())).toEqual(stripIds(native.getJSON()))
+    expect(menu.getJSON()).toMatchObject({
+      content: expect.arrayContaining([
+        expect.objectContaining({ type: 'headerBlock' }),
+        expect.objectContaining({
+          attrs: expect.objectContaining({ bullet: '- ' })
+        })
+      ])
+    })
+    expect(JSON.stringify(menu.getJSON())).toContain('"type":"table"')
+    expect(JSON.stringify(menu.getJSON())).toContain('"type":"bold"')
   })
 
   it('takes the rich path even when a stale shift flag is set (Mod-Shift-v regression)', async () => {
