@@ -1081,6 +1081,12 @@ func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexSt
 		if source == "" {
 			source = "vault"
 		}
+		// The per-file indexers log file warnings (see IndexFileBlocks); the
+		// batched scan used to drop them, so a hierarchy repair found on the
+		// cold-start scan was reported nowhere. Keep the per-file log shape.
+		for _, w := range res.Warnings {
+			log.Printf("db.IndexScanResults(%s/%s/%s/%s): %s", source, res.Notebook, res.Section, res.Page, w)
+		}
 		if err := dm.ClearFileBlocks(tx, source, res.Notebook, res.Section, res.Page); err != nil {
 			return indexedCount, skipped, fmt.Errorf("failed to clear blocks for %s: %w", res.Path, err)
 		}
