@@ -30,7 +30,11 @@ import {
 import { CodeBlock, siltPasteProps } from './schema'
 import { PlainPaste, _setShiftHeldForTests } from './plainPaste'
 import { PASTE_HTML_SIZE_CAP } from './paste/normalizePastedHTML'
-import { GENUINE_TABLE, OUTLOOK_BODY } from './paste/fixtures'
+import {
+  GENUINE_TABLE,
+  NESTED_ORDERED_LIST,
+  OUTLOOK_BODY
+} from './paste/fixtures'
 import {
   copySelection,
   pasteFromClipboard,
@@ -365,6 +369,64 @@ describe('context-menu paste', () => {
     })
     expect(JSON.stringify(menu.getJSON())).toContain('"type":"table"')
     expect(JSON.stringify(menu.getJSON())).toContain('"type":"bold"')
+    Object.defineProperty(globalThis, 'ClipboardItem', {
+      value: originalItem,
+      configurable: true
+    })
+    Object.defineProperty(navigator, 'clipboard', {
+      value: originalClipboard,
+      configurable: true
+    })
+  })
+
+  it('preserves nested list depth through menu copy and paste', async () => {
+    const source = makeEditor()
+    source.commands.selectAll()
+    source.view.pasteHTML(NESTED_ORDERED_LIST)
+    source.commands.selectAll()
+    const nativeSource = source.getJSON()
+
+    let writtenItem: { data: Record<string, Blob> } | undefined
+    class TestClipboardItem {
+      static supports = () => true
+      constructor(data: Record<string, Blob>) {
+        this.data = data
+      }
+      data: Record<string, Blob>
+    }
+    const originalItem = globalThis.ClipboardItem
+    const originalClipboard = navigator.clipboard
+    Object.defineProperty(globalThis, 'ClipboardItem', {
+      value: TestClipboardItem,
+      configurable: true
+    })
+    Object.defineProperty(navigator, 'clipboard', {
+      value: {
+        write: vi.fn(async (items: { data: Record<string, Blob> }[]) => {
+          writtenItem = items[0]
+        })
+      },
+      configurable: true
+    })
+    copySelection(deps(source))
+    await vi.waitFor(() => expect(writtenItem).toBeDefined())
+
+    const menu = makeEditor()
+    menu.commands.selectAll()
+    readClipboardPayload.mockResolvedValueOnce({
+      html: await writtenItem!.data['text/html'].text(),
+      text: await writtenItem!.data['text/plain'].text()
+    })
+    await pasteFromClipboard(deps(menu))
+
+    expect(stripIds(menu.getJSON())).toEqual(stripIds(nativeSource))
+    const depths: number[] = []
+    const visit = (node: JSONContent) => {
+      if (typeof node.attrs?.depth === 'number') depths.push(node.attrs.depth)
+      node.content?.forEach(visit)
+    }
+    visit(menu.getJSON())
+    expect(depths.some((depth) => depth > 0)).toBe(true)
     Object.defineProperty(globalThis, 'ClipboardItem', {
       value: originalItem,
       configurable: true
