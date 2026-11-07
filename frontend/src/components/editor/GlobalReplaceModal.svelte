@@ -106,8 +106,7 @@
         overdue: false,
         // Block-scoped budget: page rows would consume the 200-row window, so
         // a find term matching many page names could hide the block matches
-        // this preview exists to replace. With them excluded the limit covers
-        // blocks and res.total is an exact block count.
+        // this preview exists to replace.
         excludePageTitles: true
       })
       const results = res.results || []
@@ -115,8 +114,10 @@
       // row (id === "") could only become a phantom match — the preview
       // promises a replacement Apply can never make.
       const blockResults = results.filter((r) => r.id !== '')
-      // res.total counts blocks only, so it is the exact match count for the
-      // truncation banner.
+      // res.total counts preview rows — the grouped envelope, at most 3 per
+      // page and at most 500 overall — not every matching block. Matches
+      // beyond those caps never reach this preview, so Apply cannot replace
+      // them and the banner must not promise them: it reports rows.
       if (res.total > blockResults.length) {
         truncatedCount = res.total
       }
@@ -149,6 +150,10 @@
       groups = [...byPage.values()]
       previewStale = false
     } catch (e) {
+      // A failed refresh wipes the actionable surface: the truncation count was
+      // already reset before the request, so keeping the previous groups would
+      // leave an unlabelled partial preview that Apply would happily write.
+      groups = []
       statusMessage = `Preview failed: ${String(e)}`
     } finally {
       loading = false
@@ -519,8 +524,9 @@
           role="status"
           aria-live="polite"
         >
-          Showing first {groups.length} pages — {truncatedCount} total matches. Refine
-          your search to replace all.
+          Showing first {groups.length} pages — {truncatedCount} preview rows (up
+          to 3 per page). Refine to see the rest; Apply replaces only the previewed
+          blocks.
         </div>
       {/if}
       {#if groups.length === 0}

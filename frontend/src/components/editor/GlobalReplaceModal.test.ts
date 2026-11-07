@@ -544,8 +544,10 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
 
   // The preview budget is block rows only: with page rows in the window, a
   // find term matching many page names could hide every block match and the
-  // banner would report a page-row-inflated total.
-  it('asks for block-only results and reports the exact truncated total', async () => {
+  // banner would report a page-row-inflated total. The banner reports preview
+  // ROWS, not matches: the per-page (3) and flat (500) caps mean matching
+  // blocks can exist that this preview cannot offer.
+  it('asks for block-only results and reports the truncated preview rows', async () => {
     mocks.SearchBlocksPaged.mockResolvedValue({
       results: [
         {
@@ -581,7 +583,46 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       200,
       expect.objectContaining({ excludePageTitles: true })
     )
-    expect(screen.getByText(/340 total matches/)).toBeInTheDocument()
+    expect(screen.getByText(/340 preview rows/)).toBeInTheDocument()
+    expect(screen.getByText(/3 per page/)).toBeInTheDocument()
+  })
+
+  // A rejected refresh must clear the actionable preview, not just show the
+  // error: truncatedCount is reset before the request, so keeping the previous
+  // groups leaves an unlabelled partial preview that Apply would still write.
+  it('clears the applicable preview when the refresh fails', async () => {
+    mocks.SearchBlocksPaged.mockResolvedValueOnce({
+      results: [
+        {
+          id: 'b1',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'page1',
+          snippet: 'foo bar'
+        }
+      ],
+      total: 1,
+      offset: 0,
+      limit: 200,
+      has_more: false
+    })
+
+    await renderAndPreview('foo', 'qux')
+    expect(
+      screen.getByRole('button', { name: 'Replace 1' })
+    ).toBeInTheDocument()
+
+    mocks.SearchBlocksPaged.mockRejectedValueOnce(new Error('ipc down'))
+    await fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+
+    await waitFor(
+      () => {
+        expect(screen.getByText(/Preview failed/)).toBeInTheDocument()
+      },
+      { timeout: 2000 }
+    )
+    expect(screen.queryByRole('button', { name: /^Replace \d/ })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Replace' })).toBeDisabled()
   })
 
   // Page-level title hits (id === "") are navigation rows, not blocks: the
