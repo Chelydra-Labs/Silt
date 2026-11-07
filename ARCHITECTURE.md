@@ -369,9 +369,12 @@ CREATE TABLE files (
 -- for a file that carried no blocks at its last index, which leaves no ID
 -- evidence. This row is the path-keyed witness that the old loc belonged to
 -- that file, letting the re-index clear the abandoned page_core/page_types/
--- page_properties rows in the same transaction. Re-derivable from markdown:
--- rewritten on every index; a vault upgraded without it only skips the
--- reconcile for the first index of each file.
+-- page_properties rows in the same transaction. It is also the ownership
+-- witness for the block-evidence reconcile: a loc that some path still
+-- publishes is a live page, so a whole-page move between pages (or two files
+-- sharing one block ID) can never clear it. The startup scan upserts it for
+-- every scanned file — warm-skipped ones included — so every file on disk has
+-- an owner. Re-derivable from markdown: rewritten on every index.
 CREATE TABLE file_page_locs (
     path     TEXT PRIMARY KEY,
     source   TEXT NOT NULL,
@@ -433,7 +436,11 @@ CREATE INDEX idx_page_properties_type_prop ON page_properties(type_name, propert
 -- blocks cannot see (page inventory reads, wiki-link resolution, title
 -- search). The delete/remove paths drop the row with the rest of the
 -- projection; a restart-safe one-shot backfill (page_core_blocks_backfill
--- marker) fills identities from pre-existing blocks rows on upgrade.
+-- marker) fills identities from pre-existing blocks rows on upgrade, and every
+-- startup/link scan then reconciles the table against the files it actually
+-- found: a row no scanned file publishes is a ghost from a pre-inventory build
+-- (or an identity an earlier move abandoned) and is dropped, while scanned
+-- locs missing a row get an identity-only one.
 CREATE TABLE page_core (
     source   TEXT NOT NULL,
     notebook TEXT NOT NULL,
@@ -1406,12 +1413,17 @@ and not DONE) restrict results to matching TASK rows; zero-value fields are
 no-ops. Pages whose NAME matches every term surface as page-level results
 (block id empty, snippet = highlighted title) ranked above all body hits —
 including zero-block pages, which is what makes an empty page findable by
-name; block-scoped filters (type, tag) and task-attribute filters suppress
-the page leg. A page-level row's `clean_content` is the page name and its
-snippet is that raw name with `<mark>` ranges injected — consumers must
-HTML-escape the snippet and then re-allow only `<mark>`. Page rows appear
-only in the `SearchBlocksPaged` envelope: `SearchBlocks` and the plugin SDK's
-`searchBlocks` return block hits only. The SearchModal adds a scope segmented control (Vault | +Linked),
+name; this leg splits the query on non-alphanumeric runes instead of squashing
+them per word, so typing "2026-06-13" finds the page of that name. Block-scoped filters (type,
+tag) and task-attribute filters suppress the page leg. A page-level row's
+`clean_content` is the page name and its snippet is that raw name with
+`<mark>` ranges injected — consumers must HTML-escape the snippet and then
+re-allow only `<mark>`. Page rows are emitted into the `SearchBlocksPaged`
+envelope only when `SearchFilters.ExcludePageTitles` is false **and** no
+type/tag/task filter is set; `SearchBlocks` (and the plugin SDK's
+`searchBlocks`) set that switch so they return block hits only, as does
+GlobalReplace so page rows cannot consume its preview budget, while MCP's
+`search_blocks` does emit them. The SearchModal adds a scope segmented control (Vault | +Linked),
 category filter chips (single-select by block type), a sort toggle, and a live
 count. Each result keeps the backend `source` discriminator, shows a Vault or
 Linked qualifier beside its breadcrumb and snippet, and sends the complete
