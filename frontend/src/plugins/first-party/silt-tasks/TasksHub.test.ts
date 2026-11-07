@@ -196,17 +196,24 @@ describe('Tasks hub shell (#424)', () => {
     render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
-    expect(screen.getByTestId('tasks-hub-header')).toHaveClass(
-      'flex-wrap',
-      'sm:flex-nowrap'
-    )
+    const header = screen.getByTestId('tasks-hub-header')
+    const primary = screen.getByTestId('tasks-hub-toolbar-primary')
+    expect(header).toContainElement(primary)
+    expect(header).toContainElement(screen.getByTestId('tasks-filter-bar'))
+    expect(primary).toHaveClass('flex-wrap', 'sm:flex-nowrap')
     const actions = screen.getByTestId('tasks-hub-header-actions')
     expect(actions).toHaveClass('basis-full', 'sm:basis-auto', 'sm:ml-auto')
-    expect(actions).toContainElement(screen.getByTestId('tasks-hub-bookmark'))
     expect(actions).toContainElement(
       screen.getByTestId('tasks-hub-mode-switcher')
     )
-    expect(actions).toContainElement(screen.getByTestId('tasks-preferences'))
+    const utilityCluster = screen.getByTestId('tasks-hub-utility-cluster')
+    expect(actions).toContainElement(utilityCluster)
+    expect(utilityCluster).toContainElement(
+      screen.getByTestId('tasks-hub-bookmark')
+    )
+    expect(utilityCluster).toContainElement(
+      screen.getByTestId('tasks-preferences')
+    )
   })
 
   it('defaults to List mode and renders the list renderer', async () => {

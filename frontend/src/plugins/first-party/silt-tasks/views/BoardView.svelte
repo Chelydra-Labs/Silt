@@ -594,7 +594,7 @@
            feel like a preview. Reuses the global .skeleton-text shimmer so the
            pulse matches ListView's loading rows. -->
       <div
-        class="h-full flex gap-3 p-3 overflow-x-auto custom-scrollbar sm:gap-4 sm:p-4"
+        class="h-full flex gap-3 px-3 py-3 overflow-x-auto custom-scrollbar sm:gap-4 sm:px-5 sm:py-4 lg:px-6"
         data-testid="tasks-board-loading"
         aria-busy="true"
         aria-label="Loading board"
@@ -617,7 +617,7 @@
       <ErrorBanner message={errorMsg} />
     {:else}
       <div
-        class="h-full flex gap-3 p-3 overflow-x-auto custom-scrollbar sm:gap-4 sm:p-4"
+        class="h-full flex gap-3 px-3 py-3 overflow-x-auto custom-scrollbar sm:gap-4 sm:px-5 sm:py-4 lg:px-6"
         class:board-inspector-open={!!selectedCard}
         role="list"
         aria-label="Board columns"
@@ -632,7 +632,7 @@
           {@const overWip = wipLimit != null && cards.length > wipLimit}
           {@const qa = quickAddFor(col)}
           <section
-            class="board-lane flex flex-col min-w-70 flex-1 max-w-100 overflow-hidden rounded-xl border border-surface-panel-border bg-surface-panel/50 shadow-sm transition-all {cols.colDragIndex ===
+            class="board-lane flex flex-col min-w-70 flex-1 overflow-hidden rounded-xl border border-surface-panel-border bg-surface-panel/50 shadow-sm transition-all {cols.colDragIndex ===
             colIdx
               ? 'opacity-50'
               : ''} {overWip
@@ -761,7 +761,7 @@
 
         <!-- Add-column affordance: enabled only for status (user-managed
              columns). Other dimensions are data-driven. -->
-        <div class="flex flex-col justify-center min-w-20">
+        <div class="flex shrink-0 flex-col justify-start pt-0.5 min-w-20">
           {#if groupBy === 'status'}
             <button
               type="button"
