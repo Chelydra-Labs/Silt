@@ -86,16 +86,30 @@ func listDistinctPages(db *sql.DB) ([]PageLoc, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var out []PageLoc
 	for rows.Next() {
 		var p PageLoc
 		if err := rows.Scan(&p.Source, &p.Notebook, &p.Section, &p.Page); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		// The open-time backfill fills page_core from blocks, so an empty
+		// projection normally means an empty index. Keep the DISTINCT-over-
+		// blocks scan for a DB written by a build that predates the
+		// projection and is read without a reopened initSchema.
+		return scanDistinctPages(db, ``, nil)
+	}
+	return out, nil
 }
 
 // scanDistinctPages runs SELECT DISTINCT page locs with an optional WHERE

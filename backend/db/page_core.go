@@ -48,6 +48,23 @@ func aliasesJSON(aliases []string) string {
 	return string(b)
 }
 
+// ensurePageCoreRowTx registers a page's identity on the caller's open
+// transaction without touching core metadata. Every index path calls it, so
+// page_core stays a complete one-row-per-indexed-page inventory (including
+// zero-block files) even on the block-only reindex paths that never publish
+// frontmatter-derived core fields. OR IGNORE is load-bearing: a row written by
+// a frontmatter-affecting publish carries real type/date/aliases/created and
+// must never be clobbered by a later block-only write.
+func ensurePageCoreRowTx(tx *sql.Tx, source, notebook, section, page string) error {
+	if _, err := tx.Exec(
+		"INSERT OR IGNORE INTO page_core (source, notebook, section, page) VALUES (?, ?, ?, ?)",
+		source, notebook, section, page,
+	); err != nil {
+		return fmt.Errorf("failed to ensure page_core inventory row: %w", err)
+	}
+	return nil
+}
+
 // clearPageCoreTx deletes a page's page_core row on the caller's open
 // transaction. Shared by every atomic core clear path (the unified
 // IndexFileWithProjection / IndexScanResultsWithProjection replace path, and
