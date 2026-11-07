@@ -440,9 +440,10 @@ export const BlockIndentOnDrop = Extension.create({
               return false
             }
             // Whole-run depth delta: the drop column targets the dragged
-            // head; every member shifts by the same delta (relative depths
-            // preserved), capped so the deepest member never passes
-            // MAX_DEPTH. Regions interleaved in the span keep their depth.
+            // head; every member — prose and region alike (#1061) — shifts
+            // by the same delta (relative depths preserved), capped so the
+            // deepest member never passes MAX_DEPTH (region member depths
+            // included in both the cap and the shift).
             const deepest = run.nodes.reduce(
               (max, n) => Math.max(max, (n.attrs.depth as number) || 0),
               0
