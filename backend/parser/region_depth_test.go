@@ -7,9 +7,10 @@ import (
 
 // Region-block depth round-trips: a region's Depth (the opener's leading
 // indent) must survive parse → render so an indented code fence or callout
-// under a task stays inside the task's depth band on disk. Regions remain
-// parentless (DeriveHierarchy transparency) — the depth is
-// serialization-only.
+// under a task stays inside the task's depth band on disk. DeriveHierarchy
+// resolves a region's parent from that depth (nearest shallower non-region
+// ancestor) but never lets a region act as an ancestor — see
+// hierarchy_test.go's TestDeriveHierarchy_RegionParentage.
 
 const (
 	regionDepthTaskID   = "11111111-1111-1111-1111-111111111111"
@@ -84,14 +85,13 @@ func TestRenderFileContent_RegionDepthUnderTaskPreserved(t *testing.T) {
 			t.Errorf("block %d (%v) depth = %d, want %d", i, blocks[i].Type, blocks[i].Depth, want)
 		}
 	}
-	for _, b := range blocks {
-		if b.ParentID != "" && b.ID != regionDepthReplyID {
-			t.Errorf("block %v unexpectedly parented to %s", b.Type, b.ParentID)
+	// Every region and the reply resolve to the task — regions parent to
+	// their nearest shallower non-region ancestor, the reply's parent is
+	// unchanged by the regions between them.
+	for _, b := range blocks[1:] {
+		if b.ParentID != regionDepthTaskID {
+			t.Errorf("block %v ParentID = %s, want the task", b.Type, b.ParentID)
 		}
-	}
-	// The reply after the regions still belongs to the task.
-	if blocks[5].ParentID != regionDepthTaskID {
-		t.Errorf("reply parent = %s, want the task", blocks[5].ParentID)
 	}
 
 	rendered := RenderFileContent(blocks, src, "", 4)
@@ -248,20 +248,24 @@ func TestRenderFileContent_IndentedInnerFenceRoundTrip(t *testing.T) {
 
 // Blank interior lines in a depth>0 region body stay bare on render (no
 // trailing whitespace) — details bodies absorb blank lines between the open
-// and close tags, and callouts use bare `>` lines as paragraph breaks.
+// and close tags, and callouts use bare `>` lines as paragraph breaks. The
+// depth-1 table pins the same indent loop for pipe rows (parse cannot put a
+// blank line inside a table — every row needs its leading `|`).
 func TestRenderFileContent_BlankInteriorLinesStayBareAtDepth(t *testing.T) {
 	src := "- [ ] task <!-- id: " + regionDepthTaskID + " @ 2026-01-01 -->\n" +
 		"    <details>\n    <summary>S</summary>\n\n    line\n    </details>\n" +
 		"    <!-- id: " + regionDepthDetailID + " @ 2026-01-01 -->\n" +
 		"    > [!note] T\n    >\n    > after break\n" +
-		"    <!-- id: " + regionDepthCallID + " @ 2026-01-01 -->\n"
+		"    <!-- id: " + regionDepthCallID + " @ 2026-01-01 -->\n" +
+		"    | a | b |\n    | --- | --- |\n    | 1 | 2 |\n" +
+		"    <!-- id: " + regionDepthTableID + " @ 2026-01-01 -->\n"
 
 	blocks, _, _, _, err := ParseFileContent(src, "", "", "", "2026-01-01", 4)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(blocks) != 3 {
-		t.Fatalf("got %d blocks, want 3 (task + details + callout)", len(blocks))
+	if len(blocks) != 4 {
+		t.Fatalf("got %d blocks, want 4 (task + details + callout + table)", len(blocks))
 	}
 	for _, b := range blocks[1:] {
 		if b.Depth != 1 {
@@ -274,6 +278,43 @@ func TestRenderFileContent_BlankInteriorLinesStayBareAtDepth(t *testing.T) {
 	}
 	if strings.Contains(rendered, " \n") {
 		t.Fatalf("trailing whitespace leaked into a rendered line: %q", rendered)
+	}
+}
+
+// renderBlock is also fed caller-constructed blocks straight from save (IPC,
+// plugin SDK), where a TABLE or CALLOUT clean_text can carry a genuinely
+// blank interior line — parse can never produce one (a blank line ends the
+// region). The bare-blank branch must keep those lines empty instead of
+// emitting indent-only trailing whitespace (#1060 AC).
+func TestRenderBlock_BlankInteriorLineStaysBareAtDepth(t *testing.T) {
+	cases := []struct {
+		kind BlockType
+		body string
+	}{
+		{BlockTable, "| a | b |\n| --- | --- |\n\n| 1 | 2 |"},
+		{BlockDetails, "<details>\n<summary>S</summary>\n\n</details>"},
+		{BlockCallout, "> [!note] T\n\n> after the break"},
+	}
+	for _, tc := range cases {
+		out := renderBlock(ParsedBlock{
+			ID:        "77777777-7777-4777-8777-777777777777",
+			Type:      tc.kind,
+			Depth:     1,
+			CleanText: tc.body,
+		}, 4)
+		blankSeen := false
+		for i, ln := range strings.Split(out, "\n") {
+			if ln == "" {
+				blankSeen = true
+				continue
+			}
+			if !strings.HasPrefix(ln, "    ") {
+				t.Errorf("%s render line %d = %q, want the 4-space region indent", tc.kind, i, ln)
+			}
+		}
+		if !blankSeen {
+			t.Errorf("%s render lost its bare blank interior line (indent-only line or collapsed): %q", tc.kind, out)
+		}
 	}
 }
 
