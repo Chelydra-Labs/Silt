@@ -28,11 +28,16 @@ import {
   persistInspectorPaneWidth,
   canFitInspectorSplit,
   maxInspectorPaneWidthForHost,
+  inspectorSplitRatioFromWidth,
+  resolveInspectorPaneWidthForHost,
+  referenceInspectorPaneWidthFromRatio,
   onTasksSettingsChanged,
   DEFAULT_INSPECTOR_PANE_WIDTH,
+  DEFAULT_INSPECTOR_SPLIT_RATIO,
   MIN_INSPECTOR_PANE_WIDTH,
   MAX_INSPECTOR_PANE_WIDTH,
-  MIN_LIST_MASTER_WIDTH
+  MIN_LIST_MASTER_WIDTH,
+  REFERENCE_INSPECTOR_HOST_WIDTH
 } from './settings'
 import { SYSTEM_VIEWS } from './savedViews'
 import { getTaskWeekStart } from '../../../lib/taskWeekStart.svelte'
@@ -428,5 +433,31 @@ describe('inspector pane width (#910)', () => {
     await setTasksSettings({ inspector_pane_width: 500 })
     expect(seen.length).toBeGreaterThanOrEqual(1)
     unsub()
+  })
+
+  it('scales inspector pane width proportionally with hostWidth while protecting master min (#1058)', () => {
+    expect(DEFAULT_INSPECTOR_SPLIT_RATIO).toBeCloseTo(0.4, 5)
+    expect(
+      inspectorSplitRatioFromWidth(
+        DEFAULT_INSPECTOR_PANE_WIDTH,
+        REFERENCE_INSPECTOR_HOST_WIDTH
+      )
+    ).toBeCloseTo(0.4, 5)
+
+    // At 1200px host: 40% = 480px (leaves 716px for list)
+    expect(resolveInspectorPaneWidthForHost(1200, 0.4)).toBe(480)
+    // At 1350px reference host: 40% = 540px
+    expect(resolveInspectorPaneWidthForHost(1350, 0.4)).toBe(540)
+    // At 1600px host: 40% = 640px
+    expect(resolveInspectorPaneWidthForHost(1600, 0.4)).toBe(640)
+    // At 2000px host: clamped to MAX_INSPECTOR_PANE_WIDTH (700)
+    expect(resolveInspectorPaneWidthForHost(2000, 0.4)).toBe(
+      MAX_INSPECTOR_PANE_WIDTH
+    )
+    // At 880px host with 0.55 ratio: 880*0.55=484, clamped to maxForHost (880 - 420 - 4 = 456)
+    expect(resolveInspectorPaneWidthForHost(880, 0.55)).toBe(456)
+    expect(referenceInspectorPaneWidthFromRatio(0.4)).toBe(
+      DEFAULT_INSPECTOR_PANE_WIDTH
+    )
   })
 })

@@ -773,6 +773,99 @@ describe('Tasks view', () => {
     }
   })
 
+  it('uses fluid full-width list containers and scales inspector pane proportionally on resize (#1058)', async () => {
+    const observed = new Map<Element, ResizeObserverCallback>()
+    const OrigRO = globalThis.ResizeObserver
+    class MockRO {
+      private cb: ResizeObserverCallback
+      constructor(cb: ResizeObserverCallback) {
+        this.cb = cb
+      }
+      observe(el: Element) {
+        observed.set(el, this.cb)
+        const w = (el as HTMLElement).clientWidth || 0
+        this.cb(
+          [
+            { target: el, contentRect: { width: w } }
+          ] as unknown as ResizeObserverEntry[],
+          this as unknown as ResizeObserver
+        )
+      }
+      unobserve(el: Element) {
+        observed.delete(el)
+      }
+      disconnect() {
+        observed.clear()
+      }
+    }
+    globalThis.ResizeObserver = MockRO as unknown as typeof ResizeObserver
+
+    let hostWidth = 1200
+    const fireHostWidth = (el: HTMLElement, w: number) => {
+      hostWidth = w
+      const cb = observed.get(el)
+      cb?.(
+        [
+          { target: el, contentRect: { width: w } }
+        ] as unknown as ResizeObserverEntry[],
+        {} as ResizeObserver
+      )
+    }
+
+    try {
+      mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+        if (isOpenSql(sql)) {
+          return {
+            rows: [task('prop1', 'Proportional split task')],
+            truncated: false
+          }
+        }
+        return { rows: [], truncated: false }
+      })
+
+      const { container } = render(Tasks, {
+        ctx: makeCtx(),
+        manifest: MANIFEST
+      })
+      await flush()
+
+      const listScroll = screen.getByTestId('tasks-list-scroll')
+      const quickAddInner = screen.getByTestId('tasks-inline-quickadd-inner')
+      expect(listScroll).toHaveClass('w-full')
+      expect(listScroll).not.toHaveClass('max-w-5xl')
+      expect(quickAddInner).toHaveClass('w-full')
+      expect(quickAddInner).not.toHaveClass('max-w-5xl')
+
+      const host = container.querySelector('[data-tasks-view]') as HTMLElement
+      Object.defineProperty(host, 'clientWidth', {
+        configurable: true,
+        get: () => hostWidth
+      })
+      fireHostWidth(host, 1200)
+      await flush()
+
+      const bodyBtn = document.querySelector(
+        '[data-block-id="prop1"] button[aria-label^="Edit metadata for"]'
+      ) as HTMLElement
+      await fireEvent.click(bodyBtn)
+      await flush()
+
+      const pane = screen.getByTestId('tasks-inspector-pane')
+      const master = screen.getByTestId('tasks-list-master')
+      // At 1200px with 0.4 default ratio -> 480px pane, 420px min-width master
+      expect(pane.style.width).toBe('480px')
+      expect(master.style.minWidth).toBe('420px')
+
+      // Resize wider to 1500px -> 40% = 600px
+      fireHostWidth(host, 1500)
+      await flush()
+      await tick()
+      expect(pane.style.width).toBe('600px')
+    } finally {
+      globalThis.ResizeObserver = OrigRO
+    }
+  })
+
   it('clicking the pencil affordance opens the sub-editor modal', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
       if (isOpenSql(sql))

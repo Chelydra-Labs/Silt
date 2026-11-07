@@ -19,12 +19,12 @@ state/query module per mode.
 | `savedViews.ts` | The three code-defined `SYSTEM_VIEWS` + the `fingerprintOf` / `fingerprintOfState` helpers that power the "is the live state the same as this saved view?" check. |
 | `settings.ts` | YAML pref I/O for everything under `plugins.plugin_settings.silt-tasks`. Reads come from the synchronous settings snapshot; writes go through the atomic `updatePluginSetting`. |
 | `lib/taskWeekStart.svelte.ts` | Reactive active-vault projection of the persisted Tasks week-start preference for global calendar surfaces. |
-| `TasksHub.svelte` | The shell — title + open/done count header, mode switcher, FilterBar, scope breadcrumb, saved-view bookmark affordance, and the route to the active renderer. |
-| `views/ListView.svelte` | List renderer — time-horizon (or any `groupBy`) sections, inline quick-add, row drag-reorder under `sort: manual`. |
-| `views/BoardView.svelte` | Board renderer — status columns, HTML5 drag-and-drop with FLIP animation, manual `[order::]` reordering, ArrowLeft/Right keyboard parity. |
-| `views/CalendarView.svelte` | Calendar renderer — month/week grids over a windowed due-date query. |
+| `TasksHub.svelte` | The workspace shell — consolidated `<header data-testid="tasks-hub-header">` housing the primary title/count/active-view bar, segmented mode switcher, grouped utility cluster (saved-view bookmark + preferences), compact routed page-context strip, and subordinate `FilterBar`, followed by the shared content shell (`data-testid="tasks-hub-content-shell"`). |
+| `views/ListView.svelte` | List renderer — full-width workspace-aligned sections (`w-full`, time-horizon or any `groupBy`), proportional master–detail split with `TaskEditDrawer` (60:40 default list:inspector ratio scaling with `hostWidth` above `864px`, resizable via `SidebarResizeHandle`, overlay fallback below `864px`), inline quick-add, row drag-reorder under `sort: manual`. |
+| `views/BoardView.svelte` | Board renderer — fluid status/dimension lanes aligned with workspace padding, HTML5 drag-and-drop with FLIP animation, manual `[order::]` reordering, ArrowLeft/Right keyboard parity. |
+| `views/CalendarView.svelte` | Calendar renderer — compact single-row navigation bar + full-height month/week grids over a windowed due-date query. |
 | `Sidebar.svelte` | The unified sidebar — smart lists, saved views, mini-calendar, and filter controls. Reads + writes the same hub state as the shell. |
-| `components/FilterBar.svelte` | Owner / priority / due-date / tag filter chips (writes `TaskFilters`). |
+| `components/FilterBar.svelte` | Subordinate toolbar control row grouped into two flex-wrapping clusters: Organize (`Scope: <Crumb>` + `Follow`, `Group`, `Sort`) and Facets (`Owner`, `Priority`, `Due date`, `Stale (30d)`, `Tags`, `Clear all`). |
 | `components/TaskEditDrawer.svelte` | Shared non-blocking inspector drawer (pin, progress, recurrence, due date, status, owner, priority, tags). |
 | `components/CommentThread.svelte` | Comment thread over a task's NOTE-block children (`FetchSubtree` + `block_meta` attribution); one-level replies. |
 | `components/TasksCommandPalette.svelte` | Hub-scoped Ctrl+K command palette (mode / group / sort / views / find / add). |
@@ -54,6 +54,27 @@ Every dimension setter in `state.svelte.ts` marks the active saved view
 dirty when one is active, so the header bookmark can offer Update /
 Save-as-new instead of just "saved". The sidebar and the header are
 bidirectionally in sync because they read the same `$state` singleton.
+
+## Workspace layout hierarchy
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│ header[data-testid="tasks-hub-header"] (unified workspace chrome)         │
+│  ├─ Primary row: <h1> Tasks · open/done count · active saved-view badge   │
+│  │               [List | Board | Calendar] · [Bookmark | Preferences]     │
+│  ├─ Optional compact page-context strip (when routed from a page)         │
+│  └─ FilterBar (subordinate row, wraps by functional cluster):             │
+│       ├─ Organize cluster: [Scope: <Crumb> (+ Follow)] [Group] [Sort]     │
+│       └─ Facets cluster:   [Owner] [Priority] [Due] [Stale] [Tags]        │
+├───────────────────────────────────────────────────────────────────────────┤
+│ div[data-testid="tasks-hub-content-shell"]                                │
+│  ├─ List mode: full-width aligned list + bottom quick-add composer;       │
+│  │             proportional master–detail split (60:40 default, min 420px │
+│  │             list, resizable handle, <864px overlay fallback)           │
+│  ├─ Board mode: fluid workspace-aligned lanes + overlay inspector         │
+│  └─ Calendar mode: compact single-row nav bar + full-height month/week    │
+└───────────────────────────────────────────────────────────────────────────┘
+```
 
 ## Configuration
 

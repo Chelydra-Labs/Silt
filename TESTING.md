@@ -236,6 +236,13 @@ these are manual by design.
       (grants re-seed on launch — no `content-mutate` capability error).
 - [ ] **Mode switching**: List / Board / Calendar switch from the header;
       the chosen mode + grouping + sort persists across restarts.
+- [ ] **Responsive layout & inspector split**: resize the window from narrow
+      (~720 px) through standard (~1280 px) to wide (≥1600 px) across List,
+      Board, and Calendar modes: the unified toolbar wraps by control cluster
+      without horizontal scroll, the List rows and quick-add bar expand fluidly
+      aligned with the toolbar edges, and the open List inspector scales
+      proportionally above 864 px (falling back to the overlay drawer below
+      864 px while keeping the list column ≥420 px).
 - [ ] **Grouping**: all 9 dimensions (None/Status/Owner/Priority/Due date/
       Tag/Notebook/Section/Page) bin correctly; the trailing Unassigned
       bucket renders for empty values.
