@@ -409,6 +409,13 @@ CREATE INDEX idx_page_properties_type_prop ON page_properties(type_name, propert
 -- remains the tag query path (SPECS.md §11.6/§11.7). Separate from
 -- page_properties (type-scoped) and tags by design; composing the three is a
 -- read-side concern. Source-scoped (mirrors page_types/blocks).
+-- The table also serves as the page-inventory projection: every index path
+-- guarantees a row (identity-only for block-only paths), so it answers
+-- "which pages exist" — including zero-block files that a DISTINCT over
+-- blocks cannot see (page inventory reads, wiki-link resolution, title
+-- search). The delete/remove paths drop the row with the rest of the
+-- projection; a restart-safe one-shot backfill (page_core_blocks_backfill
+-- marker) fills identities from pre-existing blocks rows on upgrade.
 CREATE TABLE page_core (
     source   TEXT NOT NULL,
     notebook TEXT NOT NULL,
@@ -420,6 +427,7 @@ CREATE TABLE page_core (
     created  TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (source, notebook, section, page)
 );
+CREATE INDEX idx_page_core_inventory ON page_core(notebook, section, page);
 
 
 3.1 External / Linked Notebooks
@@ -766,7 +774,8 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
 - **Typeaheads & backlinks** — `SearchPages` powers the `[[` page-link
   autocomplete picker after two non-space query characters. It returns the
   rank-correct, case-insensitive top 50 over distinct page paths (exact name,
-  page-prefix, path-prefix, then substring; deterministic ties). `RecordTagUsage`
+  page-prefix, path-prefix, then substring; deterministic ties), reading the
+  page_core page-inventory projection so zero-block pages stay linkable. `RecordTagUsage`
   validates a bounded tag path before maintaining an MRU
   `recent_tags` list (capped at 12) that seeds the `#` tag-typeahead above
   full index tags. `GetBacklinksPaged` returns bounded, cursor-paged inbound
@@ -1372,7 +1381,15 @@ for Replace All.
 WHERE (notebook/section/tag/type/scope) + sort (relevance=bm25 |
 recency=file_date DESC) + a 20-token snippet window. Tag matches the exact tag
 OR a hierarchical descendant. `SearchFilters.VaultOnly` scopes to in-vault
-blocks. The SearchModal adds a scope segmented control (Vault | +Linked),
+blocks. Task-attribute filters (`owner` exact case-insensitive, `status`
+TODO/DOING/DONE, inclusive `dueBefore`/`dueAfter` YYYY-MM-DD bounds,
+`priorityMin` urgency floor where 1 is highest, `overdue` = due before today
+and not DONE) restrict results to matching TASK rows; zero-value fields are
+no-ops. Pages whose NAME matches every term surface as page-level results
+(block id empty, snippet = highlighted title) ranked above all body hits —
+including zero-block pages, which is what makes an empty page findable by
+name; block-scoped filters (type, tag) and task-attribute filters suppress
+the page leg. The SearchModal adds a scope segmented control (Vault | +Linked),
 category filter chips (single-select by block type), a sort toggle, and a live
 count. Each result keeps the backend `source` discriminator, shows a Vault or
 Linked qualifier beside its breadcrumb and snippet, and sends the complete
