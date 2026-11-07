@@ -2121,4 +2121,118 @@ describe('region-block depth round-trip (#1003)', () => {
       ['NOTE', 1]
     ])
   })
+
+  // The full region matrix: every region type the converter emits, at both
+  // depth bands. Embeds and block math are NOTE-typed on disk (sole-content
+  // bodies) and included here so a new region shape cannot ship without a
+  // depth case next to it.
+  const EMBED_UUID = '11111111-1111-1111-1111-111111111111'
+  function matrixBlocks(depth: number) {
+    const n = depth + 1
+    return [
+      mkBlock('TASK', { clean_text: 'task', depth, line_number: 1 }),
+      mkBlock('CODE', {
+        clean_text: 'code',
+        depth,
+        language: 'js',
+        line_number: 2
+      }),
+      mkBlock('TABLE', {
+        clean_text: '| a | b |\n| --- | --- |\n| 1 | 2 |',
+        depth,
+        line_number: 3
+      }),
+      mkBlock('CALLOUT', {
+        clean_text: '> [!note] T\n> body',
+        depth,
+        line_number: 4
+      }),
+      mkBlock('DETAILS', {
+        clean_text: '<details>\n<summary>S</summary>\nline\n</details>',
+        depth,
+        line_number: 5
+      }),
+      mkBlock('NOTE', {
+        clean_text: `{{embed:${EMBED_UUID}}}`,
+        depth,
+        line_number: 6
+      }),
+      mkBlock('NOTE', { clean_text: '$$x = 1$$', depth, line_number: 7 })
+    ]
+  }
+
+  it('every region type at depth 0 stays at depth 0 with stable emit', () => {
+    const back = docToBlocks(blocksToDoc(matrixBlocks(0)))
+    expect(back.map((b) => b.depth)).toEqual([0, 0, 0, 0, 0, 0, 0])
+    // Emit is stable from the first save — a depth-0 file's bytes cannot
+    // change because of the region-depth carry (table pads columns to its
+    // own canonical widths, so stability is asserted pass-over-pass).
+    const back2 = docToBlocks(blocksToDoc(back))
+    expect(back2.map((b) => [b.type, b.depth, b.clean_text])).toEqual(
+      back.map((b) => [b.type, b.depth, b.clean_text])
+    )
+  })
+
+  it('every region type indented under a task keeps its depth band', () => {
+    const blocks = [
+      ...matrixBlocks(1).slice(1), // regions at depth 1, task re-added below
+      mkBlock('NOTE', {
+        clean_text: 'still the task',
+        depth: 1,
+        line_number: 8
+      })
+    ]
+    const doc = blocksToDoc([
+      mkBlock('TASK', { clean_text: 'task', depth: 0 }),
+      ...blocks
+    ])
+    const back = docToBlocks(doc)
+    // Indent preserved for every region; the trailing reply stays inside the
+    // task's depth band (ownership signal), and regions stay parentless —
+    // parentage is the Go parser's alone.
+    expect(back.map((b) => b.depth)).toEqual([0, 1, 1, 1, 1, 1, 1, 1])
+    for (const b of back.slice(1, 7)) {
+      expect(b.parent_id).toBe('')
+    }
+    // The embed/math nodes round-trip as NOTEs carrying their token bodies.
+    expect(back[5]).toMatchObject({
+      type: 'NOTE',
+      clean_text: `{{embed:${EMBED_UUID}}}`
+    })
+    expect(back[6]).toMatchObject({ type: 'NOTE', clean_text: '$$x = 1$$' })
+  })
+
+  it('a real TipTap editor keeps the region depth attr through setContent', () => {
+    // Without the depth attr in each region node's schema, ProseMirror
+    // silently drops it on setContent — the exact regression class that
+    // collapsed regions to column 0 on save.
+    const doc = blocksToDoc([
+      mkBlock('TASK', { clean_text: 'task', depth: 0 }),
+      mkBlock('CODE', { clean_text: 'code', depth: 1, language: 'js' }),
+      mkBlock('CALLOUT', { clean_text: '> [!note] T\n> body', depth: 1 }),
+      mkBlock('TABLE', {
+        clean_text: '| a | b |\n| --- | --- |\n| 1 | 2 |',
+        depth: 1
+      }),
+      mkBlock('DETAILS', {
+        clean_text: '<details>\n<summary>S</summary>\nline\n</details>',
+        depth: 1
+      })
+    ])
+    const editor = makeEditorWithNewBlocks()
+    editor.commands.setContent(doc)
+    const saved = docToBlocks(editor.getJSON() as DocJSON)
+    // The harness's TrailingNode seeds an empty noteBlock after a
+    // details/table last child (notAfter covers only prose types) — expected
+    // harness behavior, not a converter artifact.
+    expect(saved.map((b) => [b.type, b.depth])).toEqual([
+      ['TASK', 0],
+      ['CODE', 1],
+      ['CALLOUT', 1],
+      ['TABLE', 1],
+      ['DETAILS', 1],
+      ['NOTE', 0]
+    ])
+    editor.destroy()
+  })
 })

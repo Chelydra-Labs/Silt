@@ -905,6 +905,20 @@ export const CALLOUT_VARIANTS: Record<
   }
 }
 
+// Outline `depth` for region/atomic block nodes (callout, code, table,
+// details, embeds, block math). Serialization-only: load stamps it from the
+// parsed block's depth (its on-disk leading indent) and save reads it back,
+// so an indented region under a task stays inside the task's depth band
+// across save instead of collapsing to column 0. These nodes never join
+// Tab/Shift-Tab depth runs and parent nothing — the attr is pure carry.
+const depthAttr = {
+  default: 0,
+  parseHTML: (el: HTMLElement) => Number(el.getAttribute('data-depth') || 0),
+  renderHTML: (attrs: Record<string, unknown>) => ({
+    'data-depth': String(attrs.depth)
+  })
+}
+
 export const CalloutBlock = Node.create({
   name: 'calloutBlock',
   group: 'block',
@@ -932,6 +946,7 @@ export const CalloutBlock = Node.create({
         parseHTML: (el) => el.getAttribute('data-variant') || 'note',
         renderHTML: (attrs) => ({ 'data-variant': attrs.variant })
       },
+      depth: depthAttr,
       file_date: {
         default: '',
         parseHTML: (el) => el.getAttribute('data-file-date') || '',
@@ -990,6 +1005,7 @@ export const CodeBlock = Node.create({
         renderHTML: (attrs) =>
           attrs.language ? { 'data-language': attrs.language } : {}
       },
+      depth: depthAttr,
       file_date: {
         default: '',
         parseHTML: (el) => el.getAttribute('data-file-date') || '',
@@ -1046,6 +1062,7 @@ export const SiltDetailsExtensions = [
           parseHTML: (el) => el.getAttribute('data-id') || null,
           renderHTML: (attrs) => (attrs.id ? { 'data-id': attrs.id } : {})
         },
+        depth: depthAttr,
         file_date: {
           default: '',
           parseHTML: (el) => el.getAttribute('data-file-date') || '',
@@ -1076,6 +1093,7 @@ export const SiltTableExtensions = [
           parseHTML: (el) => el.getAttribute('data-id') || null,
           renderHTML: (attrs) => (attrs.id ? { 'data-id': attrs.id } : {})
         },
+        depth: depthAttr,
         file_date: {
           default: '',
           parseHTML: (el) => el.getAttribute('data-file-date') || '',
@@ -1122,6 +1140,7 @@ export const EmbedNode = Node.create({
         parseHTML: (el) => el.getAttribute('data-uuid') || '',
         renderHTML: (attrs) => (attrs.uuid ? { 'data-uuid': attrs.uuid } : {})
       },
+      depth: depthAttr,
       bullet: { default: '' }
     }
   },
@@ -1329,6 +1348,7 @@ export const BlockMathNode = Node.create({
         renderHTML: (attrs) =>
           attrs.latex ? { 'data-latex': attrs.latex } : {}
       },
+      depth: depthAttr,
       // `bullet` is round-trip metadata (#327): a sole-content NOTE
       // (`- $$x$$`) carries its bullet marker so the Go serializer re-emits
       // it. Default '' = bare (atomic blocks default to no bullet).
@@ -1441,6 +1461,7 @@ export const EmbedBlockNode = Node.create({
         renderHTML: (attrs) =>
           attrs.pluginID ? { 'data-plugin': attrs.pluginID } : {}
       },
+      depth: depthAttr,
       // `bullet` is round-trip metadata (#327): a sole-content NOTE
       // (`- <!-- silt-embed: ... -->`) carries its bullet marker so the Go
       // serializer re-emits it. Default '' = bare.

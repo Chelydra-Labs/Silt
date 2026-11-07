@@ -302,11 +302,11 @@ export const BlockIndentOnDrop = Extension.create({
             if (!draggedNode || !Number.isFinite(oldPos)) return false
 
             // 2. The dragged node must carry a `depth` attr. Prose blocks
-            //    (noteBlock/taskBlock/headerBlock) do; calloutBlock, tables,
-            //    codeBlock, embeds, details do NOT — indenting those would
-            //    silently no-op on save (docToBlocks only reads depth for
-            //    the prose types). Bail so native reorders without a bogus
-            //    attr write.
+            //    (noteBlock/taskBlock/headerBlock) and region/atomic blocks
+            //    (callout, table, codeBlock, embeds, details) do; anything
+            //    else would silently no-op on save (docToBlocks reads depth
+            //    only where the schema defines it). Bail so native reorders
+            //    without a bogus attr write.
             if (draggedNode.attrs.depth === undefined) return false
 
             // 3. Top-level-only guard. Silt blocks are flat (doc children

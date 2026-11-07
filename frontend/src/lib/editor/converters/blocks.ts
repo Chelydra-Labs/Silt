@@ -33,6 +33,17 @@ function clampDepth(depth: number | undefined | null): number {
   return Math.min(depth ?? 0, MAX_DEPTH)
 }
 
+// The save-side depth of a region/atomic node (callout, code, table, details,
+// embeds, block math). Derived once from document position at load —
+// blockToNode stamps the parsed depth, the node's on-disk leading indent —
+// and carried on the depth attr; every region-emitting site in docToBlocks
+// reads it through THIS helper so a new region type cannot silently
+// reintroduce a hardcoded depth 0 (which would de-indent the file on save).
+// Regions stay parentless — depth is serialization-only.
+function regionDepth(attrs: Record<string, unknown>): number {
+  return clampDepth(attrs.depth as number | undefined)
+}
+
 // Concatenate the text descendants of a NodeJSON[] (used for code blocks,
 // whose content is plain `text*` with no marks). Newlines inside a text node
 // are preserved, so a multi-line code block round-trips verbatim.
@@ -173,7 +184,8 @@ function blockToNode(block: ParsedBlock): NodeJSON {
       attrs: {
         id: block.id,
         uuid: embedMatch[1],
-        bullet: detectBullet(block.raw_text)
+        bullet: detectBullet(block.raw_text),
+        depth: clampDepth(block.depth)
       }
     }
   }
@@ -187,7 +199,8 @@ function blockToNode(block: ParsedBlock): NodeJSON {
       attrs: {
         id: block.id,
         ...embedBlockAttrs,
-        bullet: detectBullet(block.raw_text)
+        bullet: detectBullet(block.raw_text),
+        depth: clampDepth(block.depth)
       }
     }
   }
@@ -203,7 +216,8 @@ function blockToNode(block: ParsedBlock): NodeJSON {
       attrs: {
         id: block.id,
         latex: blockMathMatch[1],
-        bullet: detectBullet(block.raw_text)
+        bullet: detectBullet(block.raw_text),
+        depth: clampDepth(block.depth)
       }
     }
   }
@@ -220,6 +234,7 @@ function blockToNode(block: ParsedBlock): NodeJSON {
       attrs: {
         id: block.id,
         language: block.language || '',
+        depth: clampDepth(block.depth),
         file_date: block.file_date || ''
       },
       content: codeText ? [{ type: 'text', text: codeText }] : []
@@ -257,7 +272,11 @@ function blockToNode(block: ParsedBlock): NodeJSON {
       for (const r of dataRows) rows.push(mkRow(r, 'tableCell'))
       return {
         type: 'table',
-        attrs: { id: block.id || null, file_date: block.file_date || '' },
+        attrs: {
+          id: block.id || null,
+          depth: clampDepth(block.depth),
+          file_date: block.file_date || ''
+        },
         content: rows
       }
     }
@@ -267,7 +286,12 @@ function blockToNode(block: ParsedBlock): NodeJSON {
   // multi-line clean_text. Parse into a details/detailsSummary/detailsContent
   // tree. The body lines become child block nodes.
   if (block.type === 'DETAILS') {
-    return parseDetailsHTML(rawText, block.id, block.file_date || '')
+    return parseDetailsHTML(
+      rawText,
+      block.id,
+      block.file_date || '',
+      clampDepth(block.depth)
+    )
   }
 
   // A CALLOUT block (#308) carries multi-line Obsidian callout syntax as
@@ -275,7 +299,12 @@ function blockToNode(block: ParsedBlock): NodeJSON {
   // into a calloutBlock node with paragraph children. Each `>` line becomes
   // a paragraph; the variant is extracted from the first line's `[!variant]`.
   if (block.type === 'CALLOUT') {
-    return parseCalloutText(rawText, block.id, block.file_date || '')
+    return parseCalloutText(
+      rawText,
+      block.id,
+      block.file_date || '',
+      clampDepth(block.depth)
+    )
   }
 
   const content: NodeJSON[] = text ? legacyTokenizeInline(text) : []
@@ -428,11 +457,14 @@ const DETAILS_SUMMARY_RE = /^<summary(?:\s[^>]*)?>([\s\S]*?)<\/summary>$/i
 
 // Parse <details> HTML into a details node tree. The opener's line carries the
 // block id (inherited from the old converter model). Body lines become child
-// block nodes via synthetic ParsedBlocks fed through blockToNode.
+// block nodes via synthetic ParsedBlocks fed through blockToNode. `depth` is
+// the region's serialization depth; nested <details> (synthetic, serialized
+// into the parent's clean_text) stay at 0.
 function parseDetailsHTML(
   html: string,
   blockId: string,
-  fileDate: string
+  fileDate: string,
+  depth: number
 ): NodeJSON {
   const lines = html.split('\n')
   const today = new Date().toISOString().slice(0, 10)
@@ -460,6 +492,7 @@ function parseDetailsHTML(
     attrs: {
       id: blockId || null,
       open: false,
+      depth,
       file_date: fileDate || today
     },
     content: [
@@ -580,7 +613,7 @@ function detailsBodyLinesToNodes(lines: string[]): NodeJSON[] {
       }
       if (depth === 0) {
         const nestedHTML = lines.slice(i, j + 1).join('\n')
-        nodes.push(parseDetailsHTML(nestedHTML, '', ''))
+        nodes.push(parseDetailsHTML(nestedHTML, '', '', 0))
         i = j + 1
         continue
       }
@@ -797,10 +830,12 @@ const CALLOUT_MARKER_RE =
 // is stripped of one `>` prefix and parsed into a block child. Plain lines stay
 // paragraphs so legacy multi-paragraph callouts round-trip byte-for-byte, while
 // code fences / tables / tasks / headers / nested callouts become typed children.
+// `depth` is the region's serialization depth; nested callouts stay at 0.
 function parseCalloutText(
   text: string,
   blockId: string,
-  fileDate: string
+  fileDate: string,
+  depth: number
 ): NodeJSON {
   const lines = text.split('\n')
   const today = new Date().toISOString().slice(0, 10)
@@ -832,6 +867,7 @@ function parseCalloutText(
     attrs: {
       id: blockId || null,
       variant,
+      depth,
       file_date: fileDate || today
     },
     content: children
@@ -864,7 +900,7 @@ function calloutBodyLinesToNodes(lines: string[]): NodeJSON[] {
       )
         j++
       const nestedText = lines.slice(i, j).join('\n')
-      nodes.push(parseCalloutText(nestedText, '', ''))
+      nodes.push(parseCalloutText(nestedText, '', '', 0))
       i = j
       continue
     }
@@ -882,7 +918,7 @@ function calloutBodyLinesToNodes(lines: string[]): NodeJSON[] {
       }
       if (depth === 0) {
         const html = lines.slice(i, j + 1).join('\n')
-        nodes.push(parseDetailsHTML(html, '', ''))
+        nodes.push(parseDetailsHTML(html, '', '', 0))
         i = j + 1
         continue
       }
@@ -1039,7 +1075,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
 
     // Smart Graph block-level node: the embed token is its own line. We
     // emit a NOTE block carrying just the {{embed:uuid}} text in its body
-    // (atomic; depth 0; no parent). The Go side will write the token
+    // (atomic; no parent). The Go side will write the token
     // verbatim, so the on-disk file is unchanged. The bullet attr (#327)
     // prefixes raw_text so a `- {{embed:...}}` round-trips its marker.
     if (node.type === 'embedNode') {
@@ -1050,7 +1086,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         id,
         parent_id: '',
         type: 'NOTE',
-        depth: 0,
+        depth: regionDepth(attrs),
         raw_text: `${bullet}${body}`,
         clean_text: body,
         status: '',
@@ -1077,7 +1113,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         id,
         parent_id: '',
         type: 'NOTE',
-        depth: 0,
+        depth: regionDepth(attrs),
         raw_text: `${bullet}${body}`,
         clean_text: body,
         status: '',
@@ -1112,7 +1148,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         id,
         parent_id: '',
         type: 'NOTE',
-        depth: 0,
+        depth: regionDepth(attrs),
         raw_text: `${bullet}${marker}`,
         clean_text: marker,
         status: '',
@@ -1134,7 +1170,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         id,
         parent_id: '',
         type: 'CALLOUT',
-        depth: 0,
+        depth: regionDepth(attrs),
         raw_text: calloutText,
         clean_text: calloutText,
         status: '',
@@ -1158,7 +1194,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         id,
         parent_id: '',
         type: 'CODE',
-        depth: 0,
+        depth: regionDepth(attrs),
         raw_text: '',
         clean_text: code,
         status: '',
@@ -1184,7 +1220,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         id,
         parent_id: '',
         type: 'DETAILS',
-        depth: 0,
+        depth: regionDepth(attrs),
         raw_text: html,
         clean_text: html,
         status: '',
@@ -1208,7 +1244,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         id,
         parent_id: '',
         type: 'TABLE',
-        depth: 0,
+        depth: regionDepth(attrs),
         raw_text: '',
         clean_text: gfm,
         status: '',
