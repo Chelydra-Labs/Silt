@@ -740,7 +740,8 @@ func TestSaveSubtreeBlocks_IndentedRegionMember(t *testing.T) {
 // TestAppendTaskComment_IndentedRegionMember pins the comment writer on the
 // member fixture: AppendTaskComment re-splices the task's whole membership —
 // now including the indented region — plus the new NOTE. Every id must land
-// exactly once and the index must commit all five rows.
+// exactly once in member order (reply, region, reply, new comment) and the
+// index must commit all five rows.
 func TestAppendTaskComment_IndentedRegionMember(t *testing.T) {
 	app := newTestApp(t)
 	indexTestFile(t, app, "W", "S", "CommentRegionMember", "2026-07-01", indentedRegionChildRunDoc)
@@ -755,6 +756,13 @@ func TestAppendTaskComment_IndentedRegionMember(t *testing.T) {
 		if n := strings.Count(s, id); n != 1 {
 			t.Errorf("id %s occurs %d times on disk, want exactly 1:\n%s", id, n, s)
 		}
+	}
+	// Region must hold member position between the replies, ahead of the new
+	// comment — main's non-member semantics relocates it after the inserted run.
+	if !(strings.Index(s, indentRunReply1) < strings.Index(s, indentRunCodeID) &&
+		strings.Index(s, indentRunCodeID) < strings.Index(s, indentRunReply2) &&
+		strings.Index(s, indentRunReply2) < strings.Index(s, newID)) {
+		t.Errorf("relative order reply1 < region < reply2 < new comment broken — region lost member position:\n%s", s)
 	}
 	if !strings.Contains(s, "fmt.Println(1)") {
 		t.Errorf("code region body lost in:\n%s", s)
