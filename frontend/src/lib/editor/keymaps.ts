@@ -183,19 +183,6 @@ function isBlockEmpty(node: ProseMirrorNode): boolean {
 }
 
 /**
- * Set block depth and, for ordered noteBlocks, renumber vacated/destination
- * same-depth runs so indent/unindent keep sequential markers (#837).
- */
-function setBlockDepth(
-  editor: Editor,
-  nodePos: number,
-  newDepth: number
-): void {
-  const tr = applyDepthChangeOnTransaction(editor.state.tr, nodePos, newDepth)
-  if (tr.docChanged) editor.view.dispatch(tr)
-}
-
-/**
  * Positions of the selected block plus every following same-parent sibling
  * in its subtree: the contiguous run of depth-bearing outline blocks whose
  * depth is greater than the selected block's. The run ends at a header (its
@@ -1310,8 +1297,9 @@ export const SiltBlockKeymaps = Extension.create({
         }
 
         if (info.depth > 0) {
-          // Unindent first.
-          setBlockDepth(this.editor, info.pos, info.depth - 1)
+          // Unindent first — the whole contiguous run, matching the subtree
+          // semantics of Tab/Shift-Tab so children follow their parent down.
+          shiftDepthRun(this.editor, depthRunPositions(this.editor, info), -1)
           return true
         }
 
