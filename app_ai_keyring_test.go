@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"silt/backend/config"
 	"silt/backend/keyring"
 )
 
@@ -368,5 +369,125 @@ func TestGetAIProviderConfig_FlagsKeyringUnusable(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected chat in KeyringUnusableFor, got %v", pub.KeyringUnusableFor)
+	}
+}
+
+// TestSetAIAPIKey_PreservesConcurrentExternalEdit covers setting provider API
+// keys against a stale in-memory config for both keyring and plaintext fallback modes.
+func TestSetAIAPIKey_PreservesConcurrentExternalEdit(t *testing.T) {
+	t.Run("keyring stored", func(t *testing.T) {
+		app := newTestApp(t)
+		fake := withFakeKeyring(t, app)
+		seedStaleConfigWithExternalFont(t, app, "StaleFont", "ExternalEditFont")
+
+		if err := app.SetAIAPIKey("chat", "super-secret"); err != nil {
+			t.Fatalf("SetAIAPIKey: %v", err)
+		}
+		assertExternalFontSurvived(t, app, "ExternalEditFont")
+
+		got, err := fake.Get(keyringService, app.aiKeyringUser("chat"))
+		if err != nil {
+			t.Fatalf("fake Get: %v", err)
+		}
+		if got != "super-secret" {
+			t.Errorf("keyring held %q, want super-secret", got)
+		}
+
+		loaded, err := config.Load(app.vaultPath)
+		if err != nil {
+			t.Fatalf("reload: %v", err)
+		}
+		if loaded.AI.Chat.APIKey != "" {
+			t.Errorf("on-disk APIKey not blanked: got %q", loaded.AI.Chat.APIKey)
+		}
+		app.configMu.RLock()
+		memKey := app.cfg.AI.Chat.APIKey
+		app.configMu.RUnlock()
+		if memKey != "" {
+			t.Errorf("in-memory APIKey not blanked: got %q", memKey)
+		}
+	})
+
+	t.Run("plaintext fallback", func(t *testing.T) {
+		app := newTestApp(t)
+		app.keyringStore = keyring.UnavailableFake{}
+		seedStaleConfigWithExternalFont(t, app, "StaleFont", "ExternalEditFont")
+
+		if err := app.SetAIAPIKey("embedding", "fallback-secret"); err != nil {
+			t.Fatalf("SetAIAPIKey: %v", err)
+		}
+		assertExternalFontSurvived(t, app, "ExternalEditFont")
+
+		loaded, err := config.Load(app.vaultPath)
+		if err != nil {
+			t.Fatalf("reload: %v", err)
+		}
+		if loaded.AI.Embedding.APIKey != "fallback-secret" {
+			t.Errorf("on-disk APIKey not updated: got %q", loaded.AI.Embedding.APIKey)
+		}
+		app.configMu.RLock()
+		memKey := app.cfg.AI.Embedding.APIKey
+		app.configMu.RUnlock()
+		if memKey != "fallback-secret" {
+			t.Errorf("in-memory APIKey not updated: got %q", memKey)
+		}
+	})
+}
+
+// TestClearAIAPIKey_PreservesConcurrentExternalEdit covers clearing provider API
+// keys against a stale in-memory config.
+func TestClearAIAPIKey_PreservesConcurrentExternalEdit(t *testing.T) {
+	app := newTestApp(t)
+	fake := withFakeKeyring(t, app)
+	seedStaleConfigWithExternalFont(t, app, "StaleFont", "ExternalEditFont")
+
+	_ = fake.Set(keyringService, app.aiKeyringUser("chat"), "to-be-cleared")
+	if err := app.ClearAIAPIKey("chat"); err != nil {
+		t.Fatalf("ClearAIAPIKey: %v", err)
+	}
+	assertExternalFontSurvived(t, app, "ExternalEditFont")
+
+	if _, err := fake.Get(keyringService, app.aiKeyringUser("chat")); err == nil {
+		t.Error("keyring entry was not cleared")
+	}
+
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if loaded.AI.Chat.APIKey != "" {
+		t.Errorf("on-disk APIKey not empty: got %q", loaded.AI.Chat.APIKey)
+	}
+	app.configMu.RLock()
+	memKey := app.cfg.AI.Chat.APIKey
+	app.configMu.RUnlock()
+	if memKey != "" {
+		t.Errorf("in-memory APIKey not empty: got %q", memKey)
+	}
+}
+
+// TestSetUseKeyring_PreservesConcurrentExternalEdit covers toggling the keyring
+// setting against a stale in-memory config.
+func TestSetUseKeyring_PreservesConcurrentExternalEdit(t *testing.T) {
+	app := newTestApp(t)
+	seedStaleConfigWithExternalFont(t, app, "StaleFont", "ExternalEditFont")
+
+	if err := app.SetUseKeyring(false); err != nil {
+		t.Fatalf("SetUseKeyring: %v", err)
+	}
+	assertExternalFontSurvived(t, app, "ExternalEditFont")
+
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if loaded.AI.UseKeyring == nil || *loaded.AI.UseKeyring {
+		t.Errorf("on-disk UseKeyring = %v, want false", loaded.AI.UseKeyring)
+	}
+	app.configMu.RLock()
+	mem := app.cfg.AI.UseKeyring
+	app.configMu.RUnlock()
+	if mem == nil || *mem {
+		t.Errorf("in-memory UseKeyring = %v, want false", mem)
 	}
 }

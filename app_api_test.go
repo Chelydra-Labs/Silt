@@ -2354,6 +2354,17 @@ func TestMutateConfigFresh_RefusesCorruptConfig(t *testing.T) {
 			_, err := a.AddCustomDictionaryWord("noteworthy")
 			return err
 		}},
+		{"UpdateAIFeatures", func(a *App) error {
+			enabled := true
+			return a.UpdateAIFeatures(AIFeaturesPatch{Enabled: &enabled})
+		}},
+		{"UpdateAIProviderConfig", func(a *App) error {
+			return a.UpdateAIProviderConfig("chat", AIProviderPatch{Model: "gpt-4o"})
+		}},
+		{"SetAIAPIKey", func(a *App) error { return a.SetAIAPIKey("chat", "key") }},
+		{"ClearAIAPIKey", func(a *App) error { return a.ClearAIAPIKey("chat") }},
+		{"SetUseKeyring", func(a *App) error { return a.SetUseKeyring(false) }},
+		{"SetLocalMCPConfig", func(a *App) error { return a.SetLocalMCPConfig(true, true, false, 0) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newTestApp(t)
