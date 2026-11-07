@@ -471,7 +471,13 @@ export function makePluginContext(
         tag: '',
         type: 'TASK',
         sort: '',
-        vaultOnly: false
+        vaultOnly: false,
+        owner: '',
+        status: '',
+        dueBefore: '',
+        dueAfter: '',
+        priorityMin: 0,
+        overdue: false
       })
       return res.results ?? []
     },

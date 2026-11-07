@@ -97,7 +97,13 @@
         tag: '',
         type: '',
         sort: '',
-        vaultOnly: true
+        vaultOnly: true,
+        owner: '',
+        status: '',
+        dueBefore: '',
+        dueAfter: '',
+        priorityMin: 0,
+        overdue: false
       })
       const results = res.results || []
       // res.total is the full match count; results is capped at the page limit.
