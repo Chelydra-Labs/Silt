@@ -158,7 +158,8 @@
         dueBefore: '',
         dueAfter: '',
         priorityMin: 0,
-        overdue: false
+        overdue: false,
+        excludePageTitles: false
       })
       // Guard against a stale response landing after a newer query/filter.
       if (

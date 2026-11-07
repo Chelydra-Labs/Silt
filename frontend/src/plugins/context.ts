@@ -479,7 +479,8 @@ export function makePluginContext(
         dueBefore: '',
         dueAfter: '',
         priorityMin: 0,
-        overdue: false
+        overdue: false,
+        excludePageTitles: false
       })
       return res.results ?? []
     },

@@ -103,21 +103,22 @@
         dueBefore: '',
         dueAfter: '',
         priorityMin: 0,
-        overdue: false
+        overdue: false,
+        // Block-scoped budget: page rows would consume the 200-row window, so
+        // a find term matching many page names could hide the block matches
+        // this preview exists to replace. With them excluded the limit covers
+        // blocks and res.total is an exact block count.
+        excludePageTitles: true
       })
       const results = res.results || []
-      // Page-level title rows (id === "") are navigation rows, not blocks —
-      // this modal replaces block content, so a page row could only become a
-      // phantom match (preview promises a replacement; Apply can never make
-      // it). The backend prepends them, so the visible page rows are all of
-      // them unless page rows alone fill the page — in which case there are no
-      // block matches to truncate anyway. Discount their count so the
-      // truncation banner stays honest.
+      // Defensive: the request excludes page rows at the source, but a page
+      // row (id === "") could only become a phantom match — the preview
+      // promises a replacement Apply can never make.
       const blockResults = results.filter((r) => r.id !== '')
-      const pageRows = results.length - blockResults.length
-      // res.total is the full match count; results is capped at the page limit.
-      if (res.total - pageRows > blockResults.length) {
-        truncatedCount = res.total - pageRows
+      // res.total counts blocks only, so it is the exact match count for the
+      // truncation banner.
+      if (res.total > blockResults.length) {
+        truncatedCount = res.total
       }
       // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
       const byPage = new Map<string, PageGroup>()

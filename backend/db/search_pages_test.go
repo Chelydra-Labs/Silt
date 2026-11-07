@@ -625,3 +625,141 @@ func TestSearch_TitleHitsBoundedByFlatCap(t *testing.T) {
 		t.Error("HasMore expected true: 10 returned of 500 capped total")
 	}
 }
+
+// TestSearch_SearchBlocksBudgetExcludesTitleHits pins the block-scoped budget:
+// with more title hits than the 50-row window, SearchBlocks must still return
+// a full page of blocks. Dropping page rows after paging let title hits consume
+// the budget and could zero the editor's block-ref picker while body matches
+// existed.
+func TestSearch_SearchBlocksBudgetExcludesTitleHits(t *testing.T) {
+	dm := newTestDB(t)
+
+	// 60 zero-block pages whose NAMES all contain the query term.
+	for i := 1; i <= 60; i++ {
+		page := fmt.Sprintf("2026 Daily %02d", i)
+		if err := dm.IndexFileWithProjection("vault", "Journal", "", page,
+			nil, nil, "", nil, PageCoreFields{}); err != nil {
+			t.Fatalf("index title page %s: %v", page, err)
+		}
+	}
+	// 60 body hits across 20 pages (3 per page stays under the per-page cap).
+	for p := 1; p <= 20; p++ {
+		blocks := make([]parser.ParsedBlock, 0, 3)
+		for b := 1; b <= 3; b++ {
+			blocks = append(blocks, parser.ParsedBlock{
+				ID:   fmt.Sprintf("bbbb%04d-0000-4000-8000-%012d", p, b),
+				Type: parser.BlockNote, RawText: "plan for 2026", CleanText: "plan for 2026",
+				LineNumber: b,
+			})
+		}
+		if err := dm.IndexFileBlocks("vault", "Notes", "", fmt.Sprintf("Plan %02d", p), blocks, nil); err != nil {
+			t.Fatalf("index body page %d: %v", p, err)
+		}
+	}
+
+	blocksHit, err := dm.SearchBlocks("2026")
+	if err != nil {
+		t.Fatalf("SearchBlocks: %v", err)
+	}
+	if len(blocksHit) != 50 {
+		t.Fatalf("block budget consumed by title rows: got %d block hits, want 50", len(blocksHit))
+	}
+	for _, r := range blocksHit {
+		if r.ID == "" {
+			t.Errorf("SearchBlocks leaked a page-level row: %+v", r)
+		}
+	}
+
+	// The same source-level switch keeps the paged envelope's totals honest:
+	// every counted row is a block.
+	paged, err := dm.SearchBlocksPaged("2026", 0, 50, SearchFilters{ExcludePageTitles: true})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(excludePageTitles): %v", err)
+	}
+	if paged.Total != 60 {
+		t.Fatalf("block-only total = %d, want 60", paged.Total)
+	}
+	if len(paged.Results) != 50 || !paged.HasMore {
+		t.Fatalf("block-only page = %d rows, hasMore=%v (want 50,true)", len(paged.Results), paged.HasMore)
+	}
+
+	// Default behavior is unchanged: title hits still lead the merged list.
+	merged, err := dm.SearchBlocksPaged("2026", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(default): %v", err)
+	}
+	if merged.Total != 120 || merged.Results[0].ID != "" {
+		t.Fatalf("merged envelope changed: total=%d first=%+v", merged.Total, merged.Results[0])
+	}
+}
+
+// TestSearch_TitleHitsRankExactThenPrefix pins the title-leg ordering: an
+// exactly-named page must outrank prefix and substring matches, so it can
+// never be buried by alphabetically-earlier substring hits or pushed past the
+// flat cap by them.
+func TestSearch_TitleHitsRankExactThenPrefix(t *testing.T) {
+	dm := newTestDB(t)
+
+	for _, page := range []string{"Old Agenda", "Agenda Archive", "Agenda"} {
+		if err := dm.IndexFileWithProjection("vault", "NB", "", page,
+			nil, nil, "", nil, PageCoreFields{}); err != nil {
+			t.Fatalf("index %s: %v", page, err)
+		}
+	}
+	res, err := dm.SearchBlocksPaged("agenda", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 3 {
+		t.Fatalf("expected 3 title hits, got %d: %+v", res.Total, res.Results)
+	}
+	want := []string{"Agenda", "Agenda Archive", "Old Agenda"}
+	for i, page := range want {
+		if res.Results[i].Page != page {
+			t.Fatalf("title rank order = %v, want %v", []string{
+				res.Results[0].Page, res.Results[1].Page, res.Results[2].Page,
+			}, want)
+		}
+	}
+}
+
+// TestSearch_TaskFiltersTrimmed pins the trim-before-activate contract: a
+// whitespace-only value must behave as unset, and padded date bounds compare as
+// their trimmed date.
+func TestSearch_TaskFiltersTrimmed(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	// "  " used to activate the Owner filter (suppressing the title leg) while
+	// binding an owner that can never match — an empty result set.
+	res, err := dm.SearchBlocksPaged("agenda", 0, 50, SearchFilters{Owner: "  "})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(blank owner): %v", err)
+	}
+	if res.Total != 3 {
+		t.Fatalf("whitespace-only owner changed the result set: total=%d %+v", res.Total, res.Results)
+	}
+
+	// Padded bound: due_date <= 2020-01-31 matches only the overdue cutover.
+	res, err = dm.SearchBlocksPaged("postgres", 0, 50, SearchFilters{DueBefore: " 2020-01-31 "})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(padded dueBefore): %v", err)
+	}
+	if res.Total != 1 || res.Results[0].ID == "" || res.Results[0].Owner != "Bob" {
+		t.Fatalf("padded dueBefore not trimmed: %+v", res.Results)
+	}
+}
+
+// TestSearch_InvalidDateBoundRejected: a bound that is not YYYY-MM-DD would
+// order lexicographically against stored dates and silently return nonsense.
+func TestSearch_InvalidDateBoundRejected(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	for _, f := range []SearchFilters{
+		{DueBefore: "2020-1-1"},
+		{DueAfter: "tomorrow"},
+	} {
+		if _, err := dm.SearchBlocksPaged("postgres", 0, 50, f); err == nil {
+			t.Fatalf("malformed date bound accepted: %+v", f)
+		}
+	}
+}

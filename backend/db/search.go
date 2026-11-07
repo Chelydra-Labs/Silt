@@ -56,14 +56,47 @@ type SearchFilters struct {
 	// Overdue selects tasks whose due_date is before today (local) and whose
 	// status is not DONE.
 	Overdue bool `json:"overdue"`
+
+	// ExcludePageTitles suppresses the page-title leg so every row in the
+	// envelope is a block. Block-scoped consumers (the replace preview, the
+	// block picker) need this: their offset/limit/total arithmetic assumes a
+	// row is a block, and a page row consuming a slot would silently shrink
+	// the block budget — for the picker's fixed 50-row window, a vault whose
+	// page names share a common fragment can crowd every block out.
+	ExcludePageTitles bool `json:"excludePageTitles"`
 }
 
 // hasTaskFilters reports whether any task-attribute filter is active — i.e.
 // whether the query is restricted to tasks carrying those attributes (which
-// also makes page-level title hits inapplicable).
+// also makes page-level title hits inapplicable). Values are tested trimmed
+// because the predicates bind trimmed values: an all-whitespace Owner must not
+// activate a filter that can then never match.
 func (f SearchFilters) hasTaskFilters() bool {
-	return f.Owner != "" || f.Status != "" || f.DueBefore != "" || f.DueAfter != "" ||
+	return strings.TrimSpace(f.Owner) != "" || strings.TrimSpace(f.Status) != "" ||
+		strings.TrimSpace(f.DueBefore) != "" || strings.TrimSpace(f.DueAfter) != "" ||
 		f.PriorityMin > 0 || f.Overdue
+}
+
+// validateTaskFilters rejects malformed date bounds at the boundary. The bounds
+// are compared as strings in SQL, so a value like "2020-1-1" would order
+// against stored dates lexicographically and return a plausible-looking but
+// wrong set — indistinguishable from a legitimate empty match. Parsing keeps
+// the YYYY-MM-DD contract enforced by the caller instead of hiding a bad value
+// in a silent result.
+func (f SearchFilters) validateTaskFilters() error {
+	for _, bound := range []struct{ name, value string }{
+		{"dueBefore", f.DueBefore},
+		{"dueAfter", f.DueAfter},
+	} {
+		v := strings.TrimSpace(bound.value)
+		if v == "" {
+			continue
+		}
+		if _, err := time.Parse("2006-01-02", v); err != nil {
+			return fmt.Errorf("invalid %s %q: want YYYY-MM-DD", bound.name, v)
+		}
+	}
+	return nil
 }
 
 // appendTaskFilterPredicates is the SINGLE source of the tasks-JOIN WHERE
@@ -94,26 +127,33 @@ func (f SearchFilters) hasTaskFilters() bool {
 //   - Overdue: due_date < today (local date, computed by the caller and
 //     passed as now) AND status != DONE.
 func appendTaskFilterPredicates(where []string, args []any, filters SearchFilters, now time.Time) ([]string, []any) {
-	if filters.Owner != "" {
+	// Trim once and gate on the trimmed value: hasTaskFilters makes the same
+	// decision, so a whitespace-only field can neither activate the filter nor
+	// bind an empty needle that matches nothing.
+	owner := strings.TrimSpace(filters.Owner)
+	status := strings.ToUpper(strings.TrimSpace(filters.Status))
+	dueBefore := strings.TrimSpace(filters.DueBefore)
+	dueAfter := strings.TrimSpace(filters.DueAfter)
+	if owner != "" {
 		// Lower BOTH sides in SQL: the caller's raw text may carry non-ASCII
 		// upper case that Go's ToLower would fold but a Go-lowered needle vs a
 		// SQL-lowered haystack could never compare. SQLite's LOWER is ASCII-only,
 		// so exact-case non-ASCII now matches; non-ASCII case variants beyond
 		// that remain an approximation (see searchPageTitlesOn).
 		where = append(where, "LOWER(t.owner) = LOWER(?)")
-		args = append(args, strings.TrimSpace(filters.Owner))
+		args = append(args, owner)
 	}
-	if filters.Status != "" {
+	if status != "" {
 		where = append(where, "t.status = ?")
-		args = append(args, strings.ToUpper(strings.TrimSpace(filters.Status)))
+		args = append(args, status)
 	}
-	if filters.DueBefore != "" {
+	if dueBefore != "" {
 		where = append(where, "t.due_date IS NOT NULL AND t.due_date <= ?")
-		args = append(args, filters.DueBefore)
+		args = append(args, dueBefore)
 	}
-	if filters.DueAfter != "" {
+	if dueAfter != "" {
 		where = append(where, "t.due_date IS NOT NULL AND t.due_date >= ?")
-		args = append(args, filters.DueAfter)
+		args = append(args, dueAfter)
 	}
 	if filters.PriorityMin > 0 {
 		where = append(where, "t.priority IS NOT NULL AND t.priority <= ?")
@@ -177,12 +217,13 @@ func buildFTSQuery(query string) string {
 // thin wrapper over SearchBlocksPaged returning the first page (offset 0,
 // limit 50) for backwards compatibility with the original single-shot binding.
 //
-// The contract is BLOCK hits only: page-level title rows (ID "") belong to the
-// paged envelope and are dropped here, because this binding feeds block-scoped
-// consumers — the editor's block-ref picker and the plugin SDK — that key and
-// navigate by block id.
+// The contract is BLOCK hits only, and page rows are excluded at the source
+// (ExcludePageTitles) so the 50-row window belongs entirely to blocks. Dropping
+// them after paging would let page-title hits consume the block budget — with
+// enough title hits the picker would come back empty while body matches exist.
+// The ID check below stays as defense for consumers that key by block id.
 func (dm *DatabaseManager) SearchBlocks(query string) ([]parser.TaskResult, error) {
-	res, err := dm.SearchBlocksPaged(query, 0, 50, SearchFilters{})
+	res, err := dm.SearchBlocksPaged(query, 0, 50, SearchFilters{ExcludePageTitles: true})
 	if err != nil {
 		return nil, err
 	}
@@ -222,6 +263,9 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 	query = strings.TrimSpace(query)
 	if query == "" || offset < 0 || limit <= 0 {
 		return parser.SearchResult{Results: []parser.TaskResult{}, Total: 0, Offset: offset, Limit: limit}, nil
+	}
+	if err := filters.validateTaskFilters(); err != nil {
+		return parser.SearchResult{}, err
 	}
 	terms := searchTerms(query)
 	if len(terms) == 0 {
@@ -339,13 +383,14 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 	// which is what keeps an empty (block-less) page findable by name.
 	// Merged in Go, not SQL: the body leg is an FTS5 query whose helper
 	// functions (snippet/bm25) only survive in the direct FROM clause, so a
-	// UNION would degrade both legs. Block-scoped filters (type, tag) and
-	// task-attribute filters suppress the page leg — a page-level row
-	// carries neither a block type nor task attributes.
+	// UNION would degrade both legs. Block-scoped filters (type, tag),
+	// task-attribute filters, and the block-scoped ExcludePageTitles switch
+	// suppress the page leg — a page-level row carries neither a block type
+	// nor task attributes, and a block-scoped consumer budgets rows as blocks.
 	var titleHits []parser.TaskResult
-	if filters.Type == "" && filters.Tag == "" && !filters.hasTaskFilters() {
+	if !filters.ExcludePageTitles && filters.Type == "" && filters.Tag == "" && !filters.hasTaskFilters() {
 		var err error
-		titleHits, err = searchPageTitlesOn(db, terms, filters)
+		titleHits, err = searchPageTitlesOn(db, query, terms, filters)
 		if err != nil {
 			return parser.SearchResult{}, err
 		}
@@ -430,9 +475,12 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 // the frontend uses to render a page-navigation row), the page name as
 // `clean_content`, and a `<mark>`-highlighted title snippet. Consumers must
 // HTML-escape the snippet and then re-allow only `<mark>`: the page name is
-// concatenated in raw. Bounded by searchFlatCap and ordered (notebook,
-// section, page) so paging over title hits is deterministic.
-func searchPageTitlesOn(db *sql.DB, terms []string, filters SearchFilters) ([]parser.TaskResult, error) {
+// concatenated in raw. Bounded by searchFlatCap and ordered by match quality
+// first — exact name, then name prefix, then substring, with the alphabetical
+// (notebook, section, page) tiebreak — so an exactly-named page cannot be
+// buried by alphabetically-earlier substring matches or pushed past the cap by
+// them.
+func searchPageTitlesOn(db *sql.DB, query string, terms []string, filters SearchFilters) ([]parser.TaskResult, error) {
 	var where []string
 	var args []any
 	for _, t := range terms {
@@ -450,12 +498,20 @@ func searchPageTitlesOn(db *sql.DB, terms []string, filters SearchFilters) ([]pa
 	if filters.VaultOnly {
 		where = append(where, "source = 'vault'")
 	}
-	args = append(args, searchFlatCap)
+	// The rank binds are the raw query, so LIKE metacharacters a user typed
+	// must be escaped to stay literal (the page-name patterns above come from
+	// searchTerms, which strips punctuation).
+	escQuery := strings.NewReplacer(`\`, `\\`, `_`, `\_`, `%`, `\%`).Replace(query)
+	args = append(args, query, escQuery+"%", searchFlatCap)
 	rows, err := db.Query(`
 		SELECT COALESCE(source, 'vault'), notebook, section, page, date
 		FROM page_core
 		WHERE `+strings.Join(where, " AND ")+`
-		ORDER BY notebook, section, page
+		ORDER BY CASE
+			WHEN LOWER(page) = LOWER(?) THEN 0
+			WHEN LOWER(page) LIKE LOWER(?) ESCAPE '\' THEN 1
+			ELSE 2
+		END, notebook, section, page
 		LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search page titles: %w", err)

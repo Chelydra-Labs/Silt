@@ -542,6 +542,48 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
     )
   })
 
+  // The preview budget is block rows only: with page rows in the window, a
+  // find term matching many page names could hide every block match and the
+  // banner would report a page-row-inflated total.
+  it('asks for block-only results and reports the exact truncated total', async () => {
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: 'b1',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'page1',
+          snippet: 'foo bar'
+        },
+        {
+          id: 'b2',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'page2',
+          snippet: 'foo baz'
+        }
+      ],
+      total: 340,
+      offset: 0,
+      limit: 200,
+      has_more: true
+    })
+    mocks.FetchPageBlocksProgrammatic.mockResolvedValue([
+      block('b1', 'foo bar')
+    ])
+    mocks.SaveFileBlocksProgrammatic.mockResolvedValue(undefined)
+
+    await renderAndPreview('foo', 'qux')
+
+    expect(mocks.SearchBlocksPaged).toHaveBeenCalledWith(
+      'foo',
+      0,
+      200,
+      expect.objectContaining({ excludePageTitles: true })
+    )
+    expect(screen.getByText(/340 total matches/)).toBeInTheDocument()
+  })
+
   // Page-level title hits (id === "") are navigation rows, not blocks: the
   // backend prepends them to the paged envelope. They used to become phantom
   // matches (preview promised a replacement; Apply could never make it) and
