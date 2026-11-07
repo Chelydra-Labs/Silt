@@ -386,6 +386,74 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
     expect(restored[0].clean_text).toBe('foo bar')
   })
 
+  // Apply snapshots the replacement with the matcher. Reading the input inside
+  // the per-page loop let an edit made while page 2's fetch was in flight write
+  // "foo" → old value on page 1 and new value on page 2: a batch the preview
+  // never showed, reported as a normal success.
+  it('snapshots the replacement for the whole apply batch', async () => {
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: 'b1',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'page1',
+          snippet: 'foo bar'
+        },
+        {
+          id: 'b2',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'page2',
+          snippet: 'foo qux'
+        }
+      ],
+      total: 2,
+      offset: 0,
+      limit: 200,
+      has_more: false
+    })
+    let releasePage2: () => void = () => {}
+    mocks.FetchPageBlocksProgrammatic.mockImplementation(
+      (_nb: string, _sec: string, page: string) => {
+        if (page === 'page2') {
+          return new Promise((resolve) => {
+            releasePage2 = () => resolve([block('b2', 'foo qux')])
+          })
+        }
+        return Promise.resolve([block('b1', 'foo bar')])
+      }
+    )
+    mocks.SaveFileBlocksProgrammatic.mockResolvedValue(undefined)
+
+    await renderAndPreview('foo', 'qux')
+    await fireEvent.click(screen.getByRole('button', { name: /^Replace/ }))
+    await waitFor(
+      () => {
+        expect(mocks.FetchPageBlocksProgrammatic).toHaveBeenCalledTimes(2)
+      },
+      { timeout: 2000 }
+    )
+
+    // Page 2 is still awaiting its fetch: edit Replace before it resolves.
+    await fireEvent.input(screen.getByLabelText('Replace with'), {
+      target: { value: 'ZZZ' }
+    })
+    releasePage2()
+
+    await waitFor(
+      () => {
+        expect(mocks.SaveFileBlocksProgrammatic).toHaveBeenCalledTimes(2)
+      },
+      { timeout: 2000 }
+    )
+    const page2Call = mocks.SaveFileBlocksProgrammatic.mock.calls.find(
+      (c) => c[2] === 'page2'
+    )!
+    const saved = page2Call[3] as Array<{ clean_text: string }>
+    expect(saved[0].clean_text).toBe('qux qux')
+  })
+
   it('refuses a linked-notebook page even if it slips into the preview (#343)', async () => {
     // Defense in depth: the server VaultOnly filter excludes linked hits,
     // but if one reached the preview it must NOT be written.
@@ -650,10 +718,11 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
     expect(screen.getByText(/3 per page/)).toBeInTheDocument()
   })
 
-  // A rejected refresh must clear the actionable preview, not just show the
-  // error: truncatedCount is reset before the request, so keeping the previous
-  // groups leaves an unlabelled partial preview that Apply would still write.
-  it('clears the applicable preview when the refresh fails', async () => {
+  // A rejected refresh must clear the whole actionable surface, not just show
+  // the error: the groups, the truncation banner, and the stale notice all
+  // describe a preview that no longer exists. A truncated first preview makes
+  // the banner the observable difference (it renders on truncatedCount alone).
+  it('clears the applicable preview and its truncation banner when the refresh fails', async () => {
     mocks.SearchBlocksPaged.mockResolvedValueOnce({
       results: [
         {
@@ -664,16 +733,17 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
           snippet: 'foo bar'
         }
       ],
-      total: 1,
+      total: 340,
       offset: 0,
       limit: 200,
-      has_more: false
+      has_more: true
     })
 
     await renderAndPreview('foo', 'qux')
     expect(
       screen.getByRole('button', { name: 'Replace 1' })
     ).toBeInTheDocument()
+    expect(screen.getByText(/340 preview rows/)).toBeInTheDocument()
 
     mocks.SearchBlocksPaged.mockRejectedValueOnce(new Error('ipc down'))
     await fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
@@ -684,6 +754,7 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       },
       { timeout: 2000 }
     )
+    expect(screen.queryByText(/preview rows/)).toBeNull()
     expect(screen.queryByRole('button', { name: /^Replace \d/ })).toBeNull()
     expect(screen.getByRole('button', { name: 'Replace' })).toBeDisabled()
   })

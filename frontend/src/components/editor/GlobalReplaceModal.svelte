@@ -172,10 +172,12 @@
       groups = [...byPage.values()]
       previewStale = false
     } catch (e) {
-      // A failed refresh wipes the actionable surface: the truncation count was
-      // already reset before the request, so keeping the previous groups would
-      // leave an unlabelled partial preview that Apply would happily write.
+      // A failed refresh wipes the actionable surface: groups, the truncation
+      // banner, and the stale notice all describe the preview that no longer
+      // exists. Leaving any of them would render a banner over an empty list.
       groups = []
+      truncatedCount = 0
+      previewStale = false
       statusMessage = `Preview failed: ${String(e)}`
     } finally {
       loading = false
@@ -215,6 +217,11 @@
       applying = false
       return
     }
+    // Snapshot the replacement with the matcher. The batch awaits a fetch and a
+    // save per page, so reading the input inside the loop would let an edit made
+    // mid-apply substitute a different value on later pages — a mixed batch the
+    // preview never showed.
+    const replacement = replaceText
 
     // Flush every mounted editor whose page is a target BEFORE writing, so
     // the replace reads the real current content (including unsaved edits)
@@ -292,7 +299,7 @@
         for (const b of blocks) {
           if (!matchIds.has(b.id)) continue
           const before = b.clean_text ?? ''
-          const after = applyReplace(before, matcher, replaceText)
+          const after = applyReplace(before, matcher, replacement)
           if (before !== after) {
             b.clean_text = after
             // Do NOT overwrite raw_text — the renderer (RenderFileContent)
