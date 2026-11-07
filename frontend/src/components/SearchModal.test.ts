@@ -17,7 +17,7 @@ vi.mock('$silt-app', () =>
 
 import SearchModal from './SearchModal.svelte'
 
-describe('SearchModal keyboard a11y', () => {
+describe('SearchModal', () => {
   beforeEach(() => {
     mocks.SearchBlocksPaged.mockReset()
     mocks.ListNavigation.mockReset()
@@ -370,5 +370,129 @@ describe('SearchModal keyboard a11y', () => {
     expect(clickJump).toHaveBeenCalledWith(result)
     expect(enterJump).toHaveBeenCalledWith(result)
     expect(enterJump.mock.calls[0][0]).toEqual(clickJump.mock.calls[0][0])
+  })
+
+  it('sends task-attribute filters to SearchBlocksPaged (#1010)', async () => {
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn() }
+    })
+
+    const status = screen.getByLabelText(
+      'Filter by task status'
+    ) as HTMLSelectElement
+    status.value = 'DOING'
+    await fireEvent.change(status)
+
+    const owner = screen.getByLabelText('Filter by owner')
+    await fireEvent.input(owner, { target: { value: 'alice' } })
+
+    await fireEvent.click(screen.getByRole('button', { name: 'P2+' }))
+    await fireEvent.click(screen.getByTestId('search-overdue-toggle'))
+
+    const dueAfter = screen.getByLabelText('Due on or after')
+    await fireEvent.input(dueAfter, { target: { value: '2026-01-01' } })
+    const dueBefore = screen.getByLabelText('Due on or before')
+    await fireEvent.input(dueBefore, { target: { value: '2026-12-31' } })
+
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'postgres' } })
+
+    await vi.waitFor(() => {
+      const match = mocks.SearchBlocksPaged.mock.calls.find(
+        (c) =>
+          c[0] === 'postgres' &&
+          c[3]?.status === 'DOING' &&
+          c[3]?.owner === 'alice' &&
+          c[3]?.priorityMin === 2 &&
+          c[3]?.overdue === true &&
+          c[3]?.dueAfter === '2026-01-01' &&
+          c[3]?.dueBefore === '2026-12-31'
+      )
+      expect(match).toBeTruthy()
+    })
+  })
+
+  it('shows the page-title suppression hint only while a filter hides it', async () => {
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn() }
+    })
+    expect(screen.queryByTestId('search-title-leg-hint')).toBeNull()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'P1+' }))
+    expect(screen.getByTestId('search-title-leg-hint')).toBeInTheDocument()
+
+    // Clearing the priority floor restores the title leg (no hint).
+    await fireEvent.click(screen.getByLabelText('Clear priority filter'))
+    expect(screen.queryByTestId('search-title-leg-hint')).toBeNull()
+  })
+
+  it('renders page-level rows and opens them with the empty block id', async () => {
+    const pageRow = {
+      id: '',
+      source: 'vault',
+      notebook: 'Work',
+      section: 'Plans',
+      page: 'Roadmap 2027',
+      file_date: '',
+      clean_content: 'Roadmap 2027',
+      snippet: '<mark>Roadmap</mark> 2027'
+    }
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [pageRow],
+      total: 1,
+      offset: 0,
+      limit: 20,
+      has_more: false
+    })
+    const onJump = vi.fn()
+    render(SearchModal, { props: { onClose: vi.fn(), onJump } })
+
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'roadmap' } })
+    const row = await screen.findByRole('button', { name: /Roadmap 2027/i })
+    expect(screen.getByText('Page')).toBeInTheDocument()
+    await fireEvent.click(row)
+    expect(onJump).toHaveBeenCalledWith(pageRow)
+  })
+
+  it('displays task attributes projected on result rows', async () => {
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: 't1',
+          source: 'vault',
+          notebook: 'Work',
+          section: 'Sprint',
+          page: 'Sprint 41',
+          file_date: '2026-07-20',
+          clean_content: 'Ship search filters',
+          status: 'DOING',
+          owner: 'alice',
+          due_date: '2026-08-01',
+          priority: 1,
+          snippet: 'Ship <mark>search</mark> filters'
+        }
+      ],
+      total: 1,
+      offset: 0,
+      limit: 20,
+      has_more: false
+    })
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn() }
+    })
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'search' } })
+    const meta = await screen.findByTestId('search-result-task-meta')
+    expect(meta).toHaveTextContent('DOING')
+    expect(meta).toHaveTextContent('alice')
+    expect(meta).toHaveTextContent('2026-08-01')
+    expect(meta).toHaveTextContent('P1')
   })
 })
