@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"silt/backend/parser"
@@ -21,6 +22,12 @@ const searchMaxPerGroup = 3
 // carry their own date in the identity comment). VaultOnly scopes the search
 // to in-vault blocks (excludes linked-notebook sources) — the scope control
 // on the global search.
+//
+// The task-attribute filters (Owner/Status/DueBefore/DueAfter/PriorityMin/
+// Overdue) are task-scoped: setting any of them restricts results to TASK
+// blocks whose tasks projection row satisfies every predicate, and suppresses
+// the page-title result leg (a page-level row carries no task attributes).
+// Dates are YYYY-MM-DD strings compared lexicographically (= chronological).
 type SearchFilters struct {
 	Notebook  string `json:"notebook"`
 	Section   string `json:"section"`
@@ -28,6 +35,89 @@ type SearchFilters struct {
 	Type      string `json:"type"`      // TASK / NOTE / HEADER / CODE / TABLE / DETAILS / CALLOUT
 	Sort      string `json:"sort"`      // "" | "relevance" | "recency"
 	VaultOnly bool   `json:"vaultOnly"` // exclude linked-notebook sources (source != 'vault')
+
+	// Owner matches the [owner::] token exactly, case-insensitively.
+	Owner string `json:"owner"`
+	// Status matches the checkbox-driven status: TODO, DOING, or DONE
+	// (normalized to upper case server-side).
+	Status string `json:"status"`
+	// DueBefore / DueAfter bound due_date inclusively (YYYY-MM-DD). A task
+	// with no due date never matches a date bound.
+	DueBefore string `json:"dueBefore"`
+	DueAfter  string `json:"dueAfter"`
+	// PriorityMin is an inclusive urgency floor, where 1 is the highest
+	// priority and 3 the lowest: a floor of N selects priorities N and
+	// everything more urgent. Rows with no recorded priority (NULL column;
+	// the COALESCE-0 shape in the result projection) never match — "no
+	// priority recorded" is not a priority. The parser's absent-token
+	// default (LegacyMissingTaskPriority, stored as 3) is recorded data and
+	// is admitted only by the floor of 3, like an explicit P3.
+	PriorityMin int `json:"priorityMin"`
+	// Overdue selects tasks whose due_date is before today (local) and whose
+	// status is not DONE.
+	Overdue bool `json:"overdue"`
+}
+
+// hasTaskFilters reports whether any task-attribute filter is active — i.e.
+// whether the query is restricted to tasks carrying those attributes (which
+// also makes page-level title hits inapplicable).
+func (f SearchFilters) hasTaskFilters() bool {
+	return f.Owner != "" || f.Status != "" || f.DueBefore != "" || f.DueAfter != "" ||
+		f.PriorityMin > 0 || f.Overdue
+}
+
+// appendTaskFilterPredicates is the SINGLE source of the tasks-JOIN WHERE
+// clauses for the task-attribute filters. It appends predicates (referencing
+// the `tasks t` alias of SearchBlocksPaged's LEFT JOIN) and their bind args,
+// so no second SQL path for these filters can grow alongside it. Zero-value
+// fields append nothing — the unfiltered query shape is byte-identical to
+// the pre-filter SQL. All values are parameterized; only the filter MODE is
+// interpolated (fixed strings).
+//
+// Semantics (documented for the ARCHITECTURE contract and mirrored by tests):
+//   - Owner: exact match, case-insensitive (both sides lowered in SQL).
+//   - Status: exact match after upper-casing the caller's input (TODO/DOING/
+//     DONE are stored upper-case by the indexer).
+//   - DueBefore/DueAfter: inclusive bounds on due_date; NULL never satisfies
+//     a comparison, so a task without a due date is excluded by either bound.
+//   - PriorityMin: an urgency floor — 1 is the highest priority, so a floor
+//     of N selects priorities N and everything MORE urgent (recorded values
+//     1..N; P3/low is admitted only by a floor of 3). `t.priority IS NOT
+//     NULL` excludes the no-priority-recorded shapes (NULL column; the
+//     COALESCE(t.priority, 0) sentinel the result projection surfaces for
+//     non-task rows) — "no priority recorded" is not a priority and must
+//     not match any floor. The parser's absent-token default
+//     (LegacyMissingTaskPriority, stored as 3) is recorded data,
+//     indistinguishable from an explicit P3, and is admitted only by the
+//     floor of 3 accordingly.
+//   - Overdue: due_date < today (local date, computed by the caller and
+//     passed as now) AND status != DONE.
+func appendTaskFilterPredicates(where []string, args []any, filters SearchFilters, now time.Time) ([]string, []any) {
+	if filters.Owner != "" {
+		where = append(where, "LOWER(t.owner) = ?")
+		args = append(args, strings.ToLower(strings.TrimSpace(filters.Owner)))
+	}
+	if filters.Status != "" {
+		where = append(where, "t.status = ?")
+		args = append(args, strings.ToUpper(strings.TrimSpace(filters.Status)))
+	}
+	if filters.DueBefore != "" {
+		where = append(where, "t.due_date IS NOT NULL AND t.due_date <= ?")
+		args = append(args, filters.DueBefore)
+	}
+	if filters.DueAfter != "" {
+		where = append(where, "t.due_date IS NOT NULL AND t.due_date >= ?")
+		args = append(args, filters.DueAfter)
+	}
+	if filters.PriorityMin > 0 {
+		where = append(where, "t.priority IS NOT NULL AND t.priority <= ?")
+		args = append(args, filters.PriorityMin)
+	}
+	if filters.Overdue {
+		where = append(where, "t.due_date IS NOT NULL AND t.due_date < ? AND t.status != 'DONE'")
+		args = append(args, now.Format("2006-01-02"))
+	}
+	return where, args
 }
 
 // searchTerms extracts the usable search terms from a free-text query:
@@ -154,6 +244,7 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 		// Scope: in-vault blocks only (exclude linked-notebook sources).
 		where = append(where, "b.source = 'vault'")
 	}
+	where, args = appendTaskFilterPredicates(where, args, filters, time.Now())
 	// The SELECT always includes bm25 for scoring; only the ORDER BY varies.
 	// (DESC belongs in ORDER BY, never in SELECT.)
 	order := "rank"
@@ -231,10 +322,11 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 	// which is what keeps an empty (block-less) page findable by name.
 	// Merged in Go, not SQL: the body leg is an FTS5 query whose helper
 	// functions (snippet/bm25) only survive in the direct FROM clause, so a
-	// UNION would degrade both legs. Block-scoped filters (type, tag)
-	// suppress the page leg — a page-level row cannot satisfy them.
+	// UNION would degrade both legs. Block-scoped filters (type, tag) and
+	// task-attribute filters suppress the page leg — a page-level row
+	// carries neither a block type nor task attributes.
 	var titleHits []parser.TaskResult
-	if filters.Type == "" && filters.Tag == "" {
+	if filters.Type == "" && filters.Tag == "" && !filters.hasTaskFilters() {
 		var err error
 		titleHits, err = searchPageTitlesOn(db, terms, filters)
 		if err != nil {
