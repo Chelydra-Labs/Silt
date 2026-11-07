@@ -143,6 +143,32 @@ func TestPromoteUnlinkedMention_Rewrite(t *testing.T) {
 	}
 }
 
+// TestPromoteUnlinkedMention_EmptyPageTarget: a zero-block page is a real
+// inventory entry, so promoting a mention of it must resolve instead of
+// reporting "not found in inventory" — the blocks-backed existence check used
+// to miss exactly the page class this inventory exists to cover.
+func TestPromoteUnlinkedMention_EmptyPageTarget(t *testing.T) {
+	app := newTestApp(t)
+	const srcBlock = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	if err := app.db.IndexFileWithProjection("vault", "Work", "Sec", "Stub",
+		nil, nil, "", nil, db.PageCoreFields{}); err != nil {
+		t.Fatalf("index empty target page: %v", err)
+	}
+	writeNotePageWithMention(t, app, "Work", "Sec", "Notes", "2026-06-13",
+		srcBlock, "see Stub later")
+
+	if err := app.PromoteUnlinkedMention(srcBlock, "Work", "Sec", "Stub"); err != nil {
+		t.Fatalf("PromoteUnlinkedMention(empty page): %v", err)
+	}
+	var clean string
+	if err := app.db.SQLDB().QueryRow("SELECT clean_content FROM blocks WHERE id = ?", srcBlock).Scan(&clean); err != nil {
+		t.Fatalf("read promoted block: %v", err)
+	}
+	if !strings.Contains(clean, "[[Stub]]") {
+		t.Errorf("expected [[Stub]] in %q", clean)
+	}
+}
+
 // TestPromoteUnlinkedMention_ExplicitPathDisambiguates verifies that when a leaf
 // title is ambiguous, supplying the full (notebook, section, page) of one
 // candidate promotes to that page rather than rejecting.

@@ -3,13 +3,12 @@ package db
 import (
 	"database/sql"
 	"strings"
-	"sync/atomic"
 	"unicode"
 
 	"silt/backend/parser"
 )
 
-// PageLoc is a distinct page location in the block index.
+// PageLoc is a distinct page location in the page inventory.
 type PageLoc struct {
 	Source   string
 	Notebook string
@@ -42,7 +41,10 @@ func (dm *DatabaseManager) ListDistinctPages() ([]PageLoc, error) {
 }
 
 // ListPagesByLeaf returns distinct locations whose leaf page name matches leaf
-// under EqualFold (same rules as PageMatchesTarget).
+// under EqualFold (same rules as PageMatchesTarget). Leaf matching uses the
+// blocks-backed page_fold index, so it sees block-carrying pages only;
+// PageExistsExact reads the full page_core inventory (zero-block pages
+// included) and is the right check when the concrete path is known.
 func (dm *DatabaseManager) ListPagesByLeaf(leaf string) ([]PageLoc, error) {
 	db, release, err := dm.handle()
 	if err != nil {
@@ -52,7 +54,10 @@ func (dm *DatabaseManager) ListPagesByLeaf(leaf string) ([]PageLoc, error) {
 	return dm.listPagesByLeaf(db, leaf)
 }
 
-// PageExistsExact reports whether the concrete path exists in the blocks index.
+// PageExistsExact reports whether the concrete path exists in the page
+// inventory. It reads page_core, not blocks: a zero-block page is a real,
+// linkable page (the class this inventory exists to cover), so a mention of it
+// must be promotable.
 func (dm *DatabaseManager) PageExistsExact(source, notebook, section, page string) (bool, error) {
 	db, release, err := dm.handle()
 	if err != nil {
@@ -62,11 +67,6 @@ func (dm *DatabaseManager) PageExistsExact(source, notebook, section, page strin
 	return pageExistsExact(db, source, notebook, section, page)
 }
 
-// fullPageInventoryScans counts unbounded DISTINCT scans of the blocks index
-// (empty WHERE on scanDistinctPages) — the paged paths must never pay one.
-// Used by tests for #839; atomic for concurrent readers.
-var fullPageInventoryScans atomic.Uint64
-
 // listDistinctPages is the no-handle-reentry internal helper. Callers that
 // already hold a handle lease MUST call this instead of ListDistinctPages.
 //
@@ -75,11 +75,12 @@ var fullPageInventoryScans atomic.Uint64
 // an empty or block-less page exists on disk and must stay resolvable as a
 // wiki-link target and findable in page search. Every index path guarantees
 // a row (identity-only upsert on the block-only paths; full row on
-// frontmatter-affecting publishes), and the delete/remove paths
-// (ClearFileBlocks / ClearSourceBlocks) drop it with the rest of the
-// projection, so the projection and the set of indexed files stay in sync.
-// initSchema backfills the projection from blocks on every open, so there is
-// no pre-projection state left to fall back from.
+// frontmatter-affecting publishes), a re-index clears the loc it abandons when
+// frontmatter moves a page's identity (reconcileMovedPageIdentityTx), and the
+// delete/remove paths (ClearFileBlocks / ClearSourceBlocks) drop it with the
+// rest of the projection. initSchema backfills page_core from blocks ONCE
+// (page_core_blocks_backfill); after that marker is set, page_core is
+// authoritative and there is no per-open fallback.
 func listDistinctPages(db *sql.DB) ([]PageLoc, error) {
 	rows, err := db.Query(`
 		SELECT COALESCE(source, 'vault'), notebook, section, page
@@ -107,19 +108,16 @@ func listDistinctPages(db *sql.DB) ([]PageLoc, error) {
 	return out, nil
 }
 
-// scanDistinctPages runs SELECT DISTINCT page locs with an optional WHERE
-// clause (and bind args). empty whereSQL means full inventory.
+// scanDistinctPages runs SELECT DISTINCT page locs from the blocks index,
+// scoped by a required WHERE clause (and bind args). Only block-backed locs
+// can be returned — zero-block pages live in page_core, not here — so this
+// serves the leaf lookups that still key on blocks. There is deliberately no
+// unbounded form: the paged paths must never pay a full inventory scan.
 func scanDistinctPages(db *sql.DB, whereSQL string, args []any) ([]PageLoc, error) {
-	if strings.TrimSpace(whereSQL) == "" {
-		fullPageInventoryScans.Add(1)
-	}
 	q := `
 		SELECT DISTINCT COALESCE(source, 'vault'), notebook, section, page
-		FROM blocks`
-	if whereSQL != "" {
-		q += " WHERE " + whereSQL
-	}
-	q += " ORDER BY notebook, section, page"
+		FROM blocks WHERE ` + whereSQL + `
+		ORDER BY notebook, section, page`
 	rows, err := db.Query(q, args...)
 	if err != nil {
 		return nil, err
@@ -173,15 +171,16 @@ func (dm *DatabaseManager) listPagesByLeaf(db *sql.DB, leaf string) ([]PageLoc, 
 	return scanDistinctPages(db, `page_fold = ?`, []any{pageFoldKey(leaf)})
 }
 
-// pageExistsExact reports whether a concrete path is present in the blocks index.
+// pageExistsExact reports whether a concrete path is present in the page
+// inventory. page_core covers block-less files too, unlike the blocks index.
 func pageExistsExact(db *sql.DB, source, notebook, section, page string) (bool, error) {
 	if source == "" {
 		source = "vault"
 	}
 	var n int
 	err := db.QueryRow(`
-		SELECT 1 FROM blocks
-		WHERE COALESCE(source, 'vault') = ? AND notebook = ? AND section = ? AND page = ?
+		SELECT 1 FROM page_core
+		WHERE source = ? AND notebook = ? AND section = ? AND page = ?
 		LIMIT 1`, source, notebook, section, page).Scan(&n)
 	if err == sql.ErrNoRows {
 		return false, nil
