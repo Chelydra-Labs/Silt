@@ -170,12 +170,23 @@ func buildFTSQuery(query string) string {
 // bm25 relevance, with highlighted snippets and per-page grouping. It is a
 // thin wrapper over SearchBlocksPaged returning the first page (offset 0,
 // limit 50) for backwards compatibility with the original single-shot binding.
+//
+// The contract is BLOCK hits only: page-level title rows (ID "") belong to the
+// paged envelope and are dropped here, because this binding feeds block-scoped
+// consumers — the editor's block-ref picker and the plugin SDK — that key and
+// navigate by block id.
 func (dm *DatabaseManager) SearchBlocks(query string) ([]parser.TaskResult, error) {
 	res, err := dm.SearchBlocksPaged(query, 0, 50, SearchFilters{})
 	if err != nil {
 		return nil, err
 	}
-	return res.Results, nil
+	out := make([]parser.TaskResult, 0, len(res.Results))
+	for _, r := range res.Results {
+		if r.ID != "" {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 // searchFlatCap bounds the flat ranked fetch that feeds the Go-side per-page

@@ -486,7 +486,73 @@ func TestSearch_RecencySortKeepsTitleHitsFirst(t *testing.T) {
 	}
 }
 
+func TestSearch_SearchBlocksReturnsOnlyBlockHits(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	// A title-only term produces exactly one page-level row in the paged
+	// envelope...
+	paged, err := dm.SearchBlocksPaged("quiet empty", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if paged.Total != 1 || paged.Results[0].ID != "" {
+		t.Fatalf("fixture: expected a single page-level title hit, got %+v", paged.Results)
+	}
+
+	// ...but the legacy block-only binding must not expose it: its consumers
+	// (editor block-ref picker, plugin SDK) key and navigate by block id, and
+	// an empty id breaks the picker.
+	blocks, err := dm.SearchBlocks("quiet empty")
+	if err != nil {
+		t.Fatalf("SearchBlocks: %v", err)
+	}
+	if len(blocks) != 0 {
+		t.Fatalf("SearchBlocks leaked a page-level row: %+v", blocks)
+	}
+
+	// A mixed query (one title hit + two body hits) filters the page row and
+	// keeps every block hit.
+	blocks, err = dm.SearchBlocks("agenda")
+	if err != nil {
+		t.Fatalf("SearchBlocks: %v", err)
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("expected the 2 body hits only, got %+v", blocks)
+	}
+	for _, r := range blocks {
+		if r.ID == "" {
+			t.Errorf("SearchBlocks returned a page-level row: %+v", r)
+		}
+	}
+}
+
+func TestSearch_TitleHitsSuppressUnderTagFilter(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	// "notes" matches the Meeting Notes page by TITLE only. A tag filter makes
+	// the query block-scoped (page rows carry no tags), so the page leg must
+	// vanish — the counterpart to the type-filter test.
+	res, err := dm.SearchBlocksPaged("notes", 0, 50, SearchFilters{Tag: "work"})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(tag): %v", err)
+	}
+	if res.Total != 0 {
+		t.Fatalf("tag filter must suppress the page-title leg, got %+v", res.Results)
+	}
+
+	// Unfiltered, the same term surfaces the page — proves the filter, not the
+	// fixture, suppressed it.
+	plain, err := dm.SearchBlocksPaged("notes", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if plain.Total != 1 || plain.Results[0].Page != "Meeting Notes" {
+		t.Fatalf("expected the Meeting Notes title hit unfiltered, got %+v", plain.Results)
+	}
+}
+
 func TestSearch_TitleHitsBoundedByFlatCap(t *testing.T) {
+
 	dm := newTestDB(t)
 
 	// searchFlatCap+10 zero-block pages whose names all share a term: the

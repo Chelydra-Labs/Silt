@@ -106,13 +106,22 @@
         overdue: false
       })
       const results = res.results || []
+      // Page-level title rows (id === "") are navigation rows, not blocks —
+      // this modal replaces block content, so a page row could only become a
+      // phantom match (preview promises a replacement; Apply can never make
+      // it). The backend prepends them, so the visible page rows are all of
+      // them unless page rows alone fill the page — in which case there are no
+      // block matches to truncate anyway. Discount their count so the
+      // truncation banner stays honest.
+      const blockResults = results.filter((r) => r.id !== '')
+      const pageRows = results.length - blockResults.length
       // res.total is the full match count; results is capped at the page limit.
-      if (res.total > results.length) {
-        truncatedCount = res.total
+      if (res.total - pageRows > blockResults.length) {
+        truncatedCount = res.total - pageRows
       }
       // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
       const byPage = new Map<string, PageGroup>()
-      for (const r of results) {
+      for (const r of blockResults) {
         const key = `${r.notebook}\x00${r.section}\x00${r.page}`
         if (!byPage.has(key)) {
           byPage.set(key, {

@@ -541,4 +541,66 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       { timeout: 2000 }
     )
   })
+
+  // Page-level title hits (id === "") are navigation rows, not blocks: the
+  // backend prepends them to the paged envelope. They used to become phantom
+  // matches (preview promised a replacement; Apply could never make it) and
+  // inflated the counts.
+  it('ignores page-level title rows in the preview', async () => {
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: '',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'Phantom Page A',
+          snippet: '<mark>foo</mark> page'
+        },
+        {
+          id: '',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'Phantom Page B',
+          snippet: 'another <mark>foo</mark> page'
+        },
+        {
+          id: 'b1',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'page1',
+          snippet: 'foo bar'
+        }
+      ],
+      total: 3,
+      offset: 0,
+      limit: 200,
+      has_more: false
+    })
+    mocks.FetchPageBlocksProgrammatic.mockResolvedValue([
+      block('b1', 'foo bar')
+    ])
+    mocks.SaveFileBlocksProgrammatic.mockResolvedValue(undefined)
+
+    await renderAndPreview('foo', 'qux')
+
+    // Only the real block is a match; the page rows are not offerable.
+    expect(
+      screen.getByRole('button', { name: 'Replace 1' })
+    ).toBeInTheDocument()
+    expect(screen.getByText('1 match selected')).toBeInTheDocument()
+    expect(screen.queryByText(/Phantom Page/)).toBeNull()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Replace 1' }))
+    await waitFor(
+      () => {
+        expect(mocks.SaveFileBlocksProgrammatic).toHaveBeenCalledTimes(1)
+      },
+      { timeout: 2000 }
+    )
+    const saved = mocks.SaveFileBlocksProgrammatic.mock.calls[0][3] as Array<{
+      clean_text: string
+    }>
+    expect(saved).toHaveLength(1)
+    expect(saved[0].clean_text).toBe('qux bar')
+  })
 })

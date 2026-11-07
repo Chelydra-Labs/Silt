@@ -1389,7 +1389,11 @@ no-ops. Pages whose NAME matches every term surface as page-level results
 (block id empty, snippet = highlighted title) ranked above all body hits —
 including zero-block pages, which is what makes an empty page findable by
 name; block-scoped filters (type, tag) and task-attribute filters suppress
-the page leg. The SearchModal adds a scope segmented control (Vault | +Linked),
+the page leg. A page-level row's `clean_content` is the page name and its
+snippet is that raw name with `<mark>` ranges injected — consumers must
+HTML-escape the snippet and then re-allow only `<mark>`. Page rows appear
+only in the `SearchBlocksPaged` envelope: `SearchBlocks` and the plugin SDK's
+`searchBlocks` return block hits only. The SearchModal adds a scope segmented control (Vault | +Linked),
 category filter chips (single-select by block type), a sort toggle, and a live
 count. Each result keeps the backend `source` discriminator, shows a Vault or
 Linked qualifier beside its breadcrumb and snippet, and sends the complete
