@@ -596,6 +596,32 @@ func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 			log.Printf("LinkNotebook(%s): MarkFilesIndexed: %v", ln.DisplayName, err)
 		}
 	})
+
+	// Page inventory reconcile for this source: the linked scan is the
+	// authoritative view of the root (warm-skipped files included), so it both
+	// records every file's loc and drops locs no file publishes any more —
+	// including page_core rows a pre-inventory build left behind. Scoped to
+	// this source so the vault and other links are untouched.
+	scans := make([]db.PageInventoryScan, 0, len(results))
+	for _, res := range results {
+		if res.Notebook == "" || res.Page == "" {
+			// Unreadable or unresolvable this pass: keep the loc its record
+			// publishes rather than hiding a file that is still on disk.
+			scans = append(scans, db.PageInventoryScan{Path: res.Path, Unresolved: true})
+			continue
+		}
+		scans = append(scans, db.PageInventoryScan{
+			Path: res.Path,
+			Loc:  db.PageLoc{Source: source, Notebook: res.Notebook, Section: res.Section, Page: res.Page},
+		})
+	}
+	a.coordinator.WithDBWrite(func() {
+		if removed, rerr := a.db.ReconcilePageInventory(source, scans); rerr != nil {
+			log.Printf("LinkNotebook(%s): ReconcilePageInventory: %v", ln.DisplayName, rerr)
+		} else if removed > 0 {
+			log.Printf("LinkNotebook(%s): page inventory reconciled (%d abandoned identities dropped)", ln.DisplayName, removed)
+		}
+	})
 	return indexedCount, nil
 }
 

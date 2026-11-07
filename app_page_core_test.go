@@ -1074,3 +1074,84 @@ func TestWarmUpgrade_PageCoreBackfillRunsEvenWhenProjectionMarkerSet(t *testing.
 		t.Fatal("PageCoreBackfillMarker not recorded after warm-upgrade backfill — it would re-run on every open until recorded, defeating the one-shot contract")
 	}
 }
+
+// TestVaultOpen_PrunesPreInventoryGhostAndRecordsWarmSkippedLocs pins the
+// initializeVaultServices wiring for the page-inventory reconcile: page_core
+// predates its use as the inventory, so an upgrading vault can carry rows at
+// locs no file publishes any more — no blocks to follow and no file path to
+// prune, so nothing else can reach them — while a warm-skipped file (contents
+// unchanged, never re-indexed this session) still needs its path→loc record, or
+// a later move out of that page would look ownerless.
+func TestVaultOpen_PrunesPreInventoryGhostAndRecordsWarmSkippedLocs(t *testing.T) {
+	t.Setenv("SILT_DATA_DIR", t.TempDir())
+	hostConfigDir := t.TempDir()
+	t.Setenv("APPDATA", hostConfigDir)
+	t.Setenv("XDG_CONFIG_HOME", hostConfigDir)
+
+	vaultPath := t.TempDir()
+	if err := vault.ScaffoldVault(vaultPath); err != nil {
+		t.Fatalf("ScaffoldVault: %v", err)
+	}
+	pagePath := filepath.Join(vaultPath, "Books", "Dune.md")
+	writeFile(t, pagePath, "---\n"+
+		"notebook: \"Books\"\n"+
+		"page: \"Dune\"\n"+
+		"tags: []\n"+
+		"---\n# Dune\n\nBody.\n")
+
+	app := &App{spacesPerTab: 4}
+	if err := app.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("first initializeVaultServices: %v", err)
+	}
+	if row, _ := app.db.GetPageCoreProjection("vault", "Books", "", "Dune"); row == nil {
+		t.Fatal("first open: page_core row missing for Dune")
+	}
+
+	// Stage the upgrade shape: a ghost identity an older build left behind, and
+	// no path→loc record for Dune (a vault indexed before that table existed).
+	if _, err := app.db.SQLDB().Exec(
+		`INSERT INTO page_core (source, notebook, section, page, type, date, aliases, created)
+		 VALUES ('vault', 'Books', '', 'Abandoned', 'meeting', '2025-01-01', '[]', '')`,
+	); err != nil {
+		t.Fatalf("seed ghost page_core: %v", err)
+	}
+	if _, err := app.db.SQLDB().Exec(`DELETE FROM file_page_locs WHERE path = ?`, pagePath); err != nil {
+		t.Fatalf("clear file_page_locs: %v", err)
+	}
+	if err := app.CloseVault(); err != nil {
+		t.Fatalf("CloseVault: %v", err)
+	}
+
+	// Warm reopen: Dune is warm-skipped (files row intact), so only the scan's
+	// inventory reconcile can drop the ghost or restore the loc record.
+	app2 := &App{spacesPerTab: 4}
+	if err := app2.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("warm initializeVaultServices: %v", err)
+	}
+	defer func() { _ = app2.CloseVault() }()
+
+	ghost, err := app2.db.GetPageCoreProjection("vault", "Books", "", "Abandoned")
+	if err != nil {
+		t.Fatalf("GetPageCoreProjection(ghost): %v", err)
+	}
+	if ghost != nil {
+		t.Errorf("pre-inventory ghost survived the open: %+v", ghost)
+	}
+	live, err := app2.db.GetPageCoreProjection("vault", "Books", "", "Dune")
+	if err != nil {
+		t.Fatalf("GetPageCoreProjection(Dune): %v", err)
+	}
+	if live == nil {
+		t.Fatal("live page lost its page_core row at open")
+	}
+
+	var recordedPage string
+	if err := app2.db.SQLDB().QueryRow(
+		`SELECT page FROM file_page_locs WHERE path = ?`, pagePath,
+	).Scan(&recordedPage); err != nil {
+		t.Fatalf("warm-skipped file has no page loc record: %v", err)
+	}
+	if recordedPage != "Dune" {
+		t.Errorf("recorded page = %q, want Dune", recordedPage)
+	}
+}

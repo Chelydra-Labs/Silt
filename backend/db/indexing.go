@@ -661,17 +661,14 @@ func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, source, notebook, section
 // no such identity, so without this the old loc stays in the inventory as a
 // ghost that resolves wiki links to a page the file no longer carries.
 //
-// A loc is treated as abandoned only when every block row there belongs to the
-// incoming set (see abandonedPageLocsTx). That guard separates a page moving
-// wholesale from a single block being transplanted to another page: in the
-// latter the source page keeps rows the incoming set does not carry, so it is
-// left alone.
-func reconcileMovedPageIdentityTx(tx *sql.Tx, source, notebook, section, page string, blocks []parser.ParsedBlock) error {
+// Two independent guards decide "abandoned", because containment alone is not
+// evidence: see abandonedPageLocsTx.
+func reconcileMovedPageIdentityTx(tx *sql.Tx, path, source, notebook, section, page string, blocks []parser.ParsedBlock) error {
 	ids := make([]string, len(blocks))
 	for i, b := range blocks {
 		ids[i] = b.ID
 	}
-	locs, err := abandonedPageLocsTx(tx, source, notebook, section, page, ids)
+	locs, err := abandonedPageLocsTx(tx, path, source, notebook, section, page, ids)
 	if err != nil {
 		return fmt.Errorf("find abandoned page locs: %w", err)
 	}
@@ -687,8 +684,21 @@ func reconcileMovedPageIdentityTx(tx *sql.Tx, source, notebook, section, page st
 // (block_meta / task_dependencies / page_links cascade from them) and the
 // three loc-keyed projections. Mirrors ClearFileBlocks' projection set.
 func clearPageLocTx(tx *sql.Tx, loc PageLoc) error {
-	for _, q := range []string{
+	if _, err := tx.Exec(
 		"DELETE FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+		loc.Source, loc.Notebook, loc.Section, loc.Page,
+	); err != nil {
+		return fmt.Errorf("clear page loc %s/%s/%s: %w", loc.Notebook, loc.Section, loc.Page, err)
+	}
+	return clearPageLocProjectionsTx(tx, loc)
+}
+
+// clearPageLocProjectionsTx deletes the three loc-keyed projection rows
+// (page_types / page_properties / page_core) for one page loc, leaving its
+// blocks alone. The single definition of the projection set, shared by the
+// full-loc clear and the inventory reconcile.
+func clearPageLocProjectionsTx(tx *sql.Tx, loc PageLoc) error {
+	for _, q := range []string{
 		"DELETE FROM page_types WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
 		"DELETE FROM page_properties WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
 		"DELETE FROM page_core WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
@@ -714,19 +724,14 @@ func reconcileFilePathIdentityTx(tx *sql.Tx, path, source, notebook, section, pa
 		return nil
 	}
 	cur := PageLoc{Source: source, Notebook: notebook, Section: section, Page: page}
-	var prev PageLoc
-	err := tx.QueryRow(
-		"SELECT source, notebook, section, page FROM file_page_locs WHERE path = ?", path,
-	).Scan(&prev.Source, &prev.Notebook, &prev.Section, &prev.Page)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		// First index of this path (fresh file, or a vault upgraded before
-		// this record existed): nothing to reconcile.
-	case err != nil:
-		return fmt.Errorf("read last indexed page loc for %s: %w", path, err)
-	case prev == cur:
-		return nil
-	default:
+	prev, ok, err := recordedFilePathLocTx(tx, path)
+	if err != nil {
+		return err
+	}
+	if ok {
+		if prev == cur {
+			return nil
+		}
 		if err := clearAbandonedZeroBlockLocTx(tx, path, prev); err != nil {
 			return err
 		}
@@ -749,18 +754,31 @@ func clearAbandonedZeroBlockLocTx(tx *sql.Tx, path string, loc PageLoc) error {
 	if blocks > 0 {
 		return nil
 	}
-	var shared int
-	if err := tx.QueryRow(
-		`SELECT COUNT(*) FROM file_page_locs
-		 WHERE source = ? AND notebook = ? AND section = ? AND page = ? AND path != ?`,
-		loc.Source, loc.Notebook, loc.Section, loc.Page, path,
-	).Scan(&shared); err != nil {
-		return fmt.Errorf("count owners of abandoned page loc %s/%s/%s: %w", loc.Notebook, loc.Section, loc.Page, err)
+	owned, err := pageLocOwnedTx(tx, loc, path)
+	if err != nil {
+		return err
 	}
-	if shared > 0 {
+	if owned {
 		return nil
 	}
 	return clearPageLocTx(tx, loc)
+}
+
+// recordedFilePathLocTx reads the identity a path's last index published. ok is
+// false when the path has none — a fresh file, or a vault upgraded before the
+// record existed — which means "nothing to reconcile", not "no owner".
+func recordedFilePathLocTx(tx *sql.Tx, path string) (PageLoc, bool, error) {
+	var loc PageLoc
+	err := tx.QueryRow(
+		"SELECT source, notebook, section, page FROM file_page_locs WHERE path = ?", path,
+	).Scan(&loc.Source, &loc.Notebook, &loc.Section, &loc.Page)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PageLoc{}, false, nil
+	}
+	if err != nil {
+		return PageLoc{}, false, fmt.Errorf("read last indexed page loc for %s: %w", path, err)
+	}
+	return loc, true, nil
 }
 
 // recordFilePathLocTx upserts the identity a path's index just published, so
@@ -777,13 +795,151 @@ func recordFilePathLocTx(tx *sql.Tx, path string, loc PageLoc) error {
 	return nil
 }
 
+// PageInventoryScan is one scanned file's on-disk identity: the path it lives
+// at and the page loc its notebook/section/page resolves to.
+type PageInventoryScan struct {
+	Path string
+	Loc  PageLoc
+	// Unresolved marks a file the scan could not resolve this pass (read or
+	// parse failure). Its loc is unknown, so the loc its record publishes stays
+	// live rather than being treated as absent — an unreadable file is still on
+	// disk, and dropping its inventory row would hide it until a later scan
+	// could read it again.
+	Unresolved bool
+}
+
+// ReconcilePageInventory makes the page inventory match the scan that just ran:
+// every scanned file's loc becomes an owned page_core row, and every loc of
+// `source` that no scanned file publishes loses its projections.
+//
+// A scan is the only complete view of the on-disk inventory — it sees
+// warm-skipped files, whose contents are not re-indexed — so this is where
+// historical drift heals: page_core predates its use as the inventory, and a
+// frontmatter identity edit made by an older build left rows at locs no file
+// publishes any more. Those ghosts would otherwise resolve wiki links and page
+// search to pages that no longer exist, with no path-keyed record — and
+// therefore no reconcile — to reach them.
+//
+// Recording the loc of warm-skipped files is also what makes the abandonment
+// guard in abandonedPageLocsTx complete: a loc is only cleared when no indexed
+// path still publishes it, which needs an owner row for every file on disk, not
+// just the ones this session re-indexed.
+//
+// Scope is the caller's source: a vault scan must not touch a linked notebook's
+// rows, and each linked root reconciles its own. Block rows are deliberately
+// out of scope — a dead loc's stale blocks are a separate, pre-existing
+// under-clear.
+func (dm *DatabaseManager) ReconcilePageInventory(source string, scans []PageInventoryScan) (int, error) {
+	if source == "" {
+		source = "vault"
+	}
+	db, release, err := dm.handle()
+	if err != nil {
+		return 0, ErrDBClosed
+	}
+	defer release()
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin page inventory reconcile: %w", err)
+	}
+	defer tx.Rollback()
+
+	live := make(map[PageLoc]struct{}, len(scans))
+	for _, s := range scans {
+		if s.Unresolved {
+			if s.Path == "" {
+				continue
+			}
+			loc, ok, err := recordedFilePathLocTx(tx, s.Path)
+			if err != nil {
+				return 0, err
+			}
+			if ok {
+				live[loc] = struct{}{}
+			}
+			continue
+		}
+		loc := s.Loc
+		if loc.Source == "" {
+			loc.Source = source
+		}
+		live[loc] = struct{}{}
+		if err := ensurePageCoreRowTx(tx, loc.Source, loc.Notebook, loc.Section, loc.Page); err != nil {
+			return 0, err
+		}
+		if s.Path != "" {
+			if err := recordFilePathLocTx(tx, s.Path, loc); err != nil {
+				return 0, err
+			}
+		}
+	}
+
+	// Existing locs of this source, across every loc-keyed projection table so
+	// drift that skipped page_core (a failed partial publish, or a pre-inventory
+	// typed projection) is reachable too.
+	rows, err := tx.Query(`
+		SELECT notebook, section, page FROM page_core WHERE source = ?
+		UNION
+		SELECT notebook, section, page FROM page_types WHERE source = ?
+		UNION
+		SELECT notebook, section, page FROM page_properties WHERE source = ?`,
+		source, source, source)
+	if err != nil {
+		return 0, fmt.Errorf("read page inventory locs for %s: %w", source, err)
+	}
+	var stale []PageLoc
+	for rows.Next() {
+		loc := PageLoc{Source: source}
+		if err := rows.Scan(&loc.Notebook, &loc.Section, &loc.Page); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if _, ok := live[loc]; !ok {
+			stale = append(stale, loc)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, fmt.Errorf("iterate page inventory locs for %s: %w", source, err)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+
+	for _, loc := range stale {
+		if err := clearPageLocProjectionsTx(tx, loc); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit page inventory reconcile: %w", err)
+	}
+	return len(stale), nil
+}
+
 // abandonedPageLocsTx returns the locs (other than the target) where the given
-// block IDs are currently indexed, limited to locs whose entire block set is
-// among those IDs. Empty IDs means no block evidence of a move — the caller is
-// publishing a zero-block file — which is why the path-keyed
+// block IDs are currently indexed, limited to locs that carry positive
+// evidence of abandonment. Empty IDs means no block evidence of a move — the
+// caller is publishing a zero-block file — which is why the path-keyed
 // reconcileFilePathIdentityTx exists: it covers the case this function cannot
 // see.
-func abandonedPageLocsTx(tx *sql.Tx, source, notebook, section, page string, ids []string) ([]PageLoc, error) {
+//
+// Two guards, both required:
+//
+//   - containment: every block row at the loc belongs to the incoming set. This
+//     separates a page moving wholesale from one block being transplanted to
+//     another page — in the latter the source keeps rows the incoming set does
+//     not carry.
+//   - no owner: no indexed path still publishes the loc (file_page_locs). A
+//     cross-page move empties the source while its file still owns the loc —
+//     including the single-block stub page, where containment holds trivially —
+//     so containment alone would delete a live page's blocks, projections, and
+//     page_core. The same shape arises from two files carrying one inline block
+//     ID (a copy or sync-conflict carrier): whichever publishes second must not
+//     wipe the other's page. Identity changes pass this guard because
+//     reconcileFilePathIdentityTx has already re-pointed the moving file's
+//     record at its new loc before the block work runs.
+func abandonedPageLocsTx(tx *sql.Tx, path, source, notebook, section, page string, ids []string) ([]PageLoc, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -812,6 +968,10 @@ func abandonedPageLocsTx(tx *sql.Tx, source, notebook, section, page string, ids
 		}
 		locs = append(locs, loc)
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
@@ -825,11 +985,33 @@ func abandonedPageLocsTx(tx *sql.Tx, source, notebook, section, page string, ids
 			   AND id NOT IN (`+in+`)`, locArgs...).Scan(&foreign); err != nil {
 			return nil, err
 		}
-		if foreign == 0 {
-			out = append(out, loc)
+		if foreign > 0 {
+			continue
 		}
+		owned, err := pageLocOwnedTx(tx, loc, path)
+		if err != nil {
+			return nil, err
+		}
+		if owned {
+			continue
+		}
+		out = append(out, loc)
 	}
 	return out, nil
+}
+
+// pageLocOwnedTx reports whether an indexed path other than exceptPath still
+// publishes loc — i.e. the loc is a live page, not an abandoned identity.
+func pageLocOwnedTx(tx *sql.Tx, loc PageLoc, exceptPath string) (bool, error) {
+	var owners int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM file_page_locs
+		 WHERE source = ? AND notebook = ? AND section = ? AND page = ? AND path != ?`,
+		loc.Source, loc.Notebook, loc.Section, loc.Page, exceptPath,
+	).Scan(&owners); err != nil {
+		return false, fmt.Errorf("count owners of page loc %s/%s/%s: %w", loc.Notebook, loc.Section, loc.Page, err)
+	}
+	return owners > 0, nil
 }
 
 // DeleteBlockFromPage removes a single block by ID, but ONLY if it is at the
@@ -994,7 +1176,7 @@ func (dm *DatabaseManager) indexFileBlocksStage(tx *sql.Tx, path, source, notebo
 		// Clear a loc these blocks are leaving before deleting them by ID: the
 		// ID delete leaves the abandoned loc's projections (page_core
 		// included) behind, and those have no ID of their own to self-heal.
-		if err := reconcileMovedPageIdentityTx(tx, source, notebook, section, page, blocks); err != nil {
+		if err := reconcileMovedPageIdentityTx(tx, path, source, notebook, section, page, blocks); err != nil {
 			return err
 		}
 		placeholders := make([]string, len(blocks))
@@ -1368,7 +1550,7 @@ func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexSt
 		// proves those IDs abandoned — a cold start is where an identity
 		// edited while Silt was closed first shows up.
 		if len(res.Blocks) > 0 {
-			if err := reconcileMovedPageIdentityTx(tx, source, res.Notebook, res.Section, res.Page, res.Blocks); err != nil {
+			if err := reconcileMovedPageIdentityTx(tx, res.Path, source, res.Notebook, res.Section, res.Page, res.Blocks); err != nil {
 				return indexedCount, skipped, fmt.Errorf("failed to clear abandoned page loc for %s: %w", res.Path, err)
 			}
 			placeholders := make([]string, len(res.Blocks))
