@@ -191,7 +191,167 @@ func TestPageCoreBackfill_ReopenPopulatesInventory(t *testing.T) {
 	}
 }
 
-func TestPageCoreBackfill_IdempotentReopen(t *testing.T) {
+// TestListDistinctPages_IdentityChangeDropsAbandonedLoc pins the identity-
+// change self-heal. Blocks carry their own stable IDs and re-home on a
+// frontmatter identity edit, but page_core and the page-scoped projections are
+// keyed by loc and have no ID to move: a re-index must clear the loc the page
+// left, or the inventory keeps a twin that resolves wiki links to a page the
+// file no longer carries.
+func TestListDistinctPages_IdentityChangeDropsAbandonedLoc(t *testing.T) {
+	dm := newTestDB(t)
+
+	blocks := []parser.ParsedBlock{
+		{ID: "ffff1111-0000-4000-8000-000000000001", Type: parser.BlockNote,
+			RawText: "retitled body", CleanText: "retitled body", LineNumber: 1},
+	}
+	props := []ProjectedProperty{
+		{Property: "status", ValueText: "active", ValueSort: "active", ValueType: "text"},
+	}
+	if err := dm.IndexFileWithProjection("vault", "NB", "OldSec", "OldPage",
+		blocks, nil, "meeting", props, PageCoreFields{Type: "meeting", Date: "2026-01-02"}); err != nil {
+		t.Fatalf("index at old identity: %v", err)
+	}
+
+	// Same block (stable ID), new frontmatter identity: what an in-place
+	// `page:`/`section:` edit produces on the reindex path.
+	if err := dm.IndexFileWithProjection("vault", "NB", "NewSec", "NewPage",
+		blocks, nil, "", nil, PageCoreFields{}); err != nil {
+		t.Fatalf("reindex at new identity: %v", err)
+	}
+
+	pages, err := dm.ListDistinctPages()
+	if err != nil {
+		t.Fatalf("ListDistinctPages: %v", err)
+	}
+	var haveOld, haveNew bool
+	for _, p := range pages {
+		switch p.Page {
+		case "OldPage":
+			haveOld = true
+		case "NewPage":
+			haveNew = true
+		}
+	}
+	if !haveNew {
+		t.Fatalf("new identity missing from inventory: %+v", pages)
+	}
+	if haveOld {
+		t.Errorf("abandoned identity still in inventory: %+v", pages)
+	}
+	for _, q := range []string{
+		`SELECT COUNT(*) FROM blocks WHERE page = 'OldPage'`,
+		`SELECT COUNT(*) FROM page_types WHERE page = 'OldPage'`,
+		`SELECT COUNT(*) FROM page_properties WHERE page = 'OldPage'`,
+		`SELECT COUNT(*) FROM page_core WHERE page = 'OldPage'`,
+	} {
+		var n int
+		if err := dm.SQLDB().QueryRow(q).Scan(&n); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+		if n != 0 {
+			t.Errorf("abandoned loc rows left behind (%s): %d", q, n)
+		}
+	}
+	if old, err := dm.GetPageCoreProjection("vault", "NB", "OldSec", "OldPage"); err != nil || old != nil {
+		t.Errorf("GetPageCoreProjection(old) = %+v, %v (want nil, nil)", old, err)
+	}
+}
+
+// TestListDistinctPages_TransplantedBlockKeepsSourcePage guards the containment
+// rule: a single block moving to another page must not take its source page's
+// inventory row with it, because that page still owns other blocks.
+func TestListDistinctPages_TransplantedBlockKeepsSourcePage(t *testing.T) {
+	dm := newTestDB(t)
+
+	source := []parser.ParsedBlock{
+		{ID: "ffff2222-0000-4000-8000-000000000001", Type: parser.BlockNote,
+			RawText: "stays home", CleanText: "stays home", LineNumber: 1},
+		{ID: "ffff2222-0000-4000-8000-000000000002", Type: parser.BlockNote,
+			RawText: "moves away", CleanText: "moves away", LineNumber: 2},
+	}
+	if err := dm.IndexFileBlocks("vault", "NB", "", "Source Page", source, nil); err != nil {
+		t.Fatalf("index source: %v", err)
+	}
+	target := []parser.ParsedBlock{
+		{ID: "ffff2222-0000-4000-8000-000000000003", Type: parser.BlockNote,
+			RawText: "target body", CleanText: "target body", LineNumber: 1},
+		source[1], // transplanted block, same stable ID
+	}
+	if err := dm.IndexFileBlocks("vault", "NB", "", "Target Page", target, nil); err != nil {
+		t.Fatalf("index target: %v", err)
+	}
+
+	pages, err := dm.ListDistinctPages()
+	if err != nil {
+		t.Fatalf("ListDistinctPages: %v", err)
+	}
+	var haveSource bool
+	for _, p := range pages {
+		if p.Page == "Source Page" {
+			haveSource = true
+		}
+	}
+	if !haveSource {
+		t.Fatalf("source page lost its inventory row after a single-block move: %+v", pages)
+	}
+	var remaining int
+	if err := dm.SQLDB().QueryRow(
+		`SELECT COUNT(*) FROM blocks WHERE page = 'Source Page'`).Scan(&remaining); err != nil {
+		t.Fatalf("count source blocks: %v", err)
+	}
+	if remaining != 1 {
+		t.Fatalf("source page blocks = %d, want the one that stayed", remaining)
+	}
+}
+
+// TestIndexScanResults_IdentityChangeDropsAbandonedLoc covers the cold-start
+// path: an identity edited while Silt was closed is re-indexed by the batched
+// scan, which must reconcile the abandoned loc in its batch transaction.
+func TestIndexScanResults_IdentityChangeDropsAbandonedLoc(t *testing.T) {
+	dm := newTestDB(t)
+
+	block := parser.ParsedBlock{ID: "ffff3333-0000-4000-8000-000000000001", Type: parser.BlockNote,
+		RawText: "scanned body", CleanText: "scanned body", LineNumber: 1}
+	if err := dm.IndexFileBlocks("vault", "NB", "", "Before Scan", []parser.ParsedBlock{block}, nil); err != nil {
+		t.Fatalf("index before scan: %v", err)
+	}
+
+	results := []parser.ScanResult{{
+		Path:     "NB/After Scan.md",
+		Notebook: "NB",
+		Page:     "After Scan",
+		Blocks:   []parser.ParsedBlock{block},
+	}}
+	projections := []ScanProjection{{Core: PageCoreFields{}}}
+	if _, _, err := dm.IndexScanResultsWithProjection(results, projections); err != nil {
+		t.Fatalf("IndexScanResultsWithProjection: %v", err)
+	}
+
+	pages, err := dm.ListDistinctPages()
+	if err != nil {
+		t.Fatalf("ListDistinctPages: %v", err)
+	}
+	var haveBefore, haveAfter bool
+	for _, p := range pages {
+		switch p.Page {
+		case "Before Scan":
+			haveBefore = true
+		case "After Scan":
+			haveAfter = true
+		}
+	}
+	if !haveAfter || haveBefore {
+		t.Fatalf("scan identity reconciliation: before=%v after=%v inventory=%+v", haveBefore, haveAfter, pages)
+	}
+}
+
+// TestPageCoreBackfill_PreservesExistingRows drives the backfill through the
+// mixed state a warm upgrade actually produces: the marker is absent (so the
+// guarded INSERT runs) while some identity rows are already present with real
+// frontmatter-derived core fields. The NOT EXISTS guard is load-bearing here —
+// without it the INSERT would either duplicate a row (PK conflict) or clobber
+// the published core fields.
+func TestPageCoreBackfill_PreservesExistingRows(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "index.sqlite")
 
@@ -199,42 +359,79 @@ func TestPageCoreBackfill_IdempotentReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open1: %v", err)
 	}
-	blocks := []parser.ParsedBlock{
-		{ID: "eeee1111-0000-4000-8000-000000000001", Type: parser.BlockNote,
-			RawText: "solo body", CleanText: "solo body", LineNumber: 1},
+	index := func(id, source, page string) {
+		blocks := []parser.ParsedBlock{
+			{ID: id, Type: parser.BlockNote,
+				RawText: page + " body", CleanText: page + " body", LineNumber: 1},
+		}
+		if err := dm1.IndexFileBlocks(source, "NB", "", page, blocks, nil); err != nil {
+			t.Fatalf("index %s/%s: %v", source, page, err)
+		}
 	}
-	if err := dm1.IndexFileBlocks("vault", "NB", "", "Solo", blocks, nil); err != nil {
-		t.Fatalf("index: %v", err)
-	}
-	// Preserve the CORE fields an existing row may carry: the backfill must
-	// never overwrite a present row (NOT EXISTS guard).
+	index("eeee1111-0000-4000-8000-000000000001", "vault", "Alpha")
+	index("eeee1111-0000-4000-8000-000000000002", "vault", "Beta")
+	index("eeee1111-0000-4000-8000-000000000003", "linked:x", "Shared")
+
+	// Existing row written by a frontmatter-affecting publish before the
+	// upgrade: its core fields must survive the backfill untouched.
 	if _, err := dm1.SQLDB().Exec(
-		`UPDATE page_core SET type = 'meeting', date = '2026-01-02' WHERE page = 'Solo'`); err != nil {
+		`UPDATE page_core SET type = 'meeting', date = '2026-01-02', created = '2026-01-01T09:00:00Z'
+		 WHERE source = 'vault' AND page = 'Alpha'`); err != nil {
 		t.Fatalf("seed core fields: %v", err)
+	}
+	// Mixed state: one identity row missing, marker absent.
+	if _, err := dm1.SQLDB().Exec(`DELETE FROM page_core WHERE source = 'vault' AND page = 'Beta'`); err != nil {
+		t.Fatalf("drop Beta row: %v", err)
+	}
+	if _, err := dm1.SQLDB().Exec(`DELETE FROM schema_migrations WHERE name = ?`, pageCoreBlocksBackfillMarker); err != nil {
+		t.Fatalf("clear marker: %v", err)
 	}
 	if err := dm1.Close(); err != nil {
 		t.Fatalf("close1: %v", err)
 	}
 
+	// Reopen: the guarded INSERT backfills Beta alone and leaves Alpha alone.
 	dm2, err := NewDatabaseManager(dbPath)
 	if err != nil {
 		t.Fatalf("open2: %v", err)
 	}
 	t.Cleanup(func() { _ = dm2.Close() })
 
+	if !migrationMarkerApplied(t, dm2, pageCoreBlocksBackfillMarker) {
+		t.Fatal("backfill marker missing after reopen")
+	}
 	var rows int
 	if err := dm2.SQLDB().QueryRow(`SELECT COUNT(*) FROM page_core`).Scan(&rows); err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if rows != 1 {
-		t.Fatalf("backfill duplicated rows: %d", rows)
+	if rows != 3 {
+		t.Fatalf("backfill duplicated rows: %d (want Alpha, Beta, Shared)", rows)
 	}
-	core, err := dm2.GetPageCoreProjection("vault", "NB", "", "Solo")
-	if err != nil || core == nil {
-		t.Fatalf("GetPageCoreProjection: %v %v", core, err)
+
+	alpha, err := dm2.GetPageCoreProjection("vault", "NB", "", "Alpha")
+	if err != nil || alpha == nil {
+		t.Fatalf("GetPageCoreProjection(Alpha): %v %v", alpha, err)
 	}
-	if core.Type != "meeting" || core.Date != "2026-01-02" {
-		t.Errorf("backfill clobbered existing core fields: %+v", core)
+	if alpha.Type != "meeting" || alpha.Date != "2026-01-02" || alpha.Created != "2026-01-01T09:00:00Z" {
+		t.Errorf("backfill clobbered existing core fields: %+v", alpha)
+	}
+
+	beta, err := dm2.GetPageCoreProjection("vault", "NB", "", "Beta")
+	if err != nil || beta == nil {
+		t.Fatalf("GetPageCoreProjection(Beta): %v %v", beta, err)
+	}
+	if beta.Type != "" || beta.Date != "" || beta.Created != "" {
+		t.Errorf("backfilled row should be identity-only, got %+v", beta)
+	}
+
+	// Linked sources keep their discriminator: the backfill must not collapse
+	// them into the vault namespace.
+	shared, err := dm2.GetPageCoreProjection("linked:x", "NB", "", "Shared")
+	if err != nil || shared == nil {
+		t.Fatalf("linked source row missing after backfill: %v %v", shared, err)
+	}
+	if shared.Type != "" || shared.Created != "" {
+		t.Errorf("linked backfilled row should be identity-only, got %+v", shared)
 	}
 }
 

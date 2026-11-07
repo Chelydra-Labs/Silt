@@ -654,6 +654,95 @@ func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, source, notebook, section
 	return nil
 }
 
+// reconcileMovedPageIdentityTx clears the page locs a re-index proves the
+// incoming block set has abandoned. Blocks self-heal across an identity change
+// (frontmatter page:/section:/notebook:/source) because the indexer deletes
+// them by their stable IDs wherever they lived; the loc-keyed projections have
+// no such identity, so without this the old loc stays in the inventory as a
+// ghost that resolves wiki links to a page the file no longer carries.
+//
+// A loc is treated as abandoned only when every block row there belongs to the
+// incoming set (see abandonedPageLocsTx). That guard separates a page moving
+// wholesale from a single block being transplanted to another page: in the
+// latter the source page keeps rows the incoming set does not carry, so it is
+// left alone.
+func reconcileMovedPageIdentityTx(tx *sql.Tx, source, notebook, section, page string, blocks []parser.ParsedBlock) error {
+	ids := make([]string, len(blocks))
+	for i, b := range blocks {
+		ids[i] = b.ID
+	}
+	locs, err := abandonedPageLocsTx(tx, source, notebook, section, page, ids)
+	if err != nil {
+		return fmt.Errorf("find abandoned page locs: %w", err)
+	}
+	for _, loc := range locs {
+		for _, q := range []string{
+			"DELETE FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+			"DELETE FROM page_types WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+			"DELETE FROM page_properties WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+			"DELETE FROM page_core WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+		} {
+			if _, err := tx.Exec(q, loc.Source, loc.Notebook, loc.Section, loc.Page); err != nil {
+				return fmt.Errorf("clear abandoned page loc %s/%s/%s: %w", loc.Notebook, loc.Section, loc.Page, err)
+			}
+		}
+	}
+	return nil
+}
+
+// abandonedPageLocsTx returns the locs (other than the target) where the given
+// block IDs are currently indexed, limited to locs whose entire block set is
+// among those IDs. Empty IDs means no reconciliation work: the caller is
+// publishing a zero-block file, which leaves no block evidence of a move.
+func abandonedPageLocsTx(tx *sql.Tx, source, notebook, section, page string, ids []string) ([]PageLoc, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	in := strings.Join(placeholders, ",")
+	rows, err := tx.Query(
+		`SELECT DISTINCT COALESCE(source, 'vault'), notebook, section, page
+		 FROM blocks WHERE id IN (`+in+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	var locs []PageLoc
+	for rows.Next() {
+		var loc PageLoc
+		if err := rows.Scan(&loc.Source, &loc.Notebook, &loc.Section, &loc.Page); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if loc.Source == source && loc.Notebook == notebook && loc.Section == section && loc.Page == page {
+			continue
+		}
+		locs = append(locs, loc)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	var out []PageLoc
+	for _, loc := range locs {
+		locArgs := append([]any{loc.Source, loc.Notebook, loc.Section, loc.Page}, args...)
+		var foreign int
+		if err := tx.QueryRow(
+			`SELECT COUNT(*) FROM blocks
+			 WHERE source = ? AND notebook = ? AND section = ? AND page = ?
+			   AND id NOT IN (`+in+`)`, locArgs...).Scan(&foreign); err != nil {
+			return nil, err
+		}
+		if foreign == 0 {
+			out = append(out, loc)
+		}
+	}
+	return out, nil
+}
+
 // DeleteBlockFromPage removes a single block by ID, but ONLY if it is at the
 // specified source/notebook/section/page. This page-scoping is critical for
 // the cross-page-move source-removal path: the block has already been indexed
@@ -804,6 +893,12 @@ func (dm *DatabaseManager) FindPageByLeaf(source, page string) (notebook, sectio
 // are appended to dups for the caller's post-commit dispatch.
 func (dm *DatabaseManager) indexFileBlocksStage(tx *sql.Tx, source, notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, logTag string, dups *duplicateIDCollector) error {
 	if len(blocks) > 0 {
+		// Clear a loc these blocks are leaving before deleting them by ID: the
+		// ID delete leaves the abandoned loc's projections (page_core
+		// included) behind, and those have no ID of their own to self-heal.
+		if err := reconcileMovedPageIdentityTx(tx, source, notebook, section, page, blocks); err != nil {
+			return err
+		}
 		placeholders := make([]string, len(blocks))
 		args := make([]interface{}, len(blocks))
 		for i, b := range blocks {
@@ -1145,10 +1240,25 @@ func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexSt
 			continue
 		}
 
+		// Source comes from the ScanResult so the batched linked-tree scan
+		// (#134) scopes its own rows; the vault startup scan leaves Source
+		// empty, defaulting to 'vault' (the historical behavior). Resolved
+		// before the block clear because the identity reconciliation needs it.
+		source := res.Source
+		if source == "" {
+			source = "vault"
+		}
+
 		// Clear any pre-existing rows for these block IDs (handles the case
 		// where frontmatter metadata changed since the previous index, since
 		// block IDs are stable but (notebook, section, date) is denormalized).
+		// The reconciliation immediately before it removes the loc the scan
+		// proves those IDs abandoned — a cold start is where an identity
+		// edited while Silt was closed first shows up.
 		if len(res.Blocks) > 0 {
+			if err := reconcileMovedPageIdentityTx(tx, source, res.Notebook, res.Section, res.Page, res.Blocks); err != nil {
+				return indexedCount, skipped, fmt.Errorf("failed to clear abandoned page loc for %s: %w", res.Path, err)
+			}
 			placeholders := make([]string, len(res.Blocks))
 			args := make([]interface{}, len(res.Blocks))
 			for j, b := range res.Blocks {
@@ -1162,13 +1272,6 @@ func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexSt
 		}
 
 		// Also clear by metadata to catch blocks the user removed from the file.
-		// Source comes from the ScanResult so the batched linked-tree scan
-		// (#134) scopes its own rows; the vault startup scan leaves Source
-		// empty, defaulting to 'vault' (the historical behavior).
-		source := res.Source
-		if source == "" {
-			source = "vault"
-		}
 		// The per-file indexers log file warnings (see IndexFileBlocks); the
 		// batched scan used to drop them, so a hierarchy repair found on the
 		// cold-start scan was reported nowhere. Keep the per-file log shape.
