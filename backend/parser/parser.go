@@ -827,7 +827,8 @@ func accumulateRegion(lines []string, openIdx, lineNumber int, meta *FileMetadat
 
 	// The region's Depth is serialization-only: the opener's leading indent,
 	// re-applied by renderBlock's region branches and by the normalization
-	// emit below. DeriveHierarchy ignores it (regions stay parentless).
+	// emit below. DeriveHierarchy resolves the region's parent from it
+	// (regions never enter the ancestry stack).
 	pb.Depth = parseLeadingIndent(lines[openIdx], spacesPerTab)
 	indent := strings.Repeat(" ", pb.Depth*spacesPerTab)
 

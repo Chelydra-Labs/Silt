@@ -45,12 +45,16 @@ func (v HierarchyViolation) String() string {
 //   - when no ancestor exists at all (the file opens indented), the block
 //     stays parentless.
 //
-// Region blocks (CODE/TABLE/DETAILS/CALLOUT) are transparent to the
-// hierarchy: they carry a Depth for serialization only (their on-disk
-// indentation), and admitting one to the stack would let it steal the
-// children of the block it follows (a fenced code block between a task and
-// its indented reply would parent the reply to the code). Regions parent to
-// nothing and nothing parents to them.
+// Region blocks (CODE/TABLE/DETAILS/CALLOUT) carry a Depth for
+// serialization only (their on-disk indentation). Their ParentID is
+// resolved with the same nearest-ancestor scan — the nearest shallower
+// non-region block, since the stack holds only non-region ids — but a
+// region never enters the ancestry stack: nothing parents to a region (a
+// fenced code block between a task and its indented reply must not steal
+// the reply), and a block after a region still resolves to its pre-region
+// ancestor. Region resolution is silent: an indentation jump on a
+// serialization-only depth is a shape, not corruption. A depth-0 region is
+// a root (ParentID "").
 //
 // HEADER blocks are exempt from violation reporting: their Depth is the
 // heading level (1–6), not indentation, so a parentless top heading or a
@@ -71,8 +75,9 @@ func (v HierarchyViolation) String() string {
 // nothing recomputes the hierarchy.
 func DeriveHierarchy(blocks []ParsedBlock) []HierarchyViolation {
 	var violations []HierarchyViolation
-	// stack[d] is the id of the most recent block at depth d, or "" for a
-	// depth no block has occupied since the last shallower block.
+	// stack[d] is the id of the most recent non-region block at depth d, or
+	// "" for a depth no block has occupied since the last shallower block
+	// (regions never enter it — see the region paragraph above).
 	var stack []string
 	for i := range blocks {
 		b := &blocks[i]
@@ -89,9 +94,7 @@ func DeriveHierarchy(blocks []ParsedBlock) []HierarchyViolation {
 			b.Depth = 0
 		}
 		b.ParentID = ""
-		if isRegionBlock(b.Type) {
-			continue
-		}
+		region := isRegionBlock(b.Type)
 		if b.Depth > 0 {
 			parentID := ""
 			parentDepth := -1
@@ -104,18 +107,27 @@ func DeriveHierarchy(blocks []ParsedBlock) []HierarchyViolation {
 			}
 			if parentID != "" {
 				b.ParentID = parentID
-				if parentDepth != b.Depth-1 && b.Type != BlockHeader {
+				// Regions resolve silently: their Depth is serialization-only
+				// (the opener's indent), so an imperfect match is a shape, not
+				// corruption — never a repair to report.
+				if !region && parentDepth != b.Depth-1 && b.Type != BlockHeader {
 					violations = append(violations, HierarchyViolation{
 						BlockID: b.ID, Type: b.Type, LineNumber: b.LineNumber,
 						Depth: b.Depth, ParentID: parentID, ParentDepth: parentDepth,
 					})
 				}
-			} else if b.Type != BlockHeader {
+			} else if !region && b.Type != BlockHeader {
 				violations = append(violations, HierarchyViolation{
 					BlockID: b.ID, Type: b.Type, LineNumber: b.LineNumber,
 					Depth: b.Depth, ParentID: "", ParentDepth: -1,
 				})
 			}
+		}
+		if region {
+			// Never admit a region to the stack: its depth slot stays empty,
+			// so nothing parents to it and a deeper block scans past it to
+			// the pre-region ancestor.
+			continue
 		}
 		for len(stack) <= b.Depth {
 			stack = append(stack, "")
@@ -131,8 +143,8 @@ func DeriveHierarchy(blocks []ParsedBlock) []HierarchyViolation {
 // isRegionBlock reports whether bt is a managed multi-line region type
 // (fenced code, GFM table, <details> HTML, callout). These carry a
 // serialization-only Depth (the opener's leading indent); DeriveHierarchy
-// treats them as transparent regardless — see the region paragraph in its
-// doc comment.
+// resolves their parent but never admits them to the ancestry stack — see
+// the region paragraph in its doc comment.
 func isRegionBlock(bt BlockType) bool {
 	return bt == BlockCode || bt == BlockTable || bt == BlockDetails || bt == BlockCallout
 }
