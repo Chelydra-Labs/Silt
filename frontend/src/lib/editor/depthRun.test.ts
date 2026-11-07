@@ -81,7 +81,7 @@ describe('depthRunSpan — contiguous run collection', () => {
     editor.destroy()
   })
 
-  it('skips region siblings without collecting them, keeping the span contiguous', () => {
+  it('collects deeper region siblings as members, keeping the span contiguous', () => {
     const editor = makeDoc([
       note('p', 'parent', 0),
       code('r', 'const x = 1', 1),
@@ -89,14 +89,28 @@ describe('depthRunSpan — contiguous run collection', () => {
       note('tail', 'l0', 0)
     ])
     const span = depthRunSpan(editor.state.doc, startOf(editor, 'p'), 0)
-    // The region is transparent to the hierarchy: the deeper note after it
-    // still belongs to the run, but the region itself is never a member.
-    expect(span.nodes.map((n) => n.attrs.id)).toEqual(['p', 'c'])
-    // The contiguous span still covers the region (delete+insert sweeps it
-    // along with the run).
+    // A deeper region is a run MEMBER (#1061): it shifts with the subtree
+    // like prose, and the deeper note after it still belongs too.
+    expect(span.nodes.map((n) => n.attrs.id)).toEqual(['p', 'r', 'c'])
     expect(span.from).toBe(0)
     const c = editor.state.doc.nodeAt(startOf(editor, 'c'))
     expect(span.to).toBe(startOf(editor, 'c') + (c?.nodeSize ?? 0))
+    editor.destroy()
+  })
+
+  it('terminates at a region at or above the head depth — boundary, not member', () => {
+    const editor = makeDoc([
+      note('p', 'parent', 0),
+      code('r', 'const x = 1', 0),
+      note('c', 'child', 1),
+      note('tail', 'l0', 0)
+    ])
+    const span = depthRunSpan(editor.state.doc, startOf(editor, 'p'), 0)
+    // Same rule as prose at ≤ depth: a region at the head's own depth is a
+    // sibling, not a child — the run (and any indent behind it) ends there.
+    expect(span.nodes.map((n) => n.attrs.id)).toEqual(['p'])
+    const p = editor.state.doc.nodeAt(startOf(editor, 'p'))
+    expect(span.to).toBe(startOf(editor, 'p') + (p?.nodeSize ?? 0))
     editor.destroy()
   })
 
@@ -125,13 +139,13 @@ describe('depthRunSpanForNode — run initiation', () => {
     expect(DEPTH_BLOCK_TYPES.has('headerBlock')).toBe(false)
   })
 
-  it('a region head never initiates a run — regions cannot parent', () => {
+  it('a region head never initiates a run — regions are members only', () => {
     const editor = makeDoc([code('r', 'const x = 1', 1), note('c', 'child', 2)])
     const node = editor.state.doc.nodeAt(0)
     const span = depthRunSpanForNode(editor.state.doc, 0, node!)
-    // Dragging a region reorders the region alone; a following deeper note
-    // is NOT swept along (regions are transparent, their depth attr is
-    // serialization-only).
+    // Dragging/moving a region relocates the region alone; a following
+    // deeper note is NOT swept along (regions never head a run — only
+    // noteBlock/taskBlock/headerBlock can initiate one).
     expect(span.positions).toEqual([0])
     expect(span.nodes.map((n) => n.attrs.id)).toEqual(['r'])
     expect(span.to).toBe(node!.nodeSize)
@@ -184,6 +198,26 @@ describe('planAdjacentRunSwap — Alt+Arrow relocation plan', () => {
   it('plans an up-swap: insert before the adjacent non-member sibling', () => {
     const editor = makeDoc([
       note('x', 'prev', 0),
+      note('a', 'parent', 0),
+      note('b', 'child', 1)
+    ])
+    const doc = editor.state.doc
+    const headPos = startOf(editor, 'a')
+    const head = doc.nodeAt(headPos)!
+    const plan = planAdjacentRunSwap(doc, headPos, head, -1)!
+    expect(plan).not.toBeNull()
+    expect(plan.insertAt).toBe(startOf(editor, 'x'))
+    expect(plan.focusIndex).toBe(0)
+    editor.destroy()
+  })
+
+  it('plans an up-swap past a subtree ending in a deeper region member', () => {
+    // #1061: the fence (depth 1) is x's run member, so the swap must land
+    // before X. Inserting before the region itself (the old "region is its
+    // own swap slot" rule) would strand it re-parented under the moved run.
+    const editor = makeDoc([
+      note('x', 'prev head', 0),
+      code('r', 'const x = 1', 1),
       note('a', 'parent', 0),
       note('b', 'child', 1)
     ])
@@ -276,7 +310,7 @@ describe('shiftRunDepths — relocation steps for a drag mid-subtree', () => {
     editor.destroy()
   })
 
-  it('leaves interleaved region siblings at their own depth', () => {
+  it('shifts interleaved region members with the run delta', () => {
     const editor = makeDoc([
       note('p', 'parent', 0),
       code('r', 'const x = 1', 1),
@@ -291,7 +325,8 @@ describe('shiftRunDepths — relocation steps for a drag mid-subtree', () => {
     let tr = editor.state.tr.delete(span.from, span.to)
     tr = tr.insert(0, shiftRunDepths(doc, span, delta))
     editor.view.dispatch(tr)
-    // The region rides along in the span but keeps its derived depth.
+    // The region rides along AND shifts +1 — a member exactly like prose
+    // (#1061), so the serializer keeps the whole depth band together.
     const ids = Array.from(
       { length: editor.state.doc.childCount },
       (_, i) => editor.state.doc.child(i).attrs.id
@@ -300,7 +335,64 @@ describe('shiftRunDepths — relocation steps for a drag mid-subtree', () => {
       Number(editor.state.doc.child(i).attrs.depth ?? 0)
     )
     expect(ids).toEqual(['p', 'r', 'c', 'tail'])
-    expect(depths).toEqual([1, 1, 3, 0])
+    expect(depths).toEqual([1, 2, 3, 0])
+    editor.destroy()
+  })
+
+  it('mirrors the drag step-7: a dragged parent sweeps its deeper region sibling', () => {
+    // jsdom cannot drive handleDrop (per AGENTS.md), so the drag path's
+    // run construction is pinned here at the helper level: the dragged
+    // parent's span must include the deeper fence, and the whole-run
+    // delta/clamp must see the region's depth.
+    const editor = makeDoc([
+      note('x', 'l0', 0),
+      note('p', 'parent', 0),
+      code('r', 'const x = 1', 1),
+      note('c', 'child', 1),
+      note('tail', 'l0', 0)
+    ])
+    const doc = editor.state.doc
+    const headPos = startOf(editor, 'p')
+    const run = depthRunSpanForNode(doc, headPos, doc.nodeAt(headPos)!)
+    expect(run.nodes.map((n) => n.attrs.id)).toEqual(['p', 'r', 'c'])
+    const deepest = run.nodes.reduce(
+      (max, n) => Math.max(max, (n.attrs.depth as number) || 0),
+      0
+    )
+    const delta = clampRunDepthDelta(1, 0, deepest, MAX_DEPTH)
+    expect(delta).toBe(1)
+    let tr = editor.state.tr.delete(run.from, run.to)
+    tr = tr.insert(0, shiftRunDepths(doc, run, delta))
+    editor.view.dispatch(tr)
+    const ids = Array.from(
+      { length: editor.state.doc.childCount },
+      (_, i) => editor.state.doc.child(i).attrs.id
+    )
+    const depths = Array.from({ length: editor.state.doc.childCount }, (_, i) =>
+      Number(editor.state.doc.child(i).attrs.depth ?? 0)
+    )
+    expect(ids).toEqual(['p', 'r', 'c', 'x', 'tail'])
+    expect(depths).toEqual([1, 2, 2, 0, 0])
+    editor.destroy()
+  })
+
+  it('the whole-run clamp sees region member depths (region at MAX_DEPTH)', () => {
+    const editor = makeDoc([
+      note('p', 'parent', 0),
+      code('r', 'const x = 1', 6),
+      note('x', 'l0', 0)
+    ])
+    const doc = editor.state.doc
+    const headPos = startOf(editor, 'p')
+    const run = depthRunSpanForNode(doc, headPos, doc.nodeAt(headPos)!)
+    expect(run.nodes.map((n) => n.attrs.id)).toEqual(['p', 'r'])
+    const deepest = run.nodes.reduce(
+      (max, n) => Math.max(max, (n.attrs.depth as number) || 0),
+      0
+    )
+    // The region member sits at MAX_DEPTH, so a +1 indent is capped to a
+    // no-op — indenting the parent alone would strand the fence's band.
+    expect(clampRunDepthDelta(1, 0, deepest, MAX_DEPTH)).toBe(0)
     editor.destroy()
   })
 

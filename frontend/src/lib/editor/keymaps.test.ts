@@ -1488,11 +1488,11 @@ describe('subtree-aware indent + depth clamp (#1002)', () => {
     editor.destroy()
   })
 
-  it('the depth run stays contiguous across a region sibling (code block)', () => {
-    // Regions are transparent to the hierarchy: nothing parents to them, so
-    // a note after a region parents to the preceding block. Ending the run
-    // at the region would strand that note — its parent indents away while
-    // it stays put, leaving it parentless on the next parse.
+  it('the depth run sweeps deeper region siblings in and back out (code block)', () => {
+    // #1061: a region deeper than the initiator is a run MEMBER — it shifts
+    // with the subtree like prose, so an indented fence under a note keeps
+    // rendering inside its parent's band (pre-#1061 the region was skipped
+    // and its depth stayed put while the prose around it indented away).
     const editor = makeEditorWithKeymaps([CodeBlock])
     editor.commands.setContent({
       type: 'doc',
@@ -1501,7 +1501,7 @@ describe('subtree-aware indent + depth clamp (#1002)', () => {
         note('a', 'A', 0),
         {
           type: 'codeBlock',
-          attrs: { id: 'c1', language: 'ts', file_date: '' },
+          attrs: { id: 'c1', depth: 1, language: 'ts', file_date: '' },
           content: [{ type: 'text', text: 'const x = 1' }]
         },
         note('b', 'B', 1)
@@ -1509,12 +1509,90 @@ describe('subtree-aware indent + depth clamp (#1002)', () => {
     })
     focusBlockIndex(editor, 1)
     expect(pressKey(editor, 'Tab')).toBe(true)
-    // The codeBlock reports 0 only because it carries no depth attr — it is
-    // skipped, not shifted; B (A's child across the region) comes along.
-    expect(depthsOf(editor)).toEqual([0, 1, 0, 2])
-    // Symmetric: unindenting A brings the region-separated child back too.
+    // A, the fence, and B (A's child after it) all shift +1 together.
+    expect(depthsOf(editor)).toEqual([0, 1, 2, 2])
+    // Symmetric: unindenting A brings the fence and the child back too.
     expect(pressKey(editor, 'Tab', { shiftKey: true })).toBe(true)
-    expect(depthsOf(editor)).toEqual([0, 0, 0, 1])
+    expect(depthsOf(editor)).toEqual([0, 0, 1, 1])
+    editor.destroy()
+  })
+
+  it('#1061 trigger: Tab on a task indents its replies and the code fence together', () => {
+    const editor = makeEditorWithKeymaps([CodeBlock])
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('root', 'root', 0),
+        {
+          type: 'taskBlock',
+          attrs: { id: 't', depth: 0, status: 'TODO' },
+          content: [{ type: 'text', text: 'task' }]
+        },
+        note('r1', 'reply one', 1),
+        {
+          type: 'codeBlock',
+          attrs: { id: 'c1', depth: 1, language: 'ts', file_date: '' },
+          content: [{ type: 'text', text: 'const x = 1' }]
+        },
+        note('r2', 'reply two', 1)
+      ]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    // Depths [1, 2, 2, 2]: the fence is a member — before #1061 it stayed
+    // at 1 while everything around it indented, breaking the task's band.
+    expect(depthsOf(editor)).toEqual([0, 1, 2, 2, 2])
+    // Shift-Tab is the exact inverse.
+    expect(pressKey(editor, 'Tab', { shiftKey: true })).toBe(true)
+    expect(depthsOf(editor)).toEqual([0, 0, 1, 1, 1])
+    editor.destroy()
+  })
+
+  it('a region at or above the initiator depth is a boundary — never collected', () => {
+    // Same rule as prose at ≤ depth: a depth-0 region is the initiator's
+    // sibling, not its child, so the run (and the indent) ends at it.
+    const editor = makeEditorWithKeymaps([CodeBlock])
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('root', 'root', 0),
+        note('a', 'A', 0),
+        {
+          type: 'codeBlock',
+          attrs: { id: 'c1', depth: 0, language: 'ts', file_date: '' },
+          content: [{ type: 'text', text: 'const x = 1' }]
+        },
+        note('b', 'B', 1)
+      ]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    expect(depthsOf(editor)).toEqual([0, 1, 0, 1])
+    editor.destroy()
+  })
+
+  it('whole-run clamp: a region member at depth 6 blocks the indent', () => {
+    const editor = makeEditorWithKeymaps([CodeBlock])
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('root', 'root', 0),
+        note('p', 'parent', 0),
+        {
+          type: 'codeBlock',
+          attrs: { id: 'c6', depth: 6, language: 'ts', file_date: '' },
+          content: [{ type: 'text', text: 'const x = 1' }]
+        }
+      ]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    // The parent's only run member is the fence at MAX_DEPTH: indenting
+    // would write depth 7 on it, so the whole run holds. The region's
+    // depth is what blocks the move (no prose member exists).
+    expect(depthsOf(editor)).toEqual([0, 0, 6])
+    const saved = docToBlocks(editor.getJSON() as DocJSON)
+    expect(saved.every((b) => b.depth <= 6)).toBe(true)
     editor.destroy()
   })
 
@@ -1848,6 +1926,79 @@ describe('moveActiveBlock — drag-handle keyboard complement (#181)', () => {
     const moved = blocksOf(editor)
     expect(moved.map((b) => b.id)).toEqual(['a', 'b', 'x', 'y'])
     expect(moved.map((b) => b.depth)).toEqual([0, 1, 0, 1])
+    editor.destroy()
+  })
+
+  // --- region members inside Alt-Arrow runs (#1061) ---------------------
+  // Regions deeper than their initiator join the run, so movers inherit
+  // them: the fence rides with the parent's subtree, and a preceding
+  // subtree that ENDS in a fence swaps as a unit too.
+
+  const code = (id: string, text: string, depth: number) => ({
+    type: 'codeBlock' as const,
+    attrs: { id, depth, language: 'ts', file_date: '' },
+    content: [{ type: 'text' as const, text }]
+  })
+
+  it('moves a parent run with its deeper region member (fence rides along)', () => {
+    const editor = makeEditorWithKeymaps([CodeBlock])
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('p', 'parent', 0),
+        code('c1', 'const x = 1', 1),
+        note('b', 'child', 1),
+        note('z', 'tail', 0)
+      ]
+    })
+    focusBlockIndex(editor, 0)
+    expect(moveActiveBlock(editor, 1)).toBe(true)
+    // The whole run [p, c1, b] lands after z — fence included, depths
+    // unchanged (a move is a pure reorder).
+    expect(blocksOf(editor).map((n) => n.id)).toEqual(['z', 'p', 'c1', 'b'])
+    expect(blocksOf(editor).map((n) => n.depth)).toEqual([0, 0, 1, 1])
+    editor.destroy()
+  })
+
+  it('moves a parent run up past a subtree that ends in a region member', () => {
+    // The fence (depth 1) is x's run member, so the up-swap must land
+    // before x — inserting before the fence itself would strand it
+    // re-parented under the moved parent.
+    const editor = makeEditorWithKeymaps([CodeBlock])
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('x', 'head', 0),
+        code('c1', 'const x = 1', 1),
+        note('a', 'parent', 0),
+        note('b', 'child', 1)
+      ]
+    })
+    focusBlockIndex(editor, 2)
+    expect(moveActiveBlock(editor, -1)).toBe(true)
+    expect(blocksOf(editor).map((n) => n.id)).toEqual(['a', 'b', 'x', 'c1'])
+    expect(blocksOf(editor).map((n) => n.depth)).toEqual([0, 1, 0, 1])
+    editor.destroy()
+  })
+
+  it('moves a block down past a subtree that ends in a region member', () => {
+    // Down-path mirror: z's run ends at the fence, so the moved block
+    // lands after BOTH — dropping it between z and the fence would
+    // re-parent the fence under it.
+    const editor = makeEditorWithKeymaps([CodeBlock])
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('a', 'parent', 0),
+        note('z', 'next head', 0),
+        code('c1', 'const x = 1', 1),
+        note('t', 'tail', 0)
+      ]
+    })
+    focusBlockIndex(editor, 0)
+    expect(moveActiveBlock(editor, 1)).toBe(true)
+    expect(blocksOf(editor).map((n) => n.id)).toEqual(['z', 'c1', 'a', 't'])
+    expect(blocksOf(editor).map((n) => n.depth)).toEqual([0, 1, 0, 0])
     editor.destroy()
   })
 })

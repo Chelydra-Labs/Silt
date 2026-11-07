@@ -906,11 +906,14 @@ export const CALLOUT_VARIANTS: Record<
 }
 
 // Outline `depth` for region/atomic block nodes (callout, code, table,
-// details, embeds, block math). Serialization-only: load stamps it from the
+// details, embeds, block math). Serialization carry: load stamps it from the
 // parsed block's depth (its on-disk leading indent) and save reads it back,
 // so an indented region under a task stays inside the task's depth band
-// across save instead of collapsing to column 0. These nodes never join
-// Tab/Shift-Tab depth runs and parent nothing — the attr is pure carry.
+// across save instead of collapsing to column 0. Regions deeper than a run
+// head join Tab/Shift-Tab depth runs as MEMBERS (#1061) — the attr shifts
+// with the run like prose — but never initiate one and parent nothing: Tab
+// on the region itself falls through to TipTap defaults, and a moved region
+// relocates alone.
 const depthAttr = {
   default: 0,
   // Pasted data-depth is untrusted: a negative value reaching Go's

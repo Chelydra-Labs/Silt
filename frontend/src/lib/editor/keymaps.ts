@@ -409,8 +409,8 @@ export function moveActiveBlock(editor: Editor, direction: 1 | -1): boolean {
   const plan = planAdjacentRunSwap(doc, info.pos, info.node, direction)
   if (!plan) return false
 
-  // Delete the whole span, then re-insert it (regions interleaved between
-  // run members ride along) at the swapped slot in ONE transaction — a
+  // Delete the whole span, then re-insert it (deeper region members sweep
+  // with the run, #1061) at the swapped slot in ONE transaction — a
   // whole-subtree move is a single undo step and a single autosave.
   const spanContent = doc.slice(plan.from, plan.to).content
   let newTr = tr.delete(plan.from, plan.to)

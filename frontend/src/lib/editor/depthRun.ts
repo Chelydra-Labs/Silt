@@ -17,9 +17,10 @@ import { MAX_DEPTH } from './constants'
  *   indent — it never joins a run as a MEMBER (a header terminates every
  *   scan), though it can HEAD a run: its body notes at level+1 follow it
  *   through moves, exactly like the Backspace unindent treats it.
- * - callout/code/table/details (and other container/atomic types): they
- *   carry a depth attr for serialization only; regions are transparent to
- *   the hierarchy, so they neither head a run nor shift with one.
+ * - regions (callout/code/table/details and other depth-carrying atomic
+ *   blocks): they join runs as MEMBERS when deeper than the head (#1061)
+ *   but never INITIATE one — the set guards initiation (Tab on a region
+ *   falls through to TipTap defaults), so regions stay out of it.
  */
 export const DEPTH_BLOCK_TYPES = new Set(['noteBlock', 'taskBlock'])
 
@@ -42,19 +43,18 @@ export interface DepthRunSpan {
 
 /**
  * Positions of the block at `headPos` plus every following same-parent
- * sibling in its subtree: the contiguous run of depth-bearing outline
- * blocks whose depth is greater than the head's. The run ends at a header
- * (its depth attr is a heading level, not an indent) or at the first
- * sibling at or shallower than the head's depth.
+ * sibling in its subtree: the contiguous run of blocks whose depth attr is
+ * greater than the head's. The run ends at a header (its depth attr is a
+ * heading level, not an indent) or at the first sibling at or shallower
+ * than the head's depth.
  *
- * Region blocks (code/table/callout/details) are transparent to the
- * hierarchy — nothing parents to them — so a deeper sibling AFTER a region
- * still belongs to the run: the scan advances past regions without
- * collecting them. Terminating at a region instead would strand those
- * siblings (their parent indents away while they stay put). A region
- * interleaved inside the span therefore rides along with a relocation (it
- * sits inside `from`..`to`) but never shifts depth and never joins
- * `positions`/`nodes`.
+ * Region blocks (code/table/callout/details and other depth-carrying
+ * atomic blocks) are MEMBERS under the same rule as prose (#1061): a
+ * region deeper than the head shifts with the run — an indented fence
+ * under a task moves with the task's subtree, so its depth band survives
+ * indent, moves, and drags intact. A region at or above the head's depth
+ * is a boundary exactly like a prose sibling there, and regions never
+ * head a run (see `depthRunSpanForNode`).
  *
  * Sibling boundaries come from resolved `nodeAfter` at node-boundary
  * positions, which never crosses into a different parent — so a block
@@ -76,13 +76,14 @@ export function depthRunSpan(
     const next = doc.resolve(pos + node.nodeSize).nodeAfter
     if (!next) break // parent's last child — never cross the container
     if (next.type.name === 'headerBlock') break
-    if (DEPTH_BLOCK_TYPES.has(next.type.name)) {
-      if (((next.attrs.depth as number) || 0) <= headDepth) break
-      positions.push(pos + node.nodeSize)
-      nodes.push(next)
-      to = pos + node.nodeSize + next.nodeSize
-    }
-    // Region siblings fall through to here: advance past without collecting.
+    // Membership is purely depth-based: prose and region siblings alike
+    // join when deeper than the head, and either kind ends the scan at or
+    // below the head's depth (the header check above keeps heading levels
+    // out of the comparison).
+    if (((next.attrs.depth as number) || 0) <= headDepth) break
+    positions.push(pos + node.nodeSize)
+    nodes.push(next)
+    to = pos + node.nodeSize + next.nodeSize
     pos += node.nodeSize
     node = next
   }
@@ -91,8 +92,9 @@ export function depthRunSpan(
 
 /**
  * The run a specific node heads when relocated. Region blocks never
- * initiate a run (their depth attr is serialization-only, nothing parents
- * to them), so a dragged/moved region relocates alone.
+ * initiate a run (their depth attr positions them inside a parent's run,
+ * but nothing nests under a region as a run head), so a dragged/moved
+ * region relocates alone — regions are members, never initiators.
  */
 export function depthRunSpanForNode(
   doc: ProseMirrorNode,
@@ -130,10 +132,14 @@ export interface AdjacentRunSwapPlan {
  * The head of the run that ends just before `pos` — the swap partner for
  * an upward move. Walks backward from the adjacent block, extending while
  * the current head nests under its predecessor (depth(head) > depth(before),
- * the mirror of the forward scan's membership rule) and skipping
- * transparent region blocks. A header never extends under an earlier block
- * (it terminates every forward scan, so it is always its own run's head).
- * A region adjacent to `pos` is its own swap slot — regions cannot parent.
+ * the mirror of the forward scan's membership rule) and skipping region
+ * members interleaved mid-run. A header never extends under an earlier
+ * block (it terminates every forward scan, so it is always its own run's
+ * head). A region ADJACENT to `pos` extends the same way: a deeper region
+ * belongs to the partner head's run (#1061), and inserting before the
+ * region itself would strand it re-parented under the moved run. When the
+ * adjacent region does not nest under the preceding block (at or above its
+ * depth), it is a boundary and stays its own swap slot.
  */
 function precedingRunHead(
   doc: ProseMirrorNode,
@@ -144,10 +150,10 @@ function precedingRunHead(
   const adjacentPos = pos - adjacent.nodeSize
   const isOutlineBlock = (n: ProseMirrorNode) =>
     DEPTH_BLOCK_TYPES.has(n.type.name) || n.type.name === 'headerBlock'
-  if (!isOutlineBlock(adjacent)) {
-    return { pos: adjacentPos, node: adjacent }
-  }
   const depthOf = (n: ProseMirrorNode) => (n.attrs.depth as number) || 0
+  // A region may ride along as the walk's starting candidate (member in
+  // tow); if the walk never reaches a depth-bearing head, the adjacent
+  // region is returned as its own swap slot below.
   let headPos = adjacentPos
   let head = adjacent
   let cursor = adjacentPos
@@ -164,8 +170,9 @@ function precedingRunHead(
       }
       break
     }
-    // Region: transparent — the head may still nest under a block further
-    // back, so keep walking without extending.
+    // Region interleaved mid-run: whether it is a member of the run's
+    // head or a boundary, inserting at a head found further back keeps
+    // the whole slice intact — keep walking without extending.
     cursor = beforePos
   }
   return { pos: headPos, node: head }
@@ -257,12 +264,12 @@ export function clampRunDepthDelta(
 }
 
 /**
- * Build the replacement content for a relocated span: every run member's
- * depth attr shifts by `delta` (clamped to [0, maxDepth] as defense against
- * already-over-cap legacy docs), while interleaved region nodes pass through
- * unchanged (a region's derived depth never shifts with a sibling's
- * subtree). Callers delete `span.from..span.to` and insert the returned
- * fragment at the mapped position.
+ * Build the replacement content for a relocated span: every block at a
+ * run-member position (prose and region members alike, #1061) shifts its
+ * depth attr by `delta` (clamped to [0, maxDepth] as defense against
+ * already-over-cap legacy docs), so the whole depth band moves together.
+ * Callers delete `span.from..span.to` and insert the returned fragment at
+ * the mapped position.
  */
 export function shiftRunDepths(
   doc: ProseMirrorNode,
