@@ -1113,48 +1113,51 @@
           {/each}
         </div>
 
-        <button
-          onclick={() => openSettings('general')}
-          class="relative w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer border-none bg-transparent hover:bg-hover hover:scale-105 active:scale-95 group focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start motion-reduce:transform-none motion-reduce:transition-none"
-          class:text-accent-primary-start={activeView === 'settings'}
-          class:text-surface-activitybar-text-muted={activeView !== 'settings'}
-          aria-label="Settings"
-          aria-pressed={activeView === 'settings'}
-          title="Settings"
-        >
-          {#if activeView === 'settings'}
-            <div
-              class="absolute left-0 top-2 bottom-2 w-0.5 bg-accent-primary-start rounded-full shadow-accent-glow"
-              style:opacity={sidebarCollapsed ? '0.5' : '1'}
-            ></div>
+        <div class="flex flex-col gap-3 items-center w-full">
+          {#if sidebarCollapsed && !(activeView === 'settings' && themeEditorSession.open)}
+            <button
+              onclick={() => {
+                sidebarCollapsed = false
+                manuallyCollapsed = false
+              }}
+              transition:fade={{ duration: 150 }}
+              aria-label="Show sidebar"
+              title={`Show sidebar${shortcutBinding('toggle_sidebar', settings.config?.hotkeys ?? {}) ? ` (${shortcutBinding('toggle_sidebar', settings.config?.hotkeys ?? {})})` : ''}`}
+              class="relative w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer border-none bg-transparent hover:bg-hover hover:scale-105 active:scale-95 group focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start text-surface-activitybar-text-muted hover:text-accent-primary-start motion-reduce:transform-none motion-reduce:transition-none"
+            >
+              <span class="material-symbols-outlined text-type-2xl"
+                >left_panel_open</span
+              >
+            </button>
           {/if}
-          <span
-            class="material-symbols-outlined text-type-2xl"
-            style:color="var(--color-nav-icon-settings)">settings</span
+
+          <button
+            onclick={() => openSettings('general')}
+            class="relative w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer border-none bg-transparent hover:bg-hover hover:scale-105 active:scale-95 group focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start motion-reduce:transform-none motion-reduce:transition-none"
+            class:text-accent-primary-start={activeView === 'settings'}
+            class:text-surface-activitybar-text-muted={activeView !==
+              'settings'}
+            aria-label="Settings"
+            aria-pressed={activeView === 'settings'}
+            title="Settings"
           >
-        </button>
+            {#if activeView === 'settings'}
+              <div
+                class="absolute left-0 top-2 bottom-2 w-0.5 bg-accent-primary-start rounded-full shadow-accent-glow"
+                style:opacity={sidebarCollapsed ? '0.5' : '1'}
+              ></div>
+            {/if}
+            <span
+              class="material-symbols-outlined text-type-2xl"
+              style:color="var(--color-nav-icon-settings)">settings</span
+            >
+          </button>
+        </div>
       </div>
 
       <!-- Immersive theme editor: hide Settings sidebar so we don't stack
            activity bar → settings sections → editor groups. -->
       {#if !(activeView === 'settings' && themeEditorSession.open)}
-        {#if sidebarCollapsed}
-          <button
-            onclick={() => {
-              sidebarCollapsed = false
-              manuallyCollapsed = false
-            }}
-            transition:fade={{ duration: 150 }}
-            aria-label="Show sidebar"
-            title={`Show sidebar${shortcutBinding('toggle_sidebar', settings.config?.hotkeys ?? {}) ? ` (${shortcutBinding('toggle_sidebar', settings.config?.hotkeys ?? {})})` : ''}`}
-            class="absolute bottom-4 left-16 z-50 w-8 h-8 rounded-lg bg-surface-sidebar/80 backdrop-blur-md border border-surface-sidebar-border text-surface-sidebar-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 flex items-center justify-center transition-all cursor-pointer shadow-lg hover:scale-105 active:scale-95"
-          >
-            <span class="material-symbols-outlined text-icon-lg"
-              >left_panel_open</span
-            >
-          </button>
-        {/if}
-
         <Sidebar
           bind:activeNotebook
           bind:activeSection
