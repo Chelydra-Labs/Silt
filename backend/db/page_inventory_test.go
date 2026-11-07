@@ -620,6 +620,44 @@ func TestReconcilePageInventory_KeepsBlockEvidenceLoc(t *testing.T) {
 	}
 }
 
+// TestReconcilePageInventory_MaterializesBlockOnlyLoc pins the block-evidence
+// INSERT half of the reconcile directly: a block row can outlive a partial
+// publish that never wrote its inventory row, and the source-scoped union is
+// what makes the two evidence views agree again. Deleting the INSERT leaves
+// every other test green, so this is the one fixture that would notice.
+func TestReconcilePageInventory_MaterializesBlockOnlyLoc(t *testing.T) {
+	dm := newTestDB(t)
+
+	blocks := []parser.ParsedBlock{
+		{ID: "aaaa2222-0000-4000-8000-000000000002", Type: parser.BlockNote,
+			RawText: "body", CleanText: "body", LineNumber: 1},
+	}
+	if err := dm.IndexFileBlocks("vault", "NB", "Sec", "Blocks Only", blocks, nil); err != nil {
+		t.Fatalf("index blocks: %v", err)
+	}
+	// Simulate the split-brain the union heals: blocks exist, no inventory row.
+	if _, err := dm.SQLDB().Exec(
+		`DELETE FROM page_core WHERE source = 'vault' AND notebook = 'NB' AND section = 'Sec' AND page = 'Blocks Only'`,
+	); err != nil {
+		t.Fatalf("drop page_core: %v", err)
+	}
+
+	removed, err := dm.ReconcilePageInventory("vault", nil, true)
+	if err != nil {
+		t.Fatalf("ReconcilePageInventory: %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("removed = %d, want 0: the block-bearing loc is live evidence", removed)
+	}
+	if core, err := dm.GetPageCoreProjection("vault", "NB", "Sec", "Blocks Only"); err != nil || core == nil {
+		t.Fatalf("block-only loc did not get its inventory row back: %+v, %v", core, err)
+	}
+	exists, err := dm.PageExistsExact("vault", "NB", "Sec", "Blocks Only")
+	if err != nil || !exists {
+		t.Errorf("PageExistsExact = %v, %v; want true (the union must satisfy every blocks-backed lookup)", exists, err)
+	}
+}
+
 // TestSchema_NoFilePageLocsTable pins the retirement of the path-keyed identity
 // record: the scan reconcile subsumes it, and a database created by an earlier
 // build of this branch must not keep a table the reconcile no longer

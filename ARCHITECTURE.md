@@ -431,15 +431,25 @@ CREATE INDEX idx_page_properties_type_prop ON page_properties(type_name, propert
 -- every blocks-backed lookup. Completeness is derived by one default-deny
 -- helper from the walk's error channel (deliberate skips — symlinks, dot-dirs,
 -- attachments/ — never arm deletion), so a transient unreadable file or
--- subtree makes the pass add-only and the heal waits for the next open.
+-- subtree makes the pass add-only and the heal waits for the next open. A
+-- symlinked vault root is walked through its resolved target: an alias that
+-- cannot be resolved reports a walk error, rather than a complete-looking
+-- empty vault.
+--
+-- The startup prune of paths that vanished while the app was closed obeys the
+-- same three rules: it runs only on a complete pass, only for paths under the
+-- opened vault (linked notebooks are their own scan boundary), and never
+-- clears a loc the scan still publishes (a move that preserves frontmatter
+-- identity makes the old path and the live loc the same page).
 --
 -- Residual staleness (accepted): an in-place external identity edit
 -- (frontmatter page:/section:/notebook:) leaves the old loc's projections live
--- until the next vault open or linked re-scan. Silt's own rename/move/delete
--- paths still clear synchronously, so only an external editor can author this
--- state, and the index is re-derived at scan boundaries. A dead loc that still
--- carries blocks is kept forever: the block row is the pre-existing defect, not
--- an inventory decision.
+-- until the next vault open — or, for a linked notebook, until an
+-- unlink+relink, which is the only linked re-scan trigger today. Silt's own
+-- rename/move/delete paths still clear synchronously, so only an external
+-- editor can author this state, and the index is re-derived at scan
+-- boundaries. A dead loc that still carries blocks is kept forever: the block
+-- row is the pre-existing defect, not an inventory decision.
 CREATE TABLE page_core (
     source   TEXT NOT NULL,
     notebook TEXT NOT NULL,

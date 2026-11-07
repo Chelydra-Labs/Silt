@@ -194,7 +194,10 @@ func TestScanStandaloneTasks_IndexesExistingFile(t *testing.T) {
 	); err != nil {
 		t.Fatalf("delete standalone rows: %v", err)
 	}
-	results := parser.ScanStandaloneTasks(app.vaultPath, app.spacesPerTab)
+	results, err := parser.ScanStandaloneTasks(app.vaultPath, app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ScanStandaloneTasks: %v", err)
+	}
 	if len(results) != 1 {
 		t.Fatalf("expected 1 scan result, got %d", len(results))
 	}
@@ -211,7 +214,10 @@ func TestScanStandaloneTasks_IndexesExistingFile(t *testing.T) {
 // (no error) when no standalone tasks have been created yet.
 func TestScanStandaloneTasks_AbsentFileReturnsNil(t *testing.T) {
 	app := newTestApp(t)
-	results := parser.ScanStandaloneTasks(app.vaultPath, app.spacesPerTab)
+	results, err := parser.ScanStandaloneTasks(app.vaultPath, app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ScanStandaloneTasks: %v", err)
+	}
 	if results != nil {
 		t.Errorf("expected nil results for absent file, got %d", len(results))
 	}

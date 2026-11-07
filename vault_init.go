@@ -190,16 +190,22 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 		_ = dbMgr.Close()
 		return fmt.Errorf("failed to scan workspace: %w", err)
 	}
-	// Both walk channels are user-facing init warnings; only walkErrs arms the
-	// destructive half of the inventory reconcile (see scanInventory).
-	walkWarnings := append(append([]string{}, walkSkips...), walkErrs...)
-
 	// Append the standalone-tasks file (<vault>/.silt/tasks.md) if it exists.
 	// WalkMarkdown skips dot-directories so this targeted read is the only
 	// way the file enters the index (#368). parseSingleFile derives
 	// notebook=".silt" from the path; ListNavigation hides dot-prefixed
-	// notebooks so it never surfaces in the page browser.
-	results = append(results, parser.ScanStandaloneTasks(vaultPath, a.spacesPerTab)...)
+	// notebooks so it never surfaces in the page browser. A stat failure other
+	// than absence is blindness like a walk error: the tasks page exists but
+	// this pass could not see it, so nothing may be pruned on its behalf.
+	standaloneResults, standaloneErr := parser.ScanStandaloneTasks(vaultPath, a.spacesPerTab)
+	results = append(results, standaloneResults...)
+	if standaloneErr != nil {
+		walkErrs = append(walkErrs, standaloneErr.Error())
+	}
+
+	// Both walk channels are user-facing init warnings; only walkErrs arms the
+	// destructive half of the inventory reconcile (see scanInventory).
+	walkWarnings := append(append([]string{}, walkSkips...), walkErrs...)
 
 	// Cross-file duplicate block ids are detected HERE — at the scan layer,
 	// grouping every file's parse — because only the parses can distinguish
@@ -287,19 +293,6 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 			log.Printf("initializeVaultServices: MarkFileIndexed(%s): %v", res.Path, err)
 		}
 	}
-	pruned, pruneErr := dbMgr.PruneStaleFiles(seenPaths)
-	if pruneErr != nil {
-		log.Printf("initializeVaultServices: PruneStaleFiles: %v", pruneErr)
-	}
-	for _, p := range pruned {
-		allWarnings = append(allWarnings, fmt.Sprintf("%s: removed from index (file no longer exists)", p))
-		// Drop blocks + typed projection for paths that vanished while the app
-		// was closed. PruneStaleFiles only removes the files-table skip key;
-		// without this, page_types/page_properties (and blocks) linger as
-		// dashboard ghosts and relation targets until a cold index wipe.
-		a.clearIndexedPageForPath(dbMgr, vaultPath, p)
-	}
-
 	// Page inventory reconcile: page_core predates its use as the inventory, so
 	// an upgraded vault can carry locs at identities no file publishes any more.
 	// The scan is the authoritative on-disk inventory — warm-skipped files
@@ -307,6 +300,13 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// deletes only when the pass was complete: a walk error or an unreadable
 	// file means pages may exist that this scan could not see.
 	live, complete := scanInventory(results, walkErrs, "vault")
+
+	// Startup prune drops the files-table skip key AND the blocks/projection of
+	// vault paths that vanished while the app was closed (see
+	// pruneStaleVaultPaths for the invariants it shares with the reconcile).
+	pruneWarnings := pruneStaleVaultPaths(dbMgr, vaultPath, seenPaths, live, complete)
+	allWarnings = append(allWarnings, pruneWarnings...)
+
 	if removed, rerr := dbMgr.ReconcilePageInventory("vault", live, complete); rerr != nil {
 		log.Printf("initializeVaultServices: ReconcilePageInventory: %v", rerr)
 	} else if removed > 0 {
@@ -551,54 +551,77 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	return nil
 }
 
-// clearIndexedPageForPath drops blocks + typed projection for a markdown path
-// that disappeared from disk (startup prune). Best-effort: unknown layouts are
-// skipped. Caller holds vaultMu.Lock; uses dbMgr directly (a.db may not be set).
-func (a *App) clearIndexedPageForPath(dbMgr *db.DatabaseManager, vaultPath, absPath string) {
-	if dbMgr == nil || absPath == "" || !strings.HasSuffix(strings.ToLower(absPath), ".md") {
-		return
+// pruneStaleVaultPaths drops the files-table skip keys and the blocks/typed
+// projections of vault markdown paths that disappeared while the app was closed.
+// Returns one-time init warnings for the pruned paths. Caller holds vaultMu.Lock
+// and passes dbMgr directly (a.db is not set yet at this point in the open).
+//
+// This is destructive, so it obeys the same three invariants as
+// ReconcilePageInventory:
+//   - complete only: a walk error or an unreadable file means a path missing
+//     from this pass may still exist, so an incomplete pass prunes nothing;
+//   - vault only: linked notebooks are their own scan boundary — this scan never
+//     saw their paths, so their skip keys and rows are not its to delete;
+//   - a loc the scan still publishes is never cleared: a move that preserves
+//     frontmatter identity makes the old path and the live loc resolve to the
+//     same page, and clearing it would wipe the file that was just indexed.
+func pruneStaleVaultPaths(dbMgr *db.DatabaseManager, vaultPath string, seenPaths []string, live []db.PageLoc, complete bool) []string {
+	if dbMgr == nil {
+		return nil
 	}
-	source, notebook, section, page := "", "", "", ""
-	if rel, err := filepath.Rel(vaultPath, absPath); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-		parts := strings.Split(filepath.ToSlash(rel), "/")
-		if len(parts) >= 2 {
-			notebook = parts[0]
-			page = strings.TrimSuffix(parts[len(parts)-1], filepath.Ext(parts[len(parts)-1]))
-			if len(parts) > 2 {
-				section = strings.Join(parts[1:len(parts)-1], "/")
-			}
-			source = "vault"
+	if !complete {
+		log.Printf("initializeVaultServices: startup prune skipped (scan was incomplete)")
+		return nil
+	}
+	liveSet := make(map[db.PageLoc]struct{}, len(live))
+	for _, loc := range live {
+		liveSet[loc] = struct{}{}
+	}
+	pruned, pruneErr := dbMgr.PruneStaleFiles(vaultPath, seenPaths)
+	if pruneErr != nil {
+		log.Printf("initializeVaultServices: PruneStaleFiles: %v", pruneErr)
+		return nil
+	}
+	warnings := make([]string, 0, len(pruned))
+	for _, p := range pruned {
+		warnings = append(warnings, fmt.Sprintf("%s: removed from index (file no longer exists)", p))
+		loc, ok := vaultPageLocForPath(vaultPath, p)
+		if !ok {
+			continue
+		}
+		if _, isLive := liveSet[loc]; isLive {
+			continue
+		}
+		if err := dbMgr.ClearFileBlocks(nil, loc.Source, loc.Notebook, loc.Section, loc.Page); err != nil {
+			log.Printf("initializeVaultServices: ClearFileBlocks pruned %s: %v", p, err)
 		}
 	}
-	if source == "" {
-		a.configMu.RLock()
-		links := append([]config.LinkedNotebook(nil), a.cfg.LinkedNotebooks...)
-		a.configMu.RUnlock()
-		for _, ln := range links {
-			if ln.RootPath == "" {
-				continue
-			}
-			rel, err := filepath.Rel(ln.RootPath, absPath)
-			if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
-				continue
-			}
-			parts := strings.Split(filepath.ToSlash(rel), "/")
-			if len(parts) < 1 {
-				continue
-			}
-			page = strings.TrimSuffix(parts[len(parts)-1], filepath.Ext(parts[len(parts)-1]))
-			if len(parts) > 1 {
-				section = strings.Join(parts[:len(parts)-1], "/")
-			}
-			notebook = ln.DisplayName
-			source = ln.Source()
-			break
-		}
+	return warnings
+}
+
+// vaultPageLocForPath resolves a markdown path inside the vault to the loc the
+// path rules derive for it. It is vault-only on purpose: the startup prune's
+// seen-set comes from the vault walk, so a path outside the vault is not
+// evidence about any linked notebook (their own tree scan is their authority).
+func vaultPageLocForPath(vaultPath, absPath string) (db.PageLoc, bool) {
+	if absPath == "" || !strings.HasSuffix(strings.ToLower(absPath), ".md") {
+		return db.PageLoc{}, false
 	}
-	if source == "" || notebook == "" || page == "" {
-		return
+	rel, err := filepath.Rel(vaultPath, absPath)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return db.PageLoc{}, false
 	}
-	if err := dbMgr.ClearFileBlocks(nil, source, notebook, section, page); err != nil {
-		log.Printf("initializeVaultServices: ClearFileBlocks pruned %s: %v", absPath, err)
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	if len(parts) < 2 {
+		return db.PageLoc{}, false // root-level .md: not indexable, nothing to clear
 	}
+	loc := db.PageLoc{
+		Source:   "vault",
+		Notebook: parts[0],
+		Page:     strings.TrimSuffix(parts[len(parts)-1], filepath.Ext(parts[len(parts)-1])),
+	}
+	if len(parts) > 2 {
+		loc.Section = strings.Join(parts[1:len(parts)-1], "/")
+	}
+	return loc, loc.Notebook != "" && loc.Page != ""
 }

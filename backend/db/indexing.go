@@ -728,7 +728,10 @@ func (dm *DatabaseManager) ReconcilePageInventory(source string, live []PageLoc,
 	}
 	// Block-evidence half of the contract. INSERT OR IGNORE keeps it additive:
 	// a loc that already has a published core row keeps its fields, and
-	// idx_blocks_src_file serves the source scan.
+	// idx_blocks_src_file serves the source scan. This restores existence only —
+	// a loc that is block-bearing but lost page_types/page_properties gets its
+	// inventory row back without the typed rows; the next publish re-derives
+	// those (they are never deleted while the block row exists).
 	if _, err := tx.Exec(`
 		INSERT OR IGNORE INTO page_core (source, notebook, section, page)
 		SELECT DISTINCT ?, notebook, section, page FROM blocks WHERE source = ?`,

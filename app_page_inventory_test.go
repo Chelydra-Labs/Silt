@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"silt/backend/db"
 	"silt/backend/parser"
 	"silt/backend/vault"
 )
@@ -43,8 +44,14 @@ func typedPageBody(notebook, section, page, blockID string) string {
 		"---\n# " + page + " <!-- id: " + blockID + " -->\n\nBody.\n"
 }
 
-// inventoryProjectionCounts counts the loc-keyed projection rows for one page.
+// inventoryProjectionCounts counts the vault loc-keyed projection rows for one page.
 func inventoryProjectionCounts(t *testing.T, app *App, notebook, section, page string) (types, props, core int) {
+	t.Helper()
+	return projectionCounts(t, app, "vault", notebook, section, page)
+}
+
+// projectionCounts counts the loc-keyed projection rows for one page in any source.
+func projectionCounts(t *testing.T, app *App, source, notebook, section, page string) (types, props, core int) {
 	t.Helper()
 	for _, c := range []struct {
 		table string
@@ -54,12 +61,52 @@ func inventoryProjectionCounts(t *testing.T, app *App, notebook, section, page s
 		{"page_properties", &props},
 		{"page_core", &core},
 	} {
-		q := "SELECT COUNT(*) FROM " + c.table + " WHERE source = 'vault' AND notebook = ? AND section = ? AND page = ?"
-		if err := app.db.SQLDB().QueryRow(q, notebook, section, page).Scan(c.out); err != nil {
+		q := "SELECT COUNT(*) FROM " + c.table + " WHERE source = ? AND notebook = ? AND section = ? AND page = ?"
+		if err := app.db.SQLDB().QueryRow(q, source, notebook, section, page).Scan(c.out); err != nil {
 			t.Fatalf("%s: %v", c.table, err)
 		}
 	}
 	return types, props, core
+}
+
+// blockCount counts the indexed blocks at one page loc.
+func blockCount(t *testing.T, app *App, source, notebook, section, page string) int {
+	t.Helper()
+	var n int
+	q := "SELECT COUNT(*) FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?"
+	if err := app.db.SQLDB().QueryRow(q, source, notebook, section, page).Scan(&n); err != nil {
+		t.Fatalf("count blocks: %v", err)
+	}
+	return n
+}
+
+// skipUnlessPermissionsEnforced skips a permission-denied fixture when the
+// platform does not actually deny access after os.Chmod(0o000). Windows only
+// toggles the read-only attribute (directories stay enumerable, files stay
+// readable), and a privileged runner bypasses the mode bits entirely, so the
+// probe runs the fixture's own blocked operation rather than guessing.
+func skipUnlessPermissionsEnforced(t *testing.T, probe func() error) {
+	t.Helper()
+	if err := probe(); err == nil {
+		t.Skip("os.Chmod(0o000) does not deny access on this platform (Windows toggles only the read-only attribute; privileged users bypass permissions)")
+	}
+}
+
+// settleInventoryVault opens and closes the vault twice so the parser's
+// first-parse id normalization has rewritten every fixture file. After that the
+// mtimes are stable, the warm skip applies, and no watcher event for a rewritten
+// file can race an assertion.
+func settleInventoryVault(t *testing.T, vaultPath string) {
+	t.Helper()
+	for i := 0; i < 2; i++ {
+		app := &App{spacesPerTab: 4}
+		if err := app.initializeVaultServices(vaultPath); err != nil {
+			t.Fatalf("settling open %d: %v", i+1, err)
+		}
+		if err := app.CloseVault(); err != nil {
+			t.Fatalf("settling CloseVault %d: %v", i+1, err)
+		}
+	}
 }
 
 // TestWatcher_IdentityEditAddsNewLocInSession pins the in-session half of the
@@ -209,9 +256,6 @@ func TestVaultOpen_DuplicateIDCarrierKeepsWarmPage(t *testing.T) {
 // once readable again (mtime unchanged), so nothing would ever re-derive typed
 // metadata that the blind open dropped.
 func TestVaultOpen_UnreadableThenWarmReopenKeepsTypedProjections(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("permission-based fixture cannot deny read access to root")
-	}
 	vaultPath := newInventoryVault(t)
 	pagePath := filepath.Join(vaultPath, "Books", "Dune.md")
 	// Zero-block typed page: its inventory row has no block evidence to fall back
@@ -256,6 +300,10 @@ func TestVaultOpen_UnreadableThenWarmReopenKeepsTypedProjections(t *testing.T) {
 		}
 	}
 	defer restore()
+	skipUnlessPermissionsEnforced(t, func() error {
+		_, err := os.ReadFile(pagePath)
+		return err
+	})
 
 	app2 := &App{spacesPerTab: 4}
 	if err := app2.initializeVaultServices(vaultPath); err != nil {
@@ -294,9 +342,6 @@ func TestVaultOpen_UnreadableThenWarmReopenKeepsTypedProjections(t *testing.T) {
 // transient walk failures (a directory vanishing mid-traversal) during an open
 // that otherwise proceeds.
 func TestScanWorkspace_WalkErrorYieldsIncompleteInventory(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("permission-based fixture cannot deny traversal to root")
-	}
 	vaultPath := t.TempDir()
 	writeFile(t, filepath.Join(vaultPath, "Books", "Dune.md"), typedPageBody("Books", "", "Dune", "aaaa1111-0000-4000-8000-000000000006"))
 	deepDir := filepath.Join(vaultPath, "Books", "Deep")
@@ -306,6 +351,10 @@ func TestScanWorkspace_WalkErrorYieldsIncompleteInventory(t *testing.T) {
 		t.Fatalf("chmod: %v", err)
 	}
 	defer func() { _ = os.Chmod(deepDir, 0o755) }()
+	skipUnlessPermissionsEnforced(t, func() error {
+		_, err := os.ReadDir(deepDir)
+		return err
+	})
 
 	results, skips, walkErrs, err := parser.ScanWorkspace(vaultPath, 4)
 	if err != nil {
@@ -364,6 +413,11 @@ func TestVaultOpen_SymlinkSkipDoesNotBlockHealing(t *testing.T) {
 // scan), and the linked root's own scan is what heals its ghost.
 func TestVaultOpen_KeepsLinkedInventory(t *testing.T) {
 	vaultPath := newInventoryVault(t)
+	// A vault page keeps the vault scan non-empty. With zero vault files the
+	// prune takes an accidentally-safe branch (nothing to compare against), so
+	// the source-scoping invariant this test names would never run.
+	writeFile(t, filepath.Join(vaultPath, "Books", "Dune.md"),
+		typedPageBody("Books", "", "Dune", "aaaa1111-0000-4000-8000-000000000010"))
 	ext := t.TempDir()
 	writeFile(t, filepath.Join(ext, "Linked Page.md"), typedPageBody("Ext", "", "Linked Page", "aaaa1111-0000-4000-8000-000000000009"))
 
@@ -394,6 +448,9 @@ func TestVaultOpen_KeepsLinkedInventory(t *testing.T) {
 	if core, _ := app2.db.GetPageCoreProjection(src, ln.DisplayName, "", "Linked Page"); core == nil {
 		t.Error("vault open deleted the linked live page")
 	}
+	if blocks := blockCount(t, app2, src, ln.DisplayName, "", "Linked Page"); blocks == 0 {
+		t.Error("vault open cleared the linked live page's blocks")
+	}
 	if core, _ := app2.db.GetPageCoreProjection(src, ln.DisplayName, "", "Linked Ghost"); core == nil {
 		t.Error("vault open deleted a linked-source row: the reconcile is not source-scoped")
 	}
@@ -407,6 +464,182 @@ func TestVaultOpen_KeepsLinkedInventory(t *testing.T) {
 	}
 	if core, _ := app2.db.GetPageCoreProjection(src, ln.DisplayName, "", "Linked Page"); core == nil {
 		t.Error("linked live page lost its inventory row")
+	}
+}
+
+// TestVaultOpen_MoveWhileClosedKeepsLiveLoc pins the prune's live guard: a
+// folder move made while Silt was closed, with the page's frontmatter identity
+// retaining the old location, resolves both the vanished path and the live loc
+// to the same page. Pruning the old path must not clear what the scan just
+// indexed (the moved file warm-skips afterwards, so nothing would re-derive it).
+func TestVaultOpen_MoveWhileClosedKeepsLiveLoc(t *testing.T) {
+	vaultPath := newInventoryVault(t)
+	oldPath := filepath.Join(vaultPath, "Books", "Sec", "Dune.md")
+	newPath := filepath.Join(vaultPath, "Books", "Archive", "Dune.md")
+	writeFile(t, oldPath, typedPageBody("Books", "Sec", "Dune", "aaaa1111-0000-4000-8000-000000000011"))
+	settleInventoryVault(t, vaultPath)
+
+	if err := os.MkdirAll(filepath.Dir(newPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Rename(oldPath, newPath); err != nil {
+		t.Fatalf("move: %v", err)
+	}
+
+	app2 := &App{spacesPerTab: 4}
+	if err := app2.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer func() { _ = app2.CloseVault() }()
+
+	types, props, core := inventoryProjectionCounts(t, app2, "Books", "Sec", "Dune")
+	if types != 1 || props != 1 || core != 1 {
+		t.Errorf("move-while-closed wiped the live loc: page_types=%d page_properties=%d page_core=%d (want 1/1/1)", types, props, core)
+	}
+	if blocks := blockCount(t, app2, "vault", "Books", "Sec", "Dune"); blocks == 0 {
+		t.Error("move-while-closed wiped the live loc's blocks")
+	}
+}
+
+// TestPruneStaleVaultPaths_IncompleteScanPrunesNothing pins the prune's
+// completeness gate and its root scoping at the unit that owns the decision,
+// with an explicit complete=false as scanInventory derives it from a walk error.
+// (A full open with an un-walkable subtree cannot reach the prune: the watcher
+// refuses to start on it, which is why the walk-error channel is pinned at scan
+// level.) No app/watcher is involved, so a delete handler cannot mask the prune.
+func TestPruneStaleVaultPaths_IncompleteScanPrunesNothing(t *testing.T) {
+	vaultPath := t.TempDir()
+	gonePath := filepath.Join(vaultPath, "Books", "Gone.md")
+	linkedPath := filepath.Join(t.TempDir(), "Linked.md")
+
+	dbMgr, err := db.NewDatabaseManager(filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	defer func() { _ = dbMgr.Close() }()
+
+	blocks := []parser.ParsedBlock{
+		{ID: "aaaa1111-0000-4000-8000-000000000014", Type: parser.BlockNote,
+			RawText: "body", CleanText: "body", LineNumber: 1},
+	}
+	props := []db.ProjectedProperty{
+		{Property: "status", ValueText: "active", ValueSort: "active", ValueType: "text"},
+	}
+	if err := dbMgr.IndexFileWithProjection("vault", "Books", "", "Gone",
+		blocks, nil, "book", props, db.PageCoreFields{Type: "book"}); err != nil {
+		t.Fatalf("index gone page: %v", err)
+	}
+	if err := dbMgr.MarkFileIndexed(nil, gonePath, 1, 1); err != nil {
+		t.Fatalf("mark gone: %v", err)
+	}
+	// A linked notebook's skip key lives in the same path-keyed table; a vault
+	// open never saw its tree, so it is not this prune's to drop.
+	if err := dbMgr.MarkFileIndexed(nil, linkedPath, 1, 1); err != nil {
+		t.Fatalf("mark linked: %v", err)
+	}
+
+	count := func(table string) int {
+		t.Helper()
+		var n int
+		if err := dbMgr.SQLDB().QueryRow(
+			"SELECT COUNT(*) FROM " + table + " WHERE source = 'vault' AND notebook = 'Books' AND section = '' AND page = 'Gone'",
+		).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		return n
+	}
+
+	if warnings := pruneStaleVaultPaths(dbMgr, vaultPath, nil, nil, false); len(warnings) != 0 {
+		t.Errorf("incomplete pass pruned %v, want nothing", warnings)
+	}
+	for _, table := range []string{"blocks", "page_core", "page_types", "page_properties"} {
+		if n := count(table); n == 0 {
+			t.Errorf("incomplete pass cleared %s of a path it may simply not have seen", table)
+		}
+	}
+
+	// The same inputs on a complete pass are allowed to clear the vanished page,
+	// and only under the vault root.
+	pruned := pruneStaleVaultPaths(dbMgr, vaultPath, nil, nil, true)
+	if len(pruned) != 1 || !strings.Contains(pruned[0], gonePath) {
+		t.Fatalf("complete pass pruned %v, want exactly %q", pruned, gonePath)
+	}
+	for _, table := range []string{"blocks", "page_core", "page_types", "page_properties"} {
+		if n := count(table); n != 0 {
+			t.Errorf("complete pass did not clear the vanished page's %s", table)
+		}
+	}
+	known, err := dbMgr.KnownFiles()
+	if err != nil {
+		t.Fatalf("KnownFiles: %v", err)
+	}
+	if _, ok := known[linkedPath]; !ok {
+		t.Error("vault prune dropped a path outside the vault root (linked notebook skip key)")
+	}
+	if _, ok := known[gonePath]; ok {
+		t.Error("complete pass kept the vanished path's skip key")
+	}
+}
+
+// TestVaultOpen_IncompleteScanDoesNotPruneOrClear pins the gate end-to-end: a
+// page deleted while Silt was closed is pruned on the next complete open, but
+// an open that could not read another file is blind, so the vanished path must
+// survive that pass — otherwise a transient read failure permanently wipes a
+// page whose file is still on disk. Recovery on the following complete open
+// also proves the blindness was what held it, not a broken prune.
+func TestVaultOpen_IncompleteScanDoesNotPruneOrClear(t *testing.T) {
+	vaultPath := newInventoryVault(t)
+	gonePath := filepath.Join(vaultPath, "Books", "Gone.md")
+	blindPath := filepath.Join(vaultPath, "Books", "Blind.md")
+	writeFile(t, gonePath, typedPageBody("Books", "", "Gone", "aaaa1111-0000-4000-8000-000000000015"))
+	writeFile(t, blindPath, typedPageBody("Books", "", "Blind", "aaaa1111-0000-4000-8000-000000000016"))
+	settleInventoryVault(t, vaultPath)
+
+	if err := os.Remove(gonePath); err != nil {
+		t.Fatalf("remove gone page: %v", err)
+	}
+
+	if err := os.Chmod(blindPath, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(blindPath, 0o644) })
+	skipUnlessPermissionsEnforced(t, func() error {
+		_, err := os.ReadFile(blindPath)
+		return err
+	})
+
+	app2 := &App{spacesPerTab: 4}
+	if err := app2.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("blind open: %v", err)
+	}
+	if blocks := blockCount(t, app2, "vault", "Books", "", "Gone"); blocks == 0 {
+		t.Error("blind open cleared blocks of a path it could not confirm was deleted")
+	}
+	if types, props, core := inventoryProjectionCounts(t, app2, "Books", "", "Gone"); types != 1 || props != 1 || core != 1 {
+		t.Errorf("blind open cleared projections: page_types=%d page_properties=%d page_core=%d", types, props, core)
+	}
+	if known, err := app2.db.KnownFiles(); err != nil {
+		t.Fatalf("KnownFiles: %v", err)
+	} else if _, ok := known[gonePath]; !ok {
+		t.Error("blind open pruned the vanished path's skip key")
+	}
+	if err := app2.CloseVault(); err != nil {
+		t.Fatalf("CloseVault (blind): %v", err)
+	}
+
+	if err := os.Chmod(blindPath, 0o644); err != nil {
+		t.Fatalf("restore chmod: %v", err)
+	}
+	app3 := &App{spacesPerTab: 4}
+	if err := app3.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("complete open: %v", err)
+	}
+	defer func() { _ = app3.CloseVault() }()
+	if blocks := blockCount(t, app3, "vault", "Books", "", "Gone"); blocks != 0 {
+		t.Error("complete open did not prune the vanished page")
+	}
+	if _, props, core := inventoryProjectionCounts(t, app3, "Books", "", "Gone"); props != 0 || core != 0 {
+		t.Error("complete open did not clear the vanished page's projections")
 	}
 }
 

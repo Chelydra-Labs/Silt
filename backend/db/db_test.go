@@ -1577,8 +1577,8 @@ func TestPruneStaleFiles_DropsRenamedAndDeletedPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Simulate a scan that only sees `keep` (old was renamed/deleted).
-	pruned, err := dm.PruneStaleFiles([]string{keep})
+	// Simulate a vault scan that only sees `keep` (old was renamed/deleted).
+	pruned, err := dm.PruneStaleFiles("/vault", []string{keep})
 	if err != nil {
 		t.Fatalf("PruneStaleFiles: %v", err)
 	}
@@ -1606,8 +1606,14 @@ func TestPruneStaleFiles_EmptyScanClearsAll(t *testing.T) {
 	if err := dm.MarkFileIndexed(nil, "/b.md", 2, 2); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dm.PruneStaleFiles(nil); err != nil {
+	pruned, err := dm.PruneStaleFiles("/", nil)
+	if err != nil {
 		t.Fatalf("PruneStaleFiles(nil): %v", err)
+	}
+	// The pruned paths are returned even in the emptied-tree branch: the caller
+	// clears their blocks, which the keep-set would otherwise protect forever.
+	if len(pruned) != 2 {
+		t.Fatalf("expected both paths reported as pruned, got %v", pruned)
 	}
 	known, err := dm.KnownFiles()
 	if err != nil {

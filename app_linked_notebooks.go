@@ -183,8 +183,9 @@ func (a *App) UnlinkNotebook(id string) error {
 	if a.watcher != nil && rootPath != "" {
 		a.watcher.RemoveWatchRoot(rootPath)
 	}
-	// Drop the local index rows for this source. The files table rows (keyed by
-	// absolute path) are pruned by PruneStaleFiles on the next startup scan;
+	// Drop the local index rows for this source. The files-table rows (keyed by
+	// absolute path) stay until the next scan of that root prunes them — the
+	// vault startup scan is deliberately source-scoped and never touches them;
 	// dropping them eagerly here would race the watcher's Remove events.
 	a.coordinator.WithDBWrite(func() {
 		_ = a.db.ClearSourceBlocks("linked:" + id)
@@ -596,6 +597,22 @@ func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 			log.Printf("LinkNotebook(%s): MarkFilesIndexed: %v", ln.DisplayName, err)
 		}
 	})
+
+	// This tree scan is the authority for its own skip keys: a linked root has no
+	// startup scan, and the vault prune is source-scoped, so without this a path
+	// deleted from the root would keep its mtime row forever. Skip keys are
+	// re-derivable, but only a pass that saw the whole tree may drop them.
+	if len(walkErrs) == 0 {
+		seen := make([]string, 0, len(results))
+		for _, res := range results {
+			seen = append(seen, res.Path)
+		}
+		a.coordinator.WithDBWrite(func() {
+			if _, err := a.db.PruneStaleFiles(ln.RootPath, seen); err != nil {
+				log.Printf("LinkNotebook(%s): prune stale paths: %v", ln.DisplayName, err)
+			}
+		})
+	}
 
 	// Page inventory reconcile for this source: the linked scan is the
 	// authoritative view of the root (warm-skipped files included), so it both

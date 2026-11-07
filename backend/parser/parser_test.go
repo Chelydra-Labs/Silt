@@ -1479,6 +1479,56 @@ func TestWalkMarkdown_SelfReferencingSymlinkDoesNotLoop(t *testing.T) {
 	}
 }
 
+// TestWalkMarkdown_SymlinkedRootIsWalked pins that a vault opened through a
+// symlinked alias is actually scanned. WalkDir Lstats its root, so handing it the
+// alias classified the whole vault as an un-followed symlink: zero files, no
+// error — a blind scan that every completeness gate would read as a complete,
+// empty vault. Returned paths stay spelled under the caller's root.
+func TestWalkMarkdown_SymlinkedRootIsWalked(t *testing.T) {
+	real := t.TempDir()
+	writeMdFile(t, filepath.Join(real, "NB", "Page.md"), "body")
+	alias := filepath.Join(t.TempDir(), "vault-alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Skipf("cannot create symlink: %v", err)
+	}
+
+	files, skips, walkErrs, err := WalkMarkdown(alias)
+	if err != nil {
+		t.Fatalf("WalkMarkdown(alias): %v", err)
+	}
+	want := filepath.Join(alias, "NB", "Page.md")
+	if len(files) != 1 || files[0] != want {
+		t.Errorf("files = %v, want [%s] (paths must stay under the caller's root)", files, want)
+	}
+	if len(skips) != 0 {
+		t.Errorf("root alias classified as a deliberate skip: %v", skips)
+	}
+	if len(walkErrs) != 0 {
+		t.Errorf("resolved alias reported walk errors: %v", walkErrs)
+	}
+}
+
+// TestWalkMarkdown_UnresolvableRootIsBlind pins the dangling alias: it must land
+// on the walk-error channel so callers derive complete=false, not look like a
+// complete, empty vault.
+func TestWalkMarkdown_UnresolvableRootIsBlind(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "dangling")
+	if err := os.Symlink(filepath.Join(t.TempDir(), "missing-target"), root); err != nil {
+		t.Skipf("cannot create symlink: %v", err)
+	}
+
+	files, skips, walkErrs, err := WalkMarkdown(root)
+	if err != nil {
+		t.Fatalf("a dangling alias must not abort the open: %v", err)
+	}
+	if len(files) != 0 || len(skips) != 0 {
+		t.Errorf("dangling root = files=%v skips=%v, want neither", files, skips)
+	}
+	if len(walkErrs) == 0 {
+		t.Fatal("dangling root reported no walk error: the pass would look complete")
+	}
+}
+
 func TestWalkMarkdown_MutualSymlinkCycleIsSkipped(t *testing.T) {
 	dir := t.TempDir()
 	writeMdFile(t, filepath.Join(dir, "NB", "PG", "2026-06-14.md"), "real note")

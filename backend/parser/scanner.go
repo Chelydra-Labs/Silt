@@ -3,7 +3,6 @@ package parser
 import (
 	"fmt"
 	"io/fs"
-	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -62,9 +61,42 @@ type ScanResult struct {
 // nothing), while a walk error is a subtree the walker could not enter and
 // therefore could not see (its absence proves nothing either — but in the
 // dangerous direction). The fatal error is non-nil only when the root itself
-// cannot be walked.
+// cannot be walked at all.
+//
+// A root that is itself a symlink is walked through its resolved target: WalkDir
+// Lstats its root, so handing it the alias would classify the whole vault as an
+// un-followed symlink and report an empty, error-free scan — blind, but
+// indistinguishable from a complete empty vault. Returned paths stay spelled
+// under the caller's root so relative-path math and the files table keep one
+// identity.
 func WalkMarkdown(root string) (files []string, skips []string, walkErrs []string, err error) {
-	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+	walkRoot := root
+	if fi, lerr := os.Lstat(root); lerr != nil {
+		return nil, nil, nil, fmt.Errorf("failed to stat scan root %s: %w", root, lerr)
+	} else if fi.Mode()&os.ModeSymlink != 0 {
+		resolved, rerr := filepath.EvalSymlinks(root)
+		if rerr != nil {
+			// The alias exists but its target cannot be resolved, so nothing
+			// below it was seen: report blindness, not an empty vault.
+			return nil, nil, []string{fmt.Sprintf("%s: %v", root, rerr)}, nil
+		}
+		walkRoot = resolved
+	}
+	// Rewrite a walked path back under the caller's root. filepath.Rel handles
+	// the separator difference on Windows, where the alias and target spell the
+	// same directories with the same separators anyway.
+	rebase := func(p string) string {
+		if walkRoot == root {
+			return p
+		}
+		rel, rerr := filepath.Rel(walkRoot, p)
+		if rerr != nil {
+			return p
+		}
+		return filepath.Join(root, rel)
+	}
+	err = filepath.WalkDir(walkRoot, func(path string, d fs.DirEntry, walkErr error) error {
+		path = rebase(path)
 		if walkErr != nil {
 			// Surface walker errors (permission denied, removed during
 			// traversal, etc.) rather than aborting the whole scan — one
@@ -176,23 +208,25 @@ const StandaloneTasksNotebook = ".silt"
 // dot-directories, so this targeted read is the only path by which the file
 // enters the index. It reuses parseSingleFile, which derives
 // notebook=".silt", section="", page="tasks" from the path — no parser
-// special-casing. Returns an empty slice when the file is absent (nothing
-// created yet). The caller appends these results to the vault scan results
-// before the incremental-reindex dedupe so the file gets a normal files-row
-// and survives warm restarts unchanged.
-func ScanStandaloneTasks(vaultPath string, spacesPerTab int) []ScanResult {
+// special-casing. Returns no results and no error when the file is absent.
+// The caller appends these results to the vault scan results before the
+// incremental-reindex dedupe so the file gets a normal files-row and survives
+// warm restarts unchanged.
+//
+// A stat failure other than "absent" is returned rather than logged: it means
+// this pass could not see the tasks page, so callers gating destructive work on
+// scan completeness must count it as blindness instead of treating the page as
+// deleted.
+func ScanStandaloneTasks(vaultPath string, spacesPerTab int) ([]ScanResult, error) {
 	tasksFile := filepath.Join(vaultPath, StandaloneTasksNotebook, "tasks.md")
 	if _, err := os.Stat(tasksFile); err != nil {
-		if !os.IsNotExist(err) {
-			// A non-absent stat error (locked, permission denied, corrupted)
-			// would otherwise silently drop all standalone tasks from the
-			// index until next launch. Surface it so the gap is diagnosable.
-			log.Printf("ScanStandaloneTasks: stat %s failed: %v", tasksFile, err)
+		if os.IsNotExist(err) {
+			return nil, nil // absent — no standalone tasks indexed this pass
 		}
-		return nil // absent or unreadable — no standalone tasks indexed this pass
+		return nil, fmt.Errorf("stat %s: %w", tasksFile, err)
 	}
 	res := parseSingleFile(tasksFile, vaultPath, spacesPerTab)
-	return []ScanResult{res}
+	return []ScanResult{res}, nil
 }
 
 func parseSingleFile(path string, vaultPath string, spacesPerTab int) ScanResult {
