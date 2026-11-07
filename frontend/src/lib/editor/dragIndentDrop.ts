@@ -3,7 +3,16 @@ import type { EditorView } from '@tiptap/pm/view'
 import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state'
 import { Fragment, Slice } from '@tiptap/pm/model'
 import { dropPoint } from '@tiptap/pm/transform'
-import { parseOrderedBullet, applyDropDepthFixup } from './orderedList'
+import {
+  parseOrderedBullet,
+  applyDropDepthFixup,
+  renumberAfterOrderedBlockMove
+} from './orderedList'
+import {
+  depthRunSpanForNode,
+  clampRunDepthDelta,
+  shiftRunDepths
+} from './depthRun'
 import { MAX_DEPTH } from './constants'
 
 // Indent-on-drop for the Silt block drag handle (#330, #181
@@ -74,7 +83,28 @@ export function resolveDropDepth(
   return raw
 }
 
-// ---- internal helpers (unexported; only the pure fn above is unit-tested) --
+// ---- helpers (pure ones are exported for jsdom unit tests) -----------------
+
+/**
+ * The drop depth to WRITE on the dragged node: the resolved drop column for
+ * every block that treats `depth` as an indent, EXCEPT headerBlock — its
+ * depth attr is the heading LEVEL, so the drop column must never rewrite it
+ * (dragging an H2 to the right margin would mint an H6; a far-left drop
+ * would zero the hashes). Mirrors the Tab-path bail that excludes headers
+ * from the depth blocks. With the level preserved, the fixup sees
+ * oldDepth === newDepth and writes nothing.
+ */
+export function resolveDragDepthForNode(
+  nodeType: string,
+  currentDepth: number,
+  clientX: number,
+  contentLeft: number,
+  indentStepPx: number,
+  maxDepth: number
+): number {
+  if (nodeType === 'headerBlock') return currentDepth
+  return resolveDropDepth(clientX, contentLeft, indentStepPx, maxDepth)
+}
 
 // Shape of `view.dragging` at runtime. ProseMirror's public .d.ts types this
 // as `{slice, move}` only, but the runtime Dragging class also carries
@@ -340,12 +370,16 @@ export const BlockIndentOnDrop = Extension.create({
               return false
             }
 
-            // 5. Compute contentLeft + new depth via the PURE helper. The
+            // 5. Compute contentLeft + new depth via the PURE helpers. The
             //    indent step is read live from --indent-unit so the applied
             //    depth matches the rendered indent (constant is the fallback).
+            //    headerBlock keeps its level (see resolveDragDepthForNode).
             const contentLeft = resolveContentLeft(view)
             if (contentLeft == null) return false
-            const newDepth = resolveDropDepth(
+            const headDepth = (draggedNode.attrs.depth as number) || 0
+            const newDepth = resolveDragDepthForNode(
+              draggedNode.type.name,
+              headDepth,
               clientX,
               contentLeft,
               resolveIndentStep(view),
@@ -360,14 +394,20 @@ export const BlockIndentOnDrop = Extension.create({
             const insertAt = dropPoint(doc, dropPos, slice)
             if (insertAt == null) return false
 
-            // 7. Build ONE transaction: delete the source, map the insert
-            //    position through the delete, re-validate top-level-ness
-            //    on the POST-delete doc, then insert + set depth.
+            // 7. Build ONE transaction: delete the source RUN, map the
+            //    insert position through the delete, re-validate top-level-
+            //    ness on the POST-delete doc, then insert + fix depths.
+            //    The dragged block relocates with its contiguous depth run —
+            //    a parent dropped elsewhere must not strand its children at
+            //    the old slot. Region blocks never initiate a run (the span
+            //    helper falls back to the single node), so region drags keep
+            //    their exact prior behavior.
             // Capture renumber returns (same contract as keymaps.ts) so a
             // future helper that returns a fresh Transaction cannot silently
             // drop drag renumber steps.
+            const run = depthRunSpanForNode(doc, oldPos, draggedNode)
             let tr = state.tr
-            tr = tr.delete(oldPos, oldPos + draggedNode.nodeSize)
+            tr = tr.delete(run.from, run.to)
             const mappedInsert = tr.mapping.map(insertAt)
             // The mapped insert position must still resolve to a top-level
             // child slot. A drop that resolves to a position inside a
@@ -378,7 +418,16 @@ export const BlockIndentOnDrop = Extension.create({
             } catch {
               return false
             }
-            tr = tr.insert(mappedInsert, draggedNode)
+            // Whole-run depth delta: the drop column targets the dragged
+            // head; every member shifts by the same delta (relative depths
+            // preserved), capped so the deepest member never passes
+            // MAX_DEPTH. Regions interleaved in the span keep their depth.
+            const deepest = run.nodes.reduce(
+              (max, n) => Math.max(max, (n.attrs.depth as number) || 0),
+              0
+            )
+            const delta = clampRunDepthDelta(newDepth, headDepth, deepest)
+            tr = tr.insert(mappedInsert, shiftRunDepths(doc, run, delta))
             // setNodeAttribute targets the node starting AT mappedInsert,
             // which post-insert is the just-inserted dragged node (insert
             // does not shift positions ≤ mappedInsert). Verified depth attr
@@ -393,14 +442,43 @@ export const BlockIndentOnDrop = Extension.create({
             // the drop's ordered fixup is jsdom-testable without driving the
             // HTML5 drag/drop pipeline (#859). Mirrors the keymaps.ts Tab path
             // but renumbers near the original source hole (`vacatedNear`).
+            // The head's depth is the delta-shifted depth — with the delta
+            // capped by the run's deepest member, the head can land BELOW
+            // the resolved column rather than flatten its subtree.
             tr = applyDropDepthFixup(
               tr,
               draggedNode.attrs,
               ordered,
               mappedInsert,
               vacatedNear,
-              newDepth
+              headDepth + delta
             )
+            // Ordered members (not the head) have their own destination
+            // sequences — renumber each, same contract as the Alt+Arrow path.
+            for (const memberPos of run.positions) {
+              if (memberPos === oldPos) continue
+              const member = doc.nodeAt(memberPos)
+              if (!member) continue
+              const memberOrdered =
+                member.type.name === 'noteBlock'
+                  ? parseOrderedBullet(String(member.attrs.bullet || ''))
+                  : null
+              if (!memberOrdered) continue
+              const memberDepth = Math.max(
+                0,
+                Math.min(
+                  ((member.attrs.depth as number) || 0) + delta,
+                  MAX_DEPTH
+                )
+              )
+              tr = renumberAfterOrderedBlockMove(
+                tr,
+                mappedInsert + (memberPos - run.from),
+                vacatedNear,
+                memberDepth,
+                memberOrdered.punc
+              )
+            }
 
             // 8. Land a NodeSelection on the moved block so the caret/focus
             //    land on it in its new home (mirrors PM's native drop

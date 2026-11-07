@@ -365,13 +365,27 @@ describe('headerBlock drag never rewrites the heading level', () => {
   it('resolveDragDepthForNode keeps the current level at any drop column', () => {
     for (const clientX of [-100, 100, 100 + 3 * INDENT_STEP_PX, 1e6]) {
       expect(
-        resolveDragDepthForNode('headerBlock', 2, clientX, 100, INDENT_STEP_PX, MAX_DEPTH)
+        resolveDragDepthForNode(
+          'headerBlock',
+          2,
+          clientX,
+          100,
+          INDENT_STEP_PX,
+          MAX_DEPTH
+        )
       ).toBe(2)
     }
     // Prose blocks keep resolving from the drop column (regression guard
     // for the non-header path).
     expect(
-      resolveDragDepthForNode('noteBlock', 0, 100 + 2 * INDENT_STEP_PX, 100, INDENT_STEP_PX, MAX_DEPTH)
+      resolveDragDepthForNode(
+        'noteBlock',
+        0,
+        100 + 2 * INDENT_STEP_PX,
+        100,
+        INDENT_STEP_PX,
+        MAX_DEPTH
+      )
     ).toBe(2)
   })
 
@@ -413,9 +427,8 @@ describe('headerBlock drag never rewrites the heading level', () => {
     // header-aware resolver (far-right column — the most destructive case),
     // then run the shared fixup.
     const header = editor.state.doc.child(0)
-    const noteSize = editor.state.doc.child(1).nodeSize
     let tr = editor.state.tr.delete(0, header.nodeSize)
-    const mappedInsert = tr.mapping.map(noteSize)
+    const mappedInsert = 0
     tr = tr.insert(mappedInsert, header)
     const vacatedNear = tr.mapping.map(0)
     const newDepth = resolveDragDepthForNode(
@@ -426,9 +439,16 @@ describe('headerBlock drag never rewrites the heading level', () => {
       INDENT_STEP_PX,
       MAX_DEPTH
     )
-    tr = applyDropDepthFixup(tr, header.attrs, null, mappedInsert, vacatedNear, newDepth)
+    tr = applyDropDepthFixup(
+      tr,
+      header.attrs,
+      null,
+      mappedInsert,
+      vacatedNear,
+      newDepth
+    )
     editor.view.dispatch(tr)
-    const dropped = editor.state.doc.child(1)
+    const dropped = editor.state.doc.child(0)
     expect(dropped.type.name).toBe('headerBlock')
     // The level survived the far-right drop column.
     expect(dropped.attrs.depth).toBe(2)

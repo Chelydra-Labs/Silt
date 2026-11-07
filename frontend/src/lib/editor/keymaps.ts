@@ -17,6 +17,11 @@ import {
   formatOrderedBullet
 } from './orderedList'
 import { MAX_DEPTH } from './constants'
+import {
+  DEPTH_BLOCK_TYPES,
+  depthRunSpan,
+  planAdjacentRunSwap
+} from './depthRun'
 
 const UNORDERED_BULLETS = new Set(['- ', '* ', '+ '])
 
@@ -55,21 +60,9 @@ export const BLOCK_TYPES = [
   'calloutBlock'
 ] as const
 
-/**
- * Block node types that carry an outliner `depth` attr and participate in
- * the indent/outdent model. Two exclusions, both deliberate:
- * - `headerBlock`: its `depth` attr is the heading LEVEL (1-6), not an
- *   indent — Tab on H6 used to write level 7, which serializes as
- *   `#######` (not a heading). Heading level changes stay on the heading
- *   commands / slash menu; Tab/Shift+Tab are consumed no-ops on headers.
- * - callout/code/table/details (and other container/atomic types): they
- *   carry a depth attr for serialization only (it re-emits their on-disk
- *   indent); regions are transparent to the hierarchy, so letting
- *   Tab/Shift+Tab shift them would desync them from the depth band the
- *   parser derived. Tab/Shift+Tab fall through for those so TipTap's
- *   default (e.g. table cell navigation) applies.
- */
-const DEPTH_BLOCK_TYPES = new Set(['noteBlock', 'taskBlock'])
+// DEPTH_BLOCK_TYPES (the depth-bearing outline blocks) and the run scan
+// live in ./depthRun — shared with the drag indent-on-drop path so both
+// movers relocate the same subtree.
 
 /**
  * Walk up from the editor's current selection to the nearest enclosing block
@@ -183,46 +176,16 @@ function isBlockEmpty(node: ProseMirrorNode): boolean {
 }
 
 /**
- * Positions of the selected block plus every following same-parent sibling
- * in its subtree: the contiguous run of depth-bearing outline blocks whose
- * depth is greater than the selected block's. The run ends at a header (its
- * depth attr is a heading level, not an indent) or at the first sibling at
- * or shallower than the selected depth.
- *
- * Region blocks (code/table/callout/details) are transparent to the
- * hierarchy — nothing parents to them — so a deeper sibling AFTER a region
- * still belongs to the run: the scan advances past regions without
- * collecting them. Terminating at a region instead would strand those
- * siblings (their parent indents away while they stay put). Once regions
- * derive a save-depth from their neighbors, skipping stays correct — a
- * region's derived depth must never shift with a sibling's subtree.
- *
- * Sibling boundaries come from resolved `nodeAfter` at node-boundary
- * positions, which never crosses into a different parent — so a block
- * nested inside a callout/details collects its run relative to container
- * siblings, exactly like `getSibling`/`indentActiveBlock` do.
+ * Positions of the selected block plus its whole contiguous depth run (see
+ * `depthRunSpan` in ./depthRun for the scan's region/header semantics).
+ * Thin wrapper: the indent/unindent/Backspace family works on `Editor`
+ * state and shifts attrs at the returned positions.
  */
 function depthRunPositions(
   editor: Editor,
   info: { node: ProseMirrorNode; pos: number; depth: number }
 ): number[] {
-  const positions = [info.pos]
-  const { doc } = editor.state
-  let pos = info.pos
-  let node = info.node
-  while (pos + node.nodeSize < doc.content.size) {
-    const next = doc.resolve(pos + node.nodeSize).nodeAfter
-    if (!next) break // parent's last child — never cross the container
-    if (next.type.name === 'headerBlock') break
-    if (DEPTH_BLOCK_TYPES.has(next.type.name)) {
-      if (((next.attrs.depth as number) || 0) <= info.depth) break
-      positions.push(pos + node.nodeSize)
-    }
-    // Region siblings fall through to here: advance past without collecting.
-    pos += node.nodeSize
-    node = next
-  }
-  return positions
+  return depthRunSpan(editor.state.doc, info.pos, info.depth).positions
 }
 
 /**
@@ -423,10 +386,13 @@ function mergeSiblingBlock(
   }
 }
 
-// Move the active top-level block up (-1) or down (+1), swapping it with its
-// neighbor (#181 — keyboard complement to the drag handle). No-ops at the
-// document edges or when the active block is not top-level (nested blocks are
-// not reorderable this way; Tab/Shift-Tab still indent them).
+// Move the active top-level block up (-1) or down (+1), swapping it with
+// its neighbor (#181 — keyboard complement to the drag handle). The block
+// relocates together with its whole contiguous depth run: moving a parent
+// alone would strand its children before a block they no longer belong
+// under. Depths never change — a move is a pure reorder. No-ops at the
+// document edges or when the active block is not top-level (nested blocks
+// are not reorderable this way; Tab/Shift-Tab still indent them).
 export function moveActiveBlock(editor: Editor, direction: 1 | -1): boolean {
   if (!editor || editor.isDestroyed) return false
   const active = findActiveBlock(editor)
@@ -440,54 +406,40 @@ export function moveActiveBlock(editor: Editor, direction: 1 | -1): boolean {
   const info = currentBlockInfo(editor)
   if (!info) return false
   const { doc, tr } = editor.state
-  let idx = -1
-  let posIdx = 0
-  let acc = 0
-  for (let i = 0; i < doc.childCount; i++) {
-    if (acc === info.pos) {
-      idx = i
-      posIdx = acc
-      break
-    }
-    acc += doc.child(i).nodeSize
-  }
-  if (idx < 0) return false
-  const swap = direction === -1 ? idx - 1 : idx + 1
-  if (swap < 0 || swap >= doc.childCount) return false
-  const node = doc.child(idx)
-  const size = node.nodeSize
-  const ordered =
-    node.type.name === 'noteBlock'
-      ? parseOrderedBullet(String(node.attrs.bullet || ''))
-      : null
-  const nodeDepth = (node.attrs.depth as number) || 0
-  let newTr = tr.delete(posIdx, posIdx + size)
-  let insertPos: number
-  if (direction === -1) {
-    // Up: the previous block's start is unaffected by deleting the block after it.
-    let posPrev = 0
-    for (let i = 0; i < swap; i++) posPrev += doc.child(i).nodeSize
-    insertPos = posPrev
-    newTr = newTr.insert(posPrev, node)
-  } else {
-    // Down: after the deletion the next block sits at posIdx; insert after it.
-    const nextSize = doc.child(swap).nodeSize
-    insertPos = posIdx + nextSize
-    newTr = newTr.insert(posIdx + nextSize, node)
-  }
-  if (ordered) {
-    // Same-depth reorder: fix destination sequence + vacated source hole.
-    const vacatedNear = newTr.mapping.map(posIdx)
+  const plan = planAdjacentRunSwap(doc, info.pos, info.node, direction)
+  if (!plan) return false
+
+  // Delete the whole span, then re-insert it (regions interleaved between
+  // run members ride along) at the swapped slot in ONE transaction — a
+  // whole-subtree move is a single undo step and a single autosave.
+  const spanContent = doc.slice(plan.from, plan.to).content
+  let newTr = tr.delete(plan.from, plan.to)
+  const insertPos = newTr.mapping.map(plan.insertAt)
+  newTr = newTr.insert(insertPos, spanContent)
+
+  // Same-depth renumber for every ordered member: the destination run and
+  // the vacated source hole, per member depth (a run's children have their
+  // own ordered sequences that must stay sequential past the neighbor).
+  const vacatedNear = newTr.mapping.map(plan.from)
+  for (const memberPos of plan.positions) {
+    const node = doc.nodeAt(memberPos)
+    if (!node) continue
+    const ordered =
+      node.type.name === 'noteBlock'
+        ? parseOrderedBullet(String(node.attrs.bullet || ''))
+        : null
+    if (!ordered) continue
     newTr = renumberAfterOrderedBlockMove(
       newTr,
-      insertPos,
+      insertPos + (memberPos - plan.from),
       vacatedNear,
-      nodeDepth,
+      (node.attrs.depth as number) || 0,
       ordered.punc
     )
   }
+
   editor.view.dispatch(newTr)
-  focusBlockAt(editor, swap)
+  focusBlockAt(editor, plan.focusIndex)
   return true
 }
 

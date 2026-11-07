@@ -155,25 +155,29 @@ describe('depthRunSpanForNode — run initiation', () => {
 })
 
 describe('planAdjacentRunSwap — Alt+Arrow relocation plan', () => {
-  it('plans a down-swap: insert after the adjacent non-member sibling', () => {
+  it('plans a down-swap: insert after the adjacent sibling — including its children', () => {
     const editor = makeDoc([
       note('x', 'prev', 0),
       note('a', 'parent', 0),
       note('b', 'child', 1),
-      note('c', 'next', 0)
+      note('c', 'next parent', 0),
+      note('cc', 'next child', 1)
     ])
     const doc = editor.state.doc
     const headPos = startOf(editor, 'a')
     const head = doc.nodeAt(headPos)!
     const plan = planAdjacentRunSwap(doc, headPos, head, 1)!
     expect(plan).not.toBeNull()
-    const spanTo = startOf(editor, 'b') + doc.nodeAt(startOf(editor, 'b'))!.nodeSize
+    const spanTo =
+      startOf(editor, 'b') + doc.nodeAt(startOf(editor, 'b'))!.nodeSize
     expect(plan.from).toBe(headPos)
     expect(plan.to).toBe(spanTo)
-    // Insert right after the following sibling c (original-doc coords).
-    expect(plan.insertAt).toBe(spanTo + doc.nodeAt(startOf(editor, 'c'))!.nodeSize)
-    // Post-swap the head lands one slot down — the focus target.
-    expect(plan.focusIndex).toBe(2)
+    // Insert after the neighbor's whole run — landing between the neighbor
+    // and its children would re-parent them.
+    const cc = doc.nodeAt(startOf(editor, 'cc'))!
+    expect(plan.insertAt).toBe(startOf(editor, 'cc') + cc.nodeSize)
+    // Post-swap the head lands right after the neighbor's whole run.
+    expect(plan.focusIndex).toBe(3)
     editor.destroy()
   })
 
@@ -195,13 +199,21 @@ describe('planAdjacentRunSwap — Alt+Arrow relocation plan', () => {
 
   it('returns null at both document edges', () => {
     // Up edge: the run starts at the first child.
-    const first = makeDoc([note('a', 'parent', 0), note('b', 'child', 1), note('c', 'tail', 0)])
+    const first = makeDoc([
+      note('a', 'parent', 0),
+      note('b', 'child', 1),
+      note('c', 'tail', 0)
+    ])
     expect(
       planAdjacentRunSwap(first.state.doc, 0, first.state.doc.child(0), -1)
     ).toBeNull()
     first.destroy()
     // Down edge: the run's last member is the doc's last child.
-    const last = makeDoc([note('c', 'head', 0), note('a', 'parent', 0), note('b', 'child', 1)])
+    const last = makeDoc([
+      note('c', 'head', 0),
+      note('a', 'parent', 0),
+      note('b', 'child', 1)
+    ])
     const aPos = startOf(last, 'a')
     expect(
       planAdjacentRunSwap(last.state.doc, aPos, last.state.doc.nodeAt(aPos)!, 1)
@@ -255,9 +267,8 @@ describe('shiftRunDepths — relocation steps for a drag mid-subtree', () => {
       { length: editor.state.doc.childCount },
       (_, i) => editor.state.doc.child(i).attrs.id
     )
-    const depths = Array.from(
-      { length: editor.state.doc.childCount },
-      (_, i) => Number(editor.state.doc.child(i).attrs.depth ?? 0)
+    const depths = Array.from({ length: editor.state.doc.childCount }, (_, i) =>
+      Number(editor.state.doc.child(i).attrs.depth ?? 0)
     )
     // Whole run relocated, relative depths [0,1,2] → [2,3,4].
     expect(ids).toEqual(['p', 'c', 'g', 'x', 'tail'])
@@ -269,7 +280,8 @@ describe('shiftRunDepths — relocation steps for a drag mid-subtree', () => {
     const editor = makeDoc([
       note('p', 'parent', 0),
       code('r', 'const x = 1', 1),
-      note('c', 'child', 2)
+      note('c', 'child', 2),
+      note('tail', 'l0', 0)
     ])
     const doc = editor.state.doc
     const headPos = startOf(editor, 'p')
@@ -280,11 +292,15 @@ describe('shiftRunDepths — relocation steps for a drag mid-subtree', () => {
     tr = tr.insert(0, shiftRunDepths(doc, span, delta))
     editor.view.dispatch(tr)
     // The region rides along in the span but keeps its derived depth.
-    const depths = Array.from(
+    const ids = Array.from(
       { length: editor.state.doc.childCount },
-      (_, i) => Number(editor.state.doc.child(i).attrs.depth ?? 0)
+      (_, i) => editor.state.doc.child(i).attrs.id
     )
-    expect(depths).toEqual([1, 1, 3])
+    const depths = Array.from({ length: editor.state.doc.childCount }, (_, i) =>
+      Number(editor.state.doc.child(i).attrs.depth ?? 0)
+    )
+    expect(ids).toEqual(['p', 'r', 'c', 'tail'])
+    expect(depths).toEqual([1, 1, 3, 0])
     editor.destroy()
   })
 

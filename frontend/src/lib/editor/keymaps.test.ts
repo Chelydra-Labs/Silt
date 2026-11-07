@@ -1724,7 +1724,11 @@ describe('moveActiveBlock — drag-handle keyboard complement (#181)', () => {
     const editor = makeEditor()
     editor.commands.setContent({
       type: 'doc',
-      content: [note('a', 'parent', 0), note('b', 'child', 1), note('c', 'tail', 0)]
+      content: [
+        note('a', 'parent', 0),
+        note('b', 'child', 1),
+        note('c', 'tail', 0)
+      ]
     })
     focusBlockIndex(editor, 0)
     expect(moveActiveBlock(editor, 1)).toBe(true)
@@ -1739,7 +1743,11 @@ describe('moveActiveBlock — drag-handle keyboard complement (#181)', () => {
     const editor = makeEditor()
     editor.commands.setContent({
       type: 'doc',
-      content: [note('x', 'head', 0), note('a', 'parent', 0), note('b', 'child', 1)]
+      content: [
+        note('x', 'head', 0),
+        note('a', 'parent', 0),
+        note('b', 'child', 1)
+      ]
     })
     focusBlockIndex(editor, 1)
     expect(moveActiveBlock(editor, -1)).toBe(true)
@@ -1752,7 +1760,11 @@ describe('moveActiveBlock — drag-handle keyboard complement (#181)', () => {
     const editor = makeEditor()
     editor.commands.setContent({
       type: 'doc',
-      content: [note('x', 'head', 0), note('a', 'parent', 0), note('b', 'child', 1)]
+      content: [
+        note('x', 'head', 0),
+        note('a', 'parent', 0),
+        note('b', 'child', 1)
+      ]
     })
     focusBlockIndex(editor, 1)
     // The run's last member is the doc's last child — nothing to swap with.
@@ -1766,26 +1778,27 @@ describe('moveActiveBlock — drag-handle keyboard complement (#181)', () => {
     editor.commands.setContent({
       type: 'doc',
       content: [
-        orderedNote('p', 'parent', 0, 1),
-        orderedNote('c1', 'child one', 1, 1),
-        orderedNote('c2', 'child two', 1, 2),
-        orderedNote('t', 'tail parent', 0, 2),
-        orderedNote('tc', 'tail child', 1, 1)
+        orderedNote('a', 'first parent', 0, 1),
+        orderedNote('c', 'its child', 1, 1),
+        orderedNote('p', 'moved parent', 0, 2),
+        orderedNote('c2', 'moved child', 1, 2),
+        orderedNote('z', 'tail parent', 0, 3)
       ]
     })
-    focusBlockIndex(editor, 0)
+    focusBlockIndex(editor, 2)
     expect(moveActiveBlock(editor, 1)).toBe(true)
     const moved = blocksOf(editor)
-    // Whole run [p, c1, c2] lands after t; every ordered run renumbers:
-    // depth-0 [t, p] and the interleaved depth-1 [tc, c1, c2].
-    expect(moved.map((b) => b.id)).toEqual(['t', 'tc', 'p', 'c1', 'c2'])
-    expect(moved.map((b) => b.depth)).toEqual([0, 1, 0, 1, 1])
+    // Whole run [p, c2] lands after z; ordered sequences stay correct on
+    // both sides: the depth-0 run renumbers [a, z, p] = 1..3, and each
+    // parent's own depth-1 run restarts — c alone, c2 alone.
+    expect(moved.map((b) => b.id)).toEqual(['a', 'c', 'z', 'p', 'c2'])
+    expect(moved.map((b) => b.depth)).toEqual([0, 1, 0, 0, 1])
     expect(moved.map((b) => b.bullet)).toEqual([
       '1. ',
       '1. ',
       '2. ',
-      '2. ',
-      '3. '
+      '3. ',
+      '1. '
     ])
     editor.destroy()
   })
