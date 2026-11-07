@@ -30,6 +30,7 @@ interface FilterBarProps {
   owners: string[]
   tags: string[]
   onFiltersChange: (f: TaskFilters) => void
+  onTextChange: (text: string) => void
   groupBy: GroupBy
   onGroupByChange: (g: GroupBy) => void
   sort: SortMode
@@ -49,6 +50,7 @@ function makeProps(overrides: Partial<FilterBarProps> = {}): FilterBarProps {
     owners: [],
     tags: [],
     onFiltersChange: vi.fn(),
+    onTextChange: vi.fn(),
     groupBy: 'status',
     onGroupByChange: vi.fn(),
     sort: 'manual',
@@ -354,6 +356,70 @@ describe('FilterBar consolidated clusters (#1058)', () => {
     expect(bar.textContent).not.toContain('12 tasks')
   })
 })
+
+describe('FilterBar text narrowing', () => {
+  it('renders a labelled, keyboard-reachable Find task input', () => {
+    render(FilterBar, { props: makeProps() })
+    const input = screen.getByLabelText('Find tasks')
+    expect(input).toHaveAttribute('type', 'search')
+    expect(input).toHaveAttribute('placeholder', 'Find task…')
+    expect(input).toHaveAttribute('id', 'tasks-hub-text-filter')
+    input.focus()
+    expect(document.activeElement).toBe(input)
+  })
+
+  it('debounces typing into a single onTextChange commit', async () => {
+    const onTextChange = vi.fn()
+    render(FilterBar, { props: makeProps({ onTextChange }) })
+    const input = screen.getByLabelText('Find tasks')
+    await fireEvent.input(input, { target: { value: 'postgres' } })
+    // Draft is local until the trailing debounce fires.
+    expect(onTextChange).not.toHaveBeenCalled()
+    await vi.waitFor(
+      () => expect(onTextChange).toHaveBeenCalledWith('postgres'),
+      { timeout: 1000 }
+    )
+    expect(onTextChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears the text immediately via the clear button', async () => {
+    const onTextChange = vi.fn()
+    render(FilterBar, {
+      props: makeProps({ onTextChange, filters: emptyTextFilters('pg') })
+    })
+    expect(screen.getByLabelText('Find tasks')).toHaveValue('pg')
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Clear task search' })
+    )
+    expect(onTextChange).toHaveBeenCalledWith('')
+    expect(screen.getByLabelText('Find tasks')).toHaveValue('')
+    expect(
+      screen.queryByRole('button', { name: 'Clear task search' })
+    ).toBeNull()
+  })
+
+  it('syncs an external clear (Clear all) back into the draft', async () => {
+    const { rerender } = render(FilterBar, {
+      props: makeProps({ filters: emptyTextFilters('pg') })
+    })
+    await rerender(makeProps({ filters: emptyTextFilters('') }))
+    await tick()
+    expect(screen.getByLabelText('Find tasks')).toHaveValue('')
+  })
+
+  it('counts an active search as an active filter', async () => {
+    render(FilterBar, {
+      props: makeProps({ filters: emptyTextFilters('postgres') })
+    })
+    await tick()
+    const region = document.querySelector('[aria-live="polite"]')
+    expect(region?.textContent?.trim()).toBe('1 active filter')
+  })
+})
+
+function emptyTextFilters(text: string): TaskFilters {
+  return { owners: [], priorities: [], dueDate: '', tags: [], text }
+}
 
 // Keep the PluginContext type import referenced (no-unused).
 export type __KeepCtxImport = _Ctx

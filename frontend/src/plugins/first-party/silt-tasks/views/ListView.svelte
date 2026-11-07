@@ -300,6 +300,7 @@
     void hub.filters.dueDate
     void hub.filters.tags
     void hub.filters.stale
+    void hub.filters.text
     void reload()
   })
 
@@ -326,6 +327,7 @@
     if (hub.filters.dueDate) return true
     if (hub.filters.tags.length > 0) return true
     if (hub.filters.stale) return true
+    if ((hub.filters.text ?? '').trim()) return true
     return false
   })
 

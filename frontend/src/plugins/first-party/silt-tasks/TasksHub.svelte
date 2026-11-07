@@ -26,6 +26,7 @@
     clearTaskPageRoute,
     setDisplayMode,
     setFilters,
+    setFilterText,
     setScope,
     setGroupBy,
     setSort,
@@ -409,10 +410,12 @@
   }
 
   function handlePaletteFindTask() {
-    // Delegate to the app-level SearchModal via the same CustomEvent pattern
-    // as open-settings / open-template-picker (PLAN #436: actual open_search
-    // path, not a invented Ctrl+P binding).
-    window.dispatchEvent(new CustomEvent('open-search'))
+    // The palette closes after running this command; focus the hub's own text
+    // filter once the overlay's focus restore has settled. "Find task" now
+    // narrows the hub in place instead of handing off to global search.
+    void tick().then(() => {
+      document.getElementById('tasks-hub-text-filter')?.focus()
+    })
   }
 
   function handlePaletteAddTask() {
@@ -539,6 +542,11 @@
   function handleFiltersChange(f: TaskFilters) {
     if (getTaskPageRoute()) blockDeferredHydration = true
     setFilters(f)
+  }
+
+  function handleTextChange(text: string) {
+    if (getTaskPageRoute()) blockDeferredHydration = true
+    setFilterText(text)
   }
 
   function handleScopeChange(s: Scope): void {
@@ -1204,6 +1212,7 @@
       owners={allOwners}
       tags={allTags}
       onFiltersChange={handleFiltersChange}
+      onTextChange={handleTextChange}
       groupBy={hubState.groupBy}
       onGroupByChange={chooseGroupBy}
       sort={hubState.sort}

@@ -371,6 +371,7 @@
     void filters.dueDate
     void filters.tags
     void filters.stale
+    void filters.text
     void reload()
   })
 

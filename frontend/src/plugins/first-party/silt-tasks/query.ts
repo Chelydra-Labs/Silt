@@ -17,6 +17,7 @@
 
 import { addDaysISO, endOfWeekISO, startOfWeekISO } from '../../../lib/dateGrid'
 import type { WeekStart } from '../../../lib/dateGrid'
+import { buildFtsMatch } from '../../../lib/ftsQuery'
 import type { PluginContext } from '../../sdk'
 import type {
   CalendarFilter,
@@ -223,7 +224,8 @@ function sortClauseFor(sort: SortMode): string {
  *     active navigation triple.
  *  2. Filter WHERE — owners (IN), priorities (IN), due-date quick-pick
  *     (overdue / today / week / none), tags (subquery on the `tags`
- *     table), and the optional Calendar-style date window. All bound via
+ *     table), free-text FTS (`blocks_fts MATCH`, joined back on rowid),
+ *     and the optional Calendar-style date window. All bound via
  *     `?` params — never string-interpolated.
  *
  * Due dates compare against the LOCAL day (ctxLike.today), not SQLite's
@@ -240,7 +242,7 @@ export function buildQuery(
   ctx: QueryCtxLike,
   options?: BuildQueryOptions
 ): { sql: string; params: unknown[] } {
-  const baseSelect = TASK_DETAIL_SELECT
+  let baseSelect = TASK_DETAIL_SELECT
   const where: string[] = []
   const params: unknown[] = []
   // Ambient navigation resolves a unique notebook display name, so it must
@@ -266,6 +268,18 @@ export function buildQuery(
       where.push('b.notebook = ?', 'b.section = ?', 'b.page = ?')
       params.push(ctx.activeNotebook, ctx.activeSection, ctx.activePage)
       break
+  }
+  // Free-text FTS narrowing. The MATCH expression is built by the same
+  // normalization the backend uses (lib/ftsQuery.ts mirrors searchTerms); no
+  // usable term leaves the query untouched (the body leg is a no-op in Go too).
+  const textMatch = buildFtsMatch(f.text ?? '')
+  if (textMatch) {
+    // blocks_fts is external-content FTS5 keyed by blocks.rowid; joining it is
+    // what makes this one hub-internal statement instead of a second search
+    // path. All filter values stay parameterized.
+    baseSelect += ' JOIN blocks_fts ON blocks_fts.rowid = b.rowid'
+    where.push('blocks_fts MATCH ?')
+    params.push(textMatch)
   }
   if (f.owners.length) {
     where.push(inClause('t.owner', f.owners))

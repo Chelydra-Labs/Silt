@@ -15,6 +15,7 @@ import {
   narrowScopeTo,
   clearScopeOverride,
   setFilters,
+  setFilterText,
   setColumns,
   clearFilters,
   setFocusDate,
@@ -302,6 +303,32 @@ describe('silt-tasks unified state (#419)', () => {
         dueDate: '',
         tags: []
       })
+    })
+
+    it('setFilterText updates the transient search without dirtying a view', () => {
+      applySavedView({ id: 'v1', name: 'saved' })
+      expect(getTaskHubState().savedViewsDirty).toBe(false)
+      setFilterText('postgres')
+      expect(getTaskHubState().filters.text).toBe('postgres')
+      // Search narrows a view; it is not a saved-view dimension.
+      expect(getTaskHubState().savedViewsDirty).toBe(false)
+    })
+
+    it('applying a saved view preserves the active search', () => {
+      setFilterText('postgres')
+      applySavedView({
+        id: 'v1',
+        name: 'saved',
+        filters: { owners: ['bob'], priorities: [], dueDate: '', tags: [] }
+      })
+      expect(getTaskHubState().filters.text).toBe('postgres')
+      expect(getTaskHubState().filters.owners).toEqual(['bob'])
+    })
+
+    it('clearFilters drops the transient search', () => {
+      setFilterText('postgres')
+      clearFilters()
+      expect(getTaskHubState().filters.text).toBeUndefined()
     })
   })
 

@@ -53,6 +53,16 @@ export interface TaskFilters {
   tags: string[]
   /** When true, only open tasks with modified_at NULL or older than 30 days. */
   stale?: boolean
+  /**
+   * Free-text narrowing over the indexed task text (FTS body). Normalized the
+   * same way the backend search does: letters/digits only, terms under 2
+   * bytes dropped, implicit AND, prefix match per term.
+   *
+   * Transient by design — saved views do not snapshot it and applying a view
+   * preserves the current search (the search bar narrows whatever the view
+   * shows rather than being a view dimension).
+   */
+  text?: string
 }
 
 /** Smart-list filter the user picked from a sidebar (Calendar lineage). */
@@ -307,7 +317,8 @@ export function enterTaskPageRoute(
             priorities: [...defaults.filters.priorities],
             dueDate: defaults.filters.dueDate,
             tags: [...defaults.filters.tags],
-            stale: defaults.filters.stale
+            stale: defaults.filters.stale,
+            text: defaults.filters.text
           }
         : undefined
     }
@@ -445,6 +456,16 @@ export function setFilters(f: TaskFilters): void {
 }
 
 /**
+ * Update only the transient free-text narrowing. Deliberately does NOT mark an
+ * active saved view dirty: the search bar narrows whatever the view shows and
+ * is not a saved-view dimension (see TaskFilters.text).
+ */
+export function setFilterText(text: string): void {
+  clearTaskPageRoute()
+  _state.filters = { ..._state.filters, text }
+}
+
+/**
  * Replace the status-board columns (including soft WIP limits). BoardView
  * persists to YAML directly; this setter is the in-memory mirror so saved
  * views can snapshot + the Phase 7 sidebar can read a single source of
@@ -569,7 +590,10 @@ export function applySavedView(view: SavedView): void {
       priorities: [...view.filters.priorities],
       dueDate: view.filters.dueDate,
       tags: [...view.filters.tags],
-      stale: view.filters.stale
+      stale: view.filters.stale,
+      // The free-text search is transient and orthogonal to views; keep it
+      // so clicking a saved view narrows instead of discarding the search.
+      text: _state.filters.text
     }
   }
   if (view.calendarSubMode !== undefined) {

@@ -4,7 +4,7 @@
   // are the same {owners, priorities, dueDate, tags}); the type now comes
   // from the unified state module so this component survives the kanban
   // retirement (#429). The sidebar (#432) mirrors these toggles bidirectionally.
-  import { tick } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import { fly } from 'svelte/transition'
   import type {
     TaskFilters,
@@ -14,12 +14,15 @@
     Scope
   } from '../state.svelte'
   import { motionDuration } from '../motion'
+  import { trailingDebounce } from '../debounce'
 
   interface Props {
     filters: TaskFilters
     owners: string[]
     tags: string[]
     onFiltersChange: (f: TaskFilters) => void
+    /** Commit the transient free-text narrowing (not a saved-view dimension). */
+    onTextChange: (text: string) => void
     groupBy: GroupBy
     onGroupByChange: (g: GroupBy) => void
     sort: SortMode
@@ -38,6 +41,7 @@
     owners,
     tags,
     onFiltersChange,
+    onTextChange,
     groupBy,
     onGroupByChange,
     sort,
@@ -84,6 +88,38 @@
     if (openChip !== 'owner') ownerQuery = ''
     if (openChip !== 'tags') tagQuery = ''
   })
+
+  // --- Free-text narrowing -------------------------------------------------
+  // The draft is local so the caret is never interrupted by the hub's re-query
+  // round-trip; commits are trailing-debounced (~200ms). External clears
+  // (Clear all, applying a saved view) sync back through the effect below.
+  let textDraft = $state(untrack(() => filters.text ?? ''))
+  let lastCommittedText = untrack(() => filters.text ?? '')
+  const commitText = trailingDebounce(() => {
+    const committed = textDraft.trim()
+    textDraft = committed
+    lastCommittedText = committed
+    onTextChange(committed)
+  }, 200)
+  $effect(() => {
+    const incoming = filters.text ?? ''
+    if (incoming === lastCommittedText) return
+    commitText.cancel()
+    lastCommittedText = incoming
+    textDraft = incoming
+  })
+  $effect(() => () => commitText.cancel())
+
+  function onTextInput(e: Event) {
+    textDraft = (e.currentTarget as HTMLInputElement).value
+    commitText.trigger()
+  }
+  function clearText() {
+    commitText.cancel()
+    textDraft = ''
+    lastCommittedText = ''
+    onTextChange('')
+  }
 
   function toggleChip(k: ChipKey, trigger: HTMLButtonElement) {
     if (openChip === k) {
@@ -182,7 +218,8 @@
       priorities: [],
       dueDate: '',
       tags: [],
-      stale: false
+      stale: false,
+      text: ''
     })
   }
 
@@ -240,13 +277,15 @@
   }
 
   // A chip counts as "active" if it has at least one selection; the Clear-all
-  // affordance appears once any chip is active.
+  // affordance appears once any chip is active. The free-text search counts
+  // too — it narrows the result set just like a facet.
   let activeCount = $derived(
     (filters.owners.length ? 1 : 0) +
       (filters.priorities.length ? 1 : 0) +
       (filters.dueDate ? 1 : 0) +
       (filters.tags.length ? 1 : 0) +
-      (filters.stale ? 1 : 0)
+      (filters.stale ? 1 : 0) +
+      ((filters.text ?? '').trim() ? 1 : 0)
   )
 
   // aria-live announcer for active-filter changes. The unified sidebar used to
@@ -285,6 +324,38 @@
   aria-label="Task view controls"
   data-testid="tasks-filter-bar"
 >
+  <div
+    class="flex min-w-0 flex-1 items-center sm:flex-none"
+    data-testid="tasks-hub-search"
+  >
+    <label class="sr-only" for="tasks-hub-text-filter">Find tasks</label>
+    <div class="relative w-full sm:w-52">
+      <span
+        class="material-symbols-outlined pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-icon-sm text-text-muted"
+        aria-hidden="true">search</span
+      >
+      <input
+        id="tasks-hub-text-filter"
+        type="search"
+        value={textDraft}
+        oninput={onTextInput}
+        placeholder="Find task…"
+        data-testid="tasks-hub-text-filter"
+        class="w-full rounded-md border border-surface-panel-border bg-surface-panel py-1 pl-7 pr-7 text-type-xs text-text-primary placeholder:text-text-muted transition-colors focus:border-accent-primary-start/50 focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 [&::-webkit-search-cancel-button]:hidden"
+      />
+      {#if textDraft}
+        <button
+          type="button"
+          aria-label="Clear task search"
+          onclick={clearText}
+          class="absolute right-1 top-1/2 flex -translate-y-1/2 items-center rounded p-0.5 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
+        >
+          <span class="material-symbols-outlined text-icon-sm">close</span>
+        </button>
+      {/if}
+    </div>
+  </div>
+
   <div
     class="flex flex-wrap items-center gap-1.5"
     data-testid="tasks-filter-cluster-organize"
