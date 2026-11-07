@@ -676,24 +676,113 @@ func reconcileMovedPageIdentityTx(tx *sql.Tx, source, notebook, section, page st
 		return fmt.Errorf("find abandoned page locs: %w", err)
 	}
 	for _, loc := range locs {
-		for _, q := range []string{
-			"DELETE FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
-			"DELETE FROM page_types WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
-			"DELETE FROM page_properties WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
-			"DELETE FROM page_core WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
-		} {
-			if _, err := tx.Exec(q, loc.Source, loc.Notebook, loc.Section, loc.Page); err != nil {
-				return fmt.Errorf("clear abandoned page loc %s/%s/%s: %w", loc.Notebook, loc.Section, loc.Page, err)
-			}
+		if err := clearPageLocTx(tx, loc); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+// clearPageLocTx deletes every row keyed by one page loc: the block rows
+// (block_meta / task_dependencies / page_links cascade from them) and the
+// three loc-keyed projections. Mirrors ClearFileBlocks' projection set.
+func clearPageLocTx(tx *sql.Tx, loc PageLoc) error {
+	for _, q := range []string{
+		"DELETE FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+		"DELETE FROM page_types WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+		"DELETE FROM page_properties WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+		"DELETE FROM page_core WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+	} {
+		if _, err := tx.Exec(q, loc.Source, loc.Notebook, loc.Section, loc.Page); err != nil {
+			return fmt.Errorf("clear page loc %s/%s/%s: %w", loc.Notebook, loc.Section, loc.Page, err)
+		}
+	}
+	return nil
+}
+
+// reconcileFilePathIdentityTx clears the page loc this file's previous index
+// published when the file's identity has moved away from it.
+//
+// The block-evidence reconcile above cannot see this case: a file that carried
+// no blocks at its last index leaves no IDs to follow, so its old loc would
+// keep its page_core row (and so stay resolvable/linkable) forever. The
+// path-keyed record from that index is the only witness that the loc belonged
+// to this file. Block-carrying locs are deliberately left to the block-evidence
+// reconcile, which can prove the move from the IDs themselves.
+func reconcileFilePathIdentityTx(tx *sql.Tx, path, source, notebook, section, page string) error {
+	if path == "" {
+		return nil
+	}
+	cur := PageLoc{Source: source, Notebook: notebook, Section: section, Page: page}
+	var prev PageLoc
+	err := tx.QueryRow(
+		"SELECT source, notebook, section, page FROM file_page_locs WHERE path = ?", path,
+	).Scan(&prev.Source, &prev.Notebook, &prev.Section, &prev.Page)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// First index of this path (fresh file, or a vault upgraded before
+		// this record existed): nothing to reconcile.
+	case err != nil:
+		return fmt.Errorf("read last indexed page loc for %s: %w", path, err)
+	case prev == cur:
+		return nil
+	default:
+		if err := clearAbandonedZeroBlockLocTx(tx, path, prev); err != nil {
+			return err
+		}
+	}
+	return recordFilePathLocTx(tx, path, cur)
+}
+
+// clearAbandonedZeroBlockLocTx drops a loc this file left, but only when the
+// loc is provably nobody else's: it holds no blocks (so no page is losing
+// content) and no other indexed path still claims the same identity (two files
+// can resolve to one loc through frontmatter name overrides).
+func clearAbandonedZeroBlockLocTx(tx *sql.Tx, path string, loc PageLoc) error {
+	var blocks int
+	if err := tx.QueryRow(
+		"SELECT COUNT(*) FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+		loc.Source, loc.Notebook, loc.Section, loc.Page,
+	).Scan(&blocks); err != nil {
+		return fmt.Errorf("count blocks at abandoned page loc %s/%s/%s: %w", loc.Notebook, loc.Section, loc.Page, err)
+	}
+	if blocks > 0 {
+		return nil
+	}
+	var shared int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM file_page_locs
+		 WHERE source = ? AND notebook = ? AND section = ? AND page = ? AND path != ?`,
+		loc.Source, loc.Notebook, loc.Section, loc.Page, path,
+	).Scan(&shared); err != nil {
+		return fmt.Errorf("count owners of abandoned page loc %s/%s/%s: %w", loc.Notebook, loc.Section, loc.Page, err)
+	}
+	if shared > 0 {
+		return nil
+	}
+	return clearPageLocTx(tx, loc)
+}
+
+// recordFilePathLocTx upserts the identity a path's index just published, so
+// the next index of the same path can tell whether the page moved.
+func recordFilePathLocTx(tx *sql.Tx, path string, loc PageLoc) error {
+	if _, err := tx.Exec(
+		`INSERT INTO file_page_locs (path, source, notebook, section, page) VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT(path) DO UPDATE SET source = excluded.source, notebook = excluded.notebook,
+		   section = excluded.section, page = excluded.page`,
+		path, loc.Source, loc.Notebook, loc.Section, loc.Page,
+	); err != nil {
+		return fmt.Errorf("record indexed page loc for %s: %w", path, err)
 	}
 	return nil
 }
 
 // abandonedPageLocsTx returns the locs (other than the target) where the given
 // block IDs are currently indexed, limited to locs whose entire block set is
-// among those IDs. Empty IDs means no reconciliation work: the caller is
-// publishing a zero-block file, which leaves no block evidence of a move.
+// among those IDs. Empty IDs means no block evidence of a move — the caller is
+// publishing a zero-block file — which is why the path-keyed
+// reconcileFilePathIdentityTx exists: it covers the case this function cannot
+// see.
 func abandonedPageLocsTx(tx *sql.Tx, source, notebook, section, page string, ids []string) ([]PageLoc, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -884,14 +973,23 @@ func (dm *DatabaseManager) FindPageByLeaf(source, page string) (notebook, sectio
 }
 
 // indexFileBlocksStage clears prior block rows (by stable block ID + by page
-// metadata) and inserts the new block/task/tag/page_links/block_meta/
-// block_references/task_dependencies rows on the caller's open transaction.
-// Shared by IndexFileBlocks and IndexFileWithProjection so the block half of
-// the publish cannot drift between them. Empty blocks clears only; the caller
-// still owns the test-seam hook + commit (so the projection step in
-// IndexFileWithProjection runs after this returns). Within-file duplicate ids
-// are appended to dups for the caller's post-commit dispatch.
-func (dm *DatabaseManager) indexFileBlocksStage(tx *sql.Tx, source, notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, logTag string, dups *duplicateIDCollector) error {
+// metadata), reconciles the page locs this re-index abandons (by block evidence
+// and, when path is known, by the file's recorded identity), and inserts the
+// new block/task/tag/page_links/block_meta/block_references/task_dependencies
+// rows on the caller's open transaction. Shared by IndexFileBlocks and
+// IndexFileWithProjection so the block half of the publish cannot drift
+// between them. Empty blocks clears only; the caller still owns the test-seam
+// hook + commit (so the projection step in IndexFileWithProjection runs
+// after this returns). Within-file duplicate ids are appended to dups for the
+// caller's post-commit dispatch. path == "" (IndexFileBlocks' callers do not
+// know it) skips the path-keyed half of the reconcile.
+func (dm *DatabaseManager) indexFileBlocksStage(tx *sql.Tx, path, source, notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, logTag string, dups *duplicateIDCollector) error {
+	// Path-keyed identity reconcile: a file whose last index carried no blocks
+	// leaves no block evidence of a move, so the loc it published there must be
+	// cleared from the record of that index instead.
+	if err := reconcileFilePathIdentityTx(tx, path, source, notebook, section, page); err != nil {
+		return err
+	}
 	if len(blocks) > 0 {
 		// Clear a loc these blocks are leaving before deleting them by ID: the
 		// ID delete leaves the abandoned loc's projections (page_core
@@ -980,7 +1078,7 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 	defer tx.Rollback()
 
 	dups := &duplicateIDCollector{}
-	if err := dm.indexFileBlocksStage(tx, source, notebook, section, page, blocks, fileTags, "IndexFileBlocks", dups); err != nil {
+	if err := dm.indexFileBlocksStage(tx, "", source, notebook, section, page, blocks, fileTags, "IndexFileBlocks", dups); err != nil {
 		return err
 	}
 
@@ -1007,14 +1105,21 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 }
 
 // IndexFileWithProjection is the atomic block+projection publish: in one
-// transaction it clears the page's prior block rows (by ID + by metadata) and
-// its prior page_types/page_properties rows, inserts the new block rows
-// (blocks/tasks/tags/page_links/block_meta/block_references/task_dependencies),
-// and inserts the new projection rows (or clears the projection when typeID
-// is empty). A reader can never observe blocks without their projection or
-// vice versa — closing the gap left by IndexFileBlocks + projectPageType,
+// transaction it clears the page's prior block rows (by ID + by metadata), its
+// prior page_types/page_properties rows, and the page loc the file's previous
+// index published when the identity has moved; then it inserts the new block
+// rows (blocks/tasks/tags/page_links/block_meta/block_references/
+// task_dependencies) and the new projection rows (or clears the projection when
+// typeID is empty). A reader can never observe blocks without their projection
+// or vice versa — closing the gap left by IndexFileBlocks + projectPageType,
 // which previously committed blocks and projection in two separate
 // transactions.
+//
+// path is the file's absolute path and keys the last page loc it published, so
+// a re-index that moves the page's identity can clear the loc it left even when
+// the file carried no blocks there (see reconcileFilePathIdentityTx). Every
+// caller that writes a file on disk passes it; "" means "no path known" and
+// skips that record, leaving a zero-block identity move unreconciled.
 //
 // typeID == "" means the page is untyped: the projection is cleared (no
 // insert). Callers that mutate blocks only (task meta / deps / recurrence)
@@ -1025,7 +1130,7 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 // fileWarnings is an optional slice of non-fatal parser diagnostics; same
 // contract as IndexFileBlocks.
 func (dm *DatabaseManager) IndexFileWithProjection(
-	source, notebook, section, page string,
+	path, source, notebook, section, page string,
 	blocks []parser.ParsedBlock,
 	fileTags []string,
 	typeID string,
@@ -1052,7 +1157,7 @@ func (dm *DatabaseManager) IndexFileWithProjection(
 	defer tx.Rollback()
 
 	dups := &duplicateIDCollector{}
-	if err := dm.indexFileBlocksStage(tx, source, notebook, section, page, blocks, fileTags, "IndexFileWithProjection", dups); err != nil {
+	if err := dm.indexFileBlocksStage(tx, path, source, notebook, section, page, blocks, fileTags, "IndexFileWithProjection", dups); err != nil {
 		return err
 	}
 	// Projection clear/insert runs in the SAME tx as the block publish. A
@@ -1249,6 +1354,13 @@ func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexSt
 			source = "vault"
 		}
 
+		// Path-keyed identity reconcile before the block work: a file whose
+		// last index carried no blocks leaves no ID evidence of a move, so the
+		// loc recorded for this path is what proves the old loc is abandoned.
+		if err := reconcileFilePathIdentityTx(tx, res.Path, source, res.Notebook, res.Section, res.Page); err != nil {
+			return indexedCount, skipped, fmt.Errorf("failed to reconcile page identity for %s: %w", res.Path, err)
+		}
+
 		// Clear any pre-existing rows for these block IDs (handles the case
 		// where frontmatter metadata changed since the previous index, since
 		// block IDs are stable but (notebook, section, date) is denormalized).
@@ -1381,6 +1493,7 @@ func (dm *DatabaseManager) ClearSourceBlocks(source string) error {
 		"DELETE FROM page_types WHERE source = ?",
 		"DELETE FROM page_properties WHERE source = ?",
 		"DELETE FROM page_core WHERE source = ?",
+		"DELETE FROM file_page_locs WHERE source = ?",
 	} {
 		if _, err := sqlTx.Exec(q, source); err != nil {
 			return err

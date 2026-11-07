@@ -229,7 +229,7 @@ func TestIndexPaths_CleanVaultNoWarnings(t *testing.T) {
 	if _, _, err := dm.IndexScanResults(append(pageA, pageB...)); err != nil {
 		t.Fatalf("IndexScanResults: %v", err)
 	}
-	if err := dm.IndexFileWithProjection("vault", "Work", "Sprint", "Board",
+	if err := dm.IndexFileWithProjection("", "vault", "Work", "Sprint", "Board",
 		pageA[0].Blocks, nil, "", nil, PageCoreFields{}); err != nil {
 		t.Fatalf("IndexFileWithProjection: %v", err)
 	}

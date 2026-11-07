@@ -363,6 +363,24 @@ CREATE TABLE files (
     indexed_at INTEGER NOT NULL  -- Unix nanoseconds
 );
 
+-- Last page identity each indexed file published, keyed by the same absolute
+-- path as `files` (pruned with it). Blocks carry stable IDs, so a page moving
+-- to a new frontmatter identity can be reconciled by following them — except
+-- for a file that carried no blocks at its last index, which leaves no ID
+-- evidence. This row is the path-keyed witness that the old loc belonged to
+-- that file, letting the re-index clear the abandoned page_core/page_types/
+-- page_properties rows in the same transaction. Re-derivable from markdown:
+-- rewritten on every index; a vault upgraded without it only skips the
+-- reconcile for the first index of each file.
+CREATE TABLE file_page_locs (
+    path     TEXT PRIMARY KEY,
+    source   TEXT NOT NULL,
+    notebook TEXT NOT NULL,
+    section  TEXT NOT NULL,
+    page     TEXT NOT NULL
+);
+CREATE INDEX idx_file_page_locs_loc ON file_page_locs(source, notebook, section, page);
+
 -- Covered indexes for query performance.
 -- idx_blocks_src_file is source-aware (source leads) so same-named notebooks
 -- across roots don't collide.

@@ -274,7 +274,7 @@ func TestIndexerTestingHook_PhaseScoped(t *testing.T) {
 			name:  "IndexFileWithProjection",
 			phase: indexerHookIndexFileWithProjectionPreCommit,
 			driver: func(dm *DatabaseManager) error {
-				return dm.IndexFileWithProjection("vault", "NB", "S", "P",
+				return dm.IndexFileWithProjection("", "vault", "NB", "S", "P",
 					[]parser.ParsedBlock{sampleNoteBlock("33333333-3333-3333-3333-333333333333", 1)},
 					nil, "task", nil, PageCoreFields{})
 			},

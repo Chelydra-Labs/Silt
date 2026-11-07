@@ -76,7 +76,8 @@ func (dm *DatabaseManager) PageExistsExact(source, notebook, section, page strin
 // wiki-link target and findable in page search. Every index path guarantees
 // a row (identity-only upsert on the block-only paths; full row on
 // frontmatter-affecting publishes), a re-index clears the loc it abandons when
-// frontmatter moves a page's identity (reconcileMovedPageIdentityTx), and the
+// frontmatter moves a page's identity (reconcileMovedPageIdentityTx, plus
+// reconcileFilePathIdentityTx for a file that had no blocks to follow), and the
 // delete/remove paths (ClearFileBlocks / ClearSourceBlocks) drop it with the
 // rest of the projection. initSchema backfills page_core from blocks ONCE
 // (page_core_blocks_backfill); after that marker is set, page_core is

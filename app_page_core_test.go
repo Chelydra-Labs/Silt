@@ -49,6 +49,25 @@ func ensureMtimeBumps(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 }
 
+// TestPageCore_IndexFileRecordsPathIdentity pins the production wiring for the
+// zero-block identity reconcile: App.indexFile must hand the file's path to the
+// indexer, or a re-index that moves a page's identity has no path-keyed record
+// to recognize the abandoned loc by.
+func TestPageCore_IndexFileRecordsPathIdentity(t *testing.T) {
+	app := newTestApp(t)
+	filePath, _ := writeCorePage(t, app, "Notes", "Sprint", "Board", "type: \"\"\n")
+
+	var source, notebook, section, page string
+	if err := app.db.SQLDB().QueryRow(
+		`SELECT source, notebook, section, page FROM file_page_locs WHERE path = ?`, filePath,
+	).Scan(&source, &notebook, &section, &page); err != nil {
+		t.Fatalf("file_page_locs row for %s: %v", filePath, err)
+	}
+	if source != "vault" || notebook != "Notes" || section != "Sprint" || page != "Board" {
+		t.Errorf("recorded identity = %s/%s/%s/%s, want vault/Notes/Sprint/Board", source, notebook, section, page)
+	}
+}
+
 // TestPageCore_RebuildsFromFrontmatter asserts the projection rebuilds from
 // frontmatter + mtime on index (#867). The page carries every core field; the
 // projected row must mirror them.

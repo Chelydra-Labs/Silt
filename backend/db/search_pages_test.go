@@ -73,7 +73,7 @@ func seedSearchPages(t *testing.T) *DatabaseManager {
 
 	// Zero-block page: a real .md file whose body has no managed blocks. Only
 	// the projection path can register it — this is the findability contract.
-	if err := dm.IndexFileWithProjection("vault", "Work", "Projects", "Quiet Empty Page",
+	if err := dm.IndexFileWithProjection("", "vault", "Work", "Projects", "Quiet Empty Page",
 		nil, nil, "", nil, PageCoreFields{}); err != nil {
 		t.Fatalf("index empty page: %v", err)
 	}
@@ -539,7 +539,7 @@ func TestSearch_UnicodeOwnerAndTitleExactCase(t *testing.T) {
 	if err := dm.IndexFileBlocks("vault", "Work", "Projects", "Release Notes", release, nil); err != nil {
 		t.Fatalf("index release page: %v", err)
 	}
-	if err := dm.IndexFileWithProjection("vault", "Work", "Projects", "MÜNCHEN",
+	if err := dm.IndexFileWithProjection("", "vault", "Work", "Projects", "MÜNCHEN",
 		nil, nil, "", nil, PageCoreFields{}); err != nil {
 		t.Fatalf("index accented page: %v", err)
 	}
@@ -637,7 +637,7 @@ func TestSearch_SearchBlocksBudgetExcludesTitleHits(t *testing.T) {
 	// 60 zero-block pages whose NAMES all contain the query term.
 	for i := 1; i <= 60; i++ {
 		page := fmt.Sprintf("2026 Daily %02d", i)
-		if err := dm.IndexFileWithProjection("vault", "Journal", "", page,
+		if err := dm.IndexFileWithProjection("", "vault", "Journal", "", page,
 			nil, nil, "", nil, PageCoreFields{}); err != nil {
 			t.Fatalf("index title page %s: %v", page, err)
 		}
@@ -701,7 +701,7 @@ func TestSearch_TitleHitsRankExactThenPrefix(t *testing.T) {
 	dm := newTestDB(t)
 
 	for _, page := range []string{"Old Agenda", "Agenda Archive", "Agenda"} {
-		if err := dm.IndexFileWithProjection("vault", "NB", "", page,
+		if err := dm.IndexFileWithProjection("", "vault", "NB", "", page,
 			nil, nil, "", nil, PageCoreFields{}); err != nil {
 			t.Fatalf("index %s: %v", page, err)
 		}

@@ -150,7 +150,7 @@ func TestPromoteUnlinkedMention_Rewrite(t *testing.T) {
 func TestPromoteUnlinkedMention_EmptyPageTarget(t *testing.T) {
 	app := newTestApp(t)
 	const srcBlock = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
-	if err := app.db.IndexFileWithProjection("vault", "Work", "Sec", "Stub",
+	if err := app.db.IndexFileWithProjection("", "vault", "Work", "Sec", "Stub",
 		nil, nil, "", nil, db.PageCoreFields{}); err != nil {
 		t.Fatalf("index empty target page: %v", err)
 	}

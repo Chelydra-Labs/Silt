@@ -42,7 +42,7 @@ func TestIndexFileWithProjection_AtomicReplace(t *testing.T) {
 	newProps := []ProjectedProperty{
 		{Property: "status", ValueText: "done", ValueSort: "done", ValueType: "select"},
 	}
-	if err := dm.IndexFileWithProjection(source, notebook, section, page,
+	if err := dm.IndexFileWithProjection("", source, notebook, section, page,
 		[]parser.ParsedBlock{newBlock}, nil, "meeting", newProps, PageCoreFields{}); err != nil {
 		t.Fatalf("IndexFileWithProjection: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestIndexFileWithProjection_UntypedClearsProjection(t *testing.T) {
 		source   = "vault"
 	)
 	// Seed: typed page with one block.
-	if err := dm.IndexFileWithProjection(source, notebook, section, page,
+	if err := dm.IndexFileWithProjection("", source, notebook, section, page,
 		[]parser.ParsedBlock{sampleNoteBlock("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1)},
 		nil, "task",
 		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}}, PageCoreFields{}); err != nil {
@@ -90,7 +90,7 @@ func TestIndexFileWithProjection_UntypedClearsProjection(t *testing.T) {
 	}
 
 	// Atomic transition to untyped: same page, typeID="".
-	if err := dm.IndexFileWithProjection(source, notebook, section, page,
+	if err := dm.IndexFileWithProjection("", source, notebook, section, page,
 		[]parser.ParsedBlock{sampleNoteBlock("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 1)},
 		nil, "", nil, PageCoreFields{}); err != nil {
 		t.Fatalf("untyped reindex: %v", err)
@@ -157,7 +157,7 @@ func TestIndexFileWithProjection_PreservesOldStateOnHookFailure(t *testing.T) {
 	}
 
 	// Seed prior committed state via the atomic path itself.
-	if err := dm.IndexFileWithProjection(source, notebook, section, page,
+	if err := dm.IndexFileWithProjection("", source, notebook, section, page,
 		[]parser.ParsedBlock{sampleNoteBlock(oldID, 1)}, nil, "task",
 		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}}, seededCore); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -197,7 +197,7 @@ func TestIndexFileWithProjection_PreservesOldStateOnHookFailure(t *testing.T) {
 		Aliases: []string{"b", "c"},
 		Created: "2026-03-03T00:00:00Z",
 	}
-	err = dm.IndexFileWithProjection(source, notebook, section, page,
+	err = dm.IndexFileWithProjection("", source, notebook, section, page,
 		[]parser.ParsedBlock{sampleNoteBlock(newID, 1)}, nil, "meeting",
 		[]ProjectedProperty{{Property: "status", ValueText: "done", ValueSort: "done", ValueType: "select"}}, replacementCore)
 	if !errors.Is(err, sentinelHookErr) {
@@ -273,7 +273,7 @@ func TestIndexFileWithProjection_ReaderNeverSeesHalfState(t *testing.T) {
 		source   = "vault"
 	)
 	// Prior committed state: task page, one block.
-	if err := dm.IndexFileWithProjection(source, notebook, section, page,
+	if err := dm.IndexFileWithProjection("", source, notebook, section, page,
 		[]parser.ParsedBlock{sampleNoteBlock("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1)},
 		nil, "task",
 		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}}, PageCoreFields{}); err != nil {
@@ -313,7 +313,7 @@ func TestIndexFileWithProjection_ReaderNeverSeesHalfState(t *testing.T) {
 	// hook, then commits.
 	writerDone := make(chan error, 1)
 	go func() {
-		writerDone <- dm.IndexFileWithProjection(source, notebook, section, page,
+		writerDone <- dm.IndexFileWithProjection("", source, notebook, section, page,
 			[]parser.ParsedBlock{sampleNoteBlock("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 1)},
 			nil, "meeting",
 			[]ProjectedProperty{{Property: "status", ValueText: "done", ValueSort: "done", ValueType: "select"}}, PageCoreFields{})
@@ -539,7 +539,7 @@ func TestIndexFileWithProjection_PreservesIndexFileBlocksBehavior(t *testing.T) 
 		source   = "vault"
 	)
 	// Seed via the atomic path: typed page.
-	if err := dm.IndexFileWithProjection(source, notebook, section, page,
+	if err := dm.IndexFileWithProjection("", source, notebook, section, page,
 		[]parser.ParsedBlock{sampleTaskBlock("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1)},
 		nil, "task",
 		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}}, PageCoreFields{}); err != nil {

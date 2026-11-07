@@ -512,7 +512,9 @@ func (dw *DirectoryWatcher) SetAtomicReindexHandler(fn AtomicReindexFunc) {
 // before watcher.Start returns, so this default only covers tests that
 // don't exercise typed projection. It exists so the watcher has NO
 // non-atomic route: every reindex goes through IndexFileWithProjection
-// regardless of whether an App handler is set.
+// regardless of whether an App handler is set. The handler signature carries
+// no filesystem path, so this default cannot record the path-keyed page
+// identity; the installed handler (App.indexFile) does.
 func (dw *DirectoryWatcher) defaultAtomicReindex(source, notebook, section, page string, blocks []parser.ParsedBlock, meta parser.FileMetadata) error {
 	// Default path: no schema awareness, so typeID is "" (the App-installed
 	// handler owns schema-aware projection). Core fields are derived directly
@@ -526,7 +528,7 @@ func (dw *DirectoryWatcher) defaultAtomicReindex(source, notebook, section, page
 	}
 	var err error
 	dw.coordinator.WithDBWrite(func() {
-		err = dw.dm.IndexFileWithProjection(source, notebook, section, page, blocks, meta.Tags, "", nil, core, meta.Warnings...)
+		err = dw.dm.IndexFileWithProjection("", source, notebook, section, page, blocks, meta.Tags, "", nil, core, meta.Warnings...)
 	})
 	return err
 }
