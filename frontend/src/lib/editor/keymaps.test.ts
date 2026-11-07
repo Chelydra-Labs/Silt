@@ -2444,6 +2444,122 @@ describe('Backspace on an empty sole block (#552 — no duplicate)', () => {
   })
 })
 
+describe('Backspace unindent moves the whole subtree run (#1057)', () => {
+  // Parity with the subtree-aware Tab/Shift-Tab shift (#1002/#1055):
+  // unindenting an empty parent with Backspace must take its contiguous
+  // depth run down too, or the children are stranded at the old depth.
+
+  const note = (id: string, text: string, depth: number) => ({
+    type: 'noteBlock' as const,
+    attrs: { id, depth, bullet: '- ' },
+    content: [{ type: 'text' as const, text }]
+  })
+
+  const emptyParent = (
+    id: string,
+    depth: number,
+    type: 'noteBlock' | 'taskBlock'
+  ) =>
+    type === 'taskBlock'
+      ? { type: 'taskBlock' as const, attrs: { id, depth, status: 'TODO' } }
+      : { type: 'noteBlock' as const, attrs: { id, depth, bullet: '' } }
+
+  function focusBlockIndex(editor: Editor, index: number): void {
+    let pos = 0
+    for (let i = 0; i < index; i++) pos += editor.state.doc.child(i).nodeSize
+    editor.commands.setTextSelection(pos + 1)
+  }
+
+  function depthsOf(editor: Editor): number[] {
+    return Array.from({ length: editor.state.doc.childCount }, (_, i) =>
+      Number(editor.state.doc.child(i).attrs.depth ?? 0)
+    )
+  }
+
+  it('unindents an empty noteBlock parent together with its child', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('root', 'root', 0),
+        emptyParent('p', 1, 'noteBlock'),
+        note('child', 'child', 2)
+      ]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Backspace')).toBe(true)
+    // No parent change: the run shifts depth attrs only, childCount stays.
+    expect(editor.state.doc.childCount).toBe(3)
+    expect(depthsOf(editor)).toEqual([0, 0, 1])
+    editor.destroy()
+  })
+
+  it('unindents an empty taskBlock parent together with its child', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('root', 'root', 0),
+        emptyParent('p', 1, 'taskBlock'),
+        note('child', 'child', 2)
+      ]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Backspace')).toBe(true)
+    expect(editor.state.doc.childCount).toBe(3)
+    expect(depthsOf(editor)).toEqual([0, 0, 1])
+    editor.destroy()
+  })
+
+  it('unindents every child of a multi-child parent', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('root', 'root', 0),
+        emptyParent('p', 1, 'noteBlock'),
+        note('c1', 'child one', 2),
+        note('c2', 'child two', 2)
+      ]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Backspace')).toBe(true)
+    expect(depthsOf(editor)).toEqual([0, 0, 1, 1])
+    editor.destroy()
+  })
+
+  it('shifts the whole run by a plain −1: a depth-6 child comes down to 5', () => {
+    // Unindent never consults MAX_DEPTH (−1 can only move away from the
+    // cap), so a deep run member just lands one level up.
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('root', 'root', 0),
+        emptyParent('p', 1, 'noteBlock'),
+        note('deep', 'deep child', 6)
+      ]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Backspace')).toBe(true)
+    expect(depthsOf(editor)).toEqual([0, 0, 5])
+    editor.destroy()
+  })
+
+  it('empty block at depth 0 still deletes into the sibling above (fall-through unchanged)', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [note('root', 'root', 0), emptyParent('p', 0, 'noteBlock')]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Backspace')).toBe(true)
+    expect(editor.state.doc.childCount).toBe(1)
+    expect(editor.state.doc.child(0).attrs.id).toBe('root')
+    editor.destroy()
+  })
+})
+
 describe('format_subscript keymap (#511 — Ctrl+Shift, chord)', () => {
   // The config default moved format_subscript to Ctrl+Shift, (ProseMirror
   // Mod-Shift-,). format_* actions are editor-scoped — the global matchHotkey
