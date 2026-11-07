@@ -1339,3 +1339,66 @@ func TestUpdateAIFeatures_AgentWrites(t *testing.T) {
 		t.Fatalf("UpdateAIFeatures read_only: %v", err)
 	}
 }
+
+// TestUpdateAIFeatures_PreservesConcurrentExternalEdit verifies that patching
+// AI feature flags merges against fresh disk state rather than clobbering
+// concurrent external edits with stale memory.
+func TestUpdateAIFeatures_PreservesConcurrentExternalEdit(t *testing.T) {
+	app := newTestApp(t)
+	seedStaleConfigWithExternalFont(t, app, "StaleFont", "ExternalEditFont")
+
+	enabled := true
+	summaries := true
+	if err := app.UpdateAIFeatures(AIFeaturesPatch{
+		Enabled:          &enabled,
+		SummariesEnabled: &summaries,
+	}); err != nil {
+		t.Fatalf("UpdateAIFeatures: %v", err)
+	}
+	assertExternalFontSurvived(t, app, "ExternalEditFont")
+
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !loaded.AI.Features.Enabled || !loaded.AI.Features.SummariesEnabled {
+		t.Errorf("on-disk features not updated: %+v", loaded.AI.Features)
+	}
+	app.configMu.RLock()
+	mem := app.cfg.AI.Features
+	app.configMu.RUnlock()
+	if !mem.Enabled || !mem.SummariesEnabled {
+		t.Errorf("in-memory features not updated: %+v", mem)
+	}
+}
+
+// TestUpdateAIProviderConfig_PreservesConcurrentExternalEdit verifies that
+// patching a provider block merges against fresh disk state rather than
+// clobbering concurrent external edits.
+func TestUpdateAIProviderConfig_PreservesConcurrentExternalEdit(t *testing.T) {
+	app := newTestApp(t)
+	seedStaleConfigWithExternalFont(t, app, "StaleFont", "ExternalEditFont")
+
+	if err := app.UpdateAIProviderConfig("chat", AIProviderPatch{
+		ProviderType: "openai-compatible",
+		BaseURL:      "https://api.openai.com/v1",
+		Model:        "gpt-4o",
+	}); err != nil {
+		t.Fatalf("UpdateAIProviderConfig: %v", err)
+	}
+	assertExternalFontSurvived(t, app, "ExternalEditFont")
+
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if loaded.AI.Chat.Model != "gpt-4o" || loaded.AI.Chat.ProviderType != "openai-compatible" {
+		t.Errorf("on-disk chat provider not updated: %+v", loaded.AI.Chat)
+	}
+	app.configMu.RLock()
+	mem := app.cfg.AI.Chat
+	app.configMu.RUnlock()
+	if mem.Model != "gpt-4o" || mem.ProviderType != "openai-compatible" {
+		t.Errorf("in-memory chat provider not updated: %+v", mem)
+	}
+}

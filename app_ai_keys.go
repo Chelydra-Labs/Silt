@@ -20,8 +20,10 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"silt/backend/keyring"
 	"strings"
+
+	"silt/backend/config"
+	"silt/backend/keyring"
 )
 
 // keyringService is the OS-keyring service name under which Silt stores AI
@@ -75,42 +77,42 @@ func (a *App) resolveAIKeyUnlocked(user string, useKeyring bool, configKey strin
 
 // setAIAPIKeyLocked writes a provider API key. Caller MUST hold vaultMu.RLock
 // for the whole call so SwitchVault/MoveVault cannot cut over mid-write.
-// configMu is taken internally (R then W); do not hold configMu when calling.
+// Routes through mutateConfigFreshLocked so an external edit survives, and reads
+// the keyring enablement toggle from the fresh config copy captured by the mutator.
 // Used by SetAIAPIKey and CopyAIAPIKey (#641) to avoid RWMutex re-entrancy.
 func (a *App) setAIAPIKeyLocked(which, key string) error {
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
 	key = strings.TrimSpace(key)
-	// Read the toggle + derive the keyring user under configMu, then release
-	// before any keyring I/O.
-	a.configMu.RLock()
-	useKeyring := a.aiUseKeyringLocked()
 	user := a.aiKeyringUser(which)
-	a.configMu.RUnlock()
 
-	keyringStored := false
-	if useKeyring && a.keyringStore != nil {
-		if err := a.keyringStore.Set(keyringService, user, key); err == nil {
-			keyringStored = true
+	err := a.mutateConfigFreshLocked(func(fresh *config.SystemConfig) (bool, error) {
+		useKeyring := fresh.AI.UseKeyring == nil || *fresh.AI.UseKeyring
+		keyringStored := false
+		if useKeyring && a.keyringStore != nil {
+			// Keyring I/O runs under the mutator's configMu hold to atomically
+			// evaluate fresh UseKeyring against disk state; save frequency is low.
+			if err := a.keyringStore.Set(keyringService, user, key); err == nil {
+				keyringStored = true
+			}
+			// On ErrUnavailable (or any error) we fall through to config below.
 		}
-		// On ErrUnavailable (or any error) we fall through to config below.
-	}
 
-	a.configMu.Lock()
-	defer a.configMu.Unlock()
-	configKey := ""
-	if !keyringStored {
-		// Keyring off/unavailable: keep the key in config so the feature works.
-		configKey = key
-	}
-	// keyringStored → blank config (the key lives off plaintext disk now).
-	if which == "chat" {
-		a.cfg.AI.Chat.APIKey = configKey
-	} else {
-		a.cfg.AI.Embedding.APIKey = configKey
-	}
-	if err := a.saveConfigTracked(a.cfg); err != nil {
+		configKey := ""
+		if !keyringStored {
+			// Keyring off/unavailable: keep the key in config so the feature works.
+			configKey = key
+		}
+		// keyringStored → blank config (the key lives off plaintext disk now).
+		if which == "chat" {
+			fresh.AI.Chat.APIKey = configKey
+		} else {
+			fresh.AI.Embedding.APIKey = configKey
+		}
+		return true, nil
+	})
+	if err != nil {
 		return err
 	}
 	// A key change may flip a 401 list-endpoint to success (or vice versa) —
@@ -164,30 +166,26 @@ func (a *App) CopyAIAPIKey(from, to string) error {
 }
 
 // SetUseKeyring toggles whether AI provider keys are stored in the OS keyring
-// (default true) vs plaintext config.yaml (#218). When turning keyring ON with
+// (default true) vs plaintext config.yaml (#218). Routes through mutateConfigFresh
+// so an external edit to an unrelated section survives. When turning keyring ON with
 // a keyring store present and a key already in config, it migrates that key into
 // the keyring immediately so the user sees the plaintext value leave config
 // without a restart. When turning it OFF, it does NOT move keys back to config
 // (the user opted out of keyring storage; a subsequent SetAIAPIKey will land in
 // config, and a key still in the keyring remains resolvable until cleared).
 func (a *App) SetUseKeyring(on bool) error {
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.vaultPath == "" {
-		return fmt.Errorf("vault not loaded")
-	}
-	a.configMu.Lock()
-	a.cfg.AI.UseKeyring = boolPtrAI(on)
-	err := a.saveConfigTracked(a.cfg)
-	a.configMu.Unlock()
+	err := a.mutateConfigFresh(func(cfg *config.SystemConfig) (bool, error) {
+		cfg.AI.UseKeyring = boolPtrAI(on)
+		return true, nil
+	})
 	if err != nil {
 		return err
 	}
 	// Turning keyring on: opportunistically migrate any plaintext keys now so
-	// the user sees them leave config.yaml without a restart. We already hold
-	// vaultMu.R — use the locked variant (do not re-enter vaultMu).
+	// the user sees them leave config.yaml without a restart. mutateConfigFresh
+	// has released vaultMu, so call migrateAIKeysToKeyring (which takes vaultMu.RLock).
 	if on {
-		a.migrateAIKeysToKeyringLocked()
+		a.migrateAIKeysToKeyring()
 	}
 	return nil
 }

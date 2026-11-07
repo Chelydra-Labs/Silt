@@ -182,3 +182,30 @@ func TestClearMCPAudit_WithRunningHost(t *testing.T) {
 		t.Fatalf("want post-clear disk entry, got %+v", entries)
 	}
 }
+
+// TestSetLocalMCPConfig_PreservesConcurrentExternalEdit covers setting local MCP
+// config against a stale in-memory config.
+func TestSetLocalMCPConfig_PreservesConcurrentExternalEdit(t *testing.T) {
+	app := newTestApp(t)
+	seedStaleConfigWithExternalFont(t, app, "StaleFont", "ExternalEditFont")
+
+	if err := app.SetLocalMCPConfig(true, true, true, 18765); err != nil {
+		t.Fatalf("SetLocalMCPConfig: %v", err)
+	}
+	defer app.stopMCPHost()
+	assertExternalFontSurvived(t, app, "ExternalEditFont")
+
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !loaded.AI.LocalMCP.Enabled || !loaded.AI.LocalMCP.HTTPEnabled || !loaded.AI.LocalMCP.WriteEnabled || loaded.AI.LocalMCP.HTTPPort != 18765 {
+		t.Errorf("on-disk LocalMCP not updated: %+v", loaded.AI.LocalMCP)
+	}
+	app.configMu.RLock()
+	mem := app.cfg.AI.LocalMCP
+	app.configMu.RUnlock()
+	if !mem.Enabled || !mem.HTTPEnabled || !mem.WriteEnabled || mem.HTTPPort != 18765 {
+		t.Errorf("in-memory LocalMCP not updated: %+v", mem)
+	}
+}

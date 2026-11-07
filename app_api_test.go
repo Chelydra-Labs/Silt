@@ -2354,6 +2354,17 @@ func TestMutateConfigFresh_RefusesCorruptConfig(t *testing.T) {
 			_, err := a.AddCustomDictionaryWord("noteworthy")
 			return err
 		}},
+		{"UpdateAIFeatures", func(a *App) error {
+			enabled := true
+			return a.UpdateAIFeatures(AIFeaturesPatch{Enabled: &enabled})
+		}},
+		{"UpdateAIProviderConfig", func(a *App) error {
+			return a.UpdateAIProviderConfig("chat", AIProviderPatch{Model: "gpt-4o"})
+		}},
+		{"SetAIAPIKey", func(a *App) error { return a.SetAIAPIKey("chat", "key") }},
+		{"ClearAIAPIKey", func(a *App) error { return a.ClearAIAPIKey("chat") }},
+		{"SetUseKeyring", func(a *App) error { return a.SetUseKeyring(false) }},
+		{"SetLocalMCPConfig", func(a *App) error { return a.SetLocalMCPConfig(true, true, false, 0) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newTestApp(t)
@@ -2391,6 +2402,42 @@ func TestMutateConfigFresh_RefusesCorruptConfig(t *testing.T) {
 				t.Errorf("in-memory config changed on a refused update: got %+v, want %+v", after, before)
 			}
 		})
+	}
+}
+
+// TestMutateConfigFreshLocked_FailedSavePreservesMemoryConfig verifies that if
+// saveConfigTracked fails during a fresh mutation, in-memory state is not updated.
+func TestMutateConfigFreshLocked_FailedSavePreservesMemoryConfig(t *testing.T) {
+	app := newTestApp(t)
+	before, err := app.GetSystemConfig()
+	if err != nil {
+		t.Fatalf("GetSystemConfig: %v", err)
+	}
+
+	cfgPath := config.ConfigPath(app.vaultPath)
+
+	// mutateConfigFreshLocked runs mut after config.Load succeeds. Sabotaging
+	// cfgPath inside mut forces saveConfigTracked to fail after loading.
+	err = app.mutateConfigFresh(func(fresh *config.SystemConfig) (bool, error) {
+		fresh.Editor.FontSizePx = 99
+		if rmErr := os.Remove(cfgPath); rmErr != nil {
+			return false, rmErr
+		}
+		if mkErr := os.Mkdir(cfgPath, 0o700); mkErr != nil {
+			return false, mkErr
+		}
+		return true, nil
+	})
+	if err == nil {
+		t.Fatal("mutateConfigFresh should have failed when save failed")
+	}
+
+	after, err := app.GetSystemConfig()
+	if err != nil {
+		t.Fatalf("GetSystemConfig after failed save: %v", err)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Errorf("in-memory config was updated despite save failure: got %+v, want %+v", after, before)
 	}
 }
 
