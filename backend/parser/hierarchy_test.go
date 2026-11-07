@@ -9,9 +9,9 @@ import (
 // invariant "depth > 0 implies a consistent parent": for every line-managed
 // block type, a block at depth 1 parents to the preceding depth-0 block and a
 // block at depth 2 parents to the preceding depth-1 block, with no
-// violations. Region types (CODE/TABLE/DETAILS/CALLOUT) are excluded — the
-// parser never produces them at depth > 0, and DeriveHierarchy treats them as
-// transparent (see TestDeriveHierarchy_RegionBlocksTransparent).
+// violations. Region types (CODE/TABLE/DETAILS/CALLOUT) are excluded — their
+// parentage resolution is pinned separately (see
+// TestDeriveHierarchy_RegionParentage).
 func TestDeriveHierarchy_ConsistentParentEveryType(t *testing.T) {
 	types := []BlockType{BlockTask, BlockNote, BlockHeader}
 	for _, bt := range types {
@@ -35,13 +35,14 @@ func TestDeriveHierarchy_ConsistentParentEveryType(t *testing.T) {
 	}
 }
 
-// TestDeriveHierarchy_RegionBlocksTransparent pins the region-parentage
-// contract on the derivation itself: a region block between a parent and its
-// indented children must not intercept their parentage, and the region
-// itself parents to nothing — for every managed region kind. Regions are
-// transparent, matching the pre-single-derivation behavior; giving regions
-// derived depth/parentage is separately sequenced (#1003).
-func TestDeriveHierarchy_RegionBlocksTransparent(t *testing.T) {
+// TestDeriveHierarchy_RegionParentage pins the region-parentage contract
+// (#1060): a region resolves its ParentID to the nearest shallower non-region
+// ancestor (same scan as prose blocks), but never enters the ancestry stack —
+// nothing parents to a region, and a block following one still resolves to
+// its pre-region ancestor. Resolution never reports violations and never
+// rewrites depth: a region's Depth is serialization-only, so an indentation
+// jump on it is a shape, not corruption.
+func TestDeriveHierarchy_RegionParentage(t *testing.T) {
 	regionTypes := []BlockType{BlockCode, BlockTable, BlockDetails, BlockCallout}
 	const (
 		taskID   = "11111111-1111-4111-8111-111111111111"
@@ -53,16 +54,16 @@ func TestDeriveHierarchy_RegionBlocksTransparent(t *testing.T) {
 		t.Run(string(rt), func(t *testing.T) {
 			blocks := []ParsedBlock{
 				{ID: taskID, Type: BlockTask, Depth: 0},
-				{ID: regionID, Type: rt, Depth: 0},
+				{ID: regionID, Type: rt, Depth: 1},
 				{ID: replyID, Type: BlockNote, Depth: 1},
 				{ID: deepID, Type: BlockNote, Depth: 2},
 			}
 			violations := DeriveHierarchy(blocks)
 			if len(violations) != 0 {
-				t.Fatalf("transparent %s produced violations: %+v", rt, violations)
+				t.Fatalf("%s fixture produced violations: %+v", rt, violations)
 			}
-			if blocks[1].ParentID != "" {
-				t.Errorf("region %s ParentID = %q, want empty (regions parent to nothing)", rt, blocks[1].ParentID)
+			if blocks[1].ParentID != taskID {
+				t.Errorf("indented %s ParentID = %q, want the task %q (nearest shallower non-region ancestor)", rt, blocks[1].ParentID, taskID)
 			}
 			if blocks[2].ParentID != taskID {
 				t.Errorf("reply ParentID = %q, want the task %q (region must not steal it)", blocks[2].ParentID, taskID)
@@ -72,22 +73,87 @@ func TestDeriveHierarchy_RegionBlocksTransparent(t *testing.T) {
 			}
 		})
 	}
+	t.Run("region at depth 0 is a root", func(t *testing.T) {
+		blocks := []ParsedBlock{
+			{ID: taskID, Type: BlockTask, Depth: 0},
+			{ID: regionID, Type: BlockCode, Depth: 0},
+			{ID: replyID, Type: BlockNote, Depth: 1},
+		}
+		if violations := DeriveHierarchy(blocks); len(violations) != 0 {
+			t.Fatalf("violations = %+v, want none", violations)
+		}
+		if blocks[1].ParentID != "" {
+			t.Errorf("depth-0 region ParentID = %q, want empty (root)", blocks[1].ParentID)
+		}
+		if blocks[2].ParentID != taskID {
+			t.Errorf("reply ParentID = %q, want the task %q", blocks[2].ParentID, taskID)
+		}
+	})
+	t.Run("deeper block after a region parents to the pre-region ancestor", func(t *testing.T) {
+		// The stack must never hold a region id: the depth-3 block finds
+		// nothing at depth 2 (the region was not pushed) and repairs to the
+		// pre-region note — parenting it to the region is exactly the bug
+		// the old transparency rule prevented, and the new one keeps.
+		blocks := []ParsedBlock{
+			{ID: taskID, Type: BlockTask, Depth: 0},
+			{ID: replyID, Type: BlockNote, Depth: 1},
+			{ID: regionID, Type: BlockCode, Depth: 2},
+			{ID: deepID, Type: BlockNote, Depth: 3},
+		}
+		violations := DeriveHierarchy(blocks)
+		if len(violations) != 1 || violations[0].BlockID != deepID {
+			t.Fatalf("violations = %+v, want exactly the depth-3 block's jump repair (the region itself never reports)", violations)
+		}
+		if blocks[2].ParentID != replyID {
+			t.Errorf("region ParentID = %q, want the note %q", blocks[2].ParentID, replyID)
+		}
+		if blocks[3].ParentID != replyID {
+			t.Errorf("depth-3 block ParentID = %q, want the pre-region note %q (a region must never be an ancestor)", blocks[3].ParentID, replyID)
+		}
+	})
+	t.Run("region depth jump resolves silently", func(t *testing.T) {
+		blocks := []ParsedBlock{
+			{ID: taskID, Type: BlockTask, Depth: 0},
+			{ID: regionID, Type: BlockTable, Depth: 4},
+		}
+		if violations := DeriveHierarchy(blocks); len(violations) != 0 {
+			t.Fatalf("violations = %+v, want none for a region depth jump (resolution, not repair)", violations)
+		}
+		if blocks[1].ParentID != taskID {
+			t.Errorf("depth-4 region ParentID = %q, want the task %q", blocks[1].ParentID, taskID)
+		}
+	})
+	t.Run("orphan indented region stays parentless and silent", func(t *testing.T) {
+		// A hand-edited file can open indented: no block anywhere above,
+		// so the scan finds no ancestor. The silence is the load-bearing
+		// part — without the region exemption this shape would report a
+		// violation on every parse.
+		blocks := []ParsedBlock{
+			{ID: regionID, Type: BlockCode, Depth: 2},
+		}
+		if violations := DeriveHierarchy(blocks); len(violations) != 0 {
+			t.Fatalf("violations = %+v, want none for an orphan region (serialization-only depth)", violations)
+		}
+		if blocks[0].ParentID != "" {
+			t.Errorf("orphan region ParentID = %q, want empty (no shallower block exists)", blocks[0].ParentID)
+		}
+	})
 }
 
-// TestParseFileContent_RegionBlocksAreTransparent pins the same contract end
-// to end through a real parse, the shape the regression shipped in: a fenced
-// code block between a task and its indented reply must not re-parent the
-// reply, and the file must parse warning-free (the region legitimately sits
-// at column 0 — this is not a hierarchy violation).
-func TestParseFileContent_RegionBlocksAreTransparent(t *testing.T) {
+// TestParseFileContent_RegionParentage pins the same contract end to end
+// through a real parse: an indented fenced code block under a task resolves
+// its own parent to the task without re-parenting the following indented
+// reply, and the file parses warning-free — a region sitting in a task's
+// depth band is the sub-editor's normal shape, not a hierarchy violation.
+func TestParseFileContent_RegionParentage(t *testing.T) {
 	const (
 		taskID  = "5f0c0a11-0000-4000-8000-000000000001"
 		codeID  = "5f0c0a11-0000-4000-8000-000000000003"
 		replyID = "5f0c0a11-0000-4000-8000-000000000002"
 	)
 	src := "- [ ] root task <!-- id: 5f0c0a11-0000-4000-8000-000000000001 -->\n" +
-		"```go\nfmt.Println(1)\n```\n" +
-		"<!-- id: 5f0c0a11-0000-4000-8000-000000000003 -->\n" +
+		"    ```go\n    fmt.Println(1)\n    ```\n" +
+		"    <!-- id: 5f0c0a11-0000-4000-8000-000000000003 -->\n" +
 		"    - reply note <!-- id: 5f0c0a11-0000-4000-8000-000000000002 -->\n"
 
 	blocks, meta, _, _, err := ParseFileContent(src, "nb", "sec", "pg", "2026-01-01", 4)
@@ -97,14 +163,14 @@ func TestParseFileContent_RegionBlocksAreTransparent(t *testing.T) {
 	if len(blocks) != 3 || blocks[1].ID != codeID || blocks[2].ID != replyID {
 		t.Fatalf("blocks = %+v, want task, code region, reply", blocks)
 	}
-	if blocks[1].Type != BlockCode || blocks[1].ParentID != "" {
-		t.Errorf("code region (type %s) ParentID = %q, want empty", blocks[1].Type, blocks[1].ParentID)
+	if blocks[1].Type != BlockCode || blocks[1].Depth != 1 || blocks[1].ParentID != taskID {
+		t.Errorf("code region (type %s depth %d) ParentID = %q, want the task %q", blocks[1].Type, blocks[1].Depth, blocks[1].ParentID, taskID)
 	}
 	if blocks[2].ParentID != taskID {
-		t.Errorf("reply ParentID = %q, want the task %q (region must stay transparent)", blocks[2].ParentID, taskID)
+		t.Errorf("reply ParentID = %q, want the task %q (region must stay non-ancestor)", blocks[2].ParentID, taskID)
 	}
 	if hierarchyWarningPresent(meta.Warnings) {
-		t.Errorf("meta.Warnings = %v, want no hierarchy violations for a transparent region", meta.Warnings)
+		t.Errorf("meta.Warnings = %v, want no hierarchy violations for an indented region", meta.Warnings)
 	}
 }
 

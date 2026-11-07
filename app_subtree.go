@@ -548,12 +548,12 @@ func (a *App) appendTaskComment(taskID, text, author, ts, parentCommentID, reaso
 // incoming children. It locates the parent, deletes every block after it by
 // parent-graph membership (hasAncestor — the exact inverse of extractSubtree),
 // and inserts the normalized children at parentIdx+1. The delete is
-// deliberately non-contiguous: managed regions are transparent to the
-// hierarchy (no depth, no parent), so a parent's children can straddle a
-// region — a depth-run delete would stop at the region and leave a
-// post-region child on disk while the normalized list already carries it,
-// rendering the same UUID twice and breaking IndexFileBlocks on the blocks.id
-// primary key.
+// deliberately non-contiguous: a column-0 region between members is a root,
+// not a member, so a parent's children can straddle it — a depth-run delete
+// would stop at the region and leave a post-region child on disk while the
+// normalized list already carries it, rendering the same UUID twice and
+// breaking IndexFileBlocks on the blocks.id primary key. An indented region
+// is itself a member and is deleted or kept with the run like any child.
 // The incoming children keep their own depth (the serializer re-indents), and
 // their ParentID is defensively set to parentID so the re-parse resolves the
 // hierarchy correctly. Returns an error when the parent wasn't found, or when

@@ -38,6 +38,31 @@ func TestExtractSubtree(t *testing.T) {
 	}
 }
 
+// TestExtractSubtree_IndentedRegionIsMember pins the #1060 membership
+// change: an indented managed region under a task resolves its ParentID to
+// the task in the single derivation, so parent-graph descent carries it into
+// the sub-tree — the sub-editor sees the region among the task's children.
+// The column-0 counterpart (regionChildRunDoc below) stays a root and out.
+func TestExtractSubtree_IndentedRegionIsMember(t *testing.T) {
+	const (
+		taskID  = "c1d2e3f4-0000-0000-0000-000000000001"
+		codeID  = "c1d2e3f4-0000-0000-0000-000000000002"
+		replyID = "c1d2e3f4-0000-0000-0000-000000000003"
+	)
+	doc := "- [ ] parent task <!-- id: " + taskID + " -->\n" +
+		"    ```go\n    fmt.Println(1)\n    ```\n" +
+		"    <!-- id: " + codeID + " -->\n" +
+		"    - reply note <!-- id: " + replyID + " -->\n"
+	blocks, _, _, _, err := parser.ParseFileContent(doc, "W", "S", "P", "2026-07-01", 4)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	got := extractSubtree(blocks, taskID)
+	if len(got) != 2 || got[0].ID != codeID || got[1].ID != replyID {
+		t.Fatalf("subtree = %+v, want [code region, reply] — the indented region is a member", got)
+	}
+}
+
 func TestExtractSubtree_NoChildren(t *testing.T) {
 	blocks := []parser.ParsedBlock{
 		{ID: "aaaaaaaa-0000-0000-0000-000000000000", Type: parser.BlockTask, Depth: 0},
@@ -127,11 +152,13 @@ func TestSpliceSubtree_EmptyChildrenRemovesOldSubtree(t *testing.T) {
 
 // TestSpliceSubtree_DeletesByMembershipAroundRegion pins that the splice
 // deletes the child sub-tree by parent-graph membership — the exact inverse
-// of extractSubtree — not by a contiguous depth run. A managed region is
-// transparent to the hierarchy (no depth, no parent), so a task's children
-// can straddle one; a depth-run delete would stop at the region and leave
-// the post-region child on disk while the normalized list already carries
-// it, duplicating its UUID.
+// of extractSubtree — not by a contiguous depth run. Two shapes:
+//   - a column-0 region is a root (not a member): a task's members straddle
+//     it, and a depth-run delete would stop at the region and resurrect the
+//     post-region member while the normalized list already carries it;
+//   - an indented region is itself a member (#1060): omitted from the saved
+//     children it is deleted with the run; resubmitted it survives, in the
+//     submitted position, exactly once.
 func TestSpliceSubtree_DeletesByMembershipAroundRegion(t *testing.T) {
 	const (
 		parent  = "aaaaaaaa-0000-0000-0000-000000000000"
@@ -140,36 +167,65 @@ func TestSpliceSubtree_DeletesByMembershipAroundRegion(t *testing.T) {
 		reply2  = "aaaaaaaa-3333-0000-0000-000000000003"
 		sibling = "bbbbbbbb-0000-0000-0000-000000000000"
 	)
-	blocks := []parser.ParsedBlock{
-		{ID: parent, Type: parser.BlockTask, Depth: 0, CleanText: "parent"},
-		{ID: reply1, Type: parser.BlockNote, Depth: 1, ParentID: parent, CleanText: "reply one"},
-		{ID: region, Type: parser.BlockCode, CleanText: "code"},
-		{ID: reply2, Type: parser.BlockNote, Depth: 1, ParentID: parent, CleanText: "reply two"},
-		{ID: sibling, Type: parser.BlockTask, Depth: 0, CleanText: "sibling"},
-	}
-
-	// The sub-editor deletes reply two: the splice receives the fetched
-	// subtree minus it.
-	got, err := spliceSubtree(blocks, parent, blocks[1:2])
-	if err != nil {
-		t.Fatal(err)
-	}
-	seen := make(map[string]int, len(got))
-	for _, b := range got {
-		seen[b.ID]++
-	}
-	if seen[reply2] != 0 {
-		t.Errorf("deleted post-region reply still present %d time(s): %+v", seen[reply2], got)
-	}
-	for _, id := range []string{parent, reply1, region, sibling} {
-		if seen[id] != 1 {
-			t.Errorf("block %s occurs %d times, want exactly 1: %+v", id, seen[id], got)
+	t.Run("members straddle a non-member region", func(t *testing.T) {
+		blocks := []parser.ParsedBlock{
+			{ID: parent, Type: parser.BlockTask, Depth: 0, CleanText: "parent"},
+			{ID: reply1, Type: parser.BlockNote, Depth: 1, ParentID: parent, CleanText: "reply one"},
+			{ID: region, Type: parser.BlockCode, Depth: 0, CleanText: "code"},
+			{ID: reply2, Type: parser.BlockNote, Depth: 1, ParentID: parent, CleanText: "reply two"},
+			{ID: sibling, Type: parser.BlockTask, Depth: 0, CleanText: "sibling"},
 		}
-	}
-	// The region is not a member: it survives, after the replaced child run.
-	if len(got) != 4 || got[0].ID != parent || got[1].ID != reply1 || got[2].ID != region || got[3].ID != sibling {
-		t.Fatalf("order = %+v, want parent, reply one, region, sibling", got)
-	}
+
+		// The sub-editor deletes reply two: the splice receives the fetched
+		// subtree minus it.
+		got, err := spliceSubtree(blocks, parent, blocks[1:2])
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen := make(map[string]int, len(got))
+		for _, b := range got {
+			seen[b.ID]++
+		}
+		if seen[reply2] != 0 {
+			t.Errorf("deleted post-region reply still present %d time(s): %+v", seen[reply2], got)
+		}
+		for _, id := range []string{parent, reply1, region, sibling} {
+			if seen[id] != 1 {
+				t.Errorf("block %s occurs %d times, want exactly 1: %+v", id, seen[id], got)
+			}
+		}
+		// The region is not a member: it survives, after the replaced child run.
+		if len(got) != 4 || got[0].ID != parent || got[1].ID != reply1 || got[2].ID != region || got[3].ID != sibling {
+			t.Fatalf("order = %+v, want parent, reply one, region, sibling", got)
+		}
+	})
+	t.Run("indented region is a member", func(t *testing.T) {
+		blocks := []parser.ParsedBlock{
+			{ID: parent, Type: parser.BlockTask, Depth: 0, CleanText: "parent"},
+			{ID: reply1, Type: parser.BlockNote, Depth: 1, ParentID: parent, CleanText: "reply one"},
+			{ID: region, Type: parser.BlockCode, Depth: 1, ParentID: parent, CleanText: "code"},
+			{ID: reply2, Type: parser.BlockNote, Depth: 1, ParentID: parent, CleanText: "reply two"},
+			{ID: sibling, Type: parser.BlockTask, Depth: 0, CleanText: "sibling"},
+		}
+
+		// Omitted from the saved children: deleted with the run.
+		got, err := spliceSubtree(blocks, parent, blocks[1:2])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 3 || got[0].ID != parent || got[1].ID != reply1 || got[2].ID != sibling {
+			t.Fatalf("splice without the region = %+v, want parent, reply one, sibling (member region deleted)", got)
+		}
+
+		// Resubmitted: kept in the submitted position, exactly once.
+		got, err = spliceSubtree(blocks, parent, blocks[1:3])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 4 || got[0].ID != parent || got[1].ID != reply1 || got[2].ID != region || got[3].ID != sibling {
+			t.Fatalf("splice with the region = %+v, want parent, reply one, region, sibling", got)
+		}
+	})
 }
 
 // TestSaveSubtreeBlocks_PreservesSurroundingContent is the end-to-end splice
@@ -478,10 +534,11 @@ func TestSpliceSubtree_NormalizesIncomingDepths(t *testing.T) {
 }
 
 // regionChildRunDoc is the shared fixture for the region-in-child-run writer
-// regressions: a task whose children straddle a managed code region. The
-// region is transparent to the hierarchy (no depth, no parent), so both
-// replies are members of the task's sub-tree — exactly the shape where the
-// old contiguous depth-run splice disagreed with extractSubtree.
+// regressions: a task whose children straddle a managed code region written
+// at column 0. A column-0 region is a root — not a member of the task's
+// sub-tree — while both replies are, exactly the shape where the old
+// contiguous depth-run splice disagreed with extractSubtree. The indented
+// member-region counterpart is indentedRegionChildRunDoc (#1060).
 const (
 	regionRunTaskID   = "a1b2c3d4-0000-0000-0000-0000000000a1"
 	regionRunReply1   = "a1b2c3d4-0000-0000-0000-0000000000a2"
@@ -492,6 +549,24 @@ const (
 		"```go\nfmt.Println(1)\n```\n" +
 		"<!-- id: " + regionRunCodeID + " -->\n" +
 		"\t- reply two <!-- id: " + regionRunReply2 + " -->\n"
+)
+
+// indentedRegionChildRunDoc is the #1060 member-region counterpart: the code
+// region is indented into the task's depth band, so the parser's single
+// hierarchy derivation resolves its parent to the task and the region is a
+// sub-tree member — the sub-editor fetch/save and the comment writer must
+// carry it through the splice like any NOTE child, without duplication or
+// byte damage.
+const (
+	indentRunTaskID           = "a1b2c3d4-0000-0000-0000-0000000000b1"
+	indentRunReply1           = "a1b2c3d4-0000-0000-0000-0000000000b2"
+	indentRunCodeID           = "a1b2c3d4-0000-0000-0000-0000000000b3"
+	indentRunReply2           = "a1b2c3d4-0000-0000-0000-0000000000b4"
+	indentedRegionChildRunDoc = "- [ ] parent task <!-- id: " + indentRunTaskID + " -->\n" +
+		"\t- reply one <!-- id: " + indentRunReply1 + " -->\n" +
+		"\t```go\n\tfmt.Println(1)\n\t```\n" +
+		"\t<!-- id: " + indentRunCodeID + " -->\n" +
+		"\t- reply two <!-- id: " + indentRunReply2 + " -->\n"
 )
 
 // indexedBlockIDs returns the set of block ids indexed for the page, failing
@@ -593,6 +668,108 @@ func TestAppendTaskComment_RegionInsideChildRun(t *testing.T) {
 	// left the pre-comment rows (no newID).
 	ids := indexedBlockIDs(t, app, "CommentRegion")
 	if len(ids) != 5 || !ids[newID] || !ids[regionRunReply2] || !ids[regionRunCodeID] {
+		t.Errorf("indexed ids = %v, want exactly the task, both replies, the code region, and the new comment %s", ids, newID)
+	}
+}
+
+// TestSaveSubtreeBlocks_IndentedRegionMember is the #1060 sub-editor
+// round-trip: FetchSubtree returns the indented region together with the
+// replies; saving the subtree minus a reply keeps the region byte-intact
+// (fence body, indent, id line), deletes exactly the omitted member, and the
+// re-parse indexes the page without duplication.
+func TestSaveSubtreeBlocks_IndentedRegionMember(t *testing.T) {
+	app := newTestApp(t)
+	filePath := indexTestFile(t, app, "W", "S", "SubtreeRegionMember", "2026-07-01", indentedRegionChildRunDoc)
+
+	sub, err := app.FetchSubtree(indentRunTaskID)
+	if err != nil {
+		t.Fatalf("FetchSubtree: %v", err)
+	}
+	if len(sub) != 3 || sub[0].ID != indentRunReply1 || sub[1].ID != indentRunCodeID || sub[2].ID != indentRunReply2 {
+		t.Fatalf("subtree = %+v, want reply one, the indented code region, reply two — the region is a member", sub)
+	}
+
+	// Delete reply two: submit the subtree without it, region included.
+	if _, err := app.SaveSubtreeBlocks(indentRunTaskID, sub[:2]); err != nil {
+		t.Fatalf("SaveSubtreeBlocks: %v", err)
+	}
+
+	updated, _ := os.ReadFile(filePath)
+	s := string(updated)
+	if strings.Contains(s, indentRunReply2) {
+		t.Errorf("deleted reply still on disk (resurrected):\n%s", s)
+	}
+	for _, id := range []string{indentRunTaskID, indentRunReply1, indentRunCodeID} {
+		if n := strings.Count(s, id); n != 1 {
+			t.Errorf("id %s occurs %d times on disk, want exactly 1 (a duplicate UUID breaks the blocks.id primary key):\n%s", id, n, s)
+		}
+	}
+	if !strings.Contains(s, "fmt.Println(1)") {
+		t.Errorf("code region body lost in:\n%s", s)
+	}
+
+	// Round-trip: the saved bytes re-parse to the same three-block shape
+	// with the region still indented under the task, and the region stays a
+	// member on the next fetch.
+	blocks, _, _, _, err := parser.ParseFileContent(s, "W", "S", "SubtreeRegionMember", "2026-07-01", 4)
+	if err != nil {
+		t.Fatalf("re-parse: %v", err)
+	}
+	if len(blocks) != 3 {
+		t.Fatalf("re-parse got %d blocks, want 3 (task + reply + region):\n%s", len(blocks), s)
+	}
+	region := blocks[2]
+	if region.ID != indentRunCodeID || region.Type != parser.BlockCode || region.Depth != 1 || region.ParentID != indentRunTaskID {
+		t.Errorf("re-parsed region = %+v, want CODE depth 1 parented to the task", region)
+	}
+	sub2, err := app.FetchSubtree(indentRunTaskID)
+	if err != nil {
+		t.Fatalf("post-save FetchSubtree: %v", err)
+	}
+	if len(sub2) != 2 || sub2[0].ID != indentRunReply1 || sub2[1].ID != indentRunCodeID {
+		t.Fatalf("post-save subtree = %+v, want reply one + the region (round-trip membership intact)", sub2)
+	}
+
+	// The post-save index committed: exactly the three surviving blocks.
+	ids := indexedBlockIDs(t, app, "SubtreeRegionMember")
+	if len(ids) != 3 || !ids[indentRunTaskID] || !ids[indentRunReply1] || !ids[indentRunCodeID] || ids[indentRunReply2] {
+		t.Errorf("indexed ids = %v, want exactly task, reply one, and the code region", ids)
+	}
+}
+
+// TestAppendTaskComment_IndentedRegionMember pins the comment writer on the
+// member fixture: AppendTaskComment re-splices the task's whole membership —
+// now including the indented region — plus the new NOTE. Every id must land
+// exactly once in member order (reply, region, reply, new comment) and the
+// index must commit all five rows.
+func TestAppendTaskComment_IndentedRegionMember(t *testing.T) {
+	app := newTestApp(t)
+	indexTestFile(t, app, "W", "S", "CommentRegionMember", "2026-07-01", indentedRegionChildRunDoc)
+
+	newID, err := app.AppendTaskComment(indentRunTaskID, "comment beside a region", "Dana", "2026-07-07T14:22:00", "")
+	if err != nil {
+		t.Fatalf("AppendTaskComment: %v", err)
+	}
+
+	s := mustReadTaskFile(t, app, "W", "S", "CommentRegionMember")
+	for _, id := range []string{indentRunTaskID, indentRunReply1, indentRunCodeID, indentRunReply2, newID} {
+		if n := strings.Count(s, id); n != 1 {
+			t.Errorf("id %s occurs %d times on disk, want exactly 1:\n%s", id, n, s)
+		}
+	}
+	// Region must hold member position between the replies, ahead of the new
+	// comment — main's non-member semantics relocates it after the inserted run.
+	if !(strings.Index(s, indentRunReply1) < strings.Index(s, indentRunCodeID) &&
+		strings.Index(s, indentRunCodeID) < strings.Index(s, indentRunReply2) &&
+		strings.Index(s, indentRunReply2) < strings.Index(s, newID)) {
+		t.Errorf("relative order reply1 < region < reply2 < new comment broken — region lost member position:\n%s", s)
+	}
+	if !strings.Contains(s, "fmt.Println(1)") {
+		t.Errorf("code region body lost in:\n%s", s)
+	}
+
+	ids := indexedBlockIDs(t, app, "CommentRegionMember")
+	if len(ids) != 5 || !ids[newID] || !ids[indentRunCodeID] || !ids[indentRunReply2] {
 		t.Errorf("indexed ids = %v, want exactly the task, both replies, the code region, and the new comment %s", ids, newID)
 	}
 }

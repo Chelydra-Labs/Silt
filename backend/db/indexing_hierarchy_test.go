@@ -58,3 +58,30 @@ func blockParentID(blocks []parser.ParsedBlock, id string) string {
 	}
 	return ""
 }
+
+// TestTaskDerivedCounts_RegionUnderTaskUnaffected pins the counts half of the
+// #1060 contract: an indented region under a task now resolves its ParentID
+// to the task (subtree membership), but taskDerivedCounts counts NOTE and
+// TASK blocks only — a CODE region is neither, so comment and subtask counts
+// stay exactly what they were when regions were parentless.
+func TestTaskDerivedCounts_RegionUnderTaskUnaffected(t *testing.T) {
+	const regionID = "5f0c0a11-0000-4000-8000-000000000003"
+	doc := "- [ ] root task <!-- id: " + hierarchyTaskID + " -->\n" +
+		"    ```go\n    fmt.Println(1)\n    ```\n" +
+		"    <!-- id: " + regionID + " -->\n" +
+		"    - reply note <!-- id: " + hierarchyReplyID + " -->\n"
+	blocks, _, _, _, err := parser.ParseFileContent(doc, "nb", "sec", "pg", "2026-01-01", 4)
+	if err != nil {
+		t.Fatalf("ParseFileContent failed: %v", err)
+	}
+	if got := blockParentID(blocks, regionID); got != hierarchyTaskID {
+		t.Fatalf("region ParentID = %q, want the task %q (the region is in the task's sub-tree)", got, hierarchyTaskID)
+	}
+	comments, subtaskTotal, _ := taskDerivedCounts(blocks)
+	if got := comments[hierarchyTaskID]; got != 1 {
+		t.Errorf("comments[%s] = %d, want 1 (the NOTE reply only — the CODE region is not a comment)", hierarchyTaskID, got)
+	}
+	if got := subtaskTotal[hierarchyTaskID]; got != 0 {
+		t.Errorf("subtaskTotal[%s] = %d, want 0 (the region is not a subtask)", hierarchyTaskID, got)
+	}
+}
