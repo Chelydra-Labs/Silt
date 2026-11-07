@@ -363,27 +363,6 @@ CREATE TABLE files (
     indexed_at INTEGER NOT NULL  -- Unix nanoseconds
 );
 
--- Last page identity each indexed file published, keyed by the same absolute
--- path as `files` (pruned with it). Blocks carry stable IDs, so a page moving
--- to a new frontmatter identity can be reconciled by following them — except
--- for a file that carried no blocks at its last index, which leaves no ID
--- evidence. This row is the path-keyed witness that the old loc belonged to
--- that file, letting the re-index clear the abandoned page_core/page_types/
--- page_properties rows in the same transaction. It is also the ownership
--- witness for the block-evidence reconcile: a loc that some path still
--- publishes is a live page, so a whole-page move between pages (or two files
--- sharing one block ID) can never clear it. The startup scan upserts it for
--- every scanned file — warm-skipped ones included — so every file on disk has
--- an owner. Re-derivable from markdown: rewritten on every index.
-CREATE TABLE file_page_locs (
-    path     TEXT PRIMARY KEY,
-    source   TEXT NOT NULL,
-    notebook TEXT NOT NULL,
-    section  TEXT NOT NULL,
-    page     TEXT NOT NULL
-);
-CREATE INDEX idx_file_page_locs_loc ON file_page_locs(source, notebook, section, page);
-
 -- Covered indexes for query performance.
 -- idx_blocks_src_file is source-aware (source leads) so same-named notebooks
 -- across roots don't collide.
@@ -430,17 +409,37 @@ CREATE INDEX idx_page_properties_type_prop ON page_properties(type_name, propert
 -- remains the tag query path (SPECS.md §11.6/§11.7). Separate from
 -- page_properties (type-scoped) and tags by design; composing the three is a
 -- read-side concern. Source-scoped (mirrors page_types/blocks).
--- The table also serves as the page-inventory projection: every index path
+-- The table also serves as the page inventory projection: every index path
 -- guarantees a row (identity-only for block-only paths), so it answers
 -- "which pages exist" — including zero-block files that a DISTINCT over
 -- blocks cannot see (page inventory reads, wiki-link resolution, title
 -- search). The delete/remove paths drop the row with the rest of the
--- projection; a restart-safe one-shot backfill (page_core_blocks_backfill
--- marker) fills identities from pre-existing blocks rows on upgrade, and every
--- startup/link scan then reconciles the table against the files it actually
--- found: a row no scanned file publishes is a ghost from a pre-inventory build
--- (or an identity an earlier move abandoned) and is dropped, while scanned
--- locs missing a row get an identity-only one.
+-- projection, and a restart-safe one-shot backfill (page_core_blocks_backfill
+-- marker) fills identities from pre-existing blocks rows on upgrade.
+--
+-- Inventory contract (ReconcilePageInventory). A page loc is live on exactly
+-- two evidence sources, combined only at a scan boundary:
+--   1. a loc published by a file the scan resolved (warm-skipped included), and
+--   2. a loc carrying block rows.
+-- Adding is unconditional: live locs get an identity-only row (INSERT OR
+-- IGNORE, so a published core row is never clobbered) and block-evidence locs
+-- are (re-)materialized the same way. Deleting happens ONLY on a complete scan
+-- — the walk entered every directory and every discovered file parsed — and
+-- removes the projection rows of locs with neither evidence. Blocks are never
+-- touched, and a loc with block rows keeps its projections even if the scan
+-- could not see it: the deliverable is one answer shared by the inventory and
+-- every blocks-backed lookup. Completeness is derived by one default-deny
+-- helper from the walk's error channel (deliberate skips — symlinks, dot-dirs,
+-- attachments/ — never arm deletion), so a transient unreadable file or
+-- subtree makes the pass add-only and the heal waits for the next open.
+--
+-- Residual staleness (accepted): an in-place external identity edit
+-- (frontmatter page:/section:/notebook:) leaves the old loc's projections live
+-- until the next vault open or linked re-scan. Silt's own rename/move/delete
+-- paths still clear synchronously, so only an external editor can author this
+-- state, and the index is re-derived at scan boundaries. A dead loc that still
+-- carries blocks is kept forever: the block row is the pre-existing defect, not
+-- an inventory decision.
 CREATE TABLE page_core (
     source   TEXT NOT NULL,
     notebook TEXT NOT NULL,
@@ -1414,7 +1413,10 @@ no-ops. Pages whose NAME matches every term surface as page-level results
 (block id empty, snippet = highlighted title) ranked above all body hits —
 including zero-block pages, which is what makes an empty page findable by
 name; this leg splits the query on non-alphanumeric runes instead of squashing
-them per word, so typing "2026-06-13" finds the page of that name. Block-scoped filters (type,
+them per word, so typing "2026-06-13" finds the page of that name. A name whose
+split parts are all single characters ("R&D", "C++") has no usable term, so the
+leg falls back to the escaped raw query — typing a page's own name still finds
+it. Block-scoped filters (type,
 tag) and task-attribute filters suppress the page leg. A page-level row's
 `clean_content` is the page name and its snippet is that raw name with
 `<mark>` ranges injected — consumers must HTML-escape the snippet and then
@@ -1437,12 +1439,16 @@ are `<sub>`/`<sup>` HTML.
 
 **Global replace (Ctrl+Shift+G)** — `GlobalReplaceModal`
 previews FTS5 matches grouped by page (before→after), with per-match + per-page
-accept. Apply iterates accepted pages: `FetchPageBlocks` → replace in
-`clean_text`/`raw_text` → `SaveFileBlocks` (atomic, self-write-tracked,
-re-indexes). A session revert log records the original blocks per page;
-"Undo last" restores. Applies to in-vault pages only; linked-notebook
-pages are excluded from bulk replace (they remain fully editable in place —
-see the linked-notebook section below).
+accept. Apply iterates accepted pages through the PROGRAMMATIC block write:
+`FetchPageBlocksProgrammatic` → replace in `clean_text` only →
+`SaveFileBlocksProgrammatic` (atomic, self-write-tracked, re-indexes).
+`raw_text` is deliberately left intact — rewriting it would strip bullet and
+checkbox prefixes, silently corrupting the markdown the preview never promised
+to touch; the block fields are re-derived from the edited `clean_text` on the
+next parse. A session revert log records the original blocks per page;
+"Restore last apply" restores. Applies to in-vault pages only;
+linked-notebook pages are excluded from bulk replace (they remain fully
+editable in place — see the linked-notebook section below).
 
 **Inline spellcheck** — `frontend/src/lib/editor/spellcheck/`:
 `dictionary.ts` wraps `typo-js` (pure-JS Hunspell, BSD). The default `en-US`

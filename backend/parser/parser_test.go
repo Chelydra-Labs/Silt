@@ -1464,15 +1464,18 @@ func TestWalkMarkdown_SelfReferencingSymlinkDoesNotLoop(t *testing.T) {
 		// Some platforms / CI runners disable symlink creation; skip gracefully.
 		t.Skipf("cannot create symlink: %v", err)
 	}
-	files, warnings, err := WalkMarkdown(dir)
+	files, skips, walkErrs, err := WalkMarkdown(dir)
 	if err != nil {
 		t.Fatalf("WalkMarkdown: %v", err)
 	}
 	if len(files) != 1 {
 		t.Errorf("expected 1 real file (symlink not followed), got %d: %v", len(files), files)
 	}
-	if len(warnings) == 0 {
-		t.Error("expected a symlink warning, got none")
+	if len(skips) == 0 {
+		t.Error("expected a symlink skip, got none")
+	}
+	if len(walkErrs) != 0 {
+		t.Errorf("a deliberate skip must not report a walk error: %v", walkErrs)
 	}
 }
 
@@ -1488,15 +1491,18 @@ func TestWalkMarkdown_MutualSymlinkCycleIsSkipped(t *testing.T) {
 	if err := os.Symlink(a, b); err != nil {
 		t.Skipf("cannot create symlink: %v", err)
 	}
-	files, warnings, err := WalkMarkdown(dir)
+	files, skips, walkErrs, err := WalkMarkdown(dir)
 	if err != nil {
 		t.Fatalf("WalkMarkdown: %v", err)
 	}
 	if len(files) != 1 {
 		t.Errorf("expected only the 1 real file, got %d: %v", len(files), files)
 	}
-	if len(warnings) < 2 {
-		t.Errorf("expected >=2 symlink warnings (one per symlink), got %d", len(warnings))
+	if len(skips) < 2 {
+		t.Errorf("expected >=2 symlink skips (one per symlink), got %d", len(skips))
+	}
+	if len(walkErrs) != 0 {
+		t.Errorf("a deliberate skip must not report a walk error: %v", walkErrs)
 	}
 }
 
@@ -1509,7 +1515,7 @@ func TestWalkMarkdown_OneHopSymlinkIsSkippedWithWarning(t *testing.T) {
 	if err := os.Symlink(filepath.Join(dir, "Real"), link); err != nil {
 		t.Skipf("cannot create symlink: %v", err)
 	}
-	files, warnings, err := WalkMarkdown(dir)
+	files, skips, walkErrs, err := WalkMarkdown(dir)
 	if err != nil {
 		t.Fatalf("WalkMarkdown: %v", err)
 	}
@@ -1517,15 +1523,21 @@ func TestWalkMarkdown_OneHopSymlinkIsSkippedWithWarning(t *testing.T) {
 	if len(files) != 1 {
 		t.Errorf("expected 1 file (real target only), got %d: %v", len(files), files)
 	}
-	foundSymlinkWarn := false
-	for _, w := range warnings {
+	foundSymlinkSkip := false
+	for _, w := range skips {
 		if strings.Contains(w, "symlink not followed") {
-			foundSymlinkWarn = true
+			foundSymlinkSkip = true
 			break
 		}
 	}
-	if !foundSymlinkWarn {
-		t.Errorf("expected a 'symlink not followed' warning, got %v", warnings)
+	if !foundSymlinkSkip {
+		t.Errorf("expected a 'symlink not followed' skip, got %v", skips)
+	}
+	// The skip must stay off the walk-error channel, or it would permanently
+	// gate the inventory reconcile's destructive half in any vault with a
+	// symlink.
+	if len(walkErrs) != 0 {
+		t.Errorf("a deliberate skip must not report a walk error: %v", walkErrs)
 	}
 }
 
@@ -1541,11 +1553,11 @@ func TestScanWorkspace_NoCrashOnSymlinkLoop(t *testing.T) {
 	}
 	done := make(chan struct{})
 	var results []ScanResult
-	var warnings []string
+	var skips []string
 	var scanErr error
 	go func() {
 		defer close(done)
-		results, warnings, scanErr = ScanWorkspace(dir, 4)
+		results, skips, _, scanErr = ScanWorkspace(dir, 4)
 	}()
 	select {
 	case <-done:
@@ -1558,8 +1570,8 @@ func TestScanWorkspace_NoCrashOnSymlinkLoop(t *testing.T) {
 	if len(results) != 1 {
 		t.Errorf("expected 1 result, got %d", len(results))
 	}
-	if len(warnings) == 0 {
-		t.Error("expected symlink warnings, got none")
+	if len(skips) == 0 {
+		t.Error("expected symlink skips, got none")
 	}
 }
 
@@ -1567,7 +1579,7 @@ func BenchmarkScanWorkspace_1000Files(b *testing.B) {
 	for range b.N {
 		dir := b.TempDir()
 		writeBenchVault(b, dir, 1000)
-		_, _, err := ScanWorkspace(dir, 4)
+		_, _, _, err := ScanWorkspace(dir, 4)
 		if err != nil {
 			b.Fatalf("ScanWorkspace: %v", err)
 		}
@@ -1595,7 +1607,7 @@ func TestScanWorkspace_BudgetRegression(t *testing.T) {
 	var best time.Duration
 	for i := range runs {
 		start := time.Now()
-		_, _, err := ScanWorkspace(dir, 4)
+		_, _, _, err := ScanWorkspace(dir, 4)
 		elapsed := time.Since(start)
 		if err != nil {
 			t.Fatalf("ScanWorkspace: %v", err)

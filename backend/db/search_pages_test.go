@@ -73,7 +73,7 @@ func seedSearchPages(t *testing.T) *DatabaseManager {
 
 	// Zero-block page: a real .md file whose body has no managed blocks. Only
 	// the projection path can register it — this is the findability contract.
-	if err := dm.IndexFileWithProjection("", "vault", "Work", "Projects", "Quiet Empty Page",
+	if err := dm.IndexFileWithProjection("vault", "Work", "Projects", "Quiet Empty Page",
 		nil, nil, "", nil, PageCoreFields{}); err != nil {
 		t.Fatalf("index empty page: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestSearch_TitleHitsPagingTiesAcrossSources(t *testing.T) {
 
 	// Rowid order (vault first) deliberately differs from source order.
 	for _, source := range []string{"vault", "linked:test"} {
-		if err := dm.IndexFileWithProjection("", source, "NB", "Sec", "Shared Name",
+		if err := dm.IndexFileWithProjection(source, "NB", "Sec", "Shared Name",
 			nil, nil, "", nil, PageCoreFields{}); err != nil {
 			t.Fatalf("index %s: %v", source, err)
 		}
@@ -583,7 +583,7 @@ func TestSearch_UnicodeOwnerAndTitleExactCase(t *testing.T) {
 	if err := dm.IndexFileBlocks("vault", "Work", "Projects", "Release Notes", release, nil); err != nil {
 		t.Fatalf("index release page: %v", err)
 	}
-	if err := dm.IndexFileWithProjection("", "vault", "Work", "Projects", "MÜNCHEN",
+	if err := dm.IndexFileWithProjection("vault", "Work", "Projects", "MÜNCHEN",
 		nil, nil, "", nil, PageCoreFields{}); err != nil {
 		t.Fatalf("index accented page: %v", err)
 	}
@@ -681,7 +681,7 @@ func TestSearch_SearchBlocksBudgetExcludesTitleHits(t *testing.T) {
 	// 60 zero-block pages whose NAMES all contain the query term.
 	for i := 1; i <= 60; i++ {
 		page := fmt.Sprintf("2026 Daily %02d", i)
-		if err := dm.IndexFileWithProjection("", "vault", "Journal", "", page,
+		if err := dm.IndexFileWithProjection("vault", "Journal", "", page,
 			nil, nil, "", nil, PageCoreFields{}); err != nil {
 			t.Fatalf("index title page %s: %v", page, err)
 		}
@@ -747,7 +747,7 @@ func TestSearch_TitleHitsRankExactThenPrefix(t *testing.T) {
 	dm := newTestDB(t)
 
 	for _, page := range []string{"AAA Old Agenda", "Agenda Archive", "Agenda"} {
-		if err := dm.IndexFileWithProjection("", "vault", "NB", "", page,
+		if err := dm.IndexFileWithProjection("vault", "NB", "", page,
 			nil, nil, "", nil, PageCoreFields{}); err != nil {
 			t.Fatalf("index %s: %v", page, err)
 		}
@@ -812,8 +812,10 @@ func TestSearch_TitleRankExactPageSurvivesCap(t *testing.T) {
 func TestSearch_TitleHitsMatchSeparatorNamedPages(t *testing.T) {
 	dm := newTestDB(t)
 
-	// Decoys contain every term of their query but sort first alphabetically, so
-	// only the exact-name rank tier can put the real page on top.
+	// Decoys contain every term of their query and sort first alphabetically, so
+	// the rank tiers — not the alphabetical fallback — decide the winner. (The
+	// exact-vs-prefix distinction is pinned separately; see
+	// TestSearch_TitleRankExactBeatsAlphabeticalPrefix.)
 	pages := []string{
 		"2026-06-13",
 		"0099 Old 2026-06-13 Copy",
@@ -823,7 +825,7 @@ func TestSearch_TitleHitsMatchSeparatorNamedPages(t *testing.T) {
 		"AAA api-v2 notes",
 	}
 	for _, page := range pages {
-		if err := dm.IndexFileWithProjection("", "vault", "NB", "", page,
+		if err := dm.IndexFileWithProjection("vault", "NB", "", page,
 			nil, nil, "", nil, PageCoreFields{}); err != nil {
 			t.Fatalf("index %s: %v", page, err)
 		}
@@ -854,7 +856,7 @@ func TestSearch_TitleRankEscapesLikeMetacharacters(t *testing.T) {
 	dm := newTestDB(t)
 
 	for _, page := range []string{"100!Kilo", "100%Kilo"} {
-		if err := dm.IndexFileWithProjection("", "vault", "NB", "", page,
+		if err := dm.IndexFileWithProjection("vault", "NB", "", page,
 			nil, nil, "", nil, PageCoreFields{}); err != nil {
 			t.Fatalf("index %s: %v", page, err)
 		}
@@ -909,5 +911,119 @@ func TestSearch_InvalidDateBoundRejected(t *testing.T) {
 		if _, err := dm.SearchBlocksPaged("postgres", 0, 50, f); err == nil {
 			t.Fatalf("malformed date bound accepted: %+v", f)
 		}
+	}
+}
+
+// TestSearch_TitleHitsMatchSingleCharPartNames pins the raw-query fallback: a
+// name whose separator-split parts are all single characters ("R&D", "Q&A",
+// "P&L", "C++", "A-B") yields no title term, so the leg must fall back to the
+// escaped raw query or typing the page's own name finds nothing. The decoys are
+// substring matches that sort first alphabetically, so only the exact-name tier
+// can put the real page on top.
+func TestSearch_TitleHitsMatchSingleCharPartNames(t *testing.T) {
+	dm := newTestDB(t)
+
+	names := []string{"R&D", "Q&A", "P&L", "C++", "A-B"}
+	for _, page := range names {
+		if err := dm.IndexFileWithProjection("vault", "NB", "", page,
+			nil, nil, "", nil, PageCoreFields{}); err != nil {
+			t.Fatalf("index %s: %v", page, err)
+		}
+		if err := dm.IndexFileWithProjection("vault", "NB", "", "AAA "+page+" notes",
+			nil, nil, "", nil, PageCoreFields{}); err != nil {
+			t.Fatalf("index decoy for %s: %v", page, err)
+		}
+	}
+
+	for _, query := range names {
+		res, err := dm.SearchBlocksPaged(query, 0, 50, SearchFilters{})
+		if err != nil {
+			t.Fatalf("SearchBlocksPaged(%q): %v", query, err)
+		}
+		if res.Total == 0 {
+			t.Fatalf("query %q found no page named for it", query)
+		}
+		if res.Results[0].Page != query {
+			t.Errorf("query %q ranked %q first, want the exactly-named page", query, res.Results[0].Page)
+		}
+		if !strings.Contains(res.Results[0].Snippet, "<mark>") {
+			t.Errorf("query %q: title snippet not highlighted: %q", query, res.Results[0].Snippet)
+		}
+	}
+
+	// One character is not a name search: the fallback stays a no-op so a
+	// single keystroke cannot match every page containing that character.
+	res, err := dm.SearchBlocksPaged("R", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(single char): %v", err)
+	}
+	if res.Total != 0 {
+		t.Errorf("single-character query matched %d title row(s), want 0", res.Total)
+	}
+}
+
+// TestSearch_TitleRankExactBeatsAlphabeticalPrefix pins the exact-vs-prefix arm
+// distinctly: an exactly-named page in an alphabetically LATER notebook must
+// still outrank an earlier notebook's prefix match. Every other "exact" fixture
+// is also a prefix match in the same notebook, so deleting only the exact CASE
+// arm would leave them green; this fixture reverses order without it.
+func TestSearch_TitleRankExactBeatsAlphabeticalPrefix(t *testing.T) {
+	dm := newTestDB(t)
+
+	for _, page := range []struct{ notebook, name string }{
+		{"Zulu", "Agenda"},
+		{"Alpha", "Agenda Archive"},
+	} {
+		if err := dm.IndexFileWithProjection("vault", page.notebook, "", page.name,
+			nil, nil, "", nil, PageCoreFields{}); err != nil {
+			t.Fatalf("index %s/%s: %v", page.notebook, page.name, err)
+		}
+	}
+
+	res, err := dm.SearchBlocksPaged("agenda", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 2 {
+		t.Fatalf("expected both pages as candidates, got %+v", res.Results)
+	}
+	if res.Results[0].Page != "Agenda" || res.Results[0].Notebook != "Zulu" {
+		t.Errorf("ranked %q/%q first, want the exactly-named Zulu/Agenda above the alphabetical prefix Alpha/Agenda Archive",
+			res.Results[0].Notebook, res.Results[0].Page)
+	}
+	if res.Results[1].Page != "Agenda Archive" {
+		t.Errorf("second result = %q, want the prefix match", res.Results[1].Page)
+	}
+}
+
+// TestSearch_TitleHitsAlphabeticalFlowAcrossSources pins the tiebreak placement:
+// match quality and the alphabetical (notebook, section, page) flow lead, and
+// source is the tail tiebreak only. Source-leading would group every linked hit
+// before every vault hit and could crowd vault rows past the flat cap.
+func TestSearch_TitleHitsAlphabeticalFlowAcrossSources(t *testing.T) {
+	dm := newTestDB(t)
+
+	// source-leading order would put the linked row first; the display path
+	// order puts the vault row (Alpha) first.
+	for _, row := range []struct{ source, notebook string }{
+		{"linked:test", "Zulu"},
+		{"vault", "Alpha"},
+	} {
+		if err := dm.IndexFileWithProjection(row.source, row.notebook, "", "Agenda",
+			nil, nil, "", nil, PageCoreFields{}); err != nil {
+			t.Fatalf("index %s/%s: %v", row.source, row.notebook, err)
+		}
+	}
+
+	res, err := dm.SearchBlocksPaged("agenda", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 2 {
+		t.Fatalf("expected both pages as candidates, got %+v", res.Results)
+	}
+	if res.Results[0].Notebook != "Alpha" || res.Results[1].Notebook != "Zulu" {
+		t.Errorf("cross-source title order = [%s %s], want alphabetical flow [Alpha Zulu]",
+			res.Results[0].Notebook, res.Results[1].Notebook)
 	}
 }

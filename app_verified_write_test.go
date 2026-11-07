@@ -305,7 +305,7 @@ func TestVerifiedWrite_BackupsNeverIndexed(t *testing.T) {
 		}
 	}
 	for _, root := range []string{vaultRoot, linkedRoot} {
-		files, _, err := parser.WalkMarkdown(root)
+		files, _, _, err := parser.WalkMarkdown(root)
 		if err != nil {
 			t.Fatalf("WalkMarkdown(%s): %v", root, err)
 		}

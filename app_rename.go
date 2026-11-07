@@ -184,7 +184,7 @@ func (a *App) indexFile(source, notebook, section, page string, blocks []parser.
 	}
 	var err error
 	a.coordinator.WithDBWrite(func() {
-		err = a.db.IndexFileWithProjection(filePath, source, notebook, section, page, blocks, meta.Tags, typeID, props, core, warnings...)
+		err = a.db.IndexFileWithProjection(source, notebook, section, page, blocks, meta.Tags, typeID, props, core, warnings...)
 	})
 	if err != nil {
 		log.Printf("indexFile: IndexFileWithProjection failed for %s/%s/%s: %v", notebook, section, page, err)

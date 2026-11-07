@@ -242,29 +242,17 @@ func (dm *DatabaseManager) initSchema() error {
 		return fmt.Errorf("failed to create files table: %w", err)
 	}
 
-	// File Page Locs Table — the last page identity each indexed file
-	// published, keyed by absolute path (the same path space as `files`, so
-	// the two are pruned together). A re-index can only prove a page moved by
-	// following block IDs, which is blind to a file that carried no blocks at
-	// its last index; this record is the path-keyed evidence that the file
-	// owned the loc its page_core/page_types/page_properties rows live at, so
-	// a frontmatter identity edit can clear the abandoned loc instead of
-	// leaving it in the inventory forever. Re-derivable from the markdown
-	// (cardinal rule 4): the row is rewritten on every index, and an absent
-	// row only costs one skipped reconcile on upgrade.
-	createFilePageLocsTable := `
-	CREATE TABLE IF NOT EXISTS file_page_locs (
-		path     TEXT PRIMARY KEY,
-		source   TEXT NOT NULL,
-		notebook TEXT NOT NULL,
-		section  TEXT NOT NULL,
-		page     TEXT NOT NULL
-	);`
-	if _, err := db.Exec(createFilePageLocsTable); err != nil {
-		return fmt.Errorf("failed to create file_page_locs table: %w", err)
-	}
-	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_file_page_locs_loc ON file_page_locs(source, notebook, section, page)`); err != nil {
-		return fmt.Errorf("failed to create file_page_locs loc index: %w", err)
+	// Removed table: file_page_locs held each indexed file's last published
+	// page identity so an in-place frontmatter identity edit could be cleared
+	// synchronously. The inventory is now reconciled set-wise against the scan
+	// (ReconcilePageInventory), which is the only complete view of the files on
+	// disk — the per-file record was evidence the scan already carries, and its
+	// incremental clears produced more drift than they healed. The table never
+	// shipped in a release, so there is no data to migrate: drop it on open
+	// (idempotent) so a database created by an earlier build of this branch
+	// cannot keep a table nothing reads.
+	if _, err := db.Exec(`DROP TABLE IF EXISTS file_page_locs`); err != nil {
+		return fmt.Errorf("failed to drop retired file_page_locs table: %w", err)
 	}
 
 	// Page Links Table — the reverse index of [[target]] wiki links parsed off

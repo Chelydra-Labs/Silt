@@ -51,27 +51,32 @@ type ScanResult struct {
 //
 // filepath.WalkDir does not follow symlinks, so a symlink loop (e.g.
 // Work -> ../Work) cannot cause infinite recursion on its own. We make the
-// skip explicit AND surface it as a warning so the user knows the symlinked
-// directory's contents are not indexed (and so a symlink pointing outside the
-// vault is skipped deliberately rather than silently). System/hidden
-// directories (leading ".") are pruned.
+// skip explicit AND surface it so the user knows the symlinked directory's
+// contents are not indexed (and so a symlink pointing outside the vault is
+// skipped deliberately rather than silently). System/hidden directories
+// (leading ".") are pruned.
 //
-// Returns the markdown file list, non-fatal warnings (per symlink/perms
-// errors), and a fatal error only if the root cannot be walked at all.
-func WalkMarkdown(root string) (files []string, warnings []string, err error) {
+// skips and walkErrs are separate channels because they mean different things
+// to callers gating destructive work on scan completeness: a skip is content
+// that is outside the index by design (never indexable, so its absence proves
+// nothing), while a walk error is a subtree the walker could not enter and
+// therefore could not see (its absence proves nothing either — but in the
+// dangerous direction). The fatal error is non-nil only when the root itself
+// cannot be walked.
+func WalkMarkdown(root string) (files []string, skips []string, walkErrs []string, err error) {
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			// Surface walker errors (permission denied, removed during
-			// traversal, etc.) as warnings rather than aborting the whole
-			// scan — one unreadable subtree shouldn't block startup.
-			warnings = append(warnings, fmt.Sprintf("%s: %v", path, walkErr))
+			// traversal, etc.) rather than aborting the whole scan — one
+			// unreadable subtree shouldn't block startup.
+			walkErrs = append(walkErrs, fmt.Sprintf("%s: %v", path, walkErr))
 			return nil
 		}
 		// Explicit symlink handling: WalkDir already does not follow them,
 		// but skipping silently leaves the user wondering why a symlinked
 		// folder's notes never appear. Warn so it's discoverable.
 		if d.Type()&fs.ModeSymlink != 0 {
-			warnings = append(warnings, fmt.Sprintf("%s: symlink not followed", path))
+			skips = append(skips, fmt.Sprintf("%s: symlink not followed", path))
 			return nil
 		}
 		if d.IsDir() {
@@ -97,21 +102,22 @@ func WalkMarkdown(root string) (files []string, warnings []string, err error) {
 		}
 		return nil
 	})
-	return files, warnings, err
+	return files, skips, walkErrs, err
 }
 
 // ScanWorkspace scans the vault directory recursively and returns all parsed
-// file blocks and metadata, plus walk-level warnings (symlink skips,
-// permission errors) for the caller to surface as init-warnings (#32).
-func ScanWorkspace(vaultPath string, spacesPerTab int) (results []ScanResult, walkWarnings []string, err error) {
+// file blocks and metadata, plus the walk's deliberate skips and walk errors
+// (see WalkMarkdown) for the caller to surface as init-warnings (#32) and to
+// gate destructive inventory work on.
+func ScanWorkspace(vaultPath string, spacesPerTab int) (results []ScanResult, skips []string, walkErrs []string, err error) {
 	// 1. Gather all markdown files via the shared symlink-aware walker.
-	files, walkWarnings, err := WalkMarkdown(vaultPath)
+	files, skips, walkErrs, err := WalkMarkdown(vaultPath)
 	if err != nil {
-		return nil, walkWarnings, fmt.Errorf("failed to scan directories: %w", err)
+		return nil, skips, walkErrs, fmt.Errorf("failed to scan directories: %w", err)
 	}
 
 	if len(files) == 0 {
-		return nil, walkWarnings, nil
+		return nil, skips, walkErrs, nil
 	}
 
 	// 2. Parse files in parallel using a worker pool
@@ -155,7 +161,7 @@ func ScanWorkspace(vaultPath string, spacesPerTab int) (results []ScanResult, wa
 		collected = append(collected, res)
 	}
 
-	return collected, walkWarnings, nil
+	return collected, skips, walkErrs, nil
 }
 
 // StandaloneTasksNotebook is the synthetic notebook name under which the

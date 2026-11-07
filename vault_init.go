@@ -185,11 +185,14 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// Runs before the scan so the indexer sees the new model. Idempotent.
 	migrationWarnings := vault.MigratePerDayFiles(vaultPath, a.spacesPerTab)
 
-	results, walkWarnings, err := parser.ScanWorkspace(vaultPath, a.spacesPerTab)
+	results, walkSkips, walkErrs, err := parser.ScanWorkspace(vaultPath, a.spacesPerTab)
 	if err != nil {
 		_ = dbMgr.Close()
 		return fmt.Errorf("failed to scan workspace: %w", err)
 	}
+	// Both walk channels are user-facing init warnings; only walkErrs arms the
+	// destructive half of the inventory reconcile (see scanInventory).
+	walkWarnings := append(append([]string{}, walkSkips...), walkErrs...)
 
 	// Append the standalone-tasks file (<vault>/.silt/tasks.md) if it exists.
 	// WalkMarkdown skips dot-directories so this targeted read is the only
@@ -298,40 +301,24 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	}
 
 	// Page inventory reconcile: page_core predates its use as the inventory, so
-	// an upgraded vault can carry locs at identities no file publishes any more
-	// — unreachable by the block-evidence reconcile (a ghost has no blocks to
-	// follow) and by PruneStaleFiles (the path still exists under its new loc).
+	// an upgraded vault can carry locs at identities no file publishes any more.
 	// The scan is the authoritative on-disk inventory — warm-skipped files
 	// included — so it is the one place that can tell which locs are real. It
-	// also records every warm-skipped file's loc, which is what lets the
-	// abandonment guard distinguish a live page from an abandoned identity.
-	inventoryScans := make([]db.PageInventoryScan, 0, len(results))
-	for _, res := range results {
-		if res.Notebook == "" || res.Page == "" {
-			// Unreadable or unresolvable this pass: the loc is unknown, so keep
-			// whatever the path's record publishes — the file is still on disk,
-			// and dropping its row would hide it until a later scan can read it.
-			inventoryScans = append(inventoryScans, db.PageInventoryScan{Path: res.Path, Unresolved: true})
-			continue
-		}
-		source := res.Source
-		if source == "" {
-			source = "vault"
-		}
-		inventoryScans = append(inventoryScans, db.PageInventoryScan{
-			Path: res.Path,
-			Loc:  db.PageLoc{Source: source, Notebook: res.Notebook, Section: res.Section, Page: res.Page},
-		})
-	}
-	if removed, rerr := dbMgr.ReconcilePageInventory("vault", inventoryScans); rerr != nil {
+	// deletes only when the pass was complete: a walk error or an unreadable
+	// file means pages may exist that this scan could not see.
+	live, complete := scanInventory(results, walkErrs, "vault")
+	if removed, rerr := dbMgr.ReconcilePageInventory("vault", live, complete); rerr != nil {
 		log.Printf("initializeVaultServices: ReconcilePageInventory: %v", rerr)
 	} else if removed > 0 {
 		log.Printf("initializeVaultServices: page inventory reconciled (%d abandoned identities dropped)", removed)
+	} else if !complete {
+		log.Printf("initializeVaultServices: page inventory heal deferred (scan was incomplete)")
 	}
 
 	// Merge the indexer's per-file skip list into the warning stream.
 	allWarnings = append(allWarnings, skipped...)
-	// Surface walk-level warnings (symlink skips, permission errors) from #32.
+	// Surface walk-level warnings (deliberate symlink skips, permission errors)
+	// from #32.
 	allWarnings = append(allWarnings, walkWarnings...)
 	allWarnings = append(allWarnings, migrationWarnings...)
 

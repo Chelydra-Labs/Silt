@@ -287,102 +287,101 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 	if err := filters.validateTaskFilters(); err != nil {
 		return parser.SearchResult{}, err
 	}
-	terms := searchTerms(query)
-	if len(terms) == 0 {
-		return parser.SearchResult{Results: []parser.TaskResult{}, Total: 0, Offset: offset, Limit: limit}, nil
-	}
+	// The body leg is an FTS5 query, so a query with no tokenizable term (e.g.
+	// "C++" squashes to a single character) has nothing to match here — but a
+	// page may still be NAMED exactly that, so the page-title leg runs either
+	// way. Only a totally blank query short-circuits above.
 	fts := buildFTSQuery(query)
 
-	// Build the dynamic WHERE + ORDER BY from the filters. All user input is
-	// parameterized (never string-interpolated) — a synced vault's tag/notebook
-	// name can't inject SQL.
-	var where []string
-	var args []any
-	where = append(where, "blocks_fts MATCH ?")
-	args = append(args, fts)
-	if filters.Notebook != "" {
-		where = append(where, "b.notebook = ?")
-		args = append(args, filters.Notebook)
-	}
-	if filters.Section != "" {
-		where = append(where, "b.section = ?")
-		args = append(args, filters.Section)
-	}
-	if filters.Type != "" {
-		where = append(where, "b.type = ?")
-		args = append(args, filters.Type)
-	}
-	if filters.Tag != "" {
-		// Match the exact tag OR any descendant (hierarchical: "work" matches
-		// "work/project"). IN-subquery keeps it one clause. Escape LIKE
-		// wildcards (_ and %) in the tag so literal underscores in tag names
-		// don't over-match (e.g. "sprint_17" wouldn't match "sprintX17").
-		escTag := strings.NewReplacer(`\`, `\\`, `_`, `\_`, `%`, `\%`).Replace(filters.Tag)
-		where = append(where, "b.id IN (SELECT block_id FROM tags WHERE raw_path = ? OR raw_path LIKE ? ESCAPE '\\')")
-		args = append(args, filters.Tag, escTag+"/%")
-	}
-	if filters.VaultOnly {
-		// Scope: in-vault blocks only (exclude linked-notebook sources).
-		where = append(where, "b.source = 'vault'")
-	}
-	where, args = appendTaskFilterPredicates(where, args, filters, time.Now())
-	// The SELECT always includes bm25 for scoring; only the ORDER BY varies.
-	// (DESC belongs in ORDER BY, never in SELECT.)
-	order := "rank"
-	if filters.Sort == "recency" {
-		order = "b.file_date DESC, rank"
-	}
-
-	pageQuery := `
-		SELECT b.id, b.parent_id, b.source, b.notebook, b.section, b.page, b.file_date, b.depth,
-		       b.raw_content, b.clean_content, b.line_number,
-		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''),
-		       COALESCE(t.due_date, ''), COALESCE(t.priority, 0),
-		       snippet(blocks_fts, 0, '<mark>', '</mark>', '...', 20),
-		       bm25(blocks_fts) AS rank
-		FROM blocks_fts
-		JOIN blocks b ON b.rowid = blocks_fts.rowid
-		LEFT JOIN tasks t ON b.id = t.block_id
-		WHERE ` + strings.Join(where, " AND ") + `
-		ORDER BY ` + order + `
-		LIMIT ?`
-	args = append(args, searchFlatCap)
-	rows, err := db.Query(pageQuery, args...)
-	if err != nil {
-		return parser.SearchResult{}, fmt.Errorf("failed to search blocks: %w", err)
-	}
-
 	var flat []parser.TaskResult
-	for rows.Next() {
-		var r parser.TaskResult
-		var parentID sql.NullString
-		var status, owner, start, due string
-		var priority int
-		var rank float64
-		if err := rows.Scan(
-			&r.ID, &parentID, &r.Source, &r.Notebook, &r.Section, &r.Page, &r.FileDate, &r.Depth,
-			&r.RawContent, &r.CleanContent, &r.LineNumber,
-			&status, &owner, &start, &due, &priority,
-			&r.Snippet, &rank,
-		); err != nil {
-			rows.Close()
-			return parser.SearchResult{}, err
+	if fts != "" {
+		// Build the dynamic WHERE + ORDER BY from the filters. All user input is
+		// parameterized (never string-interpolated) — a synced vault's tag/notebook
+		// name can't inject SQL.
+		var where []string
+		var args []any
+		where = append(where, "blocks_fts MATCH ?")
+		args = append(args, fts)
+		if filters.Notebook != "" {
+			where = append(where, "b.notebook = ?")
+			args = append(args, filters.Notebook)
 		}
-		if parentID.Valid {
-			r.ParentID = parentID.String
+		if filters.Section != "" {
+			where = append(where, "b.section = ?")
+			args = append(args, filters.Section)
 		}
-		r.Status = status
-		r.Owner = owner
-		r.StartDate = start
-		r.DueDate = due
-		r.Priority = priority
-		flat = append(flat, r)
-	}
-	if err := rows.Err(); err != nil {
-		return parser.SearchResult{}, fmt.Errorf("failed iterating search results: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return parser.SearchResult{}, err
+		if filters.Type != "" {
+			where = append(where, "b.type = ?")
+			args = append(args, filters.Type)
+		}
+		if filters.Tag != "" {
+			// Match the exact tag OR any descendant (hierarchical: "work" matches
+			// "work/project"). IN-subquery keeps it one clause. Escape LIKE
+			// wildcards (_ and %) in the tag so literal underscores in tag names
+			// don't over-match (e.g. "sprint_17" wouldn't match "sprintX17").
+			escTag := strings.NewReplacer(`\`, `\\`, `_`, `\_`, `%`, `\%`).Replace(filters.Tag)
+			where = append(where, "b.id IN (SELECT block_id FROM tags WHERE raw_path = ? OR raw_path LIKE ? ESCAPE '\\')")
+			args = append(args, filters.Tag, escTag+"/%")
+		}
+		if filters.VaultOnly {
+			// Scope: in-vault blocks only (exclude linked-notebook sources).
+			where = append(where, "b.source = 'vault'")
+		}
+		where, args = appendTaskFilterPredicates(where, args, filters, time.Now())
+		// The SELECT always includes bm25 for scoring; only the ORDER BY varies.
+		// (DESC belongs in ORDER BY, never in SELECT.)
+		order := "rank"
+		if filters.Sort == "recency" {
+			order = "b.file_date DESC, rank"
+		}
+
+		pageQuery := `
+			SELECT b.id, b.parent_id, b.source, b.notebook, b.section, b.page, b.file_date, b.depth,
+			       b.raw_content, b.clean_content, b.line_number,
+			       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''),
+			       COALESCE(t.due_date, ''), COALESCE(t.priority, 0),
+			       snippet(blocks_fts, 0, '<mark>', '</mark>', '...', 20),
+			       bm25(blocks_fts) AS rank
+			FROM blocks_fts
+			JOIN blocks b ON b.rowid = blocks_fts.rowid
+			LEFT JOIN tasks t ON b.id = t.block_id
+			WHERE ` + strings.Join(where, " AND ") + `
+			ORDER BY ` + order + `
+			LIMIT ?`
+		args = append(args, searchFlatCap)
+		rows, err := db.Query(pageQuery, args...)
+		if err != nil {
+			return parser.SearchResult{}, fmt.Errorf("failed to search blocks: %w", err)
+		}
+
+		for rows.Next() {
+			var r parser.TaskResult
+			var parentID sql.NullString
+			var status, owner, start, due string
+			var priority int
+			var rank float64
+			if err := rows.Scan(
+				&r.ID, &parentID, &r.Source, &r.Notebook, &r.Section, &r.Page, &r.FileDate, &r.Depth,
+				&r.RawContent, &r.CleanContent, &r.LineNumber,
+				&status, &owner, &start, &due, &priority,
+				&r.Snippet, &rank,
+			); err != nil {
+				rows.Close()
+				return parser.SearchResult{}, err
+			}
+			if parentID.Valid {
+				r.ParentID = parentID.String
+			}
+			r.Status = status
+			r.Owner = owner
+			r.StartDate = start
+			r.DueDate = due
+			r.Priority = priority
+			flat = append(flat, r)
+		}
+		if err := rows.Err(); err != nil {
+			return parser.SearchResult{}, fmt.Errorf("failed iterating search results: %w", err)
+		}
 	}
 
 	// Per-page grouping: keep at most searchMaxPerGroup hits per
@@ -484,12 +483,21 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 // query split on separators (see titleTerms), so a page named "2026-06-13" or
 // "sprint_17" is found by typing its own name; the squashed body terms would
 // match neither the name nor (via FTS) the body. Quotes/`%`/`_` cannot occur
-// inside a term, so the patterns need no escaping. Both sides are lowered in
-// SQL: the comparison is ASCII case-insensitive and an exactly-cased non-ASCII
-// name still matches (query "MÜNCHEN" → page "MÜNCHEN"). SQLite's LOWER folds
-// ASCII only, so a non-exact-case non-ASCII variant ("münchen") does not match
-// — the same approximation the rename lookup (page_links) relies on; full
-// Unicode fold parity with SearchPages is out of scope here.
+// inside a term, so the patterns need no escaping.
+//
+// A query whose every part is a single character ("R&D", "Q&A", "C++") yields
+// no terms, yet a page may be named exactly that. For those the leg falls back
+// to the raw query as a single escaped pattern: typing a page's own name must
+// find it. Sub-2-byte queries stay a no-op (one character is not a name
+// search), and the raw query is escaped because it carries the user's
+// punctuation, which LIKE would otherwise treat as wildcards.
+//
+// Both sides are lowered in SQL: the comparison is ASCII case-insensitive and
+// an exactly-cased non-ASCII name still matches (query "MÜNCHEN" → page
+// "MÜNCHEN"). SQLite's LOWER folds ASCII only, so a non-exact-case non-ASCII
+// variant ("münchen") does not match — the same approximation the rename
+// lookup (page_links) relies on; full Unicode fold parity with SearchPages is
+// out of scope here.
 // Notebook/section/scope filters narrow the page leg exactly as they narrow
 // the body leg. Results carry no block identity (ID stays empty — the marker
 // the frontend uses to render a page-navigation row), the page name as
@@ -497,18 +505,27 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 // HTML-escape the snippet and then re-allow only `<mark>`: the page name is
 // concatenated in raw. Bounded by searchFlatCap and ordered by match quality
 // first — exact name, then name prefix, then substring, with the alphabetical
-// (source, notebook, section, page) tiebreak — so an exactly-named page cannot
-// be buried by alphabetically-earlier substring matches or pushed past the cap
-// by them. source is part of the tiebreak because a vault page and a
-// linked-notebook page can share the exact display path (page_core's PK): a
-// tie there would make paging over title hits skip or duplicate rows.
+// (notebook, section, page) flow and source as the final tiebreak — so an
+// exactly-named page cannot be buried by alphabetically-earlier substring
+// matches or pushed past the cap by them. source is the tail tiebreak because
+// a vault page and a linked-notebook page can share the exact display path
+// (page_core's PK): a tie there would make paging over title hits skip or
+// duplicate rows.
 func searchPageTitlesOn(db *sql.DB, query string, filters SearchFilters) ([]parser.TaskResult, error) {
 	terms := titleTerms(query)
-	if len(terms) == 0 {
-		return nil, nil
-	}
 	var where []string
 	var args []any
+	snippetTerms := terms
+	if len(terms) == 0 {
+		// See the doc comment: an all-single-char-part name has no term to
+		// anchor, so the raw query is the only pattern that can find it.
+		if len(query) < 2 {
+			return nil, nil
+		}
+		where = append(where, `LOWER(page) LIKE LOWER(?) ESCAPE '\'`)
+		args = append(args, "%"+escapeLikePattern(query)+"%")
+		snippetTerms = []string{query}
+	}
 	for _, t := range terms {
 		where = append(where, "LOWER(page) LIKE LOWER(?)")
 		args = append(args, "%"+t+"%")
@@ -526,8 +543,8 @@ func searchPageTitlesOn(db *sql.DB, query string, filters SearchFilters) ([]pars
 	}
 	// The rank binds are the raw query, so LIKE metacharacters a user typed
 	// must be escaped to stay literal (the page-name patterns above come from
-	// titleTerms, which strips punctuation).
-	escQuery := strings.NewReplacer(`\`, `\\`, `_`, `\_`, `%`, `\%`).Replace(query)
+	// titleTerms, which strips punctuation, or from the escaped raw fallback).
+	escQuery := escapeLikePattern(query)
 	args = append(args, query, escQuery+"%", searchFlatCap)
 	rows, err := db.Query(`
 		SELECT COALESCE(source, 'vault'), notebook, section, page, date
@@ -537,7 +554,7 @@ func searchPageTitlesOn(db *sql.DB, query string, filters SearchFilters) ([]pars
 			WHEN LOWER(page) = LOWER(?) THEN 0
 			WHEN LOWER(page) LIKE LOWER(?) ESCAPE '\' THEN 1
 			ELSE 2
-		END, source, notebook, section, page
+		END, notebook, section, page, source
 		LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search page titles: %w", err)
@@ -550,10 +567,16 @@ func searchPageTitlesOn(db *sql.DB, query string, filters SearchFilters) ([]pars
 			return nil, err
 		}
 		r.CleanContent = r.Page
-		r.Snippet = titleSnippet(r.Page, terms)
+		r.Snippet = titleSnippet(r.Page, snippetTerms)
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// escapeLikePattern makes a raw user query literal inside a LIKE pattern (the
+// pattern is always used with ESCAPE '\').
+func escapeLikePattern(query string) string {
+	return strings.NewReplacer(`\`, `\\`, `_`, `\_`, `%`, `\%`).Replace(query)
 }
 
 // titleSnippet renders a page name as a search snippet with <mark> ranges

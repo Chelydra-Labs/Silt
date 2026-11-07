@@ -133,9 +133,6 @@ func (dm *DatabaseManager) PruneStaleFiles(seenPaths []string) ([]string, error)
 	// round-trip DELETE keeps this cheap even for thousands of files.
 	if len(seenPaths) == 0 {
 		// No files on disk at all: drop every recorded row.
-		if _, err = db.Exec("DELETE FROM file_page_locs"); err != nil {
-			return nil, err
-		}
 		_, err = db.Exec("DELETE FROM files")
 		return nil, err
 	}
@@ -169,13 +166,6 @@ func (dm *DatabaseManager) PruneStaleFiles(seenPaths []string) ([]string, error)
 	}
 
 	if len(pruned) > 0 {
-		// file_page_locs is keyed by the same path space, so a pruned path's
-		// identity record must go with its files row or the table outlives the
-		// files it describes.
-		if _, err := db.Exec(
-			"DELETE FROM file_page_locs WHERE path NOT IN ("+strings.Join(placeholders, ",")+")", args...); err != nil {
-			return nil, fmt.Errorf("failed to prune stale file page locs: %w", err)
-		}
 		if _, err := db.Exec(
 			"DELETE FROM files WHERE path NOT IN ("+strings.Join(placeholders, ",")+")", args...); err != nil {
 			return nil, fmt.Errorf("failed to prune stale files: %w", err)
@@ -193,20 +183,8 @@ func (dm *DatabaseManager) ForgetFile(path string) error {
 		return ErrDBClosed
 	}
 	defer release()
-	// One transaction so a half-forgotten path cannot keep a stale identity
-	// record that a later index of the same path would reconcile against.
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec("DELETE FROM file_page_locs WHERE path = ?", path); err != nil {
-		return fmt.Errorf("failed to forget file page loc: %w", err)
-	}
-	if _, err := tx.Exec("DELETE FROM files WHERE path = ?", path); err != nil {
-		return fmt.Errorf("failed to forget file: %w", err)
-	}
-	return tx.Commit()
+	_, err = db.Exec("DELETE FROM files WHERE path = ?", path)
+	return err
 }
 
 // KnownFiles returns the full path→FileStat map currently recorded in the

@@ -25,7 +25,7 @@ func TestListDistinctPages_ProjectionEquivalence(t *testing.T) {
 	if err := dm.IndexFileBlocks("vault", "Work", "Ops", "Runbook", blocks, nil); err != nil {
 		t.Fatalf("index runbook: %v", err)
 	}
-	if err := dm.IndexFileWithProjection("", "vault", "Work", "Ops", "Scratchpad",
+	if err := dm.IndexFileWithProjection("vault", "Work", "Ops", "Scratchpad",
 		nil, nil, "", nil, PageCoreFields{}); err != nil {
 		t.Fatalf("index scratchpad: %v", err)
 	}
@@ -191,180 +191,6 @@ func TestPageCoreBackfill_ReopenPopulatesInventory(t *testing.T) {
 	}
 }
 
-// TestListDistinctPages_IdentityChangeDropsAbandonedLoc pins the identity-
-// change self-heal. Blocks carry their own stable IDs and re-home on a
-// frontmatter identity edit, but page_core and the page-scoped projections are
-// keyed by loc and have no ID to move: a re-index must clear the loc the page
-// left, or the inventory keeps a twin that resolves wiki links to a page the
-// file no longer carries.
-func TestListDistinctPages_IdentityChangeDropsAbandonedLoc(t *testing.T) {
-	dm := newTestDB(t)
-
-	blocks := []parser.ParsedBlock{
-		{ID: "ffff1111-0000-4000-8000-000000000001", Type: parser.BlockNote,
-			RawText: "retitled body", CleanText: "retitled body", LineNumber: 1},
-	}
-	props := []ProjectedProperty{
-		{Property: "status", ValueText: "active", ValueSort: "active", ValueType: "text"},
-	}
-	if err := dm.IndexFileWithProjection("", "vault", "NB", "OldSec", "OldPage",
-		blocks, nil, "meeting", props, PageCoreFields{Type: "meeting", Date: "2026-01-02"}); err != nil {
-		t.Fatalf("index at old identity: %v", err)
-	}
-
-	// Same block (stable ID), new frontmatter identity: what an in-place
-	// `page:`/`section:` edit produces on the reindex path.
-	if err := dm.IndexFileWithProjection("", "vault", "NB", "NewSec", "NewPage",
-		blocks, nil, "", nil, PageCoreFields{}); err != nil {
-		t.Fatalf("reindex at new identity: %v", err)
-	}
-
-	pages, err := dm.ListDistinctPages()
-	if err != nil {
-		t.Fatalf("ListDistinctPages: %v", err)
-	}
-	var haveOld, haveNew bool
-	for _, p := range pages {
-		switch p.Page {
-		case "OldPage":
-			haveOld = true
-		case "NewPage":
-			haveNew = true
-		}
-	}
-	if !haveNew {
-		t.Fatalf("new identity missing from inventory: %+v", pages)
-	}
-	if haveOld {
-		t.Errorf("abandoned identity still in inventory: %+v", pages)
-	}
-	for _, q := range []string{
-		`SELECT COUNT(*) FROM blocks WHERE page = 'OldPage'`,
-		`SELECT COUNT(*) FROM page_types WHERE page = 'OldPage'`,
-		`SELECT COUNT(*) FROM page_properties WHERE page = 'OldPage'`,
-		`SELECT COUNT(*) FROM page_core WHERE page = 'OldPage'`,
-	} {
-		var n int
-		if err := dm.SQLDB().QueryRow(q).Scan(&n); err != nil {
-			t.Fatalf("%s: %v", q, err)
-		}
-		if n != 0 {
-			t.Errorf("abandoned loc rows left behind (%s): %d", q, n)
-		}
-	}
-	if old, err := dm.GetPageCoreProjection("vault", "NB", "OldSec", "OldPage"); err != nil || old != nil {
-		t.Errorf("GetPageCoreProjection(old) = %+v, %v (want nil, nil)", old, err)
-	}
-}
-
-// TestListDistinctPages_ZeroBlockIdentityChangeDropsAbandonedLoc pins the
-// residual the block-evidence reconcile cannot see: a file that carried no
-// blocks at its last index leaves no block IDs to follow, so the loc recorded
-// for its path is the only evidence that the old identity belonged to that
-// file. Without it the abandoned identity stays in the inventory forever and
-// keeps resolving wiki links to a page the file no longer carries.
-func TestListDistinctPages_ZeroBlockIdentityChangeDropsAbandonedLoc(t *testing.T) {
-	dm := newTestDB(t)
-	const path = "/vault/NB/OldSec/OldPage.md"
-
-	if err := dm.IndexFileWithProjection(path, "vault", "NB", "OldSec", "OldPage",
-		nil, nil, "", nil, PageCoreFields{}); err != nil {
-		t.Fatalf("index empty page at old identity: %v", err)
-	}
-	// Same file, frontmatter identity edited while it still has no content
-	// blocks — the external-edit reindex path, which carries no block IDs.
-	if err := dm.IndexFileWithProjection(path, "vault", "NB", "NewSec", "NewPage",
-		nil, nil, "", nil, PageCoreFields{}); err != nil {
-		t.Fatalf("reindex empty page at new identity: %v", err)
-	}
-
-	assertInventoryHasOnly(t, dm, "NewPage", "OldPage")
-	assertNoPageLocRows(t, dm, "OldPage")
-}
-
-// TestListDistinctPages_ZeroBlockOriginToBlocksDropsAbandonedLoc covers the
-// crossed variant: the old loc had no blocks, the new identity gains them. The
-// incoming block IDs are new, so they prove nothing about the old loc — only
-// the path-keyed record does.
-func TestListDistinctPages_ZeroBlockOriginToBlocksDropsAbandonedLoc(t *testing.T) {
-	dm := newTestDB(t)
-	const path = "/vault/NB/OldSec/OldPage.md"
-
-	if err := dm.IndexFileWithProjection(path, "vault", "NB", "OldSec", "OldPage",
-		nil, nil, "", nil, PageCoreFields{}); err != nil {
-		t.Fatalf("index empty page at old identity: %v", err)
-	}
-	blocks := []parser.ParsedBlock{
-		{ID: "ffff4444-0000-4000-8000-000000000001", Type: parser.BlockNote,
-			RawText: "gained a body", CleanText: "gained a body", LineNumber: 1},
-	}
-	if err := dm.IndexFileWithProjection(path, "vault", "NB", "NewSec", "NewPage",
-		blocks, nil, "meeting", nil, PageCoreFields{Type: "meeting"}); err != nil {
-		t.Fatalf("reindex with blocks at new identity: %v", err)
-	}
-
-	assertInventoryHasOnly(t, dm, "NewPage", "OldPage")
-	assertNoPageLocRows(t, dm, "OldPage")
-}
-
-// TestListDistinctPages_ZeroBlockMoveKeepsSharedLoc guards the clear's safety
-// condition: two files can resolve to one identity through frontmatter name
-// overrides, so a loc another indexed path still claims must survive.
-func TestListDistinctPages_ZeroBlockMoveKeepsSharedLoc(t *testing.T) {
-	dm := newTestDB(t)
-	const movedPath = "/vault/NB/Sec/Alpha.md"
-	const stayPath = "/vault/NB/Sec/Beta.md"
-
-	for _, p := range []string{movedPath, stayPath} {
-		if err := dm.IndexFileWithProjection(p, "vault", "NB", "Sec", "Shared",
-			nil, nil, "", nil, PageCoreFields{}); err != nil {
-			t.Fatalf("index %s at shared identity: %v", p, err)
-		}
-	}
-	if err := dm.IndexFileWithProjection(movedPath, "vault", "NB", "Sec", "Elsewhere",
-		nil, nil, "", nil, PageCoreFields{}); err != nil {
-		t.Fatalf("reindex moved file: %v", err)
-	}
-
-	pages, err := dm.ListDistinctPages()
-	if err != nil {
-		t.Fatalf("ListDistinctPages: %v", err)
-	}
-	var haveShared, haveElsewhere bool
-	for _, p := range pages {
-		switch p.Page {
-		case "Shared":
-			haveShared = true
-		case "Elsewhere":
-			haveElsewhere = true
-		}
-	}
-	if !haveShared || !haveElsewhere {
-		t.Fatalf("shared=%v elsewhere=%v inventory=%+v (the surviving owner's loc must not be cleared)", haveShared, haveElsewhere, pages)
-	}
-}
-
-// TestIndexScanResults_ZeroBlockIdentityChangeDropsAbandonedLoc covers the
-// batched cold-start path: an identity edited while Silt was closed is
-// re-indexed by the scan, whose batch transaction must run the same
-// path-keyed reconcile.
-func TestIndexScanResults_ZeroBlockIdentityChangeDropsAbandonedLoc(t *testing.T) {
-	dm := newTestDB(t)
-	const path = "/vault/NB/OldSec/OldPage.md"
-
-	if err := dm.IndexFileWithProjection(path, "vault", "NB", "OldSec", "OldPage",
-		nil, nil, "", nil, PageCoreFields{}); err != nil {
-		t.Fatalf("index empty page at old identity: %v", err)
-	}
-	results := []parser.ScanResult{{Path: path, Notebook: "NB", Section: "NewSec", Page: "NewPage"}}
-	if _, _, err := dm.IndexScanResultsWithProjection(results, []ScanProjection{{Core: PageCoreFields{}}}); err != nil {
-		t.Fatalf("IndexScanResultsWithProjection: %v", err)
-	}
-
-	assertInventoryHasOnly(t, dm, "NewPage", "OldPage")
-	assertNoPageLocRows(t, dm, "OldPage")
-}
-
 // assertInventoryHasOnly fails unless every want page is in the inventory and
 // no unwanted page is.
 func assertInventoryHasOnly(t *testing.T, dm *DatabaseManager, want, unwanted string) {
@@ -453,47 +279,6 @@ func TestListDistinctPages_TransplantedBlockKeepsSourcePage(t *testing.T) {
 	}
 }
 
-// TestIndexScanResults_IdentityChangeDropsAbandonedLoc covers the cold-start
-// path: an identity edited while Silt was closed is re-indexed by the batched
-// scan, which must reconcile the abandoned loc in its batch transaction.
-func TestIndexScanResults_IdentityChangeDropsAbandonedLoc(t *testing.T) {
-	dm := newTestDB(t)
-
-	block := parser.ParsedBlock{ID: "ffff3333-0000-4000-8000-000000000001", Type: parser.BlockNote,
-		RawText: "scanned body", CleanText: "scanned body", LineNumber: 1}
-	if err := dm.IndexFileBlocks("vault", "NB", "", "Before Scan", []parser.ParsedBlock{block}, nil); err != nil {
-		t.Fatalf("index before scan: %v", err)
-	}
-
-	results := []parser.ScanResult{{
-		Path:     "NB/After Scan.md",
-		Notebook: "NB",
-		Page:     "After Scan",
-		Blocks:   []parser.ParsedBlock{block},
-	}}
-	projections := []ScanProjection{{Core: PageCoreFields{}}}
-	if _, _, err := dm.IndexScanResultsWithProjection(results, projections); err != nil {
-		t.Fatalf("IndexScanResultsWithProjection: %v", err)
-	}
-
-	pages, err := dm.ListDistinctPages()
-	if err != nil {
-		t.Fatalf("ListDistinctPages: %v", err)
-	}
-	var haveBefore, haveAfter bool
-	for _, p := range pages {
-		switch p.Page {
-		case "Before Scan":
-			haveBefore = true
-		case "After Scan":
-			haveAfter = true
-		}
-	}
-	if !haveAfter || haveBefore {
-		t.Fatalf("scan identity reconciliation: before=%v after=%v inventory=%+v", haveBefore, haveAfter, pages)
-	}
-}
-
 // TestListDistinctPages_CrossPageMoveKeepsEmptiedSourcePage reproduces the
 // editor's cross-page move at the index level: the TARGET page is published
 // first (applyBlocksOps saves it, so the moved block is indexed there while the
@@ -505,15 +290,12 @@ func TestIndexScanResults_IdentityChangeDropsAbandonedLoc(t *testing.T) {
 // the session (the source file still exists; only a reopen would heal it).
 func TestListDistinctPages_CrossPageMoveKeepsEmptiedSourcePage(t *testing.T) {
 	dm := newTestDB(t)
-	const sourcePath = "/vault/NB/Ops/Stub.md"
-	const targetPath = "/vault/NB/Ops/Target.md"
-
 	moved := parser.ParsedBlock{ID: "ffff5555-0000-4000-8000-000000000001", Type: parser.BlockTask,
 		RawText: "- [ ] moved", CleanText: "moved", LineNumber: 1}
 	props := []ProjectedProperty{
 		{Property: "status", ValueText: "active", ValueSort: "active", ValueType: "text"},
 	}
-	if err := dm.IndexFileWithProjection(sourcePath, "vault", "NB", "Ops", "Stub",
+	if err := dm.IndexFileWithProjection("vault", "NB", "Ops", "Stub",
 		[]parser.ParsedBlock{moved}, nil, "meeting", props,
 		PageCoreFields{Type: "meeting", Date: "2026-05-01"}); err != nil {
 		t.Fatalf("index source page: %v", err)
@@ -524,7 +306,7 @@ func TestListDistinctPages_CrossPageMoveKeepsEmptiedSourcePage(t *testing.T) {
 	// source loc.
 	stay := parser.ParsedBlock{ID: "ffff5555-0000-4000-8000-000000000002", Type: parser.BlockNote,
 		RawText: "target body", CleanText: "target body", LineNumber: 1}
-	if err := dm.IndexFileWithProjection(targetPath, "vault", "NB", "Ops", "Target",
+	if err := dm.IndexFileWithProjection("vault", "NB", "Ops", "Target",
 		[]parser.ParsedBlock{stay, moved}, nil, "meeting", props,
 		PageCoreFields{Type: "meeting", Date: "2026-05-01"}); err != nil {
 		t.Fatalf("index target page: %v", err)
@@ -595,22 +377,19 @@ func TestListDistinctPages_CrossPageMoveKeepsEmptiedSourcePage(t *testing.T) {
 // it).
 func TestListDistinctPages_DuplicateIDCarrierKeepsBothPages(t *testing.T) {
 	dm := newTestDB(t)
-	const firstPath = "/vault/NB/Ops/Original.md"
-	const copyPath = "/vault/NB/Ops/Original Copy.md"
-
 	shared := parser.ParsedBlock{ID: "ffff6666-0000-4000-8000-000000000001", Type: parser.BlockNote,
 		RawText: "copied body", CleanText: "copied body", LineNumber: 1}
 	props := []ProjectedProperty{
 		{Property: "status", ValueText: "active", ValueSort: "active", ValueType: "text"},
 	}
-	if err := dm.IndexFileWithProjection(firstPath, "vault", "NB", "Ops", "Original",
+	if err := dm.IndexFileWithProjection("vault", "NB", "Ops", "Original",
 		[]parser.ParsedBlock{shared}, nil, "meeting", props,
 		PageCoreFields{Type: "meeting", Date: "2026-05-02"}); err != nil {
 		t.Fatalf("index original: %v", err)
 	}
 	// The copy carries the same ID: the per-file reindex path (watcher picks the
 	// new file up) indexes it exactly like a target publish.
-	if err := dm.IndexFileWithProjection(copyPath, "vault", "NB", "Ops", "Original Copy",
+	if err := dm.IndexFileWithProjection("vault", "NB", "Ops", "Original Copy",
 		[]parser.ParsedBlock{shared}, nil, "meeting", props,
 		PageCoreFields{Type: "meeting", Date: "2026-05-02"}); err != nil {
 		t.Fatalf("index copy: %v", err)
@@ -634,37 +413,6 @@ func TestListDistinctPages_DuplicateIDCarrierKeepsBothPages(t *testing.T) {
 	if core == nil || core.Type != "meeting" {
 		t.Errorf("first carrier's core metadata lost: %+v", core)
 	}
-}
-
-// TestListDistinctPages_IdentityChangeWithPathRecordStillDropsAbandonedLoc
-// guards the abandonment guard's other side: once the moving file's path record
-// points at its new loc, the old loc has no owner and must still be cleared.
-// Without this, requiring an owner would silently disable the identity-change
-// reconcile.
-func TestListDistinctPages_IdentityChangeWithPathRecordStillDropsAbandonedLoc(t *testing.T) {
-	dm := newTestDB(t)
-	const path = "/vault/NB/OldSec/OldPage.md"
-
-	blocks := []parser.ParsedBlock{
-		{ID: "ffff7777-0000-4000-8000-000000000001", Type: parser.BlockNote,
-			RawText: "retitled body", CleanText: "retitled body", LineNumber: 1},
-	}
-	props := []ProjectedProperty{
-		{Property: "status", ValueText: "active", ValueSort: "active", ValueType: "text"},
-	}
-	if err := dm.IndexFileWithProjection(path, "vault", "NB", "OldSec", "OldPage",
-		blocks, nil, "meeting", props, PageCoreFields{Type: "meeting"}); err != nil {
-		t.Fatalf("index at old identity: %v", err)
-	}
-	// Same file, new frontmatter identity: the path record moves with it, so the
-	// old loc now has no owner.
-	if err := dm.IndexFileWithProjection(path, "vault", "NB", "NewSec", "NewPage",
-		blocks, nil, "", nil, PageCoreFields{}); err != nil {
-		t.Fatalf("reindex at new identity: %v", err)
-	}
-
-	assertInventoryHasOnly(t, dm, "NewPage", "OldPage")
-	assertNoPageLocRows(t, dm, "OldPage")
 }
 
 // TestIndexScanResults_DuplicateIDCarriersKeepBothPages is the cold-start
@@ -709,55 +457,212 @@ func TestIndexScanResults_DuplicateIDCarriersKeepBothPages(t *testing.T) {
 	}
 }
 
-// TestReconcilePageInventory_KeepsUnreadableFileLoc pins the scan's blind spot:
-// a file the scan cannot read or resolve this pass has no known loc, but it is
-// still on disk. Its recorded loc must stay live, or a transient permission /
-// decode failure would drop a live page from the inventory.
-func TestReconcilePageInventory_KeepsUnreadableFileLoc(t *testing.T) {
+// TestReconcilePageInventory_IncompleteScanDeletesNothing pins the completeness
+// gate: a scan that could not see every file (walk error, unreadable file) must
+// only ADD, never delete — "not seen" is not "gone" on a blind pass. The same
+// reconcile with a complete scan is what heals, so the gate is the only thing
+// between heal and destroy.
+func TestReconcilePageInventory_IncompleteScanDeletesNothing(t *testing.T) {
 	dm := newTestDB(t)
-	const path = "/vault/NB/Sec/Unreadable.md"
+
+	props := []ProjectedProperty{
+		{Property: "status", ValueText: "active", ValueSort: "active", ValueType: "text"},
+	}
+	if err := dm.IndexFileWithProjection("vault", "NB", "Sec", "Live",
+		nil, nil, "meeting", props, PageCoreFields{Type: "meeting", Date: "2026-04-01"}); err != nil {
+		t.Fatalf("index live page: %v", err)
+	}
+	// A ghost an older build left behind: page_core + page_types at a loc no
+	// file publishes.
+	for _, q := range []string{
+		`INSERT INTO page_core (source, notebook, section, page, type, date, aliases, created)
+		 VALUES ('vault', 'NB', 'OldSec', 'Ghost', 'meeting', '2026-01-01', '[]', '')`,
+		`INSERT INTO page_types (source, notebook, section, page, type_name)
+		 VALUES ('vault', 'NB', 'OldSec', 'Ghost', 'meeting')`,
+	} {
+		if _, err := dm.SQLDB().Exec(q); err != nil {
+			t.Fatalf("seed ghost (%s): %v", q, err)
+		}
+	}
+
+	live := []PageLoc{{Source: "vault", Notebook: "NB", Section: "Sec", Page: "Live"}}
+	removed, err := dm.ReconcilePageInventory("vault", live, false)
+	if err != nil {
+		t.Fatalf("ReconcilePageInventory(incomplete): %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("removed = %d on an incomplete scan, want 0", removed)
+	}
+	if core, _ := dm.GetPageCoreProjection("vault", "NB", "OldSec", "Ghost"); core == nil {
+		t.Error("incomplete scan deleted a loc it merely could not see")
+	}
+
+	// A complete scan is allowed to conclude the loc is gone.
+	removed, err = dm.ReconcilePageInventory("vault", live, true)
+	if err != nil {
+		t.Fatalf("ReconcilePageInventory(complete): %v", err)
+	}
+	if removed != 1 {
+		t.Errorf("removed = %d on a complete scan, want 1 (the ghost)", removed)
+	}
+	assertNoPageLocRows(t, dm, "Ghost")
+	// Add never clobbers: the live page keeps its published core fields.
+	core, err := dm.GetPageCoreProjection("vault", "NB", "Sec", "Live")
+	if err != nil || core == nil || core.Type != "meeting" || core.Date != "2026-04-01" {
+		t.Errorf("live page core metadata clobbered: %+v, %v", core, err)
+	}
+}
+
+// TestReconcilePageInventory_SourceScoped pins the scope boundary: a vault scan
+// must never touch a linked notebook's inventory (and vice versa), or opening
+// the vault would erase linked pages until their tree is re-scanned.
+func TestReconcilePageInventory_SourceScoped(t *testing.T) {
+	dm := newTestDB(t)
+
+	for _, q := range []string{
+		`INSERT INTO page_core (source, notebook, section, page, type, date, aliases, created)
+		 VALUES ('vault', 'NB', 'Sec', 'VaultGhost', 'meeting', '2026-01-01', '[]', '')`,
+		`INSERT INTO page_core (source, notebook, section, page, type, date, aliases, created)
+		 VALUES ('linked:test', 'NB', 'Sec', 'LinkedGhost', 'meeting', '2026-01-01', '[]', '')`,
+		`INSERT INTO page_core (source, notebook, section, page, type, date, aliases, created)
+		 VALUES ('linked:test', 'NB', 'Sec', 'LinkedLive', 'meeting', '2026-01-01', '[]', '')`,
+	} {
+		if _, err := dm.SQLDB().Exec(q); err != nil {
+			t.Fatalf("seed (%s): %v", q, err)
+		}
+	}
+
+	removed, err := dm.ReconcilePageInventory("vault", nil, true)
+	if err != nil {
+		t.Fatalf("ReconcilePageInventory(vault): %v", err)
+	}
+	if removed != 1 {
+		t.Errorf("vault reconcile removed %d loc(s), want 1 (VaultGhost only)", removed)
+	}
+	for _, page := range []string{"LinkedGhost", "LinkedLive"} {
+		if core, _ := dm.GetPageCoreProjection("linked:test", "NB", "Sec", page); core == nil {
+			t.Errorf("vault reconcile deleted linked-source page %q", page)
+		}
+	}
+
+	// The linked root reconciles its own inventory when its tree is scanned.
+	removed, err = dm.ReconcilePageInventory("linked:test",
+		[]PageLoc{{Source: "linked:test", Notebook: "NB", Section: "Sec", Page: "LinkedLive"}}, true)
+	if err != nil {
+		t.Fatalf("ReconcilePageInventory(linked): %v", err)
+	}
+	if removed != 1 {
+		t.Errorf("linked reconcile removed %d loc(s), want 1 (LinkedGhost)", removed)
+	}
+	assertNoPageLocRows(t, dm, "LinkedGhost")
+}
+
+// TestReconcilePageInventory_KeepsBlockEvidenceLoc pins invariant 1: a loc
+// carrying block rows is a page, whatever the scan could resolve. Deleting it
+// would make the inventory disagree with every blocks-backed lookup
+// (PageExists / FindPageByLeaf), resurrecting the split-brain in the dangerous
+// direction.
+func TestReconcilePageInventory_KeepsBlockEvidenceLoc(t *testing.T) {
+	dm := newTestDB(t)
 
 	blocks := []parser.ParsedBlock{
-		{ID: "ffff9999-0000-4000-8000-000000000001", Type: parser.BlockNote,
+		{ID: "aaaa2222-0000-4000-8000-000000000001", Type: parser.BlockNote,
 			RawText: "body", CleanText: "body", LineNumber: 1},
 	}
 	props := []ProjectedProperty{
 		{Property: "status", ValueText: "active", ValueSort: "active", ValueType: "text"},
 	}
-	if err := dm.IndexFileWithProjection(path, "vault", "NB", "Sec", "Unreadable",
+	if err := dm.IndexFileWithProjection("vault", "NB", "Sec", "Blocks Only",
 		blocks, nil, "meeting", props, PageCoreFields{Type: "meeting"}); err != nil {
-		t.Fatalf("index: %v", err)
+		t.Fatalf("index block-carrying page: %v", err)
 	}
 
-	removed, err := dm.ReconcilePageInventory("vault", []PageInventoryScan{{Path: path, Unresolved: true}})
+	// A complete scan that publishes no live loc (worst case: every path failed
+	// to resolve but the pass was still considered complete).
+	removed, err := dm.ReconcilePageInventory("vault", nil, true)
 	if err != nil {
-		t.Fatalf("ReconcilePageInventory(unresolved): %v", err)
+		t.Fatalf("ReconcilePageInventory: %v", err)
 	}
 	if removed != 0 {
-		t.Errorf("removed = %d, want 0: an unreadable file is still on disk", removed)
+		t.Errorf("removed = %d, want 0: a loc with block rows is a live page", removed)
 	}
-	core, err := dm.GetPageCoreProjection("vault", "NB", "Sec", "Unreadable")
+	core, err := dm.GetPageCoreProjection("vault", "NB", "Sec", "Blocks Only")
 	if err != nil || core == nil || core.Type != "meeting" {
-		t.Fatalf("unreadable file's inventory row was dropped: %+v, %v", core, err)
+		t.Errorf("block-evidence loc lost its projections: %+v, %v", core, err)
+	}
+	var blocksLeft int
+	if err := dm.SQLDB().QueryRow(
+		`SELECT COUNT(*) FROM blocks WHERE notebook = 'NB' AND section = 'Sec' AND page = 'Blocks Only'`,
+	).Scan(&blocksLeft); err != nil {
+		t.Fatalf("count blocks: %v", err)
+	}
+	if blocksLeft != 1 {
+		t.Errorf("blocks = %d, want 1: the reconcile must never touch block rows", blocksLeft)
 	}
 
-	// Control: with no scan entry at all the loc really is stale.
-	removed, err = dm.ReconcilePageInventory("vault", nil)
+	// The block keep-set is per loc: another page's block rows must not shelter
+	// a loc with no evidence at all.
+	if _, err := dm.SQLDB().Exec(
+		`INSERT INTO page_core (source, notebook, section, page, type, date, aliases, created)
+		 VALUES ('vault', 'NB', 'Sec', 'Ghost', 'meeting', '2026-01-01', '[]', '')`); err != nil {
+		t.Fatalf("seed ghost: %v", err)
+	}
+	removed, err = dm.ReconcilePageInventory("vault", nil, true)
 	if err != nil {
-		t.Fatalf("ReconcilePageInventory(empty): %v", err)
+		t.Fatalf("ReconcilePageInventory(ghost): %v", err)
 	}
 	if removed != 1 {
-		t.Fatalf("removed = %d, want 1 (the loc no file publishes)", removed)
+		t.Errorf("removed = %d, want 1 (the loc with no evidence, not the block-bearing page)", removed)
 	}
-	for _, table := range []string{"page_core", "page_types", "page_properties"} {
-		var n int
-		q := "SELECT COUNT(*) FROM " + table + " WHERE page = 'Unreadable'"
-		if err := dm.SQLDB().QueryRow(q).Scan(&n); err != nil {
-			t.Fatalf("%s: %v", q, err)
-		}
-		if n != 0 {
-			t.Errorf("%s still has %d row(s) for the stale loc", table, n)
-		}
+	assertNoPageLocRows(t, dm, "Ghost")
+	if core, _ := dm.GetPageCoreProjection("vault", "NB", "Sec", "Blocks Only"); core == nil {
+		t.Error("block-evidence loc deleted while deleting an unrelated ghost")
+	}
+}
+
+// TestSchema_NoFilePageLocsTable pins the retirement of the path-keyed identity
+// record: the scan reconcile subsumes it, and a database created by an earlier
+// build of this branch must not keep a table the reconcile no longer
+// maintains (a leftover would mislead the next reader into trusting it).
+func TestSchema_NoFilePageLocsTable(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "index.sqlite")
+
+	dm1, err := NewDatabaseManager(dbPath)
+	if err != nil {
+		t.Fatalf("open1: %v", err)
+	}
+	var present int
+	if err := dm1.SQLDB().QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'file_page_locs'`,
+	).Scan(&present); err != nil {
+		t.Fatalf("probe fresh schema: %v", err)
+	}
+	if present != 0 {
+		t.Fatal("fresh schema recreated the retired file_page_locs table")
+	}
+	// Stage the upgrade shape: a database from an earlier build of this branch.
+	if _, err := dm1.SQLDB().Exec(
+		`CREATE TABLE file_page_locs (path TEXT PRIMARY KEY, source TEXT NOT NULL,
+		 notebook TEXT NOT NULL, section TEXT NOT NULL, page TEXT NOT NULL)`); err != nil {
+		t.Fatalf("seed retired table: %v", err)
+	}
+	if err := dm1.Close(); err != nil {
+		t.Fatalf("close1: %v", err)
+	}
+
+	dm2, err := NewDatabaseManager(dbPath)
+	if err != nil {
+		t.Fatalf("open2: %v", err)
+	}
+	t.Cleanup(func() { _ = dm2.Close() })
+	if err := dm2.SQLDB().QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'file_page_locs'`,
+	).Scan(&present); err != nil {
+		t.Fatalf("probe migrated schema: %v", err)
+	}
+	if present != 0 {
+		t.Fatal("warm-upgrade open kept the retired file_page_locs table")
 	}
 }
 
@@ -765,16 +670,14 @@ func TestReconcilePageInventory_KeepsUnreadableFileLoc(t *testing.T) {
 // page_core predates its use as the inventory, so a vault that ever had a
 // frontmatter identity change carries rows at locs no file publishes any more.
 // The startup scan is the authoritative inventory and must drop them — while
-// preserving the core fields of live pages, recording warm-skipped files' locs,
-// and leaving other sources alone.
+// preserving the core fields of live pages, registering warm-skipped files, and
+// leaving other sources alone.
 func TestReconcilePageInventory_HealsPreInventoryGhosts(t *testing.T) {
 	dm := newTestDB(t)
 	const livePath = "/vault/NB/Sec/Live.md"
-	const linkGhostPath = "/linked/Sec/Linked.md"
 
-	// A live page with real core metadata (as a frontmatter publish leaves it).
-	if err := dm.IndexFileWithProjection(livePath, "vault", "NB", "Sec", "Live",
-		nil, nil, "", nil, PageCoreFields{Type: "meeting", Date: "2026-04-01"}); err != nil {
+	if err := dm.IndexFileWithProjection("vault", "NB", "Sec", "Live",
+		nil, nil, "meeting", nil, PageCoreFields{Type: "meeting", Date: "2026-04-01"}); err != nil {
 		t.Fatalf("index live page: %v", err)
 	}
 	// Ghost rows exactly as an older build left them: page_core at an abandoned
@@ -792,11 +695,11 @@ func TestReconcilePageInventory_HealsPreInventoryGhosts(t *testing.T) {
 		}
 	}
 
-	removed, err := dm.ReconcilePageInventory("vault", []PageInventoryScan{
-		{Path: livePath, Loc: PageLoc{Source: "vault", Notebook: "NB", Section: "Sec", Page: "Live"}},
+	removed, err := dm.ReconcilePageInventory("vault", []PageLoc{
+		{Source: "vault", Notebook: "NB", Section: "Sec", Page: "Live"},
 		// A warm-skipped file: never re-indexed this session, still on disk.
-		{Path: "/vault/NB/Sec/Warm.md", Loc: PageLoc{Source: "vault", Notebook: "NB", Section: "Sec", Page: "Warm"}},
-	})
+		{Source: "vault", Notebook: "NB", Section: "Sec", Page: "Warm"},
+	}, true)
 	if err != nil {
 		t.Fatalf("ReconcilePageInventory: %v", err)
 	}
@@ -815,16 +718,6 @@ func TestReconcilePageInventory_HealsPreInventoryGhosts(t *testing.T) {
 	}
 	if warm, _ := dm.GetPageCoreProjection("vault", "NB", "Sec", "Warm"); warm == nil {
 		t.Error("warm-skipped file did not get an inventory row")
-	}
-	// Warm-skipped file's loc is now owned, so a later move out of it cannot look
-	// abandoned.
-	var owned int
-	if err := dm.SQLDB().QueryRow(
-		`SELECT COUNT(*) FROM file_page_locs WHERE path = '/vault/NB/Sec/Warm.md'`).Scan(&owned); err != nil {
-		t.Fatalf("count file_page_locs: %v", err)
-	}
-	if owned != 1 {
-		t.Error("warm-skipped file's page loc was not recorded")
 	}
 
 	// Ghosts are gone from every loc-keyed table; the other source is untouched.
