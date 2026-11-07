@@ -53,11 +53,19 @@ func (a *App) mutateConfigWithResult(mut func(*config.SystemConfig) error) (conf
 //
 // Deliberate exceptions: whole-config writers (SaveSystemConfig), and writers
 // whose in-memory state must win over disk (backend-owned navigation/registry
-// reconciliation, vault-init migration). The AI/keyring/MCP config patchers
-// share this defect class but are deferred to a follow-up issue, not exempted.
+// reconciliation, vault-init migration).
 func (a *App) mutateConfigFresh(mut func(*config.SystemConfig) (changed bool, err error)) error {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
+	return a.mutateConfigFreshLocked(mut)
+}
+
+// mutateConfigFreshLocked is the lifecycle-locked form of mutateConfigFresh,
+// used by operations that already hold vaultMu.RLock (e.g. SetAIAPIKey and
+// ClearAIAPIKey, which hold vaultMu.RLock across keyring I/O to prevent vault
+// cutover mid-write). Re-entering an RWMutex read lock is unsafe when a lifecycle
+// writer is queued, so those callers use this variant.
+func (a *App) mutateConfigFreshLocked(mut func(*config.SystemConfig) (changed bool, err error)) error {
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
