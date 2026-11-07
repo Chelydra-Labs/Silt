@@ -1,25 +1,36 @@
 // Agent tool #600 — query_tasks.
 //
 // Filters the task projection (blocks JOIN tasks) by status, owner, priority,
-// due-date range, tags, notebook, and blocked state. All user values are bound
-// as SQL parameters (never interpolated), and limit is clamped 1–50. A task is
-// "blocked" when it has a task_dependencies edge to a prerequisite whose status
-// is not DONE (the same definition the DONE-confirm dialog uses).
+// due-date range, tags, notebook, blocked state, and free-text FTS. All user
+// values are bound as SQL parameters (never interpolated), and limit is clamped
+// 1–50. A task is "blocked" when it has a task_dependencies edge to a
+// prerequisite whose status is not DONE (the same definition the DONE-confirm
+// dialog uses). Free-text uses the shared buildFtsMatch normalizer so it
+// matches global search and the hub text filter.
 
 import type { PluginContext, TaskStatus } from '../../../sdk'
 import { asString } from '../../../../lib/asString'
+import { buildFtsMatch } from '../../../../lib/ftsQuery'
 import type { ToolResult } from '../tool-registry'
 import { breadcrumb, clampInt } from './_util'
 
 export const queryTasksToolDef = {
   name: 'query_tasks',
   description:
-    'Query tasks with filters. Returns id, title, status, due date, owner, ' +
-    'location, and a blocked flag. All filters are optional and combine with ' +
-    'AND; limit defaults to 20 (max 50).',
+    'Query tasks with filters, including full-text search over task text. ' +
+    'Returns id, title, status, due date, owner, location, and a blocked ' +
+    'flag. All filters are optional and combine with AND; limit defaults to ' +
+    '20 (max 50).',
   parameters: {
     type: 'object',
     properties: {
+      text: {
+        type: 'string',
+        description:
+          'Full-text terms over task text. Letters/digits only, implicit ' +
+          'AND, each term prefix-matched (same normalization as global ' +
+          'search); terms under 2 characters are ignored.'
+      },
       status: {
         type: 'string',
         description: "'TODO', 'DOING', or 'DONE'."
@@ -93,6 +104,12 @@ export async function handleQueryTasks(
   const where: string[] = []
   const params: unknown[] = []
 
+  const textMatch = buildFtsMatch(asString(args.text))
+  if (textMatch) {
+    where.push('blocks_fts MATCH ?')
+    params.push(textMatch)
+  }
+
   if (args.status !== undefined && args.status !== null) {
     const status = asString(args.status).toUpperCase()
     if (!TASK_STATUSES.includes(status as TaskStatus)) {
@@ -145,9 +162,10 @@ export async function handleQueryTasks(
     `SELECT b.id, b.clean_content, t.status, t.due_date, t.owner, ` +
     `b.notebook, b.section, b.page, t.priority, ` +
     `${BLOCKED_EXISTS} AS is_blocked ` +
-    `FROM tasks t JOIN blocks b ON b.id = t.block_id ` +
-    (where.length > 0 ? `WHERE ${where.join(' AND ')} ` : '') +
-    `ORDER BY t.due_date IS NULL, t.due_date, b.id ` +
+    `FROM tasks t JOIN blocks b ON b.id = t.block_id` +
+    (textMatch ? ' JOIN blocks_fts ON blocks_fts.rowid = b.rowid' : '') +
+    (where.length > 0 ? ` WHERE ${where.join(' AND ')}` : '') +
+    ` ORDER BY t.due_date IS NULL, t.due_date, b.id ` +
     `LIMIT ?`
   const { rows } = await ctx.sqliteQuery(sql, [...params, limit])
 

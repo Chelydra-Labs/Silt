@@ -85,6 +85,30 @@ describe('query_tasks', () => {
     expect(params).toContain('2026-12-31')
   })
 
+  it('adds a parameterized FTS predicate for text', async () => {
+    const { ctx, calls } = makeCtx()
+    await handleQueryTasks(ctx, { text: 'postgres "Bob"', owner: 'Bob' })
+    const { sql, params } = calls[0]
+    expect(sql).toContain('JOIN blocks_fts ON blocks_fts.rowid = b.rowid')
+    expect(sql).toContain('blocks_fts MATCH ?')
+    // Same normalization as buildFtsQuery: punctuation stripped, quoted
+    // prefix terms with implicit AND.
+    expect(params).toContain('"postgres"* "Bob"*')
+    expect(params).toContain('Bob')
+    expect(params[params.length - 1]).toBe(20)
+  })
+
+  it('omits the FTS join when text has no usable terms', async () => {
+    const { ctx, calls } = makeCtx()
+    await handleQueryTasks(ctx, { text: 'a * b' })
+    expect(calls[0].sql).not.toContain('blocks_fts')
+    expect(calls[0].params).toEqual([20])
+  })
+
+  it('exposes text in the tool parameters', () => {
+    expect(queryTasksToolDef.parameters.properties).toHaveProperty('text')
+  })
+
   it('rejects an invalid status value', async () => {
     const { ctx } = makeCtx()
     const res = await handleQueryTasks(ctx, { status: 'banana' })
