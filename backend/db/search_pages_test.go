@@ -265,6 +265,50 @@ func TestSearch_TitleHitsRespectPagingEnvelope(t *testing.T) {
 	}
 }
 
+// TestSearch_TitleHitsPagingTiesAcrossSources pins the title-leg ORDER BY's
+// source tiebreak. page_core's PK is (source, notebook, section, page), so a
+// vault page and a linked-notebook page can share the exact display path; the
+// rows below are inserted in the opposite order to their sources so insertion
+// order cannot satisfy the contract. Without the tiebreak the pair's relative
+// order is unspecified, and paging over title hits can skip or repeat a row.
+func TestSearch_TitleHitsPagingTiesAcrossSources(t *testing.T) {
+	dm := newTestDB(t)
+
+	// Rowid order (vault first) deliberately differs from source order.
+	for _, source := range []string{"vault", "linked:test"} {
+		if err := dm.IndexFileWithProjection("", source, "NB", "Sec", "Shared Name",
+			nil, nil, "", nil, PageCoreFields{}); err != nil {
+			t.Fatalf("index %s: %v", source, err)
+		}
+	}
+
+	var order []string
+	for offset := 0; offset < 2; offset++ {
+		res, err := dm.SearchBlocksPaged("shared name", offset, 1, SearchFilters{})
+		if err != nil {
+			t.Fatalf("offset %d: %v", offset, err)
+		}
+		if res.Total != 2 || len(res.Results) != 1 {
+			t.Fatalf("offset %d envelope = %+v", offset, res)
+		}
+		order = append(order, res.Results[0].Source)
+	}
+	if order[0] != "linked:test" || order[1] != "vault" {
+		t.Errorf("paged title order across sources = %v, want [linked:test vault] (source tiebreak)", order)
+	}
+
+	// Second walk must repeat exactly (deterministic paging), not reshuffle.
+	again, err := dm.SearchBlocksPaged("shared name", 0, 2, SearchFilters{})
+	if err != nil {
+		t.Fatalf("second walk: %v", err)
+	}
+	for i, r := range again.Results {
+		if r.Source != order[i] {
+			t.Fatalf("paging not stable: walk 1 = %v, walk 2 = %v", order, []string{again.Results[0].Source, again.Results[1].Source})
+		}
+	}
+}
+
 // ownerOf returns the distinct owners in a result set (for terse assertions).
 func ownersOf(results []parser.TaskResult) map[string]bool {
 	out := map[string]bool{}
@@ -694,13 +738,15 @@ func TestSearch_SearchBlocksBudgetExcludesTitleHits(t *testing.T) {
 }
 
 // TestSearch_TitleHitsRankExactThenPrefix pins the title-leg ordering: an
-// exactly-named page must outrank prefix and substring matches, so it can
-// never be buried by alphabetically-earlier substring hits or pushed past the
-// flat cap by them.
+// exactly-named page must outrank prefix and substring matches, so it can never
+// be buried by alphabetically-earlier substring hits or pushed past the flat cap
+// by them. The fixture is deliberately ranked against the alphabetical order
+// the ORDER BY falls back to — "AAA Old Agenda" sorts first, so deleting the
+// rank tiers flips the result and fails here.
 func TestSearch_TitleHitsRankExactThenPrefix(t *testing.T) {
 	dm := newTestDB(t)
 
-	for _, page := range []string{"Old Agenda", "Agenda Archive", "Agenda"} {
+	for _, page := range []string{"AAA Old Agenda", "Agenda Archive", "Agenda"} {
 		if err := dm.IndexFileWithProjection("", "vault", "NB", "", page,
 			nil, nil, "", nil, PageCoreFields{}); err != nil {
 			t.Fatalf("index %s: %v", page, err)
@@ -713,13 +759,115 @@ func TestSearch_TitleHitsRankExactThenPrefix(t *testing.T) {
 	if res.Total != 3 {
 		t.Fatalf("expected 3 title hits, got %d: %+v", res.Total, res.Results)
 	}
-	want := []string{"Agenda", "Agenda Archive", "Old Agenda"}
+	want := []string{"Agenda", "Agenda Archive", "AAA Old Agenda"}
 	for i, page := range want {
 		if res.Results[i].Page != page {
 			t.Fatalf("title rank order = %v, want %v", []string{
 				res.Results[0].Page, res.Results[1].Page, res.Results[2].Page,
 			}, want)
 		}
+	}
+}
+
+// TestSearch_TitleRankExactPageSurvivesCap pins the other half of the rank
+// contract: an exactly-named page must not be pushed past the flat cap by
+// alphabetically-earlier substring matches. Every decoy sorts before the exact
+// page, so without the rank tier the cap window would contain decoys only.
+func TestSearch_TitleRankExactPageSurvivesCap(t *testing.T) {
+	dm := newTestDB(t)
+
+	total := searchFlatCap + 10
+	results := make([]parser.ScanResult, 0, total+1)
+	projections := make([]ScanProjection, 0, total+1)
+	for i := 0; i < total; i++ {
+		results = append(results, parser.ScanResult{
+			Path:     fmt.Sprintf("NB/aaa%04d.md", i),
+			Notebook: "NB", Section: "", Page: fmt.Sprintf("AAA Kilroy Notes %04d", i),
+		})
+		projections = append(projections, ScanProjection{})
+	}
+	results = append(results, parser.ScanResult{Path: "NB/kilroy.md", Notebook: "NB", Page: "Kilroy"})
+	projections = append(projections, ScanProjection{})
+	if _, _, err := dm.IndexScanResultsWithProjection(results, projections); err != nil {
+		t.Fatalf("batch index: %v", err)
+	}
+
+	res, err := dm.SearchBlocksPaged("kilroy", 0, 5, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if len(res.Results) == 0 || res.Results[0].Page != "Kilroy" {
+		t.Fatalf("exactly-named page pushed past the cap by alphabetical substring hits: %+v", res.Results)
+	}
+	if res.Total != searchFlatCap {
+		t.Fatalf("title leg must cap at searchFlatCap=%d, got total=%d", searchFlatCap, res.Total)
+	}
+}
+
+// TestSearch_TitleHitsMatchSeparatorNamedPages pins the title leg's term
+// extraction against the name shapes users actually type: a date-named daily
+// note, an underscored name, and a dash-named page. Squashing each word's
+// separators (the body leg's term rule) makes none of them a LIKE candidate, so
+// typing the page's own name returned nothing.
+func TestSearch_TitleHitsMatchSeparatorNamedPages(t *testing.T) {
+	dm := newTestDB(t)
+
+	// Decoys contain every term of their query but sort first alphabetically, so
+	// only the exact-name rank tier can put the real page on top.
+	pages := []string{
+		"2026-06-13",
+		"0099 Old 2026-06-13 Copy",
+		"sprint_17",
+		"AAA sprint_17 notes",
+		"api-v2",
+		"AAA api-v2 notes",
+	}
+	for _, page := range pages {
+		if err := dm.IndexFileWithProjection("", "vault", "NB", "", page,
+			nil, nil, "", nil, PageCoreFields{}); err != nil {
+			t.Fatalf("index %s: %v", page, err)
+		}
+	}
+
+	for _, query := range []string{"2026-06-13", "sprint_17", "api-v2"} {
+		res, err := dm.SearchBlocksPaged(query, 0, 50, SearchFilters{})
+		if err != nil {
+			t.Fatalf("SearchBlocksPaged(%q): %v", query, err)
+		}
+		if res.Total == 0 {
+			t.Fatalf("query %q found no page named for it", query)
+		}
+		if res.Results[0].Page != query {
+			t.Errorf("query %q ranked %q first, want the exactly-named page", query, res.Results[0].Page)
+		}
+		if !strings.Contains(res.Results[0].Snippet, "<mark>") {
+			t.Errorf("query %q: title snippet not highlighted: %q", query, res.Results[0].Snippet)
+		}
+	}
+}
+
+// TestSearch_TitleRankEscapesLikeMetacharacters pins the escaping of the raw
+// query in the rank binds: `%` and `_` typed by the user must match literally,
+// not as wildcards. "100!Kilo" sorts before "100%Kilo" and would take the prefix
+// tier from it if the percent in the query expanded.
+func TestSearch_TitleRankEscapesLikeMetacharacters(t *testing.T) {
+	dm := newTestDB(t)
+
+	for _, page := range []string{"100!Kilo", "100%Kilo"} {
+		if err := dm.IndexFileWithProjection("", "vault", "NB", "", page,
+			nil, nil, "", nil, PageCoreFields{}); err != nil {
+			t.Fatalf("index %s: %v", page, err)
+		}
+	}
+	res, err := dm.SearchBlocksPaged("100%", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 2 {
+		t.Fatalf("expected both pages as candidates, got %+v", res.Results)
+	}
+	if res.Results[0].Page != "100%Kilo" {
+		t.Errorf("query \"100%%\" ranked %q first — the percent must match literally, not as a wildcard", res.Results[0].Page)
 	}
 }
 

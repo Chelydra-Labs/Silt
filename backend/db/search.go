@@ -166,12 +166,11 @@ func appendTaskFilterPredicates(where []string, args []any, filters SearchFilter
 	return where, args
 }
 
-// searchTerms extracts the usable search terms from a free-text query:
-// Unicode letters and digits only (mirroring the unicode61 tokenizer), terms
-// under 2 bytes dropped. Shared by the FTS body query (buildFTSQuery) and
-// the page-title matcher (searchPageTitlesOn) so the two paths cannot drift
-// on what counts as a term — a title match must imply the same AND-of-terms
-// contract a body match satisfies.
+// searchTerms extracts the usable search terms from a free-text query for the
+// FTS body leg: Unicode letters and digits only (mirroring the unicode61
+// tokenizer), terms under 2 bytes dropped. The page-title leg uses titleTerms,
+// which splits on separators instead of squashing them — the body query must
+// answer to FTS tokenization, a page name must answer to what the user typed.
 func searchTerms(query string) []string {
 	var terms []string
 	for _, w := range strings.Fields(query) {
@@ -187,6 +186,27 @@ func searchTerms(query string) []string {
 		terms = append(terms, clean)
 	}
 	return terms
+}
+
+// titleTerms extracts the page-title leg's terms: the query split on every rune
+// that is not a letter or digit. The per-word squash searchTerms applies is
+// wrong for this leg — a page NAMED "2026-06-13" or "sprint_17" would never be a
+// LIKE candidate for the squashed "20260613"/"sprint17", so typing a page's own
+// name could not find it and the exact-name rank tier was unreachable. Splitting
+// keeps every part of a separator-bearing name, so each one is found in the
+// name (unicode61 tokenizes on exactly those separators for the body leg).
+func titleTerms(query string) []string {
+	terms := strings.FieldsFunc(query, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	out := make([]string, 0, len(terms))
+	for _, t := range terms {
+		if len(t) < 2 {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
 }
 
 // buildFTSQuery turns a free-text user query into a safe FTS5 MATCH
@@ -390,7 +410,7 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 	var titleHits []parser.TaskResult
 	if !filters.ExcludePageTitles && filters.Type == "" && filters.Tag == "" && !filters.hasTaskFilters() {
 		var err error
-		titleHits, err = searchPageTitlesOn(db, query, terms, filters)
+		titleHits, err = searchPageTitlesOn(db, query, filters)
 		if err != nil {
 			return parser.SearchResult{}, err
 		}
@@ -460,16 +480,16 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 }
 
 // searchPageTitlesOn returns one page-level result per page whose NAME
-// contains every term, case-insensitive, AND semantics — the same term
-// extraction and combination contract the FTS body query applies, so a title
-// hit and a body hit always answer the same question. Terms are
-// letters/digits only, so LIKE wildcards cannot occur inside them and the
-// pattern needs no escaping. Both sides are lowered in SQL: the comparison is
-// ASCII case-insensitive and an exactly-cased non-ASCII name still matches
-// (query "MÜNCHEN" → page "MÜNCHEN"). SQLite's LOWER folds ASCII only, so a
-// non-exact-case non-ASCII variant ("münchen") does not match — the same
-// approximation the rename lookup (page_links) relies on; full Unicode fold
-// parity with SearchPages is out of scope here.
+// contains every title term, case-insensitive, AND semantics. Terms are the
+// query split on separators (see titleTerms), so a page named "2026-06-13" or
+// "sprint_17" is found by typing its own name; the squashed body terms would
+// match neither the name nor (via FTS) the body. Quotes/`%`/`_` cannot occur
+// inside a term, so the patterns need no escaping. Both sides are lowered in
+// SQL: the comparison is ASCII case-insensitive and an exactly-cased non-ASCII
+// name still matches (query "MÜNCHEN" → page "MÜNCHEN"). SQLite's LOWER folds
+// ASCII only, so a non-exact-case non-ASCII variant ("münchen") does not match
+// — the same approximation the rename lookup (page_links) relies on; full
+// Unicode fold parity with SearchPages is out of scope here.
 // Notebook/section/scope filters narrow the page leg exactly as they narrow
 // the body leg. Results carry no block identity (ID stays empty — the marker
 // the frontend uses to render a page-navigation row), the page name as
@@ -477,10 +497,16 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 // HTML-escape the snippet and then re-allow only `<mark>`: the page name is
 // concatenated in raw. Bounded by searchFlatCap and ordered by match quality
 // first — exact name, then name prefix, then substring, with the alphabetical
-// (notebook, section, page) tiebreak — so an exactly-named page cannot be
-// buried by alphabetically-earlier substring matches or pushed past the cap by
-// them.
-func searchPageTitlesOn(db *sql.DB, query string, terms []string, filters SearchFilters) ([]parser.TaskResult, error) {
+// (source, notebook, section, page) tiebreak — so an exactly-named page cannot
+// be buried by alphabetically-earlier substring matches or pushed past the cap
+// by them. source is part of the tiebreak because a vault page and a
+// linked-notebook page can share the exact display path (page_core's PK): a
+// tie there would make paging over title hits skip or duplicate rows.
+func searchPageTitlesOn(db *sql.DB, query string, filters SearchFilters) ([]parser.TaskResult, error) {
+	terms := titleTerms(query)
+	if len(terms) == 0 {
+		return nil, nil
+	}
 	var where []string
 	var args []any
 	for _, t := range terms {
@@ -500,7 +526,7 @@ func searchPageTitlesOn(db *sql.DB, query string, terms []string, filters Search
 	}
 	// The rank binds are the raw query, so LIKE metacharacters a user typed
 	// must be escaped to stay literal (the page-name patterns above come from
-	// searchTerms, which strips punctuation).
+	// titleTerms, which strips punctuation).
 	escQuery := strings.NewReplacer(`\`, `\\`, `_`, `\_`, `%`, `\%`).Replace(query)
 	args = append(args, query, escQuery+"%", searchFlatCap)
 	rows, err := db.Query(`
@@ -511,7 +537,7 @@ func searchPageTitlesOn(db *sql.DB, query string, terms []string, filters Search
 			WHEN LOWER(page) = LOWER(?) THEN 0
 			WHEN LOWER(page) LIKE LOWER(?) ESCAPE '\' THEN 1
 			ELSE 2
-		END, notebook, section, page
+		END, source, notebook, section, page
 		LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search page titles: %w", err)
