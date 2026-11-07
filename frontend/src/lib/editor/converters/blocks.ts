@@ -1298,7 +1298,12 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
       id,
       parent_id: '',
       type,
-      depth: Number(attrs.depth ?? 0),
+      // Same clamp as the load stamp (blockToNode): paste-shaped attrs can
+      // land negative (data-depth="-1") or over-deep here without passing
+      // through it, and a negative reaching Go's renderBlock panics the
+      // save; for HEADER the clamped value is the '#' level, so 0 → 1 at
+      // emit below.
+      depth: clampDepth(attrs.depth as number | undefined),
       raw_text: '',
       clean_text: cleanText,
       status: '',

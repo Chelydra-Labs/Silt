@@ -913,9 +913,9 @@ export const CALLOUT_VARIANTS: Record<
 // Tab/Shift-Tab depth runs and parent nothing — the attr is pure carry.
 const depthAttr = {
   default: 0,
-  // Guarded like headerBlock's depth attr: pasted data-depth is untrusted,
-  // and a negative value reaching Go's renderBlock panics the save
-  // (negative strings.Repeat count).
+  // Pasted data-depth is untrusted: a negative value reaching Go's
+  // renderBlock panics the save (negative strings.Repeat count). Stricter
+  // than headerBlock's depth attr, which still trusts any finite value.
   parseHTML: (el: HTMLElement) => {
     const parsed = Number(el.getAttribute('data-depth') || 0)
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0

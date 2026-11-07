@@ -1357,6 +1357,12 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 	if spacesPerTab <= 0 {
 		spacesPerTab = 4
 	}
+	// Defensive: parse never yields negatives and DeriveHierarchy floors the
+	// blocks it sees, but renderBlock is also fed caller-constructed blocks
+	// straight from save — a negative depth panics strings.Repeat below.
+	if block.Depth < 0 {
+		block.Depth = 0
+	}
 	indent := strings.Repeat(" ", block.Depth*spacesPerTab)
 
 	// Build ID suffix — includes per-block file_date if present:

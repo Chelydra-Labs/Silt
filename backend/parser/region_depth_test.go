@@ -276,3 +276,21 @@ func TestRenderFileContent_BlankInteriorLinesStayBareAtDepth(t *testing.T) {
 		t.Fatalf("trailing whitespace leaked into a rendered line: %q", rendered)
 	}
 }
+
+// renderBlock is fed caller-constructed blocks straight from save (IPC,
+// plugin SDK), not only parse output — a negative depth must floor to 0
+// instead of panicking strings.Repeat. Mirrors DeriveHierarchy's floor.
+func TestRenderBlock_NegativeDepthFloorsToZero(t *testing.T) {
+	out := renderBlock(ParsedBlock{
+		ID:        "11111111-1111-1111-8111-111111111111",
+		Type:      BlockNote,
+		Depth:     -1,
+		CleanText: "poisoned",
+	}, 4)
+	if strings.HasPrefix(out, " ") {
+		t.Fatalf("floored block still indented: %q", out)
+	}
+	if !strings.Contains(out, "poisoned") {
+		t.Fatalf("floored block lost its text: %q", out)
+	}
+}

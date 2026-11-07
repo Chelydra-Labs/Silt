@@ -2284,8 +2284,8 @@ describe('region-block depth round-trip (#1003)', () => {
   })
 
   it('paste-shaped HTML with data-depth="-1" cannot enter the doc model negative', () => {
-    // The schema's parseHTML is the paste entry point; it guards like
-    // headerBlock's depth attr instead of trusting the attribute value.
+    // The schema's parseHTML is the paste entry point; unlike headerBlock's
+    // depth attr (which trusts any finite value) it floors at 0.
     const editor = makeEditorWithNewBlocks()
     editor.commands.setContent(
       '<div data-type="callout" data-variant="note" data-depth="-1"><p>body</p></div>'
@@ -2294,5 +2294,29 @@ describe('region-block depth round-trip (#1003)', () => {
     expect(first.type.name).toBe('calloutBlock')
     expect(first.attrs.depth).toBe(0)
     editor.destroy()
+  })
+
+  it('floors a negative prose/header depth on the save readback', () => {
+    // The shared prose branch is the save funnel for NOTE/TASK/HEADER, and
+    // the prose parseHTML attrs are unguarded — a paste-shaped negative
+    // attr must floor HERE or the save dies downstream: Go's renderBlock
+    // panics on a negative prose depth, HEADER instead throws
+    // '#'.repeat(-3) at the raw_text emit.
+    const doc = blocksToDoc([
+      mkBlock('NOTE', { clean_text: 'note', depth: 0 }),
+      mkBlock('TASK', { clean_text: 'task', depth: 0 }),
+      mkBlock('HEADER', { clean_text: 'head', depth: 1 })
+    ])
+    doc.content![0]!.attrs!.depth = -1
+    doc.content![1]!.attrs!.depth = -1
+    doc.content![2]!.attrs!.depth = -3
+    const back = docToBlocks(doc)
+    expect(back.map((b) => [b.type, b.depth])).toEqual([
+      ['NOTE', 0],
+      ['TASK', 0],
+      ['HEADER', 0]
+    ])
+    // Header depth 0 falls back to level 1 at emit ('#'.repeat(0 || 1)).
+    expect(back[2]!.raw_text).toBe('# head')
   })
 })
