@@ -960,6 +960,81 @@ func TestSearch_TitleHitsMatchSingleCharPartNames(t *testing.T) {
 	if res.Total != 0 {
 		t.Errorf("single-character query matched %d title row(s), want 0", res.Total)
 	}
+
+	// The fallback's pattern must escape LIKE metacharacters. "a%b" has no
+	// two-byte part, so it takes the raw-query pattern: unescaped, "%" is a
+	// wildcard that also matches "AxxB"; escaped, only the literal name does.
+	for _, page := range []string{"A%B", "AxxB", "Q_D", "QxD"} {
+		if err := dm.IndexFileWithProjection("vault", "NB", "", page,
+			nil, nil, "", nil, PageCoreFields{}); err != nil {
+			t.Fatalf("index %s: %v", page, err)
+		}
+	}
+	res, err = dm.SearchBlocksPaged("a%b", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(a%%b): %v", err)
+	}
+	if res.Total != 1 || res.Results[0].Page != "A%B" {
+		t.Errorf("LIKE metacharacter was not literal in the fallback: %+v", res.Results)
+	}
+	res, err = dm.SearchBlocksPaged("q_d", 0, 50, SearchFilters{Notebook: "NB"})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(q_d): %v", err)
+	}
+	if res.Total != 1 || res.Results[0].Page != "Q_D" {
+		t.Errorf("LIKE underscore was not literal in the fallback: %+v", res.Results)
+	}
+}
+
+// TestSearch_FTSBooleanKeywordsAreLiteral pins that uppercase FTS5 operators
+// are searched as text. Unquoted, FTS5 parses OR/AND/NOT as boolean operators,
+// so the body leg errored before the title leg ran: every such query
+// hard-errored and a page literally named OR was unfindable.
+func TestSearch_FTSBooleanKeywordsAreLiteral(t *testing.T) {
+	dm := newTestDB(t)
+
+	body := []parser.ParsedBlock{{
+		ID: "aaaa1111-0000-4000-8000-00000000000b", Type: parser.BlockNote,
+		RawText: "salt and pepper grind", CleanText: "salt and pepper grind", LineNumber: 1,
+	}}
+	if err := dm.IndexFileBlocks("vault", "Recipes", "", "Pepper", body, nil); err != nil {
+		t.Fatalf("index body: %v", err)
+	}
+	// Zero-block page named for the operator: only the title leg can find it,
+	// and that leg only runs if the body leg no longer aborts.
+	if err := dm.IndexFileWithProjection("vault", "NB", "", "OR",
+		nil, nil, "", nil, PageCoreFields{}); err != nil {
+		t.Fatalf("index page named OR: %v", err)
+	}
+
+	for _, q := range []string{"OR", "AND", "NOT"} {
+		if _, err := dm.SearchBlocksPaged(q, 0, 50, SearchFilters{}); err != nil {
+			t.Fatalf("SearchBlocksPaged(%q): %v", q, err)
+		}
+	}
+
+	// An operator-bearing query still matches the literal words.
+	res, err := dm.SearchBlocksPaged("SALT AND PEPPER", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(SALT AND PEPPER): %v", err)
+	}
+	if res.Total != 1 || res.Results[0].ID == "" {
+		t.Fatalf("uppercase-operator query did not match the literal body: %+v", res.Results)
+	}
+
+	res, err = dm.SearchBlocksPaged("OR", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(OR): %v", err)
+	}
+	found := false
+	for _, r := range res.Results {
+		if r.Page == "OR" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("page named OR is not findable: %+v", res.Results)
+	}
 }
 
 // TestSearch_TitleRankExactBeatsAlphabeticalPrefix pins the exact-vs-prefix arm

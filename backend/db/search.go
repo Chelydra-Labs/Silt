@@ -216,10 +216,14 @@ func titleTerms(query string) []string {
 // digits (covering every script unicode61 would treat as word characters)
 // and drop everything else, which removes ALL FTS5 query-syntax characters
 // (`"`, `*`, `(`, `)`, `:`, `^`, `-` are ASCII punctuation, never letters or
-// digits). Each surviving term gets a trailing `*` for prefix matching
-// (closer to the old LIKE %term% feel than bare-token exact matching). Terms
-// are space-joined → FTS5 implicit AND. Returns "" when no usable terms
-// survive, which the caller treats as "no search".
+// digits). Each surviving term is quoted before its trailing `*` for prefix
+// matching (closer to the old LIKE %term% feel than bare-token exact
+// matching). The quotes matter beyond hygiene: FTS5 parses bare uppercase
+// OR/AND/NOT as boolean operators, so a page named "OR" — or any query with
+// one of those as a term — was a syntax error that aborted the whole search
+// before the title leg could find it. Terms are space-joined → FTS5 implicit
+// AND. Returns "" when no usable terms survive, which the caller treats as
+// "no search".
 func buildFTSQuery(query string) string {
 	terms := searchTerms(query)
 	if len(terms) == 0 {
@@ -227,7 +231,7 @@ func buildFTSQuery(query string) string {
 	}
 	parts := make([]string, len(terms))
 	for i, t := range terms {
-		parts[i] = t + "*"
+		parts[i] = `"` + t + `"*`
 	}
 	return strings.Join(parts, " ")
 }
@@ -488,9 +492,11 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 // A query whose every part is a single character ("R&D", "Q&A", "C++") yields
 // no terms, yet a page may be named exactly that. For those the leg falls back
 // to the raw query as a single escaped pattern: typing a page's own name must
-// find it. Sub-2-byte queries stay a no-op (one character is not a name
-// search), and the raw query is escaped because it carries the user's
-// punctuation, which LIKE would otherwise treat as wildcards.
+// find it. Queries shorter than 2 bytes — a single ASCII character — stay a
+// no-op (one keystroke is not a name search); the gate is byte length, so a
+// single 2-byte non-ASCII letter (e.g. "Ü") is still searched. The raw query is
+// escaped because it carries the user's punctuation, which LIKE would otherwise
+// treat as wildcards.
 //
 // Both sides are lowered in SQL: the comparison is ASCII case-insensitive and
 // an exactly-cased non-ASCII name still matches (query "MÜNCHEN" → page

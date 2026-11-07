@@ -2256,12 +2256,13 @@ func TestBuildFTSQuery_PreservesUnicode(t *testing.T) {
 	cases := []struct {
 		in, want string
 	}{
-		{"café", "café*"},
-		{"über road", "über* road*"},
-		{"中文 笔记", "中文* 笔记*"},
-		{"кирриллица", "кирриллица*"},
-		// FTS5 query-syntax chars (ASCII punctuation) are still stripped.
-		{`"inject" OR (*)`, "inject* OR*"},
+		{"café", `"café"*`},
+		{"über road", `"über"* "road"*`},
+		{"中文 笔记", `"中文"* "笔记"*`},
+		{"кирриллица", `"кирриллица"*`},
+		// FTS5 query-syntax chars (ASCII punctuation) are still stripped, and
+		// the surviving uppercase OR is quoted so FTS5 reads it as a term.
+		{`"inject" OR (*)`, `"inject"* "OR"*`},
 		// <2-char noise dropped; FTS5 syntax stripped even when ASCII.
 		{"a * b", ""}, // "a" too short, "*" all-stripped, "b" too short
 	}
