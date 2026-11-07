@@ -68,8 +68,34 @@ var fullPageInventoryScans atomic.Uint64
 
 // listDistinctPages is the no-handle-reentry internal helper. Callers that
 // already hold a handle lease MUST call this instead of ListDistinctPages.
+//
+// The inventory reads the page_core projection (one row per indexed page
+// file, including zero-block files) rather than SELECT DISTINCT over blocks:
+// an empty or block-less page exists on disk and must stay resolvable as a
+// wiki-link target and findable in page search. Every index path guarantees
+// a row (identity-only upsert on the block-only paths; full row on
+// frontmatter-affecting publishes), and the delete/remove paths
+// (ClearFileBlocks / ClearSourceBlocks) drop it with the rest of the
+// projection, so the projection and the set of indexed files stay in sync.
 func listDistinctPages(db *sql.DB) ([]PageLoc, error) {
-	return scanDistinctPages(db, `` /* no WHERE */, nil)
+	fullPageInventoryScans.Add(1)
+	rows, err := db.Query(`
+		SELECT COALESCE(source, 'vault'), notebook, section, page
+		FROM page_core
+		ORDER BY notebook, section, page`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PageLoc
+	for rows.Next() {
+		var p PageLoc
+		if err := rows.Scan(&p.Source, &p.Notebook, &p.Section, &p.Page); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
 
 // scanDistinctPages runs SELECT DISTINCT page locs with an optional WHERE

@@ -824,6 +824,18 @@ func (dm *DatabaseManager) indexFileBlocksStage(tx *sql.Tx, source, notebook, se
 		return fmt.Errorf("failed to clear old blocks: %w", err)
 	}
 
+	// Page-inventory guarantee: every index path leaves a page_core row for
+	// the page, so inventory reads and title search see files that reach this
+	// block-only stage (including zero-block re-indexes). OR IGNORE keeps it
+	// identity-only — a row written by a frontmatter-affecting publish (with
+	// real core fields) is never clobbered here.
+	if _, err := tx.Exec(
+		"INSERT OR IGNORE INTO page_core (source, notebook, section, page) VALUES (?, ?, ?, ?)",
+		source, notebook, section, page,
+	); err != nil {
+		return fmt.Errorf("failed to upsert page identity: %w", err)
+	}
+
 	if len(blocks) == 0 {
 		return nil
 	}
@@ -1170,6 +1182,17 @@ func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexSt
 		}
 		if err := dm.ClearFileBlocks(tx, source, res.Notebook, res.Section, res.Page); err != nil {
 			return indexedCount, skipped, fmt.Errorf("failed to clear blocks for %s: %w", res.Path, err)
+		}
+
+		// Same page-inventory guarantee as the per-file stage: the batched
+		// block-only path (projections == nil) must still register page
+		// identity; the WithProjection path overwrites this row with real
+		// core fields in the same tx below.
+		if _, err := tx.Exec(
+			"INSERT OR IGNORE INTO page_core (source, notebook, section, page) VALUES (?, ?, ?, ?)",
+			source, res.Notebook, res.Section, res.Page,
+		); err != nil {
+			return indexedCount, skipped, fmt.Errorf("failed to upsert page identity for %s: %w", res.Path, err)
 		}
 
 		if err := stmts.indexBlocks(source, res.Notebook, res.Section, res.Page, res.Blocks, res.Tags, "IndexScanResults", dups); err != nil {
