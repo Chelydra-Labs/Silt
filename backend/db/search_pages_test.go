@@ -526,6 +526,48 @@ func TestSearch_SearchBlocksReturnsOnlyBlockHits(t *testing.T) {
 	}
 }
 
+func TestSearch_UnicodeOwnerAndTitleExactCase(t *testing.T) {
+	dm := newTestDB(t)
+
+	release := []parser.ParsedBlock{
+		{
+			ID: "aaaa1111-0000-4000-8000-000000000009", Type: parser.BlockTask,
+			RawText:   "- [ ] Release checklist [owner:: Ünal]",
+			CleanText: "Release checklist", Status: "TODO", Owner: "Ünal", LineNumber: 1,
+		},
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Projects", "Release Notes", release, nil); err != nil {
+		t.Fatalf("index release page: %v", err)
+	}
+	if err := dm.IndexFileWithProjection("vault", "Work", "Projects", "MÜNCHEN",
+		nil, nil, "", nil, PageCoreFields{}); err != nil {
+		t.Fatalf("index accented page: %v", err)
+	}
+
+	// Owner typed exactly as stored: the needle used to be Go-lowered while the
+	// haystack was SQLite-lowered, so Ü matched only Ü by luck of no folding —
+	// and "Ünal" vs "ünal" could never compare.
+	res, err := dm.SearchBlocksPaged("release", 0, 50, SearchFilters{Owner: "Ünal"})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(owner): %v", err)
+	}
+	if res.Total != 1 || res.Results[0].Owner != "Ünal" {
+		t.Fatalf("exact-case non-ASCII owner did not match: %+v", res.Results)
+	}
+
+	// Page title typed exactly as stored.
+	title, err := dm.SearchBlocksPaged("MÜNCHEN", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(title): %v", err)
+	}
+	if title.Total != 1 || title.Results[0].ID != "" || title.Results[0].Page != "MÜNCHEN" {
+		t.Fatalf("exact-case non-ASCII page title did not match: %+v", title.Results)
+	}
+	if !strings.Contains(title.Results[0].Snippet, "<mark>MÜNCHEN</mark>") {
+		t.Errorf("snippet should highlight the accented title, got %q", title.Results[0].Snippet)
+	}
+}
+
 func TestSearch_TitleHitsSuppressUnderTagFilter(t *testing.T) {
 	dm := seedSearchPages(t)
 

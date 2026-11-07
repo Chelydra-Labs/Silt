@@ -75,7 +75,8 @@ func (f SearchFilters) hasTaskFilters() bool {
 // interpolated (fixed strings).
 //
 // Semantics (documented for the ARCHITECTURE contract and mirrored by tests):
-//   - Owner: exact match, case-insensitive (both sides lowered in SQL).
+//   - Owner: exact match, case-insensitive for ASCII (both sides lowered in
+//     SQL; SQLite's LOWER folds ASCII only, so non-ASCII matches exactly-cased).
 //   - Status: exact match after upper-casing the caller's input (TODO/DOING/
 //     DONE are stored upper-case by the indexer).
 //   - DueBefore/DueAfter: inclusive bounds on due_date; NULL never satisfies
@@ -94,8 +95,13 @@ func (f SearchFilters) hasTaskFilters() bool {
 //     passed as now) AND status != DONE.
 func appendTaskFilterPredicates(where []string, args []any, filters SearchFilters, now time.Time) ([]string, []any) {
 	if filters.Owner != "" {
-		where = append(where, "LOWER(t.owner) = ?")
-		args = append(args, strings.ToLower(strings.TrimSpace(filters.Owner)))
+		// Lower BOTH sides in SQL: the caller's raw text may carry non-ASCII
+		// upper case that Go's ToLower would fold but a Go-lowered needle vs a
+		// SQL-lowered haystack could never compare. SQLite's LOWER is ASCII-only,
+		// so exact-case non-ASCII now matches; non-ASCII case variants beyond
+		// that remain an approximation (see searchPageTitlesOn).
+		where = append(where, "LOWER(t.owner) = LOWER(?)")
+		args = append(args, strings.TrimSpace(filters.Owner))
 	}
 	if filters.Status != "" {
 		where = append(where, "t.status = ?")
@@ -413,21 +419,25 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 // extraction and combination contract the FTS body query applies, so a title
 // hit and a body hit always answer the same question. Terms are
 // letters/digits only, so LIKE wildcards cannot occur inside them and the
-// pattern needs no escaping. SQLite's LOWER is ASCII-only — the same
-// case-folding approximation the rename lookup (page_links) already relies
-// on; CJK and already-lowercase names match on literal code points.
+// pattern needs no escaping. Both sides are lowered in SQL: the comparison is
+// ASCII case-insensitive and an exactly-cased non-ASCII name still matches
+// (query "MÜNCHEN" → page "MÜNCHEN"). SQLite's LOWER folds ASCII only, so a
+// non-exact-case non-ASCII variant ("münchen") does not match — the same
+// approximation the rename lookup (page_links) relies on; full Unicode fold
+// parity with SearchPages is out of scope here.
 // Notebook/section/scope filters narrow the page leg exactly as they narrow
 // the body leg. Results carry no block identity (ID stays empty — the marker
 // the frontend uses to render a page-navigation row), the page name as
-// content, and a highlighted-title snippet. Bounded by searchFlatCap and
-// ordered (notebook, section, page) so paging over title hits is
-// deterministic.
+// `clean_content`, and a `<mark>`-highlighted title snippet. Consumers must
+// HTML-escape the snippet and then re-allow only `<mark>`: the page name is
+// concatenated in raw. Bounded by searchFlatCap and ordered (notebook,
+// section, page) so paging over title hits is deterministic.
 func searchPageTitlesOn(db *sql.DB, terms []string, filters SearchFilters) ([]parser.TaskResult, error) {
 	var where []string
 	var args []any
 	for _, t := range terms {
-		where = append(where, "LOWER(page) LIKE ?")
-		args = append(args, "%"+strings.ToLower(t)+"%")
+		where = append(where, "LOWER(page) LIKE LOWER(?)")
+		args = append(args, "%"+t+"%")
 	}
 	if filters.Notebook != "" {
 		where = append(where, "notebook = ?")
