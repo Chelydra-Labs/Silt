@@ -123,6 +123,21 @@ func TestDeriveHierarchy_RegionParentage(t *testing.T) {
 			t.Errorf("depth-4 region ParentID = %q, want the task %q", blocks[1].ParentID, taskID)
 		}
 	})
+	t.Run("orphan indented region stays parentless and silent", func(t *testing.T) {
+		// A hand-edited file can open indented: no block anywhere above,
+		// so the scan finds no ancestor. The silence is the load-bearing
+		// part — without the region exemption this shape would report a
+		// violation on every parse.
+		blocks := []ParsedBlock{
+			{ID: regionID, Type: BlockCode, Depth: 2},
+		}
+		if violations := DeriveHierarchy(blocks); len(violations) != 0 {
+			t.Fatalf("violations = %+v, want none for an orphan region (serialization-only depth)", violations)
+		}
+		if blocks[0].ParentID != "" {
+			t.Errorf("orphan region ParentID = %q, want empty (no shallower block exists)", blocks[0].ParentID)
+		}
+	})
 }
 
 // TestParseFileContent_RegionParentage pins the same contract end to end
