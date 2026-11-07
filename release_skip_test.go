@@ -19,7 +19,7 @@ func TestReleaseWorkflowSkipGuardStructure(t *testing.T) {
 	}
 	content := string(contentBytes)
 
-	// Invariant 1: workflow_dispatch exposes dry_run and sha inputs (#986)
+	// Invariant 1: workflow_dispatch exposes dry_run and sha inputs
 	if !strings.Contains(content, "dry_run:") {
 		t.Errorf("release.yml missing inputs.dry_run declaration")
 	}
