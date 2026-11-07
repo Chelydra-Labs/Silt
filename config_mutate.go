@@ -83,8 +83,11 @@ func (a *App) mutateConfigFreshLocked(mut func(*config.SystemConfig) (changed bo
 	if !changed {
 		return nil
 	}
+	if err := a.saveConfigTracked(fresh); err != nil {
+		return err
+	}
 	a.cfg = fresh
-	return a.saveConfigTracked(a.cfg)
+	return nil
 }
 
 // mutateConfigLocked is the lifecycle-locked form used by content mutations

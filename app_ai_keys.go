@@ -91,6 +91,8 @@ func (a *App) setAIAPIKeyLocked(which, key string) error {
 		useKeyring := fresh.AI.UseKeyring == nil || *fresh.AI.UseKeyring
 		keyringStored := false
 		if useKeyring && a.keyringStore != nil {
+			// Keyring I/O runs under the mutator's configMu hold to atomically
+			// evaluate fresh UseKeyring against disk state; save frequency is low.
 			if err := a.keyringStore.Set(keyringService, user, key); err == nil {
 				keyringStored = true
 			}
