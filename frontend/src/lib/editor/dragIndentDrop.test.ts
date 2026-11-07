@@ -6,9 +6,11 @@ import {
   resolveDropDepth,
   resolveIndentStepFromEl,
   resolveDragDepthForNode,
+  runSpansWholeDoc,
   BlockIndentOnDrop,
   INDENT_STEP_PX
 } from './dragIndentDrop'
+import { depthRunSpanForNode, shiftRunDepths } from './depthRun'
 import { applyDropDepthFixup } from './orderedList'
 import { CodeBlock } from './schema'
 import { MAX_DEPTH } from './constants'
@@ -452,6 +454,111 @@ describe('headerBlock drag never rewrites the heading level', () => {
     expect(dropped.type.name).toBe('headerBlock')
     // The level survived the far-right drop column.
     expect(dropped.attrs.depth).toBe(2)
+    editor.destroy()
+  })
+})
+
+// Dragging the head of a page's ONLY subtree sweeps the whole doc into the
+// run — every valid drop point lies inside it, and the delete+insert
+// relocation would empty the doc mid-transaction. PM's step machinery then
+// auto-fills a default noteBlock to satisfy the doc's `block+` content
+// requirement, and that filler survives the reinsert as a phantom empty
+// note that autosaves. handleDrop must detect the span invariant
+// (runSpansWholeDoc) and bail to native reorder. jsdom cannot drive
+// handleDrop itself (no layout-driven posAtCoords), so this pins the
+// predicate and mirrors the guarded transaction, same pattern as the
+// headerBlock drag describe above.
+describe('whole-doc run drag never mints a phantom noteBlock', () => {
+  const subtreeDoc = {
+    type: 'doc',
+    content: [
+      {
+        type: 'noteBlock',
+        attrs: { id: 'a', depth: 0, bullet: '- ' },
+        content: [{ type: 'text', text: 'parent' }]
+      },
+      {
+        type: 'noteBlock',
+        attrs: { id: 'b', depth: 1, bullet: '- ' },
+        content: [{ type: 'text', text: 'child' }]
+      }
+    ]
+  }
+
+  function makeEditor(): Editor {
+    return new Editor({
+      extensions: [
+        StarterKit.configure({
+          paragraph: false,
+          heading: false,
+          bulletList: false,
+          orderedList: false,
+          listItem: false,
+          blockquote: false,
+          codeBlock: false,
+          horizontalRule: false,
+          trailingNode: false,
+          hardBreak: false
+        }),
+        ...SiltBlockExtensions,
+        BlockIndentOnDrop
+      ],
+      content: subtreeDoc
+    })
+  }
+
+  it('flags a run that covers the entire doc (the page’s only subtree)', () => {
+    const editor = makeEditor()
+    const doc = editor.state.doc
+    // Dragging the depth-0 head sweeps its depth-1 child: 0 → doc end.
+    const run = depthRunSpanForNode(doc, 0, doc.child(0))
+    expect(run.from).toBe(0)
+    expect(run.to).toBe(doc.content.size)
+    expect(runSpansWholeDoc(run, doc.content.size)).toBe(true)
+    editor.destroy()
+  })
+
+  it('does not flag a run with a neighbor outside the span', () => {
+    const editor = makeEditor()
+    // A trailing depth-0 sibling leaves room outside the run — the
+    // delete+insert relocation is safe there and must not bail.
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        ...subtreeDoc.content,
+        {
+          type: 'noteBlock',
+          attrs: { id: 'c', depth: 0, bullet: '- ' },
+          content: [{ type: 'text', text: 'tail' }]
+        }
+      ]
+    })
+    const doc = editor.state.doc
+    const run = depthRunSpanForNode(doc, 0, doc.child(0))
+    expect(run.to).toBeLessThan(doc.content.size)
+    expect(runSpansWholeDoc(run, doc.content.size)).toBe(false)
+    editor.destroy()
+  })
+
+  it('mirroring the guarded drop transaction adds no filler block', () => {
+    const editor = makeEditor()
+    const doc = editor.state.doc
+    // Exactly the handler's step-7 sequence, guard included: a whole-doc
+    // run bails BEFORE delete+insert, so nothing is dispatched and the doc
+    // keeps its two blocks. (Unguarded, tr.delete(0, size) empties the
+    // block+ doc and PM's auto-fill survives the reinsert as a third
+    // child — the phantom this guard exists to prevent.)
+    const run = depthRunSpanForNode(doc, 0, doc.child(0))
+    if (!runSpansWholeDoc(run, doc.content.size)) {
+      editor.view.dispatch(
+        editor.state.tr
+          .delete(run.from, run.to)
+          .insert(doc.content.size, shiftRunDepths(doc, run, 1))
+      )
+    }
+    expect(editor.state.doc.childCount).toBe(2)
+    expect(editor.state.doc.child(0).attrs.id).toBe('a')
+    expect(editor.state.doc.child(1).attrs.id).toBe('b')
     editor.destroy()
   })
 })

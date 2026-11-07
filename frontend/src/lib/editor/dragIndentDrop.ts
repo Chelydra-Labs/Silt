@@ -106,6 +106,22 @@ export function resolveDragDepthForNode(
   return resolveDropDepth(clientX, contentLeft, indentStepPx, maxDepth)
 }
 
+/**
+ * True when a relocated run would cover the ENTIRE document — the page's
+ * only subtree. Every valid drop point for such a doc lies inside the
+ * run, and `tr.delete(0, doc.content.size)` empties the `block+` doc
+ * mid-transaction, so ProseMirror auto-fills a default noteBlock that
+ * survives the reinsert as a phantom empty note. The drag handler bails
+ * to native reorder in that case. Targets the span invariant, never the
+ * fill mechanics (Fitter-internal, undocumented PM surface).
+ */
+export function runSpansWholeDoc(
+  run: { from: number; to: number },
+  docSize: number
+): boolean {
+  return run.from === 0 && run.to === docSize
+}
+
 // Shape of `view.dragging` at runtime. ProseMirror's public .d.ts types this
 // as `{slice, move}` only, but the runtime Dragging class also carries
 // `node: NodeSelection | undefined` for node drags (prosemirror-view's
@@ -406,6 +422,11 @@ export const BlockIndentOnDrop = Extension.create({
             // future helper that returns a fresh Transaction cannot silently
             // drop drag renumber steps.
             const run = depthRunSpanForNode(doc, oldPos, draggedNode)
+            // Whole-doc run (the page's only subtree): every drop point
+            // lies inside it and the delete would empty the doc, so PM
+            // would auto-fill a phantom noteBlock that survives dispatch
+            // (see runSpansWholeDoc). Bail to native reorder.
+            if (runSpansWholeDoc(run, doc.content.size)) return false
             let tr = state.tr
             tr = tr.delete(run.from, run.to)
             const mappedInsert = tr.mapping.map(insertAt)
