@@ -5,10 +5,21 @@ import { SiltBlockExtensions } from './index'
 import {
   resolveDropDepth,
   resolveIndentStepFromEl,
+  resolveDragDepthForNode,
+  runSpansWholeDoc,
   BlockIndentOnDrop,
   INDENT_STEP_PX
 } from './dragIndentDrop'
-import { applyDropDepthFixup } from './orderedList'
+import {
+  depthRunSpanForNode,
+  shiftRunDepths,
+  clampRunDepthDelta
+} from './depthRun'
+import {
+  applyDropDepthFixup,
+  parseOrderedBullet,
+  renumberOrderedRunMembers
+} from './orderedList'
 import { CodeBlock } from './schema'
 import { MAX_DEPTH } from './constants'
 
@@ -350,6 +361,435 @@ describe('applyDropDepthFixup — region blocks through the drop path', () => {
       expect(dropped.type.name).toBe('codeBlock')
       expect(dropped.attrs.depth).toBe(expected)
     }
+    editor.destroy()
+  })
+})
+
+// A headerBlock's `depth` attr is its heading LEVEL, not an indent. The
+// drag handler's has-depth guard admits headerBlock drags (HeaderBlockView
+// renders the same [data-drag-handle] span as notes/tasks), so the drop
+// column must never become the new level — dragging an H2 to the right
+// margin would mint an H6, and a far-LEFT drop would zero the hashes.
+// Mirrors the Tab-path bail (headers are excluded from the depth blocks).
+describe('headerBlock drag never rewrites the heading level', () => {
+  it('resolveDragDepthForNode keeps the current level at any drop column', () => {
+    for (const clientX of [-100, 100, 100 + 3 * INDENT_STEP_PX, 1e6]) {
+      expect(
+        resolveDragDepthForNode(
+          'headerBlock',
+          2,
+          clientX,
+          100,
+          INDENT_STEP_PX,
+          MAX_DEPTH
+        )
+      ).toBe(2)
+    }
+    // Prose blocks keep resolving from the drop column (regression guard
+    // for the non-header path).
+    expect(
+      resolveDragDepthForNode(
+        'noteBlock',
+        0,
+        100 + 2 * INDENT_STEP_PX,
+        100,
+        INDENT_STEP_PX,
+        MAX_DEPTH
+      )
+    ).toBe(2)
+  })
+
+  it('the drop fixup leaves the level untouched end-to-end', () => {
+    const editor = new Editor({
+      extensions: [
+        StarterKit.configure({
+          paragraph: false,
+          heading: false,
+          bulletList: false,
+          orderedList: false,
+          listItem: false,
+          blockquote: false,
+          codeBlock: false,
+          horizontalRule: false,
+          trailingNode: false
+        }),
+        ...SiltBlockExtensions,
+        BlockIndentOnDrop
+      ],
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'headerBlock',
+            attrs: { id: 'h', depth: 2 },
+            content: [{ type: 'text', text: 'Section' }]
+          },
+          {
+            type: 'noteBlock',
+            attrs: { id: 'n', depth: 0, bullet: '- ' },
+            content: [{ type: 'text', text: 'body' }]
+          }
+        ]
+      }
+    })
+    // Mirror the drop transaction exactly as handleDrop builds it: delete
+    // the header's source, re-insert at the top, resolve the depth with the
+    // header-aware resolver (far-right column — the most destructive case),
+    // then run the shared fixup.
+    const header = editor.state.doc.child(0)
+    let tr = editor.state.tr.delete(0, header.nodeSize)
+    const mappedInsert = 0
+    tr = tr.insert(mappedInsert, header)
+    const vacatedNear = tr.mapping.map(0)
+    const newDepth = resolveDragDepthForNode(
+      'headerBlock',
+      (header.attrs.depth as number) || 0,
+      1e6,
+      100,
+      INDENT_STEP_PX,
+      MAX_DEPTH
+    )
+    tr = applyDropDepthFixup(
+      tr,
+      header.attrs,
+      null,
+      mappedInsert,
+      vacatedNear,
+      newDepth
+    )
+    editor.view.dispatch(tr)
+    const dropped = editor.state.doc.child(0)
+    expect(dropped.type.name).toBe('headerBlock')
+    // The level survived the far-right drop column.
+    expect(dropped.attrs.depth).toBe(2)
+    editor.destroy()
+  })
+})
+
+// Dragging the head of a page's ONLY subtree sweeps the whole doc into the
+// run — every valid drop point lies inside it, and the delete+insert
+// relocation would empty the doc mid-transaction. PM's step machinery then
+// auto-fills a default noteBlock to satisfy the doc's `block+` content
+// requirement, and that filler survives the reinsert as a phantom empty
+// note that autosaves. handleDrop must detect the span invariant
+// (runSpansWholeDoc) and bail to native reorder. jsdom cannot drive
+// handleDrop itself (no layout-driven posAtCoords), so this pins the
+// predicate and mirrors the guarded transaction, same pattern as the
+// headerBlock drag describe above.
+describe('whole-doc run drag never mints a phantom noteBlock', () => {
+  const subtreeDoc = {
+    type: 'doc',
+    content: [
+      {
+        type: 'noteBlock',
+        attrs: { id: 'a', depth: 0, bullet: '- ' },
+        content: [{ type: 'text', text: 'parent' }]
+      },
+      {
+        type: 'noteBlock',
+        attrs: { id: 'b', depth: 1, bullet: '- ' },
+        content: [{ type: 'text', text: 'child' }]
+      }
+    ]
+  }
+
+  function makeEditor(): Editor {
+    return new Editor({
+      extensions: [
+        StarterKit.configure({
+          paragraph: false,
+          heading: false,
+          bulletList: false,
+          orderedList: false,
+          listItem: false,
+          blockquote: false,
+          codeBlock: false,
+          horizontalRule: false,
+          trailingNode: false,
+          hardBreak: false
+        }),
+        ...SiltBlockExtensions,
+        BlockIndentOnDrop
+      ],
+      content: subtreeDoc
+    })
+  }
+
+  it('flags a run that covers the entire doc (the page’s only subtree)', () => {
+    const editor = makeEditor()
+    const doc = editor.state.doc
+    // Dragging the depth-0 head sweeps its depth-1 child: 0 → doc end.
+    const run = depthRunSpanForNode(doc, 0, doc.child(0))
+    expect(run.from).toBe(0)
+    expect(run.to).toBe(doc.content.size)
+    expect(runSpansWholeDoc(run, doc.content.size)).toBe(true)
+    editor.destroy()
+  })
+
+  it('does not flag a run with a neighbor outside the span', () => {
+    const editor = makeEditor()
+    // A trailing depth-0 sibling leaves room outside the run — the
+    // delete+insert relocation is safe there and must not bail.
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        ...subtreeDoc.content,
+        {
+          type: 'noteBlock',
+          attrs: { id: 'c', depth: 0, bullet: '- ' },
+          content: [{ type: 'text', text: 'tail' }]
+        }
+      ]
+    })
+    const doc = editor.state.doc
+    const run = depthRunSpanForNode(doc, 0, doc.child(0))
+    expect(run.to).toBeLessThan(doc.content.size)
+    expect(runSpansWholeDoc(run, doc.content.size)).toBe(false)
+    editor.destroy()
+  })
+
+  it('mirroring the guarded drop transaction adds no filler block', () => {
+    const editor = makeEditor()
+    const doc = editor.state.doc
+    // Exactly the handler's step-7 sequence, guard included: a whole-doc
+    // run bails BEFORE delete+insert, so nothing is dispatched and the doc
+    // keeps its two blocks. (Unguarded, tr.delete(0, size) empties the
+    // block+ doc and PM's auto-fill survives the reinsert as a third
+    // child — the phantom this guard exists to prevent.)
+    const run = depthRunSpanForNode(doc, 0, doc.child(0))
+    if (!runSpansWholeDoc(run, doc.content.size)) {
+      editor.view.dispatch(
+        editor.state.tr
+          .delete(run.from, run.to)
+          .insert(doc.content.size, shiftRunDepths(doc, run, 1))
+      )
+    }
+    expect(editor.state.doc.childCount).toBe(2)
+    expect(editor.state.doc.child(0).attrs.id).toBe('a')
+    expect(editor.state.doc.child(1).attrs.id).toBe('b')
+    editor.destroy()
+  })
+})
+
+// The ordered-member renumber loop inside handleDrop is glue jsdom cannot
+// reach (the HTML5 drop pipeline is undrivable there), so it lives in the
+// pure helper `renumberOrderedRunMembers` and is pinned here by mirroring
+// the step-7 transaction exactly — same pattern as the applyDropDepthFixup
+// describes above (#859 precedent: pure relocation helpers pinned,
+// pipeline undriven). Doc layout: A leads depth 0 with stale ordered child
+// M2; H (dragged head) has its own ordered child M; T trails at depth 0.
+// Every marker is deliberately off-sequence so each expected rewrite is an
+// observable change, not a pass-through.
+const memberPinDoc = {
+  type: 'doc',
+  content: [
+    {
+      type: 'noteBlock',
+      attrs: { id: 'a', depth: 0, bullet: '1. ' },
+      content: [{ type: 'text', text: 'a' }]
+    },
+    {
+      type: 'noteBlock',
+      attrs: { id: 'm2', depth: 1, bullet: '2. ' },
+      content: [{ type: 'text', text: 'm2' }]
+    },
+    {
+      type: 'noteBlock',
+      attrs: { id: 'h', depth: 0, bullet: '2. ' },
+      content: [{ type: 'text', text: 'h' }]
+    },
+    {
+      type: 'noteBlock',
+      attrs: { id: 'm', depth: 1, bullet: '3. ' },
+      content: [{ type: 'text', text: 'm' }]
+    },
+    {
+      type: 'noteBlock',
+      attrs: { id: 't', depth: 0, bullet: '3. ' },
+      content: [{ type: 'text', text: 't' }]
+    }
+  ]
+}
+
+describe('renumberOrderedRunMembers — drag-path member renumber pin', () => {
+  function makeEditor(): Editor {
+    return new Editor({
+      extensions: [
+        StarterKit.configure({
+          paragraph: false,
+          heading: false,
+          bulletList: false,
+          orderedList: false,
+          listItem: false,
+          blockquote: false,
+          codeBlock: false,
+          horizontalRule: false,
+          trailingNode: false,
+          hardBreak: false
+        }),
+        ...SiltBlockExtensions,
+        BlockIndentOnDrop
+      ],
+      content: memberPinDoc
+    })
+  }
+
+  /** Mirror handleDrop's step 7 (delete run → insert shifted → fixups). */
+  function mirrorDrop(editor: Editor, delta: number): void {
+    const doc = editor.state.doc
+    const headPos = doc.child(0).nodeSize + doc.child(1).nodeSize
+    const head = doc.child(2)
+    const run = depthRunSpanForNode(doc, headPos, head)
+    expect(run.positions).toEqual([headPos, headPos + head.nodeSize])
+    let tr = editor.state.tr.delete(run.from, run.to)
+    const mappedInsert = tr.mapping.map(doc.content.size)
+    tr = tr.insert(mappedInsert, shiftRunDepths(doc, run, delta))
+    const vacatedNear = tr.mapping.map(headPos)
+    const headDepth = (head.attrs.depth as number) || 0
+    tr = applyDropDepthFixup(
+      tr,
+      head.attrs,
+      parseOrderedBullet(String(head.attrs.bullet || '')),
+      mappedInsert,
+      vacatedNear,
+      headDepth + delta
+    )
+    tr = renumberOrderedRunMembers(
+      tr,
+      doc,
+      run,
+      mappedInsert,
+      vacatedNear,
+      delta
+    )
+    editor.view.dispatch(tr)
+  }
+
+  function snapshot(editor: Editor): {
+    ids: string[]
+    bullets: string[]
+    depths: number[]
+  } {
+    const ids: string[] = []
+    const bullets: string[] = []
+    const depths: number[] = []
+    editor.state.doc.forEach((child) => {
+      ids.push(String(child.attrs.id))
+      bullets.push(String(child.attrs.bullet))
+      depths.push((child.attrs.depth as number) || 0)
+    })
+    return { ids, bullets, depths }
+  }
+
+  it('same-depth drag renumbers member runs at the destination and source hole', () => {
+    const editor = makeEditor()
+    mirrorDrop(editor, 0)
+    // Member M renumbers at its destination (3.→1.) and its vacated depth-1
+    // peer M2 closes the gap (2.→1.); the head fixup resequences the
+    // depth-0 runs (T 3.→2., H 2.→3.). Wrong member offset math (e.g.
+    // mappedInsert + memberPos instead of + (memberPos - run.from)) points
+    // the renumber off-doc and leaves M at "3.".
+    const { ids, bullets, depths } = snapshot(editor)
+    expect(ids).toEqual(['a', 'm2', 't', 'h', 'm'])
+    expect(depths).toEqual([0, 1, 0, 0, 1])
+    expect(bullets).toEqual(['1. ', '1. ', '2. ', '3. ', '1. '])
+    editor.destroy()
+  })
+
+  it('indenting drag renumbers each member at its shifted depth', () => {
+    const editor = makeEditor()
+    // Real pipeline delta: a one-column-right drop for a head at 0 with
+    // deepest member 1.
+    const delta = clampRunDepthDelta(1, 0, 1)
+    expect(delta).toBe(1)
+    mirrorDrop(editor, delta)
+    // H adopts "1." at depth 1, M renumbers to "1." at depth 2. M2 keeps
+    // its stale "2.": the member's vacated scan runs at the SHIFTED depth
+    // (the helper's contract — renumber where the member now lives), so a
+    // depth-changing drag does not re-sequence the old-depth peer beside
+    // the hole.
+    const { ids, bullets, depths } = snapshot(editor)
+    expect(ids).toEqual(['a', 'm2', 't', 'h', 'm'])
+    expect(depths).toEqual([0, 1, 0, 1, 2])
+    expect(bullets).toEqual(['1. ', '2. ', '2. ', '1. ', '1. '])
+    editor.destroy()
+  })
+
+  it('clamps member depth at MAX_DEPTH for raw over-cap deltas', () => {
+    // The live pipeline pre-clamps delta via clampRunDepthDelta, so an
+    // over-cap member depth is unreachable there — the memberwise clamp is
+    // defense-in-depth for direct callers and must agree with
+    // shiftRunDepths' write-side clamp. The head fixup is omitted: a raw
+    // delta would give it an over-cap newDepth the pipeline can never
+    // produce (and the head fixup is already pinned above).
+    const editor = new Editor({
+      extensions: [
+        StarterKit.configure({
+          paragraph: false,
+          heading: false,
+          bulletList: false,
+          orderedList: false,
+          listItem: false,
+          blockquote: false,
+          codeBlock: false,
+          horizontalRule: false,
+          trailingNode: false,
+          hardBreak: false
+        }),
+        ...SiltBlockExtensions,
+        BlockIndentOnDrop
+      ],
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'noteBlock',
+            attrs: { id: 'a', depth: 0, bullet: '1. ' },
+            content: [{ type: 'text', text: 'a' }]
+          },
+          {
+            type: 'noteBlock',
+            attrs: { id: 'h', depth: 0, bullet: '2. ' },
+            content: [{ type: 'text', text: 'h' }]
+          },
+          {
+            type: 'noteBlock',
+            attrs: { id: 'm', depth: 1, bullet: '1. ' },
+            content: [{ type: 'text', text: 'm' }]
+          },
+          {
+            type: 'noteBlock',
+            attrs: { id: 't', depth: 0, bullet: '3. ' },
+            content: [{ type: 'text', text: 't' }]
+          }
+        ]
+      }
+    })
+    const doc = editor.state.doc
+    const headPos = doc.child(0).nodeSize
+    const head = doc.child(1)
+    const run = depthRunSpanForNode(doc, headPos, head)
+    const delta = MAX_DEPTH + 4
+    let tr = editor.state.tr.delete(run.from, run.to)
+    const mappedInsert = tr.mapping.map(doc.content.size)
+    tr = tr.insert(mappedInsert, shiftRunDepths(doc, run, delta))
+    const vacatedNear = tr.mapping.map(headPos)
+    tr = renumberOrderedRunMembers(
+      tr,
+      doc,
+      run,
+      mappedInsert,
+      vacatedNear,
+      delta
+    )
+    editor.view.dispatch(tr)
+    // Both members clamp to depth 6, so the member's destination renumber
+    // sweeps the depth-6 run sequentially (H 2.→1., M 1.→2.). Unclamped,
+    // the renumber would target depth 11, find no run, and leave M at "1.".
+    const { ids, bullets, depths } = snapshot(editor)
+    expect(ids).toEqual(['a', 't', 'h', 'm'])
+    expect(depths).toEqual([0, 0, MAX_DEPTH, MAX_DEPTH])
+    expect(bullets).toEqual(['1. ', '3. ', '1. ', '2. '])
     editor.destroy()
   })
 })
