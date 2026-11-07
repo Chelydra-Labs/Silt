@@ -2464,6 +2464,11 @@ describe('Backspace unindent moves the whole subtree run (#1057)', () => {
       ? { type: 'taskBlock' as const, attrs: { id, depth, status: 'TODO' } }
       : { type: 'noteBlock' as const, attrs: { id, depth, bullet: '' } }
 
+  const emptyHeader = (id: string, depth: number) => ({
+    type: 'headerBlock' as const,
+    attrs: { id, depth }
+  })
+
   function focusBlockIndex(editor: Editor, index: number): void {
     let pos = 0
     for (let i = 0; i < index; i++) pos += editor.state.doc.child(i).nodeSize
@@ -2508,6 +2513,26 @@ describe('Backspace unindent moves the whole subtree run (#1057)', () => {
     expect(pressKey(editor, 'Backspace')).toBe(true)
     expect(editor.state.doc.childCount).toBe(3)
     expect(depthsOf(editor)).toEqual([0, 0, 1])
+    editor.destroy()
+  })
+
+  it('unindents an empty headerBlock initiator with its body notes', () => {
+    // Backspace is the only run initiator that can be a headerBlock, and a
+    // header's depth attr is its level (level N ≡ flat depth N): its body
+    // notes at N+1 must follow it down, not strand at a jumped depth.
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('root', 'root', 0),
+        emptyHeader('hdr', 2),
+        note('body', 'body note', 3)
+      ]
+    })
+    focusBlockIndex(editor, 1)
+    expect(pressKey(editor, 'Backspace')).toBe(true)
+    expect(editor.state.doc.childCount).toBe(3)
+    expect(depthsOf(editor)).toEqual([0, 1, 2])
     editor.destroy()
   })
 
