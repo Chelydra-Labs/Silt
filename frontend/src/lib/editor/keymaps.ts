@@ -62,10 +62,12 @@ export const BLOCK_TYPES = [
  *   indent — Tab on H6 used to write level 7, which serializes as
  *   `#######` (not a heading). Heading level changes stay on the heading
  *   commands / slash menu; Tab/Shift+Tab are consumed no-ops on headers.
- * - callout/code/table/details (and other container/atomic types): no
- *   depth attr, so indenting them would be silently dropped on save.
- *   Tab/Shift+Tab fall through for those so TipTap's default (e.g. table
- *   cell navigation) applies.
+ * - callout/code/table/details (and other container/atomic types): they
+ *   carry a depth attr for serialization only (it re-emits their on-disk
+ *   indent); regions are transparent to the hierarchy, so letting
+ *   Tab/Shift+Tab shift them would desync them from the depth band the
+ *   parser derived. Tab/Shift+Tab fall through for those so TipTap's
+ *   default (e.g. table cell navigation) applies.
  */
 const DEPTH_BLOCK_TYPES = new Set(['noteBlock', 'taskBlock'])
 

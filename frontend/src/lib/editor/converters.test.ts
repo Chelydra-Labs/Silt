@@ -17,7 +17,9 @@ import {
   BlockReferenceNode,
   PageLinkNode,
   CalloutBlock,
-  CodeBlock
+  CodeBlock,
+  BlockMathNode,
+  EmbedBlockNode
 } from './schema'
 import {
   blocksToDoc,
@@ -118,6 +120,11 @@ function makeEditorWithNewBlocks() {
       ...SiltBlockExtensions,
       CalloutBlock,
       CodeBlock,
+      // The atomic region shapes (block math, generic embed) are part of the
+      // live schema (wired with NodeViews in nodeViews.ts); including them
+      // here lets the setContent round-trip pin their depth attrs too.
+      BlockMathNode,
+      EmbedBlockNode,
       ...SiltInlineMarkExtensions,
       ...SiltColorMarkExtensions,
       ...SiltDetailsExtensions,
@@ -2086,5 +2093,230 @@ describe('depth clamp on import (repair on load)', () => {
     ])
     const attrs = doc.content[0].attrs as Record<string, unknown>
     expect(Number(attrs.depth)).toBe(6)
+  })
+})
+
+// Region blocks (code/table/callout/details) sit inside a task's subtree by
+// on-disk indentation; losing their depth on save re-emits them at column 0,
+// which de-indents the file and reshuffles which task owns the lines that
+// follow. Depth is the only hierarchy signal the editor sends (regions carry
+// no parent_id), so the round-trip must preserve it.
+describe('region-block depth round-trip (#1003)', () => {
+  it('an indented code fence under a task keeps its depth across save', () => {
+    const blocks = [
+      mkBlock('TASK', { clean_text: 'task', depth: 0 }),
+      mkBlock('NOTE', { clean_text: 'reply', depth: 1, line_number: 2 }),
+      mkBlock('CODE', {
+        clean_text: 'code',
+        depth: 1,
+        language: 'js',
+        line_number: 3
+      }),
+      mkBlock('NOTE', {
+        clean_text: 'still the task',
+        depth: 1,
+        line_number: 4
+      })
+    ]
+    const back = docToBlocks(blocksToDoc(blocks))
+    // The fence stays inside the task's depth band; the blocks after it are
+    // asserted so the ownership the depths imply is pinned too.
+    expect(back.map((b) => [b.type, b.depth])).toEqual([
+      ['TASK', 0],
+      ['NOTE', 1],
+      ['CODE', 1],
+      ['NOTE', 1]
+    ])
+  })
+
+  // The full region matrix: every region type the converter emits, at both
+  // depth bands. Embeds and block math are NOTE-typed on disk (sole-content
+  // bodies) and included here so a new region shape cannot ship without a
+  // depth case next to it.
+  const EMBED_UUID = '11111111-1111-1111-1111-111111111111'
+  function matrixBlocks(depth: number) {
+    return [
+      mkBlock('TASK', { clean_text: 'task', depth, line_number: 1 }),
+      mkBlock('CODE', {
+        clean_text: 'code',
+        depth,
+        language: 'js',
+        line_number: 2
+      }),
+      mkBlock('TABLE', {
+        clean_text: '| a | b |\n| --- | --- |\n| 1 | 2 |',
+        depth,
+        line_number: 3
+      }),
+      mkBlock('CALLOUT', {
+        clean_text: '> [!note] T\n> body',
+        depth,
+        line_number: 4
+      }),
+      mkBlock('DETAILS', {
+        clean_text: '<details>\n<summary>S</summary>\nline\n</details>',
+        depth,
+        line_number: 5
+      }),
+      mkBlock('NOTE', {
+        clean_text: `{{embed:${EMBED_UUID}}}`,
+        depth,
+        line_number: 6
+      }),
+      mkBlock('NOTE', { clean_text: '$$x = 1$$', depth, line_number: 7 })
+    ]
+  }
+
+  it('every region type at depth 0 stays at depth 0 with stable emit', () => {
+    const back = docToBlocks(blocksToDoc(matrixBlocks(0)))
+    expect(back.map((b) => b.depth)).toEqual([0, 0, 0, 0, 0, 0, 0])
+    // Emit is stable from the first save — a depth-0 file's bytes cannot
+    // change because of the region-depth carry (table pads columns to its
+    // own canonical widths, so stability is asserted pass-over-pass).
+    const back2 = docToBlocks(blocksToDoc(back))
+    expect(back2.map((b) => [b.type, b.depth, b.clean_text])).toEqual(
+      back.map((b) => [b.type, b.depth, b.clean_text])
+    )
+  })
+
+  it('every region type indented under a task keeps its depth band', () => {
+    const blocks = [
+      ...matrixBlocks(1).slice(1), // regions at depth 1, task re-added below
+      mkBlock('NOTE', {
+        clean_text: 'still the task',
+        depth: 1,
+        line_number: 8
+      })
+    ]
+    const doc = blocksToDoc([
+      mkBlock('TASK', { clean_text: 'task', depth: 0 }),
+      ...blocks
+    ])
+    const back = docToBlocks(doc)
+    // Indent preserved for every region; the trailing reply stays inside the
+    // task's depth band (ownership signal), and regions stay parentless —
+    // parentage is the Go parser's alone.
+    expect(back.map((b) => b.depth)).toEqual([0, 1, 1, 1, 1, 1, 1, 1])
+    for (const b of back.slice(1, 7)) {
+      expect(b.parent_id).toBe('')
+    }
+    // The embed/math nodes round-trip as NOTEs carrying their token bodies.
+    expect(back[5]).toMatchObject({
+      type: 'NOTE',
+      clean_text: `{{embed:${EMBED_UUID}}}`
+    })
+    expect(back[6]).toMatchObject({ type: 'NOTE', clean_text: '$$x = 1$$' })
+  })
+
+  it('a real TipTap editor keeps the region depth attr through setContent', () => {
+    // Without the depth attr in each region node's schema, ProseMirror
+    // silently drops it on setContent — the exact regression class that
+    // collapsed regions to column 0 on save. All seven region-carrying nodes
+    // go through: the four block regions plus the three atomic NOTE shapes
+    // (embed, block math, generic embed block).
+    const embedMarker = embedBlockMarker({
+      embedType: 'attachment',
+      src: 'a.png'
+    })
+    const doc = blocksToDoc([
+      mkBlock('TASK', { clean_text: 'task', depth: 0 }),
+      mkBlock('CODE', { clean_text: 'code', depth: 1, language: 'js' }),
+      mkBlock('CALLOUT', { clean_text: '> [!note] T\n> body', depth: 1 }),
+      mkBlock('TABLE', {
+        clean_text: '| a | b |\n| --- | --- |\n| 1 | 2 |',
+        depth: 1
+      }),
+      mkBlock('DETAILS', {
+        clean_text: '<details>\n<summary>S</summary>\nline\n</details>',
+        depth: 1
+      }),
+      mkBlock('NOTE', {
+        clean_text: `{{embed:${EMBED_UUID}}}`,
+        depth: 1
+      }),
+      mkBlock('NOTE', { clean_text: '$$x = 1$$', depth: 1 }),
+      mkBlock('NOTE', { clean_text: embedMarker, depth: 1 })
+    ])
+    const editor = makeEditorWithNewBlocks()
+    editor.commands.setContent(doc)
+    const saved = docToBlocks(editor.getJSON() as DocJSON)
+    // The harness's TrailingNode seeds an empty noteBlock after a
+    // details/table/embedBlock last child (notAfter covers prose types) —
+    // expected harness behavior, not a converter artifact.
+    expect(saved.map((b) => [b.type, b.depth])).toEqual([
+      ['TASK', 0],
+      ['CODE', 1],
+      ['CALLOUT', 1],
+      ['TABLE', 1],
+      ['DETAILS', 1],
+      ['NOTE', 1],
+      ['NOTE', 1],
+      ['NOTE', 1],
+      ['NOTE', 0]
+    ])
+    // The atomic shapes keep both their depth and their token bodies.
+    expect(saved[5]).toMatchObject({
+      type: 'NOTE',
+      clean_text: `{{embed:${EMBED_UUID}}}`
+    })
+    expect(saved[6]).toMatchObject({ type: 'NOTE', clean_text: '$$x = 1$$' })
+    expect(saved[7]).toMatchObject({ type: 'NOTE', clean_text: embedMarker })
+    editor.destroy()
+  })
+
+  it('floors a negative depth on the load stamp and the save readback', () => {
+    // Crafted paste HTML can carry data-depth="-1" into node attrs. The
+    // shared clamp must floor it at both boundaries: a negative depth that
+    // reaches Go's renderBlock panics the save (strings.Repeat rejects
+    // negative counts).
+    const doc = blocksToDoc([
+      mkBlock('TASK', { clean_text: 'task', depth: 0 }),
+      mkBlock('CODE', { clean_text: 'code', depth: -1, language: 'js' })
+    ])
+    // Load stamp: a poisoned block cannot enter the doc model negative.
+    expect((doc.content?.[1]?.attrs as Record<string, unknown>).depth).toBe(0)
+    // Save readback: a node attr that bypassed the load stamp (paste landing
+    // directly on the attr) still floors through regionDepth → clampDepth.
+    doc.content![1]!.attrs!.depth = -1
+    const back = docToBlocks(doc)
+    expect(back[1]!.type).toBe('CODE')
+    expect(back[1]!.depth).toBe(0)
+  })
+
+  it('paste-shaped HTML with data-depth="-1" cannot enter the doc model negative', () => {
+    // The schema's parseHTML is the paste entry point; unlike headerBlock's
+    // depth attr (which trusts any finite value) it floors at 0.
+    const editor = makeEditorWithNewBlocks()
+    editor.commands.setContent(
+      '<div data-type="callout" data-variant="note" data-depth="-1"><p>body</p></div>'
+    )
+    const first = editor.state.doc.child(0)
+    expect(first.type.name).toBe('calloutBlock')
+    expect(first.attrs.depth).toBe(0)
+    editor.destroy()
+  })
+
+  it('floors a negative prose/header depth on the save readback', () => {
+    // The shared prose branch is the save funnel for NOTE/TASK/HEADER, and
+    // the prose parseHTML attrs are unguarded — a paste-shaped negative
+    // attr must floor HERE or the save dies downstream: Go's renderBlock
+    // panics on a negative prose depth, HEADER instead throws
+    // '#'.repeat(-3) at the raw_text emit.
+    const doc = blocksToDoc([
+      mkBlock('NOTE', { clean_text: 'note', depth: 0 }),
+      mkBlock('TASK', { clean_text: 'task', depth: 0 }),
+      mkBlock('HEADER', { clean_text: 'head', depth: 1 })
+    ])
+    doc.content![0]!.attrs!.depth = -1
+    doc.content![1]!.attrs!.depth = -1
+    doc.content![2]!.attrs!.depth = -3
+    const back = docToBlocks(doc)
+    expect(back.map((b) => [b.type, b.depth])).toEqual([
+      ['NOTE', 0],
+      ['TASK', 0],
+      ['HEADER', 0]
+    ])
+    // Header depth 0 falls back to level 1 at emit ('#'.repeat(0 || 1)).
+    expect(back[2]!.raw_text).toBe('# head')
   })
 })

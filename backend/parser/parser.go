@@ -553,6 +553,20 @@ func isClosingFence(trimmed string, openerLen int) bool {
 	return n >= openerLen && strings.TrimSpace(trimmed[n:]) == ""
 }
 
+// bodyLineStartsFence reports whether any body line, ignoring its leading
+// whitespace, starts the given fence string. Indent-tolerant by design:
+// isClosingFence matches closers after TrimSpace, so an indented inner fence
+// must grow the outer fence exactly like a column-0 one or re-parse splits
+// the region mid-body.
+func bodyLineStartsFence(body, fence string) bool {
+	for _, ln := range strings.Split(body, "\n") {
+		if strings.HasPrefix(strings.TrimLeft(ln, " \t"), fence) {
+			return true
+		}
+	}
+	return false
+}
+
 // ---- GFM table detection (#310) -------------------------------------------
 // A GFM table is a run of pipe-prefixed lines: a header row immediately
 // followed by a separator row (|---|), then zero or more data rows. The
@@ -717,7 +731,7 @@ func resolveTrailingID(lines []string, afterIdx int, meta *FileMetadata) (id, fi
 // Backward compatibility: old on-disk files may have inline id comments on each
 // line within a region (the pre-unified format). These are stripped from
 // clean_text, and their ids are collected for ((uuid)) reference remapping.
-func accumulateRegion(lines []string, openIdx, lineNumber int, meta *FileMetadata) (consumedTo int, block *ParsedBlock, emitLines []string, minted bool, oldIDs map[string]string) {
+func accumulateRegion(lines []string, openIdx, lineNumber int, meta *FileMetadata, spacesPerTab int) (consumedTo int, block *ParsedBlock, emitLines []string, minted bool, oldIDs map[string]string) {
 	kind := detectRegionKind(lines, openIdx)
 	if kind == regionNone {
 		return openIdx, nil, []string{lines[openIdx]}, false, nil
@@ -811,6 +825,12 @@ func accumulateRegion(lines []string, openIdx, lineNumber int, meta *FileMetadat
 		pb.Language = strings.TrimSpace(openerTrim[codeFenceLen(openerTrim):])
 	}
 
+	// The region's Depth is serialization-only: the opener's leading indent,
+	// re-applied by renderBlock's region branches and by the normalization
+	// emit below. DeriveHierarchy ignores it (regions stay parentless).
+	pb.Depth = parseLeadingIndent(lines[openIdx], spacesPerTab)
+	indent := strings.Repeat(" ", pb.Depth*spacesPerTab)
+
 	// Emit lines: for code blocks, emit the raw fence + content verbatim.
 	// For table/details/callout, emit cleaned lines (inline ids stripped) +
 	// trailing id line.
@@ -818,15 +838,26 @@ func accumulateRegion(lines []string, openIdx, lineNumber int, meta *FileMetadat
 		emitLines = append(emitLines, lines[openIdx:closer+1]...)
 	} else {
 		// Rebuild cleanLines for emission (same logic as clean_text above).
+		// stripInlineID TrimSpaces each line, so the indent must be
+		// re-applied here exactly like renderBlock does — the scanner writes
+		// these lines back to disk (normalization write) when ids are
+		// minted, and a dedented emit would destroy the region's depth
+		// before any editor save ever runs. Blank lines stay bare.
 		for j := openIdx; j <= closer; j++ {
-			emitLines = append(emitLines, stripInlineID(lines[j]))
+			cleaned := stripInlineID(lines[j])
+			if cleaned != "" {
+				cleaned = indent + cleaned
+			}
+			emitLines = append(emitLines, cleaned)
 		}
 	}
 	if consumedIDLine {
 		emitLines = append(emitLines, lines[idLineIdx])
 		return idLineIdx, &pb, emitLines, minted, oldIDs
 	}
-	emitLines = append(emitLines, fmt.Sprintf("<!-- id: %s @ %s -->", blockID, blockFileDate))
+	// A minted id line joins the region's indent (mirrors renderBlock, which
+	// lands the id line inside the indent for every region kind).
+	emitLines = append(emitLines, indent+fmt.Sprintf("<!-- id: %s @ %s -->", blockID, blockFileDate))
 	return closer, &pb, emitLines, minted, oldIDs
 }
 
@@ -1051,12 +1082,14 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 		// syntax (interoperable with Obsidian / GitHub / VS Code).
 		if detectRegionKind(lines, i) != regionNone {
 			consumedTo, regionBlock, emitLines, minted, oldIDs := accumulateRegion(
-				lines, i, lineNumber, &meta,
+				lines, i, lineNumber, &meta, spacesPerTab,
 			)
 			if regionBlock != nil {
 				if regionBlock.FileDate == "" {
 					regionBlock.FileDate = meta.Date
 				}
+				// accumulateRegion stamps the serialization-only Depth from
+				// the opener's leading indent.
 				blocks = append(blocks, *regionBlock)
 				// Collect old inline ids for Migration B remapping. Any
 				// old-format inline ids mean the file was modified (migrated).
@@ -1324,6 +1357,12 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 	if spacesPerTab <= 0 {
 		spacesPerTab = 4
 	}
+	// Defensive: parse never yields negatives and DeriveHierarchy floors the
+	// blocks it sees, but renderBlock is also fed caller-constructed blocks
+	// straight from save — a negative depth panics strings.Repeat below.
+	if block.Depth < 0 {
+		block.Depth = 0
+	}
 	indent := strings.Repeat(" ", block.Depth*spacesPerTab)
 
 	// Build ID suffix — includes per-block file_date if present:
@@ -1347,19 +1386,22 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		// comment lives on its own line, not appended to the fence).
 		idLine := ""
 		if idSuffix != "" {
-			idLine = "\n" + strings.TrimSpace(idSuffix)
+			idLine = "\n" + indent + strings.TrimSpace(idSuffix)
 		}
-		// Fence length grows to 4 backticks if the body itself contains a
-		// ``` line, so a code sample that includes a triple-backtick fence
-		// round-trips without prematurely closing. Rare; correct.
+		// Fence length grows past any fence-starting body line — including an
+		// INDENTED one (isClosingFence TrimSpaces, so an indented ``` closes
+		// an equal-length opener on re-parse and would split the region
+		// mid-body) — so a code sample that includes a fence round-trips
+		// without prematurely closing. Rare; correct.
 		fence := "```"
-		if strings.Contains("\n"+block.CleanText+"\n", "\n"+fence) {
-			fence = "````"
-			for strings.Contains("\n"+block.CleanText+"\n", "\n"+fence) {
-				fence += "`"
-			}
+		for bodyLineStartsFence(block.CleanText, fence) {
+			fence += "`"
 		}
-		return fmt.Sprintf("%s%s\n%s\n%s%s", fence, block.Language, block.CleanText, fence, idLine)
+		// The region indent lands on the boundary lines (both fences + the id
+		// line) only: parse keeps body lines verbatim, so indenting them here
+		// would double-indent on every cycle. Fence-only indenting is
+		// idempotent.
+		return fmt.Sprintf("%s%s%s\n%s\n%s%s%s", indent, fence, block.Language, block.CleanText, indent, fence, idLine)
 	}
 
 	// BlockTable and BlockDetails are multi-line: the clean_text IS the
@@ -1369,9 +1411,22 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 	if block.Type == BlockTable || block.Type == BlockDetails || block.Type == BlockCallout {
 		idLine := ""
 		if idSuffix != "" {
-			idLine = "\n" + strings.TrimSpace(idSuffix)
+			idLine = "\n" + indent + strings.TrimSpace(idSuffix)
 		}
-		return block.CleanText + idLine
+		// Unlike code, these regions' clean_text lines are TrimSpace'd on
+		// parse, so the region indent is re-applied to every content line —
+		// also idempotent. Blank lines stay bare (no trailing whitespace).
+		body := block.CleanText
+		if indent != "" {
+			bodyLines := strings.Split(body, "\n")
+			for j := range bodyLines {
+				if bodyLines[j] != "" {
+					bodyLines[j] = indent + bodyLines[j]
+				}
+			}
+			body = strings.Join(bodyLines, "\n")
+		}
+		return body + idLine
 	}
 
 	if block.Type == BlockTask {

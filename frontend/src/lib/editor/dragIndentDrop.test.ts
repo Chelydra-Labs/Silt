@@ -8,6 +8,8 @@ import {
   BlockIndentOnDrop,
   INDENT_STEP_PX
 } from './dragIndentDrop'
+import { applyDropDepthFixup } from './orderedList'
+import { CodeBlock } from './schema'
 import { MAX_DEPTH } from './constants'
 
 // resolveDropDepth is the ONLY logic this phase can prove correct in jsdom.
@@ -261,6 +263,93 @@ describe('BlockIndentOnDrop extension (smoke)', () => {
     expect(editor.state.doc.childCount).toBe(2)
     expect(editor.state.doc.firstChild?.attrs.depth).toBe(0)
     expect(editor.state.doc.lastChild?.attrs.depth).toBe(0)
+    editor.destroy()
+  })
+})
+
+// Region blocks (codeBlock, table, callout, …) carry the same depth attr as
+// prose blocks, so a region drag now passes the handler's has-depth guard and
+// must receive the resolved depth instead of falling through to a depth-less
+// native reorder. Pins the fixup + schema attr with a codeBlock: dropping the
+// attr fails here. A re-added region bail inside handleDrop itself cannot be
+// caught from jsdom — driving the extension's drag handler needs a real
+// drop event (browser e2e is out of scope for this repo).
+describe('applyDropDepthFixup — region blocks through the drop path', () => {
+  function makeEditor(): Editor {
+    return new Editor({
+      extensions: [
+        StarterKit.configure({
+          paragraph: false,
+          heading: false,
+          bulletList: false,
+          orderedList: false,
+          listItem: false,
+          blockquote: false,
+          codeBlock: false,
+          horizontalRule: false,
+          trailingNode: false
+        }),
+        ...SiltBlockExtensions,
+        CodeBlock,
+        BlockIndentOnDrop
+      ],
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'noteBlock',
+            attrs: { id: 'n1', depth: 0, bullet: '- ' },
+            content: [{ type: 'text', text: 'task' }]
+          },
+          {
+            type: 'codeBlock',
+            attrs: { id: 'c1', depth: 1, language: 'ts' },
+            content: [{ type: 'text', text: 'const x = 1' }]
+          }
+        ]
+      }
+    })
+  }
+
+  it('gives a dragged codeBlock the resolved depth and clamps at MAX_DEPTH', () => {
+    const editor = makeEditor()
+    // A mid-band drop proves the region node is not skipped (its depth attr
+    // actually changes); a far-right drop proves the applied depth is capped
+    // by the same resolver the live handler uses.
+    for (const expected of [2, MAX_DEPTH]) {
+      editor.commands.setContent({
+        type: 'doc',
+        content: [
+          {
+            type: 'noteBlock',
+            attrs: { id: 'n1', depth: 0, bullet: '- ' },
+            content: [{ type: 'text', text: 'task' }]
+          },
+          {
+            type: 'codeBlock',
+            attrs: { id: 'c1', depth: 1, language: 'ts' },
+            content: [{ type: 'text', text: 'const x = 1' }]
+          }
+        ]
+      })
+      // Mirror the drop transaction: delete the source, insert at the top,
+      // map the source hole — then hand off to the pure helper.
+      const noteSize = editor.state.doc.child(0).nodeSize
+      const code = editor.state.doc.child(1)
+      let tr = editor.state.tr.delete(noteSize, noteSize + code.nodeSize)
+      tr = tr.insert(0, code)
+      const vacatedNear = tr.mapping.map(noteSize)
+      const clientX =
+        expected === MAX_DEPTH ? 1e6 : 100 + expected * INDENT_STEP_PX
+      const newDepth = resolveDropDepth(clientX, 100, INDENT_STEP_PX, MAX_DEPTH)
+      expect(newDepth).toBe(expected)
+      // codeBlock has no bullet attr, so the handler passes ordered=null.
+      tr = applyDropDepthFixup(tr, code.attrs, null, 0, vacatedNear, newDepth)
+      editor.view.dispatch(tr)
+      const dropped = editor.state.doc.child(0)
+      expect(dropped.type.name).toBe('codeBlock')
+      expect(dropped.attrs.depth).toBe(expected)
+    }
     editor.destroy()
   })
 })
