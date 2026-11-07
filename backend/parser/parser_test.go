@@ -1508,6 +1508,44 @@ func TestWalkMarkdown_SymlinkedRootIsWalked(t *testing.T) {
 	}
 }
 
+// TestWalkMarkdown_SymlinkedRootNamedLikeSkippedDirsIsWalked pins the root
+// exemption against an unclean caller spelling: rebase cleans the root, so a
+// root compared after rebase never equals an unclean spelling ("…//vault") and
+// the dot-dir/attachments guards would instead test the resolved target's name
+// — SkipDir'ing the whole vault as a blind-but-complete empty scan.
+func TestWalkMarkdown_SymlinkedRootNamedLikeSkippedDirsIsWalked(t *testing.T) {
+	for _, targetName := range []string{"vault", "attachments", ".hidden"} {
+		t.Run(targetName, func(t *testing.T) {
+			real := filepath.Join(t.TempDir(), targetName)
+			writeMdFile(t, filepath.Join(real, "NB", "Page.md"), "body")
+			alias := filepath.Join(t.TempDir(), "vault-alias")
+			if err := os.Symlink(real, alias); err != nil {
+				t.Skipf("cannot create symlink: %v", err)
+			}
+
+			// Unclean spelling: a doubled separator still Lstats as the alias,
+			// but never equals filepath.Clean(root) — the shape a hand-edited
+			// vault_path can produce.
+			sep := string(os.PathSeparator)
+			root := filepath.Dir(alias) + sep + sep + filepath.Base(alias)
+			files, skips, walkErrs, err := WalkMarkdown(root)
+			if err != nil {
+				t.Fatalf("WalkMarkdown(%q): %v", root, err)
+			}
+			want := filepath.Join(alias, "NB", "Page.md")
+			if len(files) != 1 || files[0] != want {
+				t.Errorf("files = %v, want [%s]", files, want)
+			}
+			if len(skips) != 0 {
+				t.Errorf("root entry classified as a deliberate skip: %v", skips)
+			}
+			if len(walkErrs) != 0 {
+				t.Errorf("walked root reported walk errors: %v", walkErrs)
+			}
+		})
+	}
+}
+
 // TestWalkMarkdown_UnresolvableRootIsBlind pins the dangling alias: it must land
 // on the walk-error channel so callers derive complete=false, not look like a
 // complete, empty vault.

@@ -95,8 +95,12 @@ func WalkMarkdown(root string) (files []string, skips []string, walkErrs []strin
 		}
 		return filepath.Join(root, rel)
 	}
-	err = filepath.WalkDir(walkRoot, func(path string, d fs.DirEntry, walkErr error) error {
-		path = rebase(path)
+	err = filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, walkErr error) error {
+		// Decide root identity before rebase: rebase returns a cleaned path, so
+		// an unclean caller spelling ("…//vault") never equals the root and the
+		// exemptions below would instead test the resolved target's name.
+		isRoot := p == walkRoot
+		path := rebase(p)
 		if walkErr != nil {
 			// Surface walker errors (permission denied, removed during
 			// traversal, etc.) rather than aborting the whole scan — one
@@ -116,7 +120,7 @@ func WalkMarkdown(root string) (files []string, skips []string, walkErrs []strin
 			// Skip system and hidden directories (but keep the root itself
 			// when its name legitimately starts with "." — the root is the
 			// entry point, not a child to prune).
-			if path != root && strings.HasPrefix(name, ".") {
+			if !isRoot && strings.HasPrefix(name, ".") {
 				return filepath.SkipDir
 			}
 			// Skip the attachments/ directory (#101): it holds copied-in
@@ -124,7 +128,7 @@ func WalkMarkdown(root string) (files []string, skips []string, walkErrs []strin
 			// keeps the scanner from treating it as an empty Section and
 			// avoids ingesting non-markdown files. Visible placement
 			// (<notebook>/attachments/) per the #100 data-scoping principle.
-			if path != root && strings.EqualFold(name, "attachments") {
+			if !isRoot && strings.EqualFold(name, "attachments") {
 				return filepath.SkipDir
 			}
 			return nil
