@@ -1827,6 +1827,29 @@ describe('moveActiveBlock — drag-handle keyboard complement (#181)', () => {
     expect(moved.map((b) => b.depth)).toEqual([1, 0, 1, 0])
     editor.destroy()
   })
+
+  it('moves a parent run up past a preceding subtree without re-parenting it', () => {
+    // Pins the up-path backward scan in precedingRunHead: the swap
+    // partner is the ADJACENT sibling's whole run, so [x, y] must move as
+    // a unit behind [a, b]. Swapping with the adjacent child y alone
+    // would strand it re-parented under b: [x, a, b, y] depths 0,0,1,1.
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('x', 'head', 0),
+        note('y', 'head child', 1),
+        note('a', 'parent', 0),
+        note('b', 'child', 1)
+      ]
+    })
+    focusBlockIndex(editor, 2)
+    expect(pressKey(editor, 'ArrowUp', { altKey: true })).toBe(true)
+    const moved = blocksOf(editor)
+    expect(moved.map((b) => b.id)).toEqual(['a', 'b', 'x', 'y'])
+    expect(moved.map((b) => b.depth)).toEqual([0, 1, 0, 1])
+    editor.destroy()
+  })
 })
 
 // --- Block merge on Delete / Backspace (#364) --------------------------------
