@@ -824,6 +824,13 @@ func (dm *DatabaseManager) indexFileBlocksStage(tx *sql.Tx, source, notebook, se
 		return fmt.Errorf("failed to clear old blocks: %w", err)
 	}
 
+	// Page-inventory guarantee: inventory reads and page-title search see a
+	// row for every file that reaches this stage, including zero-block
+	// re-indexes that a SELECT DISTINCT over blocks could never surface.
+	if err := ensurePageCoreRowTx(tx, source, notebook, section, page); err != nil {
+		return err
+	}
+
 	if len(blocks) == 0 {
 		return nil
 	}
@@ -1170,6 +1177,14 @@ func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexSt
 		}
 		if err := dm.ClearFileBlocks(tx, source, res.Notebook, res.Section, res.Page); err != nil {
 			return indexedCount, skipped, fmt.Errorf("failed to clear blocks for %s: %w", res.Path, err)
+		}
+
+		// Same page-inventory guarantee as the per-file stage: the batched
+		// block-only path (projections == nil) must still register page
+		// identity; the WithProjection path rewrites this row with real core
+		// fields in the same tx below.
+		if err := ensurePageCoreRowTx(tx, source, res.Notebook, res.Section, res.Page); err != nil {
+			return indexedCount, skipped, fmt.Errorf("failed to ensure page identity for %s: %w", res.Path, err)
 		}
 
 		if err := stmts.indexBlocks(source, res.Notebook, res.Section, res.Page, res.Blocks, res.Tags, "IndexScanResults", dups); err != nil {

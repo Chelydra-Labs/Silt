@@ -3,7 +3,9 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"silt/backend/parser"
@@ -20,6 +22,12 @@ const searchMaxPerGroup = 3
 // carry their own date in the identity comment). VaultOnly scopes the search
 // to in-vault blocks (excludes linked-notebook sources) — the scope control
 // on the global search.
+//
+// The task-attribute filters (Owner/Status/DueBefore/DueAfter/PriorityMin/
+// Overdue) are task-scoped: setting any of them restricts results to TASK
+// blocks whose tasks projection row satisfies every predicate, and suppresses
+// the page-title result leg (a page-level row carries no task attributes).
+// Dates are YYYY-MM-DD strings compared lexicographically (= chronological).
 type SearchFilters struct {
 	Notebook  string `json:"notebook"`
 	Section   string `json:"section"`
@@ -27,6 +35,118 @@ type SearchFilters struct {
 	Type      string `json:"type"`      // TASK / NOTE / HEADER / CODE / TABLE / DETAILS / CALLOUT
 	Sort      string `json:"sort"`      // "" | "relevance" | "recency"
 	VaultOnly bool   `json:"vaultOnly"` // exclude linked-notebook sources (source != 'vault')
+
+	// Owner matches the [owner::] token exactly, case-insensitively.
+	Owner string `json:"owner"`
+	// Status matches the checkbox-driven status: TODO, DOING, or DONE
+	// (normalized to upper case server-side).
+	Status string `json:"status"`
+	// DueBefore / DueAfter bound due_date inclusively (YYYY-MM-DD). A task
+	// with no due date never matches a date bound.
+	DueBefore string `json:"dueBefore"`
+	DueAfter  string `json:"dueAfter"`
+	// PriorityMin is an inclusive urgency floor, where 1 is the highest
+	// priority and 3 the lowest: a floor of N selects priorities N and
+	// everything more urgent. Rows with no recorded priority (NULL column;
+	// the COALESCE-0 shape in the result projection) never match — "no
+	// priority recorded" is not a priority. The parser's absent-token
+	// default (LegacyMissingTaskPriority, stored as 3) is recorded data and
+	// is admitted only by the floor of 3, like an explicit P3.
+	PriorityMin int `json:"priorityMin"`
+	// Overdue selects tasks whose due_date is before today (local) and whose
+	// status is not DONE.
+	Overdue bool `json:"overdue"`
+}
+
+// hasTaskFilters reports whether any task-attribute filter is active — i.e.
+// whether the query is restricted to tasks carrying those attributes (which
+// also makes page-level title hits inapplicable).
+func (f SearchFilters) hasTaskFilters() bool {
+	return f.Owner != "" || f.Status != "" || f.DueBefore != "" || f.DueAfter != "" ||
+		f.PriorityMin > 0 || f.Overdue
+}
+
+// appendTaskFilterPredicates is the SINGLE source of the tasks-JOIN WHERE
+// clauses for the task-attribute filters. It appends predicates (referencing
+// the `tasks t` alias of SearchBlocksPaged's LEFT JOIN) and their bind args,
+// so no second SQL path for these filters can grow alongside it. Zero-value
+// fields append nothing — the unfiltered query shape is byte-identical to
+// the pre-filter SQL. All values are parameterized; only the filter MODE is
+// interpolated (fixed strings).
+//
+// Semantics (documented for the ARCHITECTURE contract and mirrored by tests):
+//   - Owner: exact match, case-insensitive for ASCII (both sides lowered in
+//     SQL; SQLite's LOWER folds ASCII only, so non-ASCII matches exactly-cased).
+//   - Status: exact match after upper-casing the caller's input (TODO/DOING/
+//     DONE are stored upper-case by the indexer).
+//   - DueBefore/DueAfter: inclusive bounds on due_date; NULL never satisfies
+//     a comparison, so a task without a due date is excluded by either bound.
+//   - PriorityMin: an urgency floor — 1 is the highest priority, so a floor
+//     of N selects priorities N and everything MORE urgent (recorded values
+//     1..N; P3/low is admitted only by a floor of 3). `t.priority IS NOT
+//     NULL` excludes the no-priority-recorded shapes (NULL column; the
+//     COALESCE(t.priority, 0) sentinel the result projection surfaces for
+//     non-task rows) — "no priority recorded" is not a priority and must
+//     not match any floor. The parser's absent-token default
+//     (LegacyMissingTaskPriority, stored as 3) is recorded data,
+//     indistinguishable from an explicit P3, and is admitted only by the
+//     floor of 3 accordingly.
+//   - Overdue: due_date < today (local date, computed by the caller and
+//     passed as now) AND status != DONE.
+func appendTaskFilterPredicates(where []string, args []any, filters SearchFilters, now time.Time) ([]string, []any) {
+	if filters.Owner != "" {
+		// Lower BOTH sides in SQL: the caller's raw text may carry non-ASCII
+		// upper case that Go's ToLower would fold but a Go-lowered needle vs a
+		// SQL-lowered haystack could never compare. SQLite's LOWER is ASCII-only,
+		// so exact-case non-ASCII now matches; non-ASCII case variants beyond
+		// that remain an approximation (see searchPageTitlesOn).
+		where = append(where, "LOWER(t.owner) = LOWER(?)")
+		args = append(args, strings.TrimSpace(filters.Owner))
+	}
+	if filters.Status != "" {
+		where = append(where, "t.status = ?")
+		args = append(args, strings.ToUpper(strings.TrimSpace(filters.Status)))
+	}
+	if filters.DueBefore != "" {
+		where = append(where, "t.due_date IS NOT NULL AND t.due_date <= ?")
+		args = append(args, filters.DueBefore)
+	}
+	if filters.DueAfter != "" {
+		where = append(where, "t.due_date IS NOT NULL AND t.due_date >= ?")
+		args = append(args, filters.DueAfter)
+	}
+	if filters.PriorityMin > 0 {
+		where = append(where, "t.priority IS NOT NULL AND t.priority <= ?")
+		args = append(args, filters.PriorityMin)
+	}
+	if filters.Overdue {
+		where = append(where, "t.due_date IS NOT NULL AND t.due_date < ? AND t.status != 'DONE'")
+		args = append(args, now.Format("2006-01-02"))
+	}
+	return where, args
+}
+
+// searchTerms extracts the usable search terms from a free-text query:
+// Unicode letters and digits only (mirroring the unicode61 tokenizer), terms
+// under 2 bytes dropped. Shared by the FTS body query (buildFTSQuery) and
+// the page-title matcher (searchPageTitlesOn) so the two paths cannot drift
+// on what counts as a term — a title match must imply the same AND-of-terms
+// contract a body match satisfies.
+func searchTerms(query string) []string {
+	var terms []string
+	for _, w := range strings.Fields(query) {
+		clean := strings.Map(func(r rune) rune {
+			if unicode.IsLetter(r) || unicode.IsDigit(r) {
+				return r
+			}
+			return -1
+		}, w)
+		if len(clean) < 2 {
+			continue
+		}
+		terms = append(terms, clean)
+	}
+	return terms
 }
 
 // buildFTSQuery turns a free-text user query into a safe FTS5 MATCH
@@ -41,18 +161,13 @@ type SearchFilters struct {
 // are space-joined → FTS5 implicit AND. Returns "" when no usable terms
 // survive, which the caller treats as "no search".
 func buildFTSQuery(query string) string {
-	var parts []string
-	for _, w := range strings.Fields(query) {
-		clean := strings.Map(func(r rune) rune {
-			if unicode.IsLetter(r) || unicode.IsDigit(r) {
-				return r
-			}
-			return -1
-		}, w)
-		if len(clean) < 2 {
-			continue
-		}
-		parts = append(parts, clean+"*")
+	terms := searchTerms(query)
+	if len(terms) == 0 {
+		return ""
+	}
+	parts := make([]string, len(terms))
+	for i, t := range terms {
+		parts[i] = t + "*"
 	}
 	return strings.Join(parts, " ")
 }
@@ -61,12 +176,23 @@ func buildFTSQuery(query string) string {
 // bm25 relevance, with highlighted snippets and per-page grouping. It is a
 // thin wrapper over SearchBlocksPaged returning the first page (offset 0,
 // limit 50) for backwards compatibility with the original single-shot binding.
+//
+// The contract is BLOCK hits only: page-level title rows (ID "") belong to the
+// paged envelope and are dropped here, because this binding feeds block-scoped
+// consumers — the editor's block-ref picker and the plugin SDK — that key and
+// navigate by block id.
 func (dm *DatabaseManager) SearchBlocks(query string) ([]parser.TaskResult, error) {
 	res, err := dm.SearchBlocksPaged(query, 0, 50, SearchFilters{})
 	if err != nil {
 		return nil, err
 	}
-	return res.Results, nil
+	out := make([]parser.TaskResult, 0, len(res.Results))
+	for _, r := range res.Results {
+		if r.ID != "" {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 // searchFlatCap bounds the flat ranked fetch that feeds the Go-side per-page
@@ -97,10 +223,11 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 	if query == "" || offset < 0 || limit <= 0 {
 		return parser.SearchResult{Results: []parser.TaskResult{}, Total: 0, Offset: offset, Limit: limit}, nil
 	}
-	fts := buildFTSQuery(query)
-	if fts == "" {
+	terms := searchTerms(query)
+	if len(terms) == 0 {
 		return parser.SearchResult{Results: []parser.TaskResult{}, Total: 0, Offset: offset, Limit: limit}, nil
 	}
+	fts := buildFTSQuery(query)
 
 	// Build the dynamic WHERE + ORDER BY from the filters. All user input is
 	// parameterized (never string-interpolated) — a synced vault's tag/notebook
@@ -134,6 +261,7 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 		// Scope: in-vault blocks only (exclude linked-notebook sources).
 		where = append(where, "b.source = 'vault'")
 	}
+	where, args = appendTaskFilterPredicates(where, args, filters, time.Now())
 	// The SELECT always includes bm25 for scoring; only the ORDER BY varies.
 	// (DESC belongs in ORDER BY, never in SELECT.)
 	order := "rank"
@@ -205,6 +333,24 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 		perPage[key]++
 		grouped = append(grouped, r)
 	}
+	// Page-title matches: a page NAMED for the query is the strongest
+	// relevance signal, so matching pages surface as page-level rows ranked
+	// above every body hit — including when no block body matches at all,
+	// which is what keeps an empty (block-less) page findable by name.
+	// Merged in Go, not SQL: the body leg is an FTS5 query whose helper
+	// functions (snippet/bm25) only survive in the direct FROM clause, so a
+	// UNION would degrade both legs. Block-scoped filters (type, tag) and
+	// task-attribute filters suppress the page leg — a page-level row
+	// carries neither a block type nor task attributes.
+	var titleHits []parser.TaskResult
+	if filters.Type == "" && filters.Tag == "" && !filters.hasTaskFilters() {
+		var err error
+		titleHits, err = searchPageTitlesOn(db, terms, filters)
+		if err != nil {
+			return parser.SearchResult{}, err
+		}
+	}
+	grouped = append(titleHits, grouped...)
 	total := len(grouped)
 
 	end := offset + limit
@@ -219,36 +365,42 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 		page = []parser.TaskResult{}
 	}
 
-	// Tag hydration for just this page (single secondary SELECT).
+	// Tag hydration for just this page (single secondary SELECT). Page-level
+	// title rows carry no block id and therefore no tags.
 	if len(page) > 0 {
-		blockIDs := make([]interface{}, len(page))
-		for i, r := range page {
-			blockIDs[i] = r.ID
+		blockIDs := make([]interface{}, 0, len(page))
+		for _, r := range page {
+			if r.ID != "" {
+				blockIDs = append(blockIDs, r.ID)
+			}
 		}
-		placeholders := make([]string, len(page))
-		for i := range placeholders {
-			placeholders[i] = "?"
-		}
-		tagQuery := "SELECT block_id, raw_path FROM tags WHERE block_id IN (" + strings.Join(placeholders, ",") + ") ORDER BY block_id, raw_path"
-		tagRows, err := db.Query(tagQuery, blockIDs...)
-		if err != nil {
-			return parser.SearchResult{}, fmt.Errorf("failed to query search tags: %w", err)
-		}
-		tagIndex := make(map[string][]string, len(page))
-		for tagRows.Next() {
-			var blockID, tag string
-			if err := tagRows.Scan(&blockID, &tag); err != nil {
-				tagRows.Close()
+		if len(blockIDs) > 0 {
+			placeholderCount := len(blockIDs)
+			placeholders := make([]string, placeholderCount)
+			for i := range placeholders {
+				placeholders[i] = "?"
+			}
+			tagQuery := "SELECT block_id, raw_path FROM tags WHERE block_id IN (" + strings.Join(placeholders, ",") + ") ORDER BY block_id, raw_path"
+			tagRows, err := db.Query(tagQuery, blockIDs...)
+			if err != nil {
+				return parser.SearchResult{}, fmt.Errorf("failed to query search tags: %w", err)
+			}
+			tagIndex := make(map[string][]string, len(page))
+			for tagRows.Next() {
+				var blockID, tag string
+				if err := tagRows.Scan(&blockID, &tag); err != nil {
+					tagRows.Close()
+					return parser.SearchResult{}, err
+				}
+				tagIndex[blockID] = append(tagIndex[blockID], tag)
+			}
+			if err := tagRows.Close(); err != nil {
 				return parser.SearchResult{}, err
 			}
-			tagIndex[blockID] = append(tagIndex[blockID], tag)
-		}
-		if err := tagRows.Close(); err != nil {
-			return parser.SearchResult{}, err
-		}
-		for i := range page {
-			if tags, ok := tagIndex[page[i].ID]; ok {
-				page[i].Tags = tags
+			for i := range page {
+				if tags, ok := tagIndex[page[i].ID]; ok {
+					page[i].Tags = tags
+				}
 			}
 		}
 	}
@@ -260,4 +412,116 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 		Limit:   limit,
 		HasMore: end < total,
 	}, nil
+}
+
+// searchPageTitlesOn returns one page-level result per page whose NAME
+// contains every term, case-insensitive, AND semantics — the same term
+// extraction and combination contract the FTS body query applies, so a title
+// hit and a body hit always answer the same question. Terms are
+// letters/digits only, so LIKE wildcards cannot occur inside them and the
+// pattern needs no escaping. Both sides are lowered in SQL: the comparison is
+// ASCII case-insensitive and an exactly-cased non-ASCII name still matches
+// (query "MÜNCHEN" → page "MÜNCHEN"). SQLite's LOWER folds ASCII only, so a
+// non-exact-case non-ASCII variant ("münchen") does not match — the same
+// approximation the rename lookup (page_links) relies on; full Unicode fold
+// parity with SearchPages is out of scope here.
+// Notebook/section/scope filters narrow the page leg exactly as they narrow
+// the body leg. Results carry no block identity (ID stays empty — the marker
+// the frontend uses to render a page-navigation row), the page name as
+// `clean_content`, and a `<mark>`-highlighted title snippet. Consumers must
+// HTML-escape the snippet and then re-allow only `<mark>`: the page name is
+// concatenated in raw. Bounded by searchFlatCap and ordered (notebook,
+// section, page) so paging over title hits is deterministic.
+func searchPageTitlesOn(db *sql.DB, terms []string, filters SearchFilters) ([]parser.TaskResult, error) {
+	var where []string
+	var args []any
+	for _, t := range terms {
+		where = append(where, "LOWER(page) LIKE LOWER(?)")
+		args = append(args, "%"+t+"%")
+	}
+	if filters.Notebook != "" {
+		where = append(where, "notebook = ?")
+		args = append(args, filters.Notebook)
+	}
+	if filters.Section != "" {
+		where = append(where, "section = ?")
+		args = append(args, filters.Section)
+	}
+	if filters.VaultOnly {
+		where = append(where, "source = 'vault'")
+	}
+	args = append(args, searchFlatCap)
+	rows, err := db.Query(`
+		SELECT COALESCE(source, 'vault'), notebook, section, page, date
+		FROM page_core
+		WHERE `+strings.Join(where, " AND ")+`
+		ORDER BY notebook, section, page
+		LIMIT ?`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search page titles: %w", err)
+	}
+	defer rows.Close()
+	var out []parser.TaskResult
+	for rows.Next() {
+		var r parser.TaskResult
+		if err := rows.Scan(&r.Source, &r.Notebook, &r.Section, &r.Page, &r.FileDate); err != nil {
+			return nil, err
+		}
+		r.CleanContent = r.Page
+		r.Snippet = titleSnippet(r.Page, terms)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// titleSnippet renders a page name as a search snippet with <mark> ranges
+// around term occurrences (longest-first so one term cannot chop a longer
+// term that starts at the same rune). Matching runs per-rune so byte
+// indices of the original title stay valid even when full-string lowering
+// would change its length (e.g. 'İ'); display keeps the original casing.
+func titleSnippet(title string, terms []string) string {
+	termRunes := make([][]rune, 0, len(terms))
+	for _, t := range terms {
+		termRunes = append(termRunes, []rune(strings.ToLower(t)))
+	}
+	sort.Slice(termRunes, func(i, j int) bool { return len(termRunes[i]) > len(termRunes[j]) })
+
+	orig := []rune(title)
+	lower := make([]rune, len(orig))
+	for i, r := range orig {
+		lower[i] = unicode.ToLower(r)
+	}
+	var b strings.Builder
+	i := 0
+	for i < len(orig) {
+		m := 0
+		for _, tr := range termRunes {
+			if runeHasPrefix(lower[i:], tr) {
+				m = len(tr)
+				break
+			}
+		}
+		if m > 0 {
+			b.WriteString("<mark>")
+			b.WriteString(string(orig[i : i+m]))
+			b.WriteString("</mark>")
+			i += m
+			continue
+		}
+		b.WriteRune(orig[i])
+		i++
+	}
+	return b.String()
+}
+
+func runeHasPrefix(s, p []rune) bool {
+	if len(p) > len(s) {
+		return false
+	}
+	for i, r := range p {
+		if s[i] != r {
+			return false
+		}
+	}
+	return true
 }

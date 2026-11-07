@@ -152,7 +152,13 @@
         tag: tagFilter,
         type: typeFilter,
         sort: sortMode,
-        vaultOnly: scopeVaultOnly
+        vaultOnly: scopeVaultOnly,
+        owner: '',
+        status: '',
+        dueBefore: '',
+        dueAfter: '',
+        priorityMin: 0,
+        overdue: false
       })
       // Guard against a stale response landing after a newer query/filter.
       if (

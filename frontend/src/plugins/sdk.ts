@@ -125,6 +125,8 @@ export interface SubtreeBlock {
  * A block-search hit returned by `searchBlocks` (#303). Mirrors the relevant
  * subset of the backend TaskResult projection — enough for the dependency
  * picker (and embed insertion) to render a breadcrumb + label per result.
+ * Always a real block (`id` is non-empty): page-level title rows (empty id)
+ * are only produced by the paged SearchBlocksPaged envelope.
  */
 export interface SearchHit {
   id: string

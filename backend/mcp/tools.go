@@ -204,7 +204,7 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "search_blocks",
-		Description: "Full-text search vault blocks (FTS). Prefer this before reading whole pages. Bounded results with offset/limit.",
+		Description: "Full-text search vault blocks (FTS). Results can also include page-level rows for pages whose NAME matches the query (empty id, clean_content is the page name) — open those as pages, not blocks. Prefer this before reading whole pages. Bounded results with offset/limit.",
 	}, searchHandler)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "search_notes",
