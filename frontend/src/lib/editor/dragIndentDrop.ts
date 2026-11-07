@@ -6,7 +6,7 @@ import { dropPoint } from '@tiptap/pm/transform'
 import {
   parseOrderedBullet,
   applyDropDepthFixup,
-  renumberAfterOrderedBlockMove
+  renumberOrderedRunMembers
 } from './orderedList'
 import {
   depthRunSpanForNode,
@@ -475,31 +475,17 @@ export const BlockIndentOnDrop = Extension.create({
               headDepth + delta
             )
             // Ordered members (not the head) have their own destination
-            // sequences — renumber each, same contract as the Alt+Arrow path.
-            for (const memberPos of run.positions) {
-              if (memberPos === oldPos) continue
-              const member = doc.nodeAt(memberPos)
-              if (!member) continue
-              const memberOrdered =
-                member.type.name === 'noteBlock'
-                  ? parseOrderedBullet(String(member.attrs.bullet || ''))
-                  : null
-              if (!memberOrdered) continue
-              const memberDepth = Math.max(
-                0,
-                Math.min(
-                  ((member.attrs.depth as number) || 0) + delta,
-                  MAX_DEPTH
-                )
-              )
-              tr = renumberAfterOrderedBlockMove(
-                tr,
-                mappedInsert + (memberPos - run.from),
-                vacatedNear,
-                memberDepth,
-                memberOrdered.punc
-              )
-            }
+            // sequences — renumber each at its shifted depth via the pure
+            // helper (jsdom-pinned in dragIndentDrop.test.ts), same contract
+            // as the Alt+Arrow path.
+            tr = renumberOrderedRunMembers(
+              tr,
+              doc,
+              run,
+              mappedInsert,
+              vacatedNear,
+              delta
+            )
 
             // 8. Land a NodeSelection on the moved block so the caret/focus
             //    land on it in its new home (mirrors PM's native drop

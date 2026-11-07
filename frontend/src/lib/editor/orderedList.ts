@@ -1,5 +1,7 @@
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import type { Transaction } from '@tiptap/pm/state'
+import type { DepthRunSpan } from './depthRun'
+import { MAX_DEPTH } from './constants'
 
 /**
  * Ordered-list helpers for flat noteBlock lists (#836 Enter renumber, #837
@@ -268,6 +270,61 @@ export function applyDropDepthFixup(
     )
   } else if (oldDepth !== newDepth) {
     tr = tr.setNodeAttribute(mappedInsert, 'depth', newDepth)
+  }
+  return tr
+}
+
+/**
+ * Renumber the ordered members (not the head) of a depth run relocated by
+ * drag-drop (delete+insert already applied on `tr`). Each member keeps its
+ * own ordered sequence: its destination run at `mappedInsert + (memberPos -
+ * run.from)` and the vacated peers near the source hole, renumbered at the
+ * member's SHIFTED depth (`member depth + delta`).
+ *
+ * Extracted from dragIndentDrop's handleDrop so the drop path's member
+ * renumber is jsdom-testable without driving the HTML5 drag/drop pipeline —
+ * same rationale as `applyDropDepthFixup` (#859). The head (position
+ * `run.from`) is skipped: the drag path renumbers it via
+ * `applyDropDepthFixup`, which owns the head's depth write and destination
+ * punctuation adoption. The Alt+Arrow mover keeps its own inline loop
+ * (keymaps.ts): same-depth swaps have no delta and no separate head fixup,
+ * so the two loops are deliberately not unified.
+ *
+ * Member nodes are read from the ORIGINAL `doc` (pre-delete positions).
+ * `delta` is the same whole-run depth delta the caller already applied via
+ * `shiftRunDepths`; the memberwise clamp mirrors `shiftRunDepths`' write-side
+ * clamp so the renumber always targets the depth actually written, even for
+ * a raw over-cap delta the live pipeline's `clampRunDepthDelta` would
+ * prevent.
+ */
+export function renumberOrderedRunMembers(
+  tr: Transaction,
+  doc: ProseMirrorNode,
+  run: DepthRunSpan,
+  mappedInsert: number,
+  vacatedNear: number,
+  delta: number
+): Transaction {
+  for (const memberPos of run.positions) {
+    if (memberPos === run.from) continue
+    const member = doc.nodeAt(memberPos)
+    if (!member) continue
+    const memberOrdered =
+      member.type.name === 'noteBlock'
+        ? parseOrderedBullet(String(member.attrs.bullet || ''))
+        : null
+    if (!memberOrdered) continue
+    const memberDepth = Math.max(
+      0,
+      Math.min(((member.attrs.depth as number) || 0) + delta, MAX_DEPTH)
+    )
+    tr = renumberAfterOrderedBlockMove(
+      tr,
+      mappedInsert + (memberPos - run.from),
+      vacatedNear,
+      memberDepth,
+      memberOrdered.punc
+    )
   }
   return tr
 }
