@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"silt/backend/config"
 	"silt/backend/db"
 	"silt/backend/mcp"
 	"silt/backend/parser"
@@ -397,37 +398,29 @@ func (a *App) GetLocalMCPConfig() mcp.Config {
 }
 
 // SetLocalMCPConfig patches and persists local MCP settings, then resyncs the host.
-// Persistence goes through saveConfigTracked (same as other atomic setters) so
-// the config watcher suppresses self-writes and concurrent setters cannot
-// clobber this patch via a raw config.Save race.
+// Routes through mutateConfigFresh so an external edit to an unrelated field
+// survives, while preserving normalization and self-write suppression.
 func (a *App) SetLocalMCPConfig(enabled, httpEnabled, writeEnabled bool, httpPort int) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
-	a.vaultMu.RLock()
-	if a.vaultPath == "" {
-		a.vaultMu.RUnlock()
-		return fmt.Errorf("no vault open")
-	}
-
-	a.configMu.Lock()
-	local := mcp.NormalizeConfig(mcp.Config{
-		Enabled:      enabled,
-		HTTPEnabled:  httpEnabled,
-		HTTPPort:     httpPort,
-		WriteEnabled: writeEnabled,
+	err := a.mutateConfigFresh(func(cfg *config.SystemConfig) (bool, error) {
+		local := mcp.NormalizeConfig(mcp.Config{
+			Enabled:      enabled,
+			HTTPEnabled:  httpEnabled,
+			HTTPPort:     httpPort,
+			WriteEnabled: writeEnabled,
+		})
+		// Prefer HTTP on so the stdio proxy can dial loopback out of the box.
+		if enabled && !local.HTTPEnabled {
+			local.HTTPEnabled = true
+			local = mcp.NormalizeConfig(local)
+		}
+		cfg.AI.LocalMCP = local
+		return true, nil
 	})
-	// Prefer HTTP on so the stdio proxy can dial loopback out of the box.
-	if enabled && !local.HTTPEnabled {
-		local.HTTPEnabled = true
-		local = mcp.NormalizeConfig(local)
-	}
-	a.cfg.AI.LocalMCP = local
-	saveErr := a.saveConfigTracked(a.cfg)
-	a.configMu.Unlock()
-	a.vaultMu.RUnlock()
-	if saveErr != nil {
-		return saveErr
+	if err != nil {
+		return err
 	}
 	// After locks released — sync takes vaultMu/configMu internally.
 	a.syncMCPHost()

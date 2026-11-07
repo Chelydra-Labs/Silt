@@ -205,50 +205,46 @@ func (a *App) GetAIProviderConfig() (AIPublicConfig, error) {
 }
 
 // UpdateAIFeatures applies a product-level AI enablement patch (#632) and
-// persists atomically. Dependents are clamped when master is off. Live a.cfg
-// is only updated after a successful save so a failed persist does not leave
-// memory and disk diverged until restart.
+// persists atomically. Dependents are clamped when master is off. Routes through
+// mutateConfigFresh so an external edit to an unrelated section survives.
 func (a *App) UpdateAIFeatures(patch AIFeaturesPatch) error {
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.vaultPath == "" {
-		return fmt.Errorf("vault not loaded")
-	}
-	a.configMu.Lock()
-	defer a.configMu.Unlock()
-
-	// Candidate copy: mutate offline, then publish only if write succeeds.
-	next := a.cfg
-	f := next.AI.Features
-	if patch.Enabled != nil {
-		f.Enabled = *patch.Enabled
-	}
-	if patch.RAGEnabled != nil {
-		f.RAGEnabled = *patch.RAGEnabled
-	}
-	if patch.SummariesEnabled != nil {
-		f.SummariesEnabled = *patch.SummariesEnabled
-	}
 	if patch.AgentWrites != nil {
 		aw := strings.TrimSpace(*patch.AgentWrites)
 		if !config.IsValidAgentWrites(aw) {
 			return fmt.Errorf(`agent_writes must be "read_only", "confirm", or "auto"`)
 		}
-		f.AgentWrites = aw
 	}
-	next.AI.Features = f
-	wasOn := a.cfg.AI.Features.Enabled
-	next.AI = config.NormalizeAIConfig(next.AI)
-	if err := a.saveConfigTracked(next); err != nil {
+
+	var turnOffStreams bool
+	err := a.mutateConfigFresh(func(cfg *config.SystemConfig) (bool, error) {
+		f := cfg.AI.Features
+		if patch.Enabled != nil {
+			f.Enabled = *patch.Enabled
+		}
+		if patch.RAGEnabled != nil {
+			f.RAGEnabled = *patch.RAGEnabled
+		}
+		if patch.SummariesEnabled != nil {
+			f.SummariesEnabled = *patch.SummariesEnabled
+		}
+		if patch.AgentWrites != nil {
+			f.AgentWrites = strings.TrimSpace(*patch.AgentWrites)
+		}
+		wasOn := a.cfg.AI.Features.Enabled || cfg.AI.Features.Enabled
+		cfg.AI.Features = f
+		cfg.AI = config.NormalizeAIConfig(cfg.AI)
+		turnOffStreams = wasOn && !cfg.AI.Features.Enabled
+		return true, nil
+	})
+	if err != nil {
 		return err
 	}
-	a.cfg = next
 	// Master AI just turned off: cancel any in-flight provider streams so they
 	// stop consuming tokens/cost immediately instead of running to their
 	// per-call timeout. Frontend teardown calls PluginAICancelStream, but that
 	// binding rejects once the AI capability grant is revoked on the next
 	// session check, so shutdown must not depend on it (#632).
-	if wasOn && !next.AI.Features.Enabled {
+	if turnOffStreams {
 		a.cancelAllAIStreams()
 	}
 	return nil
@@ -270,8 +266,8 @@ func aiUnusableList(chat, emb bool) []string {
 
 // UpdateAIProviderConfig applies a non-key patch to one provider block and
 // persists atomically. The existing API key is preserved (the patch type has no
-// key field), and the AI section is re-normalized. Mirrors UpdatePluginSetting's
-// atomic read-modify-write under vaultMu(R) + configMu(W). (#217.)
+// key field), and the AI section is re-normalized. Routes through mutateConfigFresh
+// so an external edit to an unrelated field survives. (#217.)
 func (a *App) UpdateAIProviderConfig(which string, patch AIProviderPatch) error {
 	if err := aiValidateWhich(which); err != nil {
 		return err
@@ -286,36 +282,31 @@ func (a *App) UpdateAIProviderConfig(which string, patch AIProviderPatch) error 
 			return fmt.Errorf("invalid reasoning_effort %q: must be one of none, minimal, low, medium, high, xhigh, max", *patch.ReasoningEffort)
 		}
 	}
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.vaultPath == "" {
-		return fmt.Errorf("vault not loaded")
-	}
-	a.configMu.Lock()
-	defer a.configMu.Unlock()
 
-	// Build the new block from the patch, preserving the live key (the patch
-	// never carries one).
-	patched := config.AIProviderConfig{
-		ProviderType:    patch.ProviderType,
-		BaseURL:         patch.BaseURL,
-		Model:           patch.Model,
-		Temperature:     patch.Temperature,
-		MaxTokens:       patch.MaxTokens,
-		ReasoningEffort: patch.ReasoningEffort,
-		TimeoutMs:       patch.TimeoutMs,
-		Dimensions:      patch.Dimensions,
-	}
-	if which == "chat" {
-		patched.APIKey = a.cfg.AI.Chat.APIKey
-		a.cfg.AI.Chat = patched
-	} else {
-		patched.APIKey = a.cfg.AI.Embedding.APIKey
-		a.cfg.AI.Embedding = patched
-	}
-	a.cfg.AI = config.NormalizeAIConfig(a.cfg.AI)
-
-	if err := a.saveConfigTracked(a.cfg); err != nil {
+	err := a.mutateConfigFresh(func(cfg *config.SystemConfig) (bool, error) {
+		// Build the new block from the patch, preserving the live key from disk
+		// (the patch never carries one).
+		patched := config.AIProviderConfig{
+			ProviderType:    patch.ProviderType,
+			BaseURL:         patch.BaseURL,
+			Model:           patch.Model,
+			Temperature:     patch.Temperature,
+			MaxTokens:       patch.MaxTokens,
+			ReasoningEffort: patch.ReasoningEffort,
+			TimeoutMs:       patch.TimeoutMs,
+			Dimensions:      patch.Dimensions,
+		}
+		if which == "chat" {
+			patched.APIKey = cfg.AI.Chat.APIKey
+			cfg.AI.Chat = patched
+		} else {
+			patched.APIKey = cfg.AI.Embedding.APIKey
+			cfg.AI.Embedding = patched
+		}
+		cfg.AI = config.NormalizeAIConfig(cfg.AI)
+		return true, nil
+	})
+	if err != nil {
 		return err
 	}
 	// A provider-type / base-URL / model change means the cached model list
@@ -346,7 +337,8 @@ func (a *App) SetAIAPIKey(which, key string) error {
 // ClearAIAPIKey removes a provider API key from BOTH stores (the OS keyring and
 // config.yaml) so a clear is durable regardless of where the key lived. The
 // keyring delete is best-effort (ErrNotFound is the normal "nothing to delete"
-// case and is ignored). (#218.)
+// case and is ignored). Routes config clearing through mutateConfigFreshLocked
+// under vaultMu.RLock so concurrent external edits survive. (#218.)
 func (a *App) ClearAIAPIKey(which string) error {
 	if err := aiValidateWhich(which); err != nil {
 		return err
@@ -363,14 +355,15 @@ func (a *App) ClearAIAPIKey(which string) error {
 	if a.keyringStore != nil {
 		_ = a.keyringStore.Delete(keyringService, user)
 	}
-	a.configMu.Lock()
-	defer a.configMu.Unlock()
-	if which == "chat" {
-		a.cfg.AI.Chat.APIKey = ""
-	} else {
-		a.cfg.AI.Embedding.APIKey = ""
-	}
-	if err := a.saveConfigTracked(a.cfg); err != nil {
+	err := a.mutateConfigFreshLocked(func(cfg *config.SystemConfig) (bool, error) {
+		if which == "chat" {
+			cfg.AI.Chat.APIKey = ""
+		} else {
+			cfg.AI.Embedding.APIKey = ""
+		}
+		return true, nil
+	})
+	if err != nil {
 		return err
 	}
 	// Cleared key → the cached list (polled under the old key) may no longer
