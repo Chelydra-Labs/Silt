@@ -250,6 +250,69 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
     expect(mocks.SaveFileBlocksProgrammatic).not.toHaveBeenCalled()
   })
 
+  it('an input edit during the in-flight preview cannot install the stale response', async () => {
+    // First preview populates the actionable surface.
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: 'b1',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'page1',
+          snippet: 'foo bar'
+        }
+      ],
+      total: 1,
+      offset: 0,
+      limit: 200,
+      has_more: false
+    })
+    await renderAndPreview('foo', 'qux')
+
+    // Second preview: hold the response until after the user edits Find.
+    let resolveResponse: (value: unknown) => void = () => {}
+    mocks.SearchBlocksPaged.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveResponse = resolve
+        })
+    )
+    await fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    await tick()
+    await fireEvent.input(screen.getByLabelText('Find'), {
+      target: { value: 'bar' }
+    })
+    await tick()
+
+    // The response was computed for "foo", but Apply would rebuild the matcher
+    // from "bar" — adopting it would apply a replacement the user never saw.
+    resolveResponse({
+      results: [
+        {
+          id: 'stale1',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'stale-page',
+          snippet: 'bar bar'
+        }
+      ],
+      total: 1,
+      offset: 0,
+      limit: 200,
+      has_more: false
+    })
+
+    await waitFor(
+      () => {
+        expect(screen.getByRole('button', { name: /^Replace/ })).toBeDisabled()
+      },
+      { timeout: 2000 }
+    )
+    expect(screen.getByText(/Preview is stale/)).toBeInTheDocument()
+    expect(screen.queryByText('stale-page')).not.toBeInTheDocument()
+    expect(mocks.SaveFileBlocksProgrammatic).not.toHaveBeenCalled()
+  })
+
   it('a mid-loop Apply failure leaves Undo available for already-persisted pages', async () => {
     mocks.SearchBlocksPaged.mockResolvedValue({
       results: [

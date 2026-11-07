@@ -73,6 +73,19 @@
   // Apply still leaves an undo path for the written pages.
   let revertLog = $state<BatchEntry[][]>([])
 
+  /** Snapshot of every input the preview's before/after values derive from.
+   *  Apply rebuilds the matcher from live inputs, so a response whose inputs
+   *  moved while the request was in flight must not replace `groups`. */
+  function previewInputs(): string {
+    return JSON.stringify([
+      findText,
+      replaceText,
+      caseSensitive,
+      wholeWord,
+      regexp
+    ])
+  }
+
   /** Preview: search FTS5 for the find term, group matches by page, compute
    *  before/after. Linked-notebook pages are flagged read-only (skipped on apply). */
   async function preview(): Promise<void> {
@@ -87,9 +100,9 @@
       truncatedCount = 0
       return
     }
+    const requested = previewInputs()
     loading = true
     statusMessage = ''
-    truncatedCount = 0
     try {
       const res = await SearchBlocksPaged(findText, 0, 200, {
         notebook: '',
@@ -110,6 +123,15 @@
         excludePageTitles: true
       })
       const results = res.results || []
+      // Inputs changed while the request was in flight: these groups were
+      // computed for the old matcher while Apply would rebuild from the new
+      // one, so keeping the previous preview (and its stale notice) is the
+      // only safe state.
+      if (previewInputs() !== requested) {
+        previewStale = true
+        return
+      }
+      truncatedCount = 0
       // Defensive: the request excludes page rows at the source, but a page
       // row (id === "") could only become a phantom match — the preview
       // promises a replacement Apply can never make.
