@@ -1688,6 +1688,132 @@ describe('moveActiveBlock — drag-handle keyboard complement (#181)', () => {
     ).toEqual(['1. ', '2. ', '3. '])
     editor.destroy()
   })
+
+  // --- subtree-aware run moves (#1056) ----------------------------------
+  // A parent must relocate WITH its contiguous depth run: moving the parent
+  // alone would strand its children before a block they no longer belong
+  // under. A move is a pure reorder — depths never change.
+
+  const note = (id: string, text: string, depth: number) => ({
+    type: 'noteBlock' as const,
+    attrs: { id, depth, bullet: '- ' },
+    content: [{ type: 'text' as const, text }]
+  })
+
+  const orderedNote = (id: string, text: string, depth: number, n: number) => ({
+    type: 'noteBlock' as const,
+    attrs: { id, depth, bullet: `${n}. ` },
+    content: [{ type: 'text' as const, text }]
+  })
+
+  function blocksOf(e: Editor) {
+    return Array.from({ length: e.state.doc.childCount }, (_, i) => ({
+      id: String(e.state.doc.child(i).attrs.id),
+      depth: Number(e.state.doc.child(i).attrs.depth ?? 0),
+      bullet: String(e.state.doc.child(i).attrs.bullet ?? '')
+    }))
+  }
+
+  function focusBlockIndex(e: Editor, index: number): void {
+    let pos = 0
+    for (let i = 0; i < index; i++) pos += e.state.doc.child(i).nodeSize
+    e.commands.setTextSelection(pos + 1)
+  }
+
+  it('moves a parent and its child together past a following sibling', () => {
+    const editor = makeEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [note('a', 'parent', 0), note('b', 'child', 1), note('c', 'tail', 0)]
+    })
+    focusBlockIndex(editor, 0)
+    expect(moveActiveBlock(editor, 1)).toBe(true)
+    // The whole run [a, b] lands after c — NOT b stranded before any
+    // depth-0 block — and no member changed depth.
+    expect(blocksOf(editor).map((b) => b.id)).toEqual(['c', 'a', 'b'])
+    expect(blocksOf(editor).map((b) => b.depth)).toEqual([0, 0, 1])
+    editor.destroy()
+  })
+
+  it('moves a parent and its child together before a preceding sibling', () => {
+    const editor = makeEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [note('x', 'head', 0), note('a', 'parent', 0), note('b', 'child', 1)]
+    })
+    focusBlockIndex(editor, 1)
+    expect(moveActiveBlock(editor, -1)).toBe(true)
+    expect(blocksOf(editor).map((b) => b.id)).toEqual(['a', 'b', 'x'])
+    expect(blocksOf(editor).map((b) => b.depth)).toEqual([0, 1, 0])
+    editor.destroy()
+  })
+
+  it('no-ops at the bottom when the run includes the last block', () => {
+    const editor = makeEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [note('x', 'head', 0), note('a', 'parent', 0), note('b', 'child', 1)]
+    })
+    focusBlockIndex(editor, 1)
+    // The run's last member is the doc's last child — nothing to swap with.
+    expect(moveActiveBlock(editor, 1)).toBe(false)
+    expect(blocksOf(editor).map((b) => b.id)).toEqual(['x', 'a', 'b'])
+    editor.destroy()
+  })
+
+  it('keeps an ordered parent run sequential and renumbered', () => {
+    const editor = makeEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        orderedNote('p', 'parent', 0, 1),
+        orderedNote('c1', 'child one', 1, 1),
+        orderedNote('c2', 'child two', 1, 2),
+        orderedNote('t', 'tail parent', 0, 2),
+        orderedNote('tc', 'tail child', 1, 1)
+      ]
+    })
+    focusBlockIndex(editor, 0)
+    expect(moveActiveBlock(editor, 1)).toBe(true)
+    const moved = blocksOf(editor)
+    // Whole run [p, c1, c2] lands after t; every ordered run renumbers:
+    // depth-0 [t, p] and the interleaved depth-1 [tc, c1, c2].
+    expect(moved.map((b) => b.id)).toEqual(['t', 'tc', 'p', 'c1', 'c2'])
+    expect(moved.map((b) => b.depth)).toEqual([0, 1, 0, 1, 1])
+    expect(moved.map((b) => b.bullet)).toEqual([
+      '1. ',
+      '1. ',
+      '2. ',
+      '2. ',
+      '3. '
+    ])
+    editor.destroy()
+  })
+
+  it('ends the run at a header and swaps past it without touching its level', () => {
+    const editor = makeEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        note('a', 'parent', 0),
+        note('b', 'child', 1),
+        {
+          type: 'headerBlock',
+          attrs: { id: 'h', depth: 1 },
+          content: [{ type: 'text', text: 'Section' }]
+        },
+        note('z', 'tail', 0)
+      ]
+    })
+    focusBlockIndex(editor, 0)
+    expect(moveActiveBlock(editor, 1)).toBe(true)
+    const moved = blocksOf(editor)
+    // The header terminates the run (its depth attr is a heading level),
+    // so the run swaps WITH the header, and the level survives the move.
+    expect(moved.map((b) => b.id)).toEqual(['h', 'a', 'b', 'z'])
+    expect(moved.map((b) => b.depth)).toEqual([1, 0, 1, 0])
+    editor.destroy()
+  })
 })
 
 // --- Block merge on Delete / Backspace (#364) --------------------------------

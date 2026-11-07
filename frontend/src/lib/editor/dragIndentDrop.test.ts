@@ -5,6 +5,7 @@ import { SiltBlockExtensions } from './index'
 import {
   resolveDropDepth,
   resolveIndentStepFromEl,
+  resolveDragDepthForNode,
   BlockIndentOnDrop,
   INDENT_STEP_PX
 } from './dragIndentDrop'
@@ -350,6 +351,87 @@ describe('applyDropDepthFixup — region blocks through the drop path', () => {
       expect(dropped.type.name).toBe('codeBlock')
       expect(dropped.attrs.depth).toBe(expected)
     }
+    editor.destroy()
+  })
+})
+
+// A headerBlock's `depth` attr is its heading LEVEL, not an indent. The
+// drag handler's has-depth guard admits headerBlock drags (HeaderBlockView
+// renders the same [data-drag-handle] span as notes/tasks), so the drop
+// column must never become the new level — dragging an H2 to the right
+// margin would mint an H6, and a far-LEFT drop would zero the hashes.
+// Mirrors the Tab-path bail (headers are excluded from the depth blocks).
+describe('headerBlock drag never rewrites the heading level', () => {
+  it('resolveDragDepthForNode keeps the current level at any drop column', () => {
+    for (const clientX of [-100, 100, 100 + 3 * INDENT_STEP_PX, 1e6]) {
+      expect(
+        resolveDragDepthForNode('headerBlock', 2, clientX, 100, INDENT_STEP_PX, MAX_DEPTH)
+      ).toBe(2)
+    }
+    // Prose blocks keep resolving from the drop column (regression guard
+    // for the non-header path).
+    expect(
+      resolveDragDepthForNode('noteBlock', 0, 100 + 2 * INDENT_STEP_PX, 100, INDENT_STEP_PX, MAX_DEPTH)
+    ).toBe(2)
+  })
+
+  it('the drop fixup leaves the level untouched end-to-end', () => {
+    const editor = new Editor({
+      extensions: [
+        StarterKit.configure({
+          paragraph: false,
+          heading: false,
+          bulletList: false,
+          orderedList: false,
+          listItem: false,
+          blockquote: false,
+          codeBlock: false,
+          horizontalRule: false,
+          trailingNode: false
+        }),
+        ...SiltBlockExtensions,
+        BlockIndentOnDrop
+      ],
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'headerBlock',
+            attrs: { id: 'h', depth: 2 },
+            content: [{ type: 'text', text: 'Section' }]
+          },
+          {
+            type: 'noteBlock',
+            attrs: { id: 'n', depth: 0, bullet: '- ' },
+            content: [{ type: 'text', text: 'body' }]
+          }
+        ]
+      }
+    })
+    // Mirror the drop transaction exactly as handleDrop builds it: delete
+    // the header's source, re-insert at the top, resolve the depth with the
+    // header-aware resolver (far-right column — the most destructive case),
+    // then run the shared fixup.
+    const header = editor.state.doc.child(0)
+    const noteSize = editor.state.doc.child(1).nodeSize
+    let tr = editor.state.tr.delete(0, header.nodeSize)
+    const mappedInsert = tr.mapping.map(noteSize)
+    tr = tr.insert(mappedInsert, header)
+    const vacatedNear = tr.mapping.map(0)
+    const newDepth = resolveDragDepthForNode(
+      'headerBlock',
+      (header.attrs.depth as number) || 0,
+      1e6,
+      100,
+      INDENT_STEP_PX,
+      MAX_DEPTH
+    )
+    tr = applyDropDepthFixup(tr, header.attrs, null, mappedInsert, vacatedNear, newDepth)
+    editor.view.dispatch(tr)
+    const dropped = editor.state.doc.child(1)
+    expect(dropped.type.name).toBe('headerBlock')
+    // The level survived the far-right drop column.
+    expect(dropped.attrs.depth).toBe(2)
     editor.destroy()
   })
 })
