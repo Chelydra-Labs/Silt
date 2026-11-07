@@ -745,6 +745,16 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
     ).toBeInTheDocument()
     expect(screen.getByText(/340 preview rows/)).toBeInTheDocument()
 
+    // Make the displayed preview stale before rejecting the refresh, so the
+    // catch's previewStale reset is exercised too (the banner only pins the
+    // truncatedCount half).
+    await fireEvent.input(screen.getByLabelText('Replace with'), {
+      target: { value: 'quux' }
+    })
+    await waitFor(() => {
+      expect(screen.getByText(/Preview is stale/)).toBeInTheDocument()
+    })
+
     mocks.SearchBlocksPaged.mockRejectedValueOnce(new Error('ipc down'))
     await fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
 
@@ -755,6 +765,7 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       { timeout: 2000 }
     )
     expect(screen.queryByText(/preview rows/)).toBeNull()
+    expect(screen.queryByText(/Preview is stale/)).toBeNull()
     expect(screen.queryByRole('button', { name: /^Replace \d/ })).toBeNull()
     expect(screen.getByRole('button', { name: 'Replace' })).toBeDisabled()
   })
