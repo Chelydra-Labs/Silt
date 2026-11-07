@@ -30,7 +30,8 @@ type PageLinkRow struct {
 }
 
 // ListDistinctPages returns every distinct (source, notebook, section, page)
-// triple present in the blocks index. Used by wiki-link resolution (#545).
+// loc in the page_core inventory — one row per indexed page file, including
+// zero-block pages. Used by wiki-link resolution (#545).
 func (dm *DatabaseManager) ListDistinctPages() ([]PageLoc, error) {
 	db, release, err := dm.handle()
 	if err != nil {
@@ -61,9 +62,9 @@ func (dm *DatabaseManager) PageExistsExact(source, notebook, section, page strin
 	return pageExistsExact(db, source, notebook, section, page)
 }
 
-// fullPageInventoryScans counts unbounded DISTINCT page-inventory scans
-// (empty WHERE on scanDistinctPages). Used by tests for #839; atomic for
-// concurrent readers. Prefer this over listDistinctPages-only counters.
+// fullPageInventoryScans counts unbounded DISTINCT scans of the blocks index
+// (empty WHERE on scanDistinctPages) — the paged paths must never pay one.
+// Used by tests for #839; atomic for concurrent readers.
 var fullPageInventoryScans atomic.Uint64
 
 // listDistinctPages is the no-handle-reentry internal helper. Callers that
@@ -77,8 +78,9 @@ var fullPageInventoryScans atomic.Uint64
 // frontmatter-affecting publishes), and the delete/remove paths
 // (ClearFileBlocks / ClearSourceBlocks) drop it with the rest of the
 // projection, so the projection and the set of indexed files stay in sync.
+// initSchema backfills the projection from blocks on every open, so there is
+// no pre-projection state left to fall back from.
 func listDistinctPages(db *sql.DB) ([]PageLoc, error) {
-	fullPageInventoryScans.Add(1)
 	rows, err := db.Query(`
 		SELECT COALESCE(source, 'vault'), notebook, section, page
 		FROM page_core
@@ -101,13 +103,6 @@ func listDistinctPages(db *sql.DB) ([]PageLoc, error) {
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
-	}
-	if len(out) == 0 {
-		// The open-time backfill fills page_core from blocks, so an empty
-		// projection normally means an empty index. Keep the DISTINCT-over-
-		// blocks scan for a DB written by a build that predates the
-		// projection and is read without a reopened initSchema.
-		return scanDistinctPages(db, ``, nil)
 	}
 	return out, nil
 }
