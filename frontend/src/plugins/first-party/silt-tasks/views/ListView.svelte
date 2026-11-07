@@ -24,12 +24,16 @@
   import {
     canFitInspectorSplit,
     clampInspectorPaneWidth,
-    DEFAULT_INSPECTOR_PANE_WIDTH,
+    DEFAULT_INSPECTOR_SPLIT_RATIO,
+    inspectorSplitRatioFromWidth,
     loadInspectorPaneWidth,
     maxInspectorPaneWidthForHost,
     MIN_INSPECTOR_PANE_WIDTH,
+    MIN_LIST_MASTER_WIDTH,
     onTasksSettingsChanged,
-    persistInspectorPaneWidth
+    persistInspectorPaneWidth,
+    referenceInspectorPaneWidthFromRatio,
+    resolveInspectorPaneWidthForHost
   } from '../settings'
   import {
     coerceTaskRow,
@@ -90,7 +94,7 @@
   let hostWidth = $state(0)
   /** False until the host has a measured width — avoids overlay→pane flash. */
   let hostMeasured = $state(false)
-  let paneWidth = $state(loadInspectorPaneWidth())
+  let paneRatio = $state(inspectorSplitRatioFromWidth(loadInspectorPaneWidth()))
   /** Inspector sidebar popover/dialog busy — blocks J/K while open. */
   let inspectorBusy = $state(false)
   // DONE-on-blocked guard (#302): shared hook owns pending state + blocker
@@ -239,7 +243,7 @@
   // Re-read persisted pane width after async settings hydrate / config reload.
   $effect(() => {
     return onTasksSettingsChanged(() => {
-      paneWidth = loadInspectorPaneWidth()
+      paneRatio = inspectorSplitRatioFromWidth(loadInspectorPaneWidth())
     })
   })
 
@@ -249,18 +253,25 @@
   /** Defer mounting either inspector shell until host width is known. */
   let inspectorReady = $derived(!!selectedTask && hostMeasured)
   let paneMaxForHost = $derived(maxInspectorPaneWidthForHost(hostWidth))
+  let defaultPaneWidthForHost = $derived(
+    resolveInspectorPaneWidthForHost(hostWidth, DEFAULT_INSPECTOR_SPLIT_RATIO)
+  )
   let effectivePaneWidth = $derived(
-    Math.min(clampInspectorPaneWidth(paneWidth), paneMaxForHost)
+    resolveInspectorPaneWidthForHost(hostWidth, paneRatio)
   )
 
   function setPaneWidth(w: number) {
-    paneWidth = Math.min(clampInspectorPaneWidth(w), paneMaxForHost)
+    const clamped = Math.min(clampInspectorPaneWidth(w), paneMaxForHost)
+    paneRatio = inspectorSplitRatioFromWidth(clamped, hostWidth)
   }
 
   function commitPaneWidth(w: number) {
-    const next = Math.min(clampInspectorPaneWidth(w), paneMaxForHost)
-    paneWidth = next
-    void persistInspectorPaneWidth(next)
+    const clamped = Math.min(clampInspectorPaneWidth(w), paneMaxForHost)
+    const nextRatio = inspectorSplitRatioFromWidth(clamped, hostWidth)
+    paneRatio = nextRatio
+    void persistInspectorPaneWidth(
+      referenceInspectorPaneWidthFromRatio(nextRatio)
+    )
   }
 
   // Must be declared before the reload $effect so day-boundary ticks
@@ -943,9 +954,14 @@
   <div class="sr-only" aria-live="polite">{liveMessage}</div>
 
   <div class="flex flex-1 min-h-0 overflow-hidden">
-    <div class="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden">
+    <div
+      class="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden"
+      style={usePane ? `min-width: ${MIN_LIST_MASTER_WIDTH}px` : undefined}
+      data-testid="tasks-list-master"
+    >
       <div
-        class="mx-auto flex-1 w-full max-w-5xl overflow-y-auto px-3 py-5 space-y-7 custom-scrollbar sm:px-5 lg:px-6"
+        class="flex-1 w-full overflow-y-auto px-3 py-4 space-y-5 custom-scrollbar sm:px-5 lg:px-6"
+        data-testid="tasks-list-scroll"
       >
         {#if loading}
           <div
@@ -1223,7 +1239,7 @@
         width={effectivePaneWidth}
         min={MIN_INSPECTOR_PANE_WIDTH}
         max={paneMaxForHost}
-        defaultWidth={Math.min(DEFAULT_INSPECTOR_PANE_WIDTH, paneMaxForHost)}
+        defaultWidth={defaultPaneWidthForHost}
         onWidthChange={setPaneWidth}
         onWidthCommit={commitPaneWidth}
         ariaLabel="Resize task inspector"
@@ -1259,10 +1275,10 @@
   </div>
 
   <div
-    class="tasks-quick-add-bar flex-shrink-0 border-t border-surface-panel-border px-3 py-3 sm:px-5 lg:px-6"
+    class="tasks-quick-add-bar flex-shrink-0 border-t border-surface-panel-border px-3 py-2.5 sm:px-5 lg:px-6"
     data-testid="tasks-inline-quickadd"
   >
-    <div class="mx-auto w-full max-w-5xl">
+    <div class="w-full" data-testid="tasks-inline-quickadd-inner">
       <QuickAddTask
         {ctx}
         placeholder="Add a task — Enter to add"

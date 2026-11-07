@@ -710,23 +710,49 @@
   data-testid="tasks-calendar"
 >
   <header
-    class="calendar-toolbar flex flex-col gap-2.5 border-b border-surface-panel-border px-3 py-3 sm:px-5 lg:px-6"
+    class="calendar-toolbar flex flex-wrap items-center gap-3 border-b border-surface-panel-border px-3 py-2 sm:px-5 lg:px-6"
+    data-testid="calendar-toolbar"
   >
-    <!-- Row 1: Icon, sub-mode toggle, New task -->
-    <div class="flex items-center gap-3 w-full flex-wrap">
-      <span
-        class="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-primary-glow text-accent-primary-start"
-        aria-hidden="true"
+    <div class="flex min-w-0 items-center gap-2">
+      <h2
+        class="font-headline-md text-headline-md min-w-0 truncate text-text-primary"
       >
-        <span class="material-symbols-outlined text-icon-lg">
-          {subMode === 'month' ? 'calendar_month' : 'calendar_view_week'}
-        </span>
-      </span>
+        {heading}
+      </h2>
+      <div class="flex items-center gap-1 ml-1">
+        <button
+          type="button"
+          onclick={prev}
+          class="flex h-7 w-7 items-center justify-center rounded-md hover:bg-hover text-text-muted hover:text-accent-primary-start border border-transparent bg-transparent cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
+          aria-label="Previous"
+        >
+          <span class="material-symbols-outlined text-icon-md"
+            >chevron_left</span
+          >
+        </button>
+        <button
+          type="button"
+          onclick={goToday}
+          class="min-h-7 px-2.5 py-0.5 rounded-md border border-surface-panel-border text-text-muted hover:bg-hover hover:text-accent-primary-start hover:border-accent-primary-start/40 text-type-xs font-label-sm bg-surface-panel cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
+          >Today</button
+        >
+        <button
+          type="button"
+          onclick={next}
+          class="flex h-7 w-7 items-center justify-center rounded-md hover:bg-hover text-text-muted hover:text-accent-primary-start border border-transparent bg-transparent cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
+          aria-label="Next"
+        >
+          <span class="material-symbols-outlined text-icon-md"
+            >chevron_right</span
+          >
+        </button>
+      </div>
+    </div>
 
-      <!-- Month/Week sub-toggle ( BELOW the main hub mode switcher — rendered
-           inside CalendarView's header area). Reads/writes calendarSubMode. -->
+    <div class="ml-auto flex flex-wrap items-center gap-2">
+      <!-- Month/Week sub-toggle (rendered inside CalendarView's compact nav bar). -->
       <div
-        class="flex items-center gap-0.5 bg-surface-panel border border-surface-panel-border rounded-lg p-1 shadow-sm"
+        class="flex items-center gap-0.5 bg-surface-panel border border-surface-panel-border rounded-lg p-0.5 shadow-sm"
         role="radiogroup"
         aria-label="Calendar layout"
         tabindex="-1"
@@ -740,7 +766,7 @@
           data-testid="calendar-submode-month"
           tabindex={subMode === 'month' ? 0 : -1}
           onclick={() => chooseSubMode('month')}
-          class="min-h-7 px-2.5 py-1 rounded-md font-label-sm border cursor-pointer transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus {subMode ===
+          class="min-h-7 px-2.5 py-0.5 rounded-md text-type-xs font-label-sm border cursor-pointer transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus {subMode ===
           'month'
             ? 'border-accent-primary-start/30 bg-accent-primary-glow text-accent-primary-start'
             : 'border-transparent bg-transparent text-text-muted hover:bg-hover'}"
@@ -754,7 +780,7 @@
           data-testid="calendar-submode-week"
           tabindex={subMode === 'week' ? 0 : -1}
           onclick={() => chooseSubMode('week')}
-          class="min-h-7 px-2.5 py-1 rounded-md font-label-sm border cursor-pointer transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus {subMode ===
+          class="min-h-7 px-2.5 py-0.5 rounded-md text-type-xs font-label-sm border cursor-pointer transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus {subMode ===
           'week'
             ? 'border-accent-primary-start/30 bg-accent-primary-glow text-accent-primary-start'
             : 'border-transparent bg-transparent text-text-muted hover:bg-hover'}"
@@ -762,52 +788,14 @@
         >
       </div>
 
-      <div class="ml-auto flex items-center gap-2">
-        <button
-          type="button"
-          onclick={openQuickAddUndated}
-          data-testid="calendar-new-task-btn"
-          class="flex min-h-8 items-center gap-1 rounded-lg border border-accent-primary-start/30 bg-accent-primary-glow px-2.5 py-1 text-accent-primary-start shadow-sm hover:border-accent-primary-start hover:bg-accent-primary-start hover:text-text-on-accent font-label-sm cursor-pointer transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
-        >
-          <span class="material-symbols-outlined text-icon-md">add</span>New
-          task
-        </button>
-      </div>
-    </div>
-
-    <!-- Row 2: Date range + navigation -->
-    <div class="flex items-center gap-2 flex-wrap">
-      <h2 class="font-headline-md text-headline-md min-w-0 text-text-primary">
-        {heading}
-      </h2>
-      <div class="flex items-center gap-1 ml-2">
-        <button
-          type="button"
-          onclick={prev}
-          class="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-hover text-text-muted hover:text-accent-primary-start border border-transparent bg-transparent cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
-          aria-label="Previous"
-        >
-          <span class="material-symbols-outlined text-icon-lg"
-            >chevron_left</span
-          >
-        </button>
-        <button
-          type="button"
-          onclick={goToday}
-          class="min-h-8 px-2.5 py-1 rounded-lg border border-surface-panel-border text-text-muted hover:bg-hover hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm bg-surface-panel cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
-          >Today</button
-        >
-        <button
-          type="button"
-          onclick={next}
-          class="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-hover text-text-muted hover:text-accent-primary-start border border-transparent bg-transparent cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
-          aria-label="Next"
-        >
-          <span class="material-symbols-outlined text-icon-lg"
-            >chevron_right</span
-          >
-        </button>
-      </div>
+      <button
+        type="button"
+        onclick={openQuickAddUndated}
+        data-testid="calendar-new-task-btn"
+        class="flex min-h-7 items-center gap-1 rounded-lg border border-accent-primary-start/30 bg-accent-primary-glow px-2.5 py-0.5 text-type-xs text-accent-primary-start shadow-sm hover:border-accent-primary-start hover:bg-accent-primary-start hover:text-text-on-accent font-label-sm cursor-pointer transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
+      >
+        <span class="material-symbols-outlined text-icon-sm">add</span>New task
+      </button>
     </div>
   </header>
 
@@ -869,7 +857,7 @@
     <div
       class="px-3 py-2.5 border-b border-surface-panel-border bg-surface-panel sm:px-5 lg:px-6"
     >
-      <div class="max-w-md">
+      <div class="w-full max-w-xl">
         <QuickAddTask
           {ctx}
           placeholder="New task (no due date) — Enter to add"
@@ -886,14 +874,16 @@
          full-width strip, matching BoardView/ListView's error placement. -->
     <ErrorBanner message={errorMsg} />
   {/if}
-  <div class="flex-1 overflow-auto custom-scrollbar p-3 sm:p-4 lg:p-5">
+  <div
+    class="flex flex-1 flex-col overflow-auto custom-scrollbar px-3 py-3 sm:px-5 sm:py-4 lg:px-6"
+  >
     {#if loading}
       <!-- Skeleton: 6×7 day-cell grid mirroring the month layout, so the
            switch from skeleton to real grid doesn't reflow. Reuses the global
            .skeleton-text shimmer (gated by prefers-reduced-motion in
            index.css). -->
       <div
-        class="grid grid-cols-7 gap-1 min-w-[43.75rem]"
+        class="grid flex-1 grid-cols-7 gap-1.5 min-w-[43.75rem]"
         data-testid="tasks-calendar-loading"
         aria-busy="true"
         aria-label="Loading calendar"
@@ -917,7 +907,10 @@
            DOW headers role="columnheader". The row wrappers use display:contents
            so the CSS grid layout is unaffected (children participate in the
            parent grid). -->
-      <div class="grid grid-cols-7 gap-1.5 min-w-[43.75rem]" role="grid">
+      <div
+        class="calendar-month-grid grid flex-1 grid-cols-7 gap-1.5 min-w-[43.75rem]"
+        role="grid"
+      >
         <div role="row" class="contents">
           {#each dayLabels as d, dowI (dowI)}
             <div
@@ -1095,7 +1088,7 @@
     {:else}
       <!-- Week view: 7 day columns (lifted from silt-calendar). ARIA grid
            structure mirrors month view: role="grid" + role="row" wrapper. -->
-      <div class="grid grid-cols-7 gap-2 min-w-[43.75rem]" role="grid">
+      <div class="grid flex-1 grid-cols-7 gap-2 min-w-[43.75rem]" role="grid">
         <div role="row" class="contents">
           {#each weekDays as day, i (i)}
             {@const isToday = ymd(day) === todayKey}
@@ -1433,6 +1426,10 @@
       var(--color-surface-panel) 72%,
       var(--color-surface-app)
     );
+  }
+
+  .calendar-month-grid {
+    grid-template-rows: auto repeat(6, minmax(5.5rem, 1fr));
   }
 
   .calendar-day-drop-target {

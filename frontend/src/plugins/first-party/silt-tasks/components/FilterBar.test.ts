@@ -303,5 +303,57 @@ describe('FilterBar aria-live announcer', () => {
   })
 })
 
+describe('FilterBar consolidated clusters (#1058)', () => {
+  it('groups organize and facet controls into explicit wrapping clusters and merges scope crumb into the Scope chip', () => {
+    render(FilterBar, {
+      props: makeProps({
+        scope: 'notebook',
+        scopeCrumb: 'Notebook · Work',
+        scopeUserOverride: true,
+        totalCount: 12
+      })
+    })
+
+    const bar = screen.getByTestId('tasks-filter-bar')
+    const organizeCluster = screen.getByTestId('tasks-filter-cluster-organize')
+    const facetsCluster = screen.getByTestId('tasks-filter-cluster-facets')
+
+    expect(bar).toContainElement(organizeCluster)
+    expect(bar).toContainElement(facetsCluster)
+
+    const scopeBtn = screen.getByTestId('tasks-hub-scope-toggle')
+    const followBtn = screen.getByRole('button', {
+      name: 'Reset Tasks scope to follow navigation'
+    })
+    const groupBtn = screen.getByTestId('tasks-hub-group-by-toggle')
+    const sortBtn = screen.getByTestId('tasks-hub-sort-toggle')
+
+    expect(organizeCluster).toContainElement(scopeBtn)
+    expect(organizeCluster).toContainElement(followBtn)
+    expect(organizeCluster).toContainElement(groupBtn)
+    expect(organizeCluster).toContainElement(sortBtn)
+    expect(scopeBtn).toHaveTextContent('Scope: Notebook · Work')
+
+    expect(facetsCluster).toContainElement(
+      screen.getByRole('button', { name: /Owner/ })
+    )
+    expect(facetsCluster).toContainElement(
+      screen.getByRole('button', { name: /Priority/ })
+    )
+    expect(facetsCluster).toContainElement(
+      screen.getByRole('button', { name: /Due date/ })
+    )
+    expect(facetsCluster).toContainElement(
+      screen.getByTestId('filter-stale-toggle')
+    )
+    expect(facetsCluster).toContainElement(
+      screen.getByRole('button', { name: /Tags/ })
+    )
+
+    // Duplicate "{scopeCrumb} · {totalCount} tasks" readout is removed from FilterBar.
+    expect(bar.textContent).not.toContain('12 tasks')
+  })
+})
+
 // Keep the PluginContext type import referenced (no-unused).
 export type __KeepCtxImport = _Ctx

@@ -382,14 +382,6 @@
             </button>
           {/if}
 
-          {#if view.system}
-            <span
-              class="material-symbols-outlined text-type-xs text-text-muted/50"
-              aria-label="Built-in view"
-              title="Built-in view — can't be modified">lock</span
-            >
-          {/if}
-
           {#if isUser}
             <button
               type="button"

@@ -204,11 +204,16 @@ export function loadDefaultDisplayMode(): DisplayMode {
   return isDisplayMode(v) ? v : 'list'
 }
 
-/** List inspector split pane width defaults (#910). */
+/** List inspector split pane width defaults (#910, proportional #1058). */
 export const DEFAULT_INSPECTOR_PANE_WIDTH = 540
 export const MIN_INSPECTOR_PANE_WIDTH = 440
 export const MAX_INSPECTOR_PANE_WIDTH = 700
 export const MIN_LIST_MASTER_WIDTH = 420
+export const REFERENCE_INSPECTOR_HOST_WIDTH = 1350
+export const DEFAULT_INSPECTOR_SPLIT_RATIO =
+  DEFAULT_INSPECTOR_PANE_WIDTH / REFERENCE_INSPECTOR_HOST_WIDTH
+const MIN_INSPECTOR_SPLIT_RATIO = 0.25
+const MAX_INSPECTOR_SPLIT_RATIO = 0.6
 const INSPECTOR_SPLIT_HANDLE = 4
 
 export function loadInspectorPaneWidth(): number {
@@ -244,6 +249,57 @@ export function maxInspectorPaneWidthForHost(hostWidth: number): number {
     MIN_INSPECTOR_PANE_WIDTH,
     Math.min(MAX_INSPECTOR_PANE_WIDTH, budget)
   )
+}
+
+/**
+ * Convert a pixel pane width (at an optional measured host width, or the
+ * reference 1350px host when hydrating from persisted settings) into a
+ * clamped inspector split ratio (#1058).
+ */
+export function inspectorSplitRatioFromWidth(
+  px: number,
+  hostWidth = REFERENCE_INSPECTOR_HOST_WIDTH
+): number {
+  const effectiveHost =
+    hostWidth > 0 ? hostWidth : REFERENCE_INSPECTOR_HOST_WIDTH
+  const clampedPx = clampInspectorPaneWidth(px)
+  const raw = clampedPx / effectiveHost
+  return Math.max(
+    MIN_INSPECTOR_SPLIT_RATIO,
+    Math.min(MAX_INSPECTOR_SPLIT_RATIO, raw)
+  )
+}
+
+/**
+ * Resolve the inspector pane pixel width for a given host width and split
+ * ratio (#1058), scaling proportionally with `hostWidth` while clamping to
+ * `[MIN_INSPECTOR_PANE_WIDTH, maxInspectorPaneWidthForHost(hostWidth)]` so
+ * the list column never drops below `MIN_LIST_MASTER_WIDTH`.
+ */
+export function resolveInspectorPaneWidthForHost(
+  hostWidth: number,
+  ratio = DEFAULT_INSPECTOR_SPLIT_RATIO
+): number {
+  const clampedRatio = Math.max(
+    MIN_INSPECTOR_SPLIT_RATIO,
+    Math.min(MAX_INSPECTOR_SPLIT_RATIO, ratio)
+  )
+  if (hostWidth <= 0) {
+    return clampInspectorPaneWidth(
+      Math.round(REFERENCE_INSPECTOR_HOST_WIDTH * clampedRatio)
+    )
+  }
+  const target = Math.round(hostWidth * clampedRatio)
+  const maxForHost = maxInspectorPaneWidthForHost(hostWidth)
+  return Math.max(MIN_INSPECTOR_PANE_WIDTH, Math.min(maxForHost, target))
+}
+
+/**
+ * Map a split ratio back to the reference host pixel width for persistence
+ * via `persistInspectorPaneWidth`.
+ */
+export function referenceInspectorPaneWidthFromRatio(ratio: number): number {
+  return resolveInspectorPaneWidthForHost(REFERENCE_INSPECTOR_HOST_WIDTH, ratio)
 }
 
 /** True when the list host can fit master min + handle + pane min. */
