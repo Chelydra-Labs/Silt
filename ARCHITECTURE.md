@@ -409,6 +409,47 @@ CREATE INDEX idx_page_properties_type_prop ON page_properties(type_name, propert
 -- remains the tag query path (SPECS.md §11.6/§11.7). Separate from
 -- page_properties (type-scoped) and tags by design; composing the three is a
 -- read-side concern. Source-scoped (mirrors page_types/blocks).
+-- The table also serves as the page inventory projection: every index path
+-- guarantees a row (identity-only for block-only paths), so it answers
+-- "which pages exist" — including zero-block files that a DISTINCT over
+-- blocks cannot see (page inventory reads, wiki-link resolution, title
+-- search). The delete/remove paths drop the row with the rest of the
+-- projection, and a restart-safe one-shot backfill (page_core_blocks_backfill
+-- marker) fills identities from pre-existing blocks rows on upgrade.
+--
+-- Inventory contract (ReconcilePageInventory). A page loc is live on exactly
+-- two evidence sources, combined only at a scan boundary:
+--   1. a loc published by a file the scan resolved (warm-skipped included), and
+--   2. a loc carrying block rows.
+-- Adding is unconditional: live locs get an identity-only row (INSERT OR
+-- IGNORE, so a published core row is never clobbered) and block-evidence locs
+-- are (re-)materialized the same way. Deleting happens ONLY on a complete scan
+-- — the walk entered every directory and every discovered file parsed — and
+-- removes the projection rows of locs with neither evidence. Blocks are never
+-- touched, and a loc with block rows keeps its projections even if the scan
+-- could not see it: the deliverable is one answer shared by the inventory and
+-- every blocks-backed lookup. Completeness is derived by one default-deny
+-- helper from the walk's error channel (deliberate skips — symlinks, dot-dirs,
+-- attachments/ — never arm deletion), so a transient unreadable file or
+-- subtree makes the pass add-only and the heal waits for the next open. A
+-- symlinked vault root is walked through its resolved target: an alias that
+-- cannot be resolved reports a walk error, rather than a complete-looking
+-- empty vault.
+--
+-- The startup prune of paths that vanished while the app was closed obeys the
+-- same three rules: it runs only on a complete pass, only for paths under the
+-- opened vault (linked notebooks are their own scan boundary), and never
+-- clears a loc the scan still publishes (a move that preserves frontmatter
+-- identity makes the old path and the live loc the same page).
+--
+-- Residual staleness (accepted): an in-place external identity edit
+-- (frontmatter page:/section:/notebook:) leaves the old loc's projections live
+-- until the next vault open — or, for a linked notebook, until an
+-- unlink+relink, which is the only linked re-scan trigger today. Silt's own
+-- rename/move/delete paths still clear synchronously, so only an external
+-- editor can author this state, and the index is re-derived at scan
+-- boundaries. A dead loc that still carries blocks is kept forever: the block
+-- row is the pre-existing defect, not an inventory decision.
 CREATE TABLE page_core (
     source   TEXT NOT NULL,
     notebook TEXT NOT NULL,
@@ -420,6 +461,7 @@ CREATE TABLE page_core (
     created  TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (source, notebook, section, page)
 );
+CREATE INDEX idx_page_core_inventory ON page_core(notebook, section, page);
 
 
 3.1 External / Linked Notebooks
@@ -766,7 +808,8 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
 - **Typeaheads & backlinks** — `SearchPages` powers the `[[` page-link
   autocomplete picker after two non-space query characters. It returns the
   rank-correct, case-insensitive top 50 over distinct page paths (exact name,
-  page-prefix, path-prefix, then substring; deterministic ties). `RecordTagUsage`
+  page-prefix, path-prefix, then substring; deterministic ties), reading the
+  page_core page-inventory projection so zero-block pages stay linkable. `RecordTagUsage`
   validates a bounded tag path before maintaining an MRU
   `recent_tags` list (capped at 12) that seeds the `#` tag-typeahead above
   full index tags. `GetBacklinksPaged` returns bounded, cursor-paged inbound
@@ -1372,7 +1415,27 @@ for Replace All.
 WHERE (notebook/section/tag/type/scope) + sort (relevance=bm25 |
 recency=file_date DESC) + a 20-token snippet window. Tag matches the exact tag
 OR a hierarchical descendant. `SearchFilters.VaultOnly` scopes to in-vault
-blocks. The SearchModal adds a scope segmented control (Vault | +Linked),
+blocks. Task-attribute filters (`owner` exact case-insensitive, `status`
+TODO/DOING/DONE, inclusive `dueBefore`/`dueAfter` YYYY-MM-DD bounds,
+`priorityMin` urgency floor where 1 is highest, `overdue` = due before today
+and not DONE) restrict results to matching TASK rows; zero-value fields are
+no-ops. Pages whose NAME matches every term surface as page-level results
+(block id empty, snippet = highlighted title) ranked above all body hits —
+including zero-block pages, which is what makes an empty page findable by
+name; this leg splits the query on non-alphanumeric runes instead of squashing
+them per word, so typing "2026-06-13" finds the page of that name. A name whose
+split parts are all single characters ("R&D", "C++") has no usable term, so the
+leg falls back to the escaped raw query — typing a page's own name still finds
+it. Block-scoped filters (type,
+tag) and task-attribute filters suppress the page leg. A page-level row's
+`clean_content` is the page name and its snippet is that raw name with
+`<mark>` ranges injected — consumers must HTML-escape the snippet and then
+re-allow only `<mark>`. Page rows are emitted into the `SearchBlocksPaged`
+envelope only when `SearchFilters.ExcludePageTitles` is false **and** no
+type/tag/task filter is set; `SearchBlocks` (and the plugin SDK's
+`searchBlocks`) set that switch so they return block hits only, as does
+GlobalReplace so page rows cannot consume its preview budget, while MCP's
+`search_blocks` does emit them. The SearchModal adds a scope segmented control (Vault | +Linked),
 category filter chips (single-select by block type), a sort toggle, and a live
 count. Each result keeps the backend `source` discriminator, shows a Vault or
 Linked qualifier beside its breadcrumb and snippet, and sends the complete
@@ -1386,12 +1449,16 @@ are `<sub>`/`<sup>` HTML.
 
 **Global replace (Ctrl+Shift+G)** — `GlobalReplaceModal`
 previews FTS5 matches grouped by page (before→after), with per-match + per-page
-accept. Apply iterates accepted pages: `FetchPageBlocks` → replace in
-`clean_text`/`raw_text` → `SaveFileBlocks` (atomic, self-write-tracked,
-re-indexes). A session revert log records the original blocks per page;
-"Undo last" restores. Applies to in-vault pages only; linked-notebook
-pages are excluded from bulk replace (they remain fully editable in place —
-see the linked-notebook section below).
+accept. Apply iterates accepted pages through the PROGRAMMATIC block write:
+`FetchPageBlocksProgrammatic` → replace in `clean_text` only →
+`SaveFileBlocksProgrammatic` (atomic, self-write-tracked, re-indexes).
+`raw_text` is deliberately left intact — rewriting it would strip bullet and
+checkbox prefixes, silently corrupting the markdown the preview never promised
+to touch; the block fields are re-derived from the edited `clean_text` on the
+next parse. A session revert log records the original blocks per page;
+"Restore last apply" restores. Applies to in-vault pages only;
+linked-notebook pages are excluded from bulk replace (they remain fully
+editable in place — see the linked-notebook section below).
 
 **Inline spellcheck** — `frontend/src/lib/editor/spellcheck/`:
 `dictionary.ts` wraps `typo-js` (pure-JS Hunspell, BSD). The default `en-US`

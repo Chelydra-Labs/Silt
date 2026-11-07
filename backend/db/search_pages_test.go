@@ -1,0 +1,1104 @@
+package db
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	"silt/backend/parser"
+)
+
+// seedSearchPages indexes two task pages plus one zero-block page so the
+// page-title and task-attribute search tests share a controlled fixture.
+//
+//	Work/Projects/Db Migrations: Bob's "Postgres cutover" task (overdue TODO),
+//	  Alice's "SQLite backup" task (future due, DOING), a plain note.
+//	Work/Projects/Meeting Notes: one note body mentioning "agenda".
+//	Work/Projects/Quiet Empty Page: ZERO blocks (indexed via the projection
+//	  path) — must stay findable by title.
+func seedSearchPages(t *testing.T) *DatabaseManager {
+	t.Helper()
+	dm := newTestDB(t)
+
+	migrations := []parser.ParsedBlock{
+		{
+			ID: "aaaa1111-0000-4000-8000-000000000001", Type: parser.BlockTask,
+			RawText:   "- [ ] Postgres cutover [owner:: Bob] [due:: 2020-01-01] [priority:: 1]",
+			CleanText: "Postgres cutover", Status: "TODO", Owner: "Bob",
+			DueDate: "2020-01-01", Priority: 1, LineNumber: 1,
+		},
+		{
+			ID: "aaaa1111-0000-4000-8000-000000000002", Type: parser.BlockTask,
+			RawText:   "- [/] Postgres backup script [owner:: Alice] [due:: 2030-01-01] [priority:: 2]",
+			CleanText: "Postgres backup script", Status: "DOING", Owner: "Alice",
+			DueDate: "2030-01-01", Priority: 2, LineNumber: 2,
+		},
+		{
+			ID: "aaaa1111-0000-4000-8000-000000000007", Type: parser.BlockTask,
+			RawText:   "- [x] Postgres retro writeup [owner:: Carol] [due:: 2020-02-01] [priority:: 2]",
+			CleanText: "Postgres retro writeup", Status: "DONE", Owner: "Carol",
+			DueDate: "2020-02-01", Priority: 2, LineNumber: 3,
+		},
+		{
+			ID: "aaaa1111-0000-4000-8000-000000000003", Type: parser.BlockNote,
+			RawText: "a plain note about gardening", CleanText: "a plain note about gardening",
+			LineNumber: 4,
+		},
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Projects", "Db Migrations", migrations, nil); err != nil {
+		t.Fatalf("index migrations page: %v", err)
+	}
+
+	meeting := []parser.ParsedBlock{
+		{
+			ID: "aaaa1111-0000-4000-8000-000000000004", Type: parser.BlockNote,
+			RawText: "weekly agenda draft", CleanText: "weekly agenda draft", LineNumber: 1,
+		},
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Projects", "Meeting Notes", meeting, nil); err != nil {
+		t.Fatalf("index meeting page: %v", err)
+	}
+
+	// A page NAMED for a term that also occurs in block bodies: the ranking
+	// test pins that its page-level title hit outranks the body hits.
+	agenda := []parser.ParsedBlock{
+		{
+			ID: "aaaa1111-0000-4000-8000-000000000006", Type: parser.BlockNote,
+			RawText: "agenda topics galore", CleanText: "agenda topics galore", LineNumber: 1,
+		},
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Projects", "Agenda Page", agenda, nil); err != nil {
+		t.Fatalf("index agenda page: %v", err)
+	}
+
+	// Zero-block page: a real .md file whose body has no managed blocks. Only
+	// the projection path can register it — this is the findability contract.
+	if err := dm.IndexFileWithProjection("vault", "Work", "Projects", "Quiet Empty Page",
+		nil, nil, "", nil, PageCoreFields{}); err != nil {
+		t.Fatalf("index empty page: %v", err)
+	}
+	return dm
+}
+
+func TestSearch_TitleOnlyMatchNoBodyHit(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	// "quiet empty" appears in no block body — only the page NAME carries it.
+	res, err := dm.SearchBlocksPaged("quiet empty", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 1 {
+		t.Fatalf("expected the zero-block page to be findable by title, got total=%d: %+v", res.Total, res.Results)
+	}
+	hit := res.Results[0]
+	if hit.ID != "" {
+		t.Errorf("page-level result should carry no block id, got %q", hit.ID)
+	}
+	if hit.Notebook != "Work" || hit.Section != "Projects" || hit.Page != "Quiet Empty Page" {
+		t.Errorf("page-level result locator = %+v", hit)
+	}
+	if !strings.Contains(hit.Snippet, "<mark>Quiet</mark>") || !strings.Contains(hit.Snippet, "<mark>Empty</mark>") {
+		t.Errorf("snippet should highlight the matched title terms, got %q", hit.Snippet)
+	}
+}
+
+func TestSearch_EmptyPageFindableByTitle(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	// Single-term query against the empty page's name.
+	res, err := dm.SearchBlocksPaged("quiet", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 1 || res.Results[0].Page != "Quiet Empty Page" {
+		t.Fatalf("empty page not findable by single title term: total=%d %+v", res.Total, res.Results)
+	}
+
+	// The page inventory must list it too (wiki-link resolution, SearchPages).
+	pages, err := dm.ListDistinctPages()
+	if err != nil {
+		t.Fatalf("ListDistinctPages: %v", err)
+	}
+	found := false
+	for _, p := range pages {
+		if p.Page == "Quiet Empty Page" && p.Notebook == "Work" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("page inventory missing zero-block page: %+v", pages)
+	}
+}
+
+func TestSearch_TitleMatchRequiresAllTerms(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	// "quiet gardening": the empty page matches "quiet" but not "gardening"
+	// (AND semantics — a partial title match must not surface the page).
+	res, err := dm.SearchBlocksPaged("quiet gardening", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	for _, r := range res.Results {
+		if r.ID == "" {
+			t.Errorf("page-level row surfaced for a partial title match: %+v", r)
+		}
+	}
+}
+
+func TestSearch_TitleHitRanksAboveBodyHits(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	// "agenda" matches the Agenda Page by TITLE and two block BODIES by FTS
+	// ("agenda topics galore", "weekly agenda draft"). The page named for the
+	// query must come first.
+	res, err := dm.SearchBlocksPaged("agenda", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 3 {
+		t.Fatalf("expected 1 title + 2 body hits, got total=%d: %+v", res.Total, res.Results)
+	}
+	if res.Results[0].ID != "" || res.Results[0].Page != "Agenda Page" {
+		t.Errorf("expected page-level title hit first, got %+v", res.Results[0])
+	}
+}
+
+func TestSearch_TitleHitsSuppressUnderBlockScopedFilters(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	// Type filter makes the query block-scoped; the "Meeting Notes" TITLE hit
+	// must not leak a page-level row into a TASK-only search.
+	res, err := dm.SearchBlocksPaged("notes", 0, 50, SearchFilters{Type: "TASK"})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	for _, r := range res.Results {
+		if r.ID == "" {
+			t.Errorf("page-level row leaked under type filter: %+v", r)
+		}
+	}
+
+	// The unfiltered query DOES surface the title hit — proves the filter,
+	// not the fixture, suppressed it.
+	plain, err := dm.SearchBlocksPaged("notes", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if plain.Total == 0 || plain.Results[0].Page != "Meeting Notes" {
+		t.Errorf("expected Meeting Notes title hit unfiltered, got %+v", plain.Results)
+	}
+}
+
+func TestSearch_TitleHitsRespectScopeFilters(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	// A same-named page in a linked source: scope filters must narrow the
+	// page leg exactly like the body leg.
+	linked := []parser.ParsedBlock{
+		{
+			ID: "aaaa1111-0000-4000-8000-000000000005", Type: parser.BlockNote,
+			RawText: "linked noise", CleanText: "linked noise", LineNumber: 1,
+		},
+	}
+	if err := dm.IndexFileBlocks("linked:x", "Linked", "", "Quiet Empty Page", linked, nil); err != nil {
+		t.Fatalf("index linked page: %v", err)
+	}
+
+	all, err := dm.SearchBlocksPaged("quiet", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	pageLocs := map[string]bool{}
+	for _, r := range all.Results {
+		if r.ID == "" {
+			pageLocs[r.Source] = true
+		}
+	}
+	if !pageLocs["vault"] || !pageLocs["linked:x"] {
+		t.Errorf("expected title hits from both sources, got %+v", all.Results)
+	}
+
+	vaultOnly, err := dm.SearchBlocksPaged("quiet", 0, 50, SearchFilters{VaultOnly: true})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	for _, r := range vaultOnly.Results {
+		if r.ID == "" && r.Source != "vault" {
+			t.Errorf("VaultOnly leaked a linked title hit: %+v", r)
+		}
+	}
+}
+
+func TestSearch_TitleHitsRespectPagingEnvelope(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	// "agenda" yields one title hit + two body hits; page size 1 must page
+	// over the MERGED list with correct envelope math.
+	page1, err := dm.SearchBlocksPaged("agenda", 0, 1, SearchFilters{})
+	if err != nil {
+		t.Fatalf("page1: %v", err)
+	}
+	if len(page1.Results) != 1 || page1.Results[0].ID != "" {
+		t.Fatalf("page1 should be the title hit, got %+v", page1.Results)
+	}
+	if page1.Total != 3 || !page1.HasMore {
+		t.Fatalf("envelope: total=%d hasMore=%v", page1.Total, page1.HasMore)
+	}
+	page2, err := dm.SearchBlocksPaged("agenda", 1, 1, SearchFilters{})
+	if err != nil {
+		t.Fatalf("page2: %v", err)
+	}
+	if len(page2.Results) != 1 || page2.Results[0].ID == "" {
+		t.Fatalf("page2 should be a body hit, got %+v", page2.Results)
+	}
+	if !page2.HasMore {
+		t.Error("page2 HasMore should be true (one body hit remains)")
+	}
+	page3, err := dm.SearchBlocksPaged("agenda", 2, 1, SearchFilters{})
+	if err != nil {
+		t.Fatalf("page3: %v", err)
+	}
+	if len(page3.Results) != 1 || page3.Results[0].ID == "" || page3.HasMore {
+		t.Fatalf("page3 should be the final body hit without HasMore, got %+v hasMore=%v", page3.Results, page3.HasMore)
+	}
+}
+
+// TestSearch_TitleHitsPagingTiesAcrossSources pins the title-leg ORDER BY's
+// source tiebreak. page_core's PK is (source, notebook, section, page), so a
+// vault page and a linked-notebook page can share the exact display path; the
+// rows below are inserted in the opposite order to their sources so insertion
+// order cannot satisfy the contract. Without the tiebreak the pair's relative
+// order is unspecified, and paging over title hits can skip or repeat a row.
+func TestSearch_TitleHitsPagingTiesAcrossSources(t *testing.T) {
+	dm := newTestDB(t)
+
+	// Rowid order (vault first) deliberately differs from source order.
+	for _, source := range []string{"vault", "linked:test"} {
+		if err := dm.IndexFileWithProjection(source, "NB", "Sec", "Shared Name",
+			nil, nil, "", nil, PageCoreFields{}); err != nil {
+			t.Fatalf("index %s: %v", source, err)
+		}
+	}
+
+	var order []string
+	for offset := 0; offset < 2; offset++ {
+		res, err := dm.SearchBlocksPaged("shared name", offset, 1, SearchFilters{})
+		if err != nil {
+			t.Fatalf("offset %d: %v", offset, err)
+		}
+		if res.Total != 2 || len(res.Results) != 1 {
+			t.Fatalf("offset %d envelope = %+v", offset, res)
+		}
+		order = append(order, res.Results[0].Source)
+	}
+	if order[0] != "linked:test" || order[1] != "vault" {
+		t.Errorf("paged title order across sources = %v, want [linked:test vault] (source tiebreak)", order)
+	}
+
+	// Second walk must repeat exactly (deterministic paging), not reshuffle.
+	again, err := dm.SearchBlocksPaged("shared name", 0, 2, SearchFilters{})
+	if err != nil {
+		t.Fatalf("second walk: %v", err)
+	}
+	for i, r := range again.Results {
+		if r.Source != order[i] {
+			t.Fatalf("paging not stable: walk 1 = %v, walk 2 = %v", order, []string{again.Results[0].Source, again.Results[1].Source})
+		}
+	}
+}
+
+// ownerOf returns the distinct owners in a result set (for terse assertions).
+func ownersOf(results []parser.TaskResult) map[string]bool {
+	out := map[string]bool{}
+	for _, r := range results {
+		out[r.Owner] = true
+	}
+	return out
+}
+
+func TestSearch_OwnerFilterCombinedWithText(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	// Text alone: all three Postgres tasks match.
+	plain, err := dm.SearchBlocksPaged("postgres", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if plain.Total != 3 {
+		t.Fatalf("unfiltered: expected 3 Postgres tasks, got %d", plain.Total)
+	}
+
+	// Owner + text: only Bob's task. Case-insensitive in both directions.
+	for _, owner := range []string{"bob", "BOB", "Bob"} {
+		res, err := dm.SearchBlocksPaged("postgres", 0, 50, SearchFilters{Owner: owner})
+		if err != nil {
+			t.Fatalf("SearchBlocksPaged(owner=%q): %v", owner, err)
+		}
+		if res.Total != 1 || res.Results[0].Owner != "Bob" {
+			t.Errorf("owner=%q: expected exactly Bob's task, got %+v", owner, res.Results)
+		}
+	}
+
+	// A non-matching owner narrows to nothing.
+	none, err := dm.SearchBlocksPaged("postgres", 0, 50, SearchFilters{Owner: "Zed"})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if none.Total != 0 {
+		t.Errorf("owner=Zed: expected 0, got %d", none.Total)
+	}
+}
+
+func TestSearch_OverdueFilterCombinedWithText(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	// Overdue + "postgres": Bob's TODO (due 2020) only — Carol's task is
+	// equally past-due but DONE, Alice's is future-dated.
+	res, err := dm.SearchBlocksPaged("postgres", 0, 50, SearchFilters{Overdue: true})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 1 || res.Results[0].Owner != "Bob" {
+		t.Fatalf("overdue+text: expected only Bob's overdue TODO, got %+v", res.Results)
+	}
+
+	// A task with NO due date must never match the overdue filter.
+	undated := []parser.ParsedBlock{
+		{
+			ID: "aaaa1111-0000-4000-8000-000000000008", Type: parser.BlockTask,
+			RawText:   "- [ ] Postgres undated chore [owner:: Bob]",
+			CleanText: "Postgres undated chore", Status: "TODO", Owner: "Bob",
+			LineNumber: 1,
+		},
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Projects", "Chores", undated, nil); err != nil {
+		t.Fatalf("index chores: %v", err)
+	}
+	res, err = dm.SearchBlocksPaged("undated", 0, 50, SearchFilters{Overdue: true})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 0 {
+		t.Errorf("undated task must not match overdue, got %+v", res.Results)
+	}
+}
+
+func TestSearch_StatusFilterCombinedWithText(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	res, err := dm.SearchBlocksPaged("postgres", 0, 50, SearchFilters{Status: "doing"})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 1 || res.Results[0].Owner != "Alice" {
+		t.Fatalf("status=doing (lowercase): expected Alice's DOING task, got %+v", res.Results)
+	}
+
+	done, err := dm.SearchBlocksPaged("postgres", 0, 50, SearchFilters{Status: "DONE"})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if done.Total != 1 || done.Results[0].Owner != "Carol" {
+		t.Fatalf("status=DONE: expected Carol's task, got %+v", done.Results)
+	}
+}
+
+func TestSearch_DueBoundsCombinedWithText(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	after, err := dm.SearchBlocksPaged("postgres", 0, 50, SearchFilters{DueAfter: "2029-01-01"})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if after.Total != 1 || after.Results[0].Owner != "Alice" {
+		t.Fatalf("dueAfter=2029: expected only Alice's 2030 task, got %+v", after.Results)
+	}
+
+	// Inclusive upper bound: Carol's task is due exactly ON the bound date.
+	before, err := dm.SearchBlocksPaged("postgres", 0, 50, SearchFilters{DueBefore: "2020-02-01"})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	got := ownersOf(before.Results)
+	if before.Total != 2 || !got["Bob"] || !got["Carol"] {
+		t.Fatalf("dueBefore=2020-02-01 (inclusive): expected Bob+Carol, got %+v", before.Results)
+	}
+}
+
+func TestSearch_PriorityMinFloor(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	// Floor 1 (highest only): Bob's P1.
+	p1, err := dm.SearchBlocksPaged("postgres", 0, 50, SearchFilters{PriorityMin: 1})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if p1.Total != 1 || p1.Results[0].Owner != "Bob" {
+		t.Fatalf("priorityMin=1: expected only Bob's P1, got %+v", p1.Results)
+	}
+
+	// Floor 2 (P1+P2): everyone.
+	p2, err := dm.SearchBlocksPaged("postgres", 0, 50, SearchFilters{PriorityMin: 2})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if p2.Total != 3 {
+		t.Fatalf("priorityMin=2: expected all three (P1+P2), got %+v", p2.Results)
+	}
+
+	// A NULL priority row (no priority recorded) must never match a floor,
+	// not even floor 3 — "no priority recorded" is not a priority.
+	if _, err := dm.SQLDB().Exec(`UPDATE tasks SET priority = NULL WHERE block_id = ?`,
+		"aaaa1111-0000-4000-8000-000000000002"); err != nil {
+		t.Fatalf("null out priority: %v", err)
+	}
+	anyFloor, err := dm.SearchBlocksPaged("backup", 0, 50, SearchFilters{PriorityMin: 3})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if anyFloor.Total != 0 {
+		t.Fatalf("NULL priority must not match priorityMin=3, got %+v", anyFloor.Results)
+	}
+}
+
+func TestSearch_TaskFiltersSuppressTitleHits(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	// "meeting" matches the Meeting Notes page by TITLE only. Under any
+	// task-attribute filter the page leg must vanish — a page row has no
+	// owner — and the body leg matches nothing, so the result is empty.
+	filters := []SearchFilters{
+		{Owner: "Bob"},
+		{Status: "TODO"},
+		{DueBefore: "2030-01-01"},
+		{DueAfter: "2000-01-01"},
+		{PriorityMin: 1},
+		{Overdue: true},
+	}
+	for _, f := range filters {
+		res, err := dm.SearchBlocksPaged("meeting", 0, 50, f)
+		if err != nil {
+			t.Fatalf("SearchBlocksPaged(%+v): %v", f, err)
+		}
+		if res.Total != 0 {
+			t.Errorf("task filter %+v: expected 0 results for title-only term, got %+v", f, res.Results)
+		}
+	}
+}
+
+func TestSearch_ZeroValueFiltersAreCompleteNoOps(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	// A zero-value SearchFilters must reproduce the exact pre-filter result
+	// set: every block matching the text — including NOTE blocks that any
+	// task predicate would silently drop — plus the page-title leg.
+	res, err := dm.SearchBlocksPaged("postgres", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 3 {
+		t.Fatalf("zero-value filters changed the result set: total=%d (want 3 tasks)", res.Total)
+	}
+	for _, r := range res.Results {
+		if r.ID == "" {
+			t.Errorf("no page-level row expected for a body-only term: %+v", r)
+		}
+		if r.Status == "" {
+			// Task results keep their projected attributes.
+			t.Errorf("result lost task projection fields: %+v", r)
+		}
+	}
+}
+
+func TestSearch_RecencySortKeepsTitleHitsFirst(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	// Recency mode reorders BODY hits (file_date DESC) but page-title hits
+	// still lead the merged list — the page named for the query is the best
+	// match regardless of sort mode.
+	res, err := dm.SearchBlocksPaged("agenda", 0, 50, SearchFilters{Sort: "recency"})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 3 {
+		t.Fatalf("expected 3 results, got %d", res.Total)
+	}
+	if res.Results[0].ID != "" || res.Results[0].Page != "Agenda Page" {
+		t.Errorf("recency sort: title hit must still rank first, got %+v", res.Results[0])
+	}
+}
+
+func TestSearch_SearchBlocksReturnsOnlyBlockHits(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	// A title-only term produces exactly one page-level row in the paged
+	// envelope...
+	paged, err := dm.SearchBlocksPaged("quiet empty", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if paged.Total != 1 || paged.Results[0].ID != "" {
+		t.Fatalf("fixture: expected a single page-level title hit, got %+v", paged.Results)
+	}
+
+	// ...but the legacy block-only binding must not expose it: its consumers
+	// (editor block-ref picker, plugin SDK) key and navigate by block id, and
+	// an empty id breaks the picker.
+	blocks, err := dm.SearchBlocks("quiet empty")
+	if err != nil {
+		t.Fatalf("SearchBlocks: %v", err)
+	}
+	if len(blocks) != 0 {
+		t.Fatalf("SearchBlocks leaked a page-level row: %+v", blocks)
+	}
+
+	// A mixed query (one title hit + two body hits) filters the page row and
+	// keeps every block hit.
+	blocks, err = dm.SearchBlocks("agenda")
+	if err != nil {
+		t.Fatalf("SearchBlocks: %v", err)
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("expected the 2 body hits only, got %+v", blocks)
+	}
+	for _, r := range blocks {
+		if r.ID == "" {
+			t.Errorf("SearchBlocks returned a page-level row: %+v", r)
+		}
+	}
+}
+
+func TestSearch_UnicodeOwnerAndTitleExactCase(t *testing.T) {
+	dm := newTestDB(t)
+
+	release := []parser.ParsedBlock{
+		{
+			ID: "aaaa1111-0000-4000-8000-000000000009", Type: parser.BlockTask,
+			RawText:   "- [ ] Release checklist [owner:: Ünal]",
+			CleanText: "Release checklist", Status: "TODO", Owner: "Ünal", LineNumber: 1,
+		},
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Projects", "Release Notes", release, nil); err != nil {
+		t.Fatalf("index release page: %v", err)
+	}
+	if err := dm.IndexFileWithProjection("vault", "Work", "Projects", "MÜNCHEN",
+		nil, nil, "", nil, PageCoreFields{}); err != nil {
+		t.Fatalf("index accented page: %v", err)
+	}
+
+	// Owner typed exactly as stored: the needle used to be Go-lowered while the
+	// haystack was SQLite-lowered, so Ü matched only Ü by luck of no folding —
+	// and "Ünal" vs "ünal" could never compare.
+	res, err := dm.SearchBlocksPaged("release", 0, 50, SearchFilters{Owner: "Ünal"})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(owner): %v", err)
+	}
+	if res.Total != 1 || res.Results[0].Owner != "Ünal" {
+		t.Fatalf("exact-case non-ASCII owner did not match: %+v", res.Results)
+	}
+
+	// Page title typed exactly as stored.
+	title, err := dm.SearchBlocksPaged("MÜNCHEN", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(title): %v", err)
+	}
+	if title.Total != 1 || title.Results[0].ID != "" || title.Results[0].Page != "MÜNCHEN" {
+		t.Fatalf("exact-case non-ASCII page title did not match: %+v", title.Results)
+	}
+	if !strings.Contains(title.Results[0].Snippet, "<mark>MÜNCHEN</mark>") {
+		t.Errorf("snippet should highlight the accented title, got %q", title.Results[0].Snippet)
+	}
+}
+
+func TestSearch_TitleHitsSuppressUnderTagFilter(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	// "notes" matches the Meeting Notes page by TITLE only. A tag filter makes
+	// the query block-scoped (page rows carry no tags), so the page leg must
+	// vanish — the counterpart to the type-filter test.
+	res, err := dm.SearchBlocksPaged("notes", 0, 50, SearchFilters{Tag: "work"})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(tag): %v", err)
+	}
+	if res.Total != 0 {
+		t.Fatalf("tag filter must suppress the page-title leg, got %+v", res.Results)
+	}
+
+	// Unfiltered, the same term surfaces the page — proves the filter, not the
+	// fixture, suppressed it.
+	plain, err := dm.SearchBlocksPaged("notes", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if plain.Total != 1 || plain.Results[0].Page != "Meeting Notes" {
+		t.Fatalf("expected the Meeting Notes title hit unfiltered, got %+v", plain.Results)
+	}
+}
+
+func TestSearch_TitleHitsBoundedByFlatCap(t *testing.T) {
+
+	dm := newTestDB(t)
+
+	// searchFlatCap+10 zero-block pages whose names all share a term: the
+	// title leg must stop at the flat cap, and the envelope must report the
+	// truncation via Total.
+	total := searchFlatCap + 10
+	results := make([]parser.ScanResult, 0, total)
+	projections := make([]ScanProjection, 0, total)
+	for i := 0; i < total; i++ {
+		results = append(results, parser.ScanResult{
+			Path:     fmt.Sprintf("NB/p%04d.md", i),
+			Notebook: "NB", Section: "", Page: fmt.Sprintf("Kilroy Page %04d", i),
+		})
+		projections = append(projections, ScanProjection{})
+	}
+	if _, _, err := dm.IndexScanResultsWithProjection(results, projections); err != nil {
+		t.Fatalf("batch index: %v", err)
+	}
+
+	res, err := dm.SearchBlocksPaged("kilroy", 0, 10, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != searchFlatCap {
+		t.Fatalf("title leg must cap at searchFlatCap=%d, got total=%d", searchFlatCap, res.Total)
+	}
+	if !res.HasMore {
+		t.Error("HasMore expected true: 10 returned of 500 capped total")
+	}
+}
+
+// TestSearch_SearchBlocksBudgetExcludesTitleHits pins the block-scoped budget:
+// with more title hits than the 50-row window, SearchBlocks must still return
+// a full page of blocks. Dropping page rows after paging let title hits consume
+// the budget and could zero the editor's block-ref picker while body matches
+// existed.
+func TestSearch_SearchBlocksBudgetExcludesTitleHits(t *testing.T) {
+	dm := newTestDB(t)
+
+	// 60 zero-block pages whose NAMES all contain the query term.
+	for i := 1; i <= 60; i++ {
+		page := fmt.Sprintf("2026 Daily %02d", i)
+		if err := dm.IndexFileWithProjection("vault", "Journal", "", page,
+			nil, nil, "", nil, PageCoreFields{}); err != nil {
+			t.Fatalf("index title page %s: %v", page, err)
+		}
+	}
+	// 60 body hits across 20 pages (3 per page stays under the per-page cap).
+	for p := 1; p <= 20; p++ {
+		blocks := make([]parser.ParsedBlock, 0, 3)
+		for b := 1; b <= 3; b++ {
+			blocks = append(blocks, parser.ParsedBlock{
+				ID:   fmt.Sprintf("bbbb%04d-0000-4000-8000-%012d", p, b),
+				Type: parser.BlockNote, RawText: "plan for 2026", CleanText: "plan for 2026",
+				LineNumber: b,
+			})
+		}
+		if err := dm.IndexFileBlocks("vault", "Notes", "", fmt.Sprintf("Plan %02d", p), blocks, nil); err != nil {
+			t.Fatalf("index body page %d: %v", p, err)
+		}
+	}
+
+	blocksHit, err := dm.SearchBlocks("2026")
+	if err != nil {
+		t.Fatalf("SearchBlocks: %v", err)
+	}
+	if len(blocksHit) != 50 {
+		t.Fatalf("block budget consumed by title rows: got %d block hits, want 50", len(blocksHit))
+	}
+	for _, r := range blocksHit {
+		if r.ID == "" {
+			t.Errorf("SearchBlocks leaked a page-level row: %+v", r)
+		}
+	}
+
+	// The same source-level switch keeps the paged envelope's totals honest:
+	// every counted row is a block.
+	paged, err := dm.SearchBlocksPaged("2026", 0, 50, SearchFilters{ExcludePageTitles: true})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(excludePageTitles): %v", err)
+	}
+	if paged.Total != 60 {
+		t.Fatalf("block-only total = %d, want 60", paged.Total)
+	}
+	if len(paged.Results) != 50 || !paged.HasMore {
+		t.Fatalf("block-only page = %d rows, hasMore=%v (want 50,true)", len(paged.Results), paged.HasMore)
+	}
+
+	// Default behavior is unchanged: title hits still lead the merged list.
+	merged, err := dm.SearchBlocksPaged("2026", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(default): %v", err)
+	}
+	if merged.Total != 120 || merged.Results[0].ID != "" {
+		t.Fatalf("merged envelope changed: total=%d first=%+v", merged.Total, merged.Results[0])
+	}
+}
+
+// TestSearch_TitleHitsRankExactThenPrefix pins the title-leg ordering: an
+// exactly-named page must outrank prefix and substring matches, so it can never
+// be buried by alphabetically-earlier substring hits or pushed past the flat cap
+// by them. The fixture is deliberately ranked against the alphabetical order
+// the ORDER BY falls back to — "AAA Old Agenda" sorts first, so deleting the
+// rank tiers flips the result and fails here.
+func TestSearch_TitleHitsRankExactThenPrefix(t *testing.T) {
+	dm := newTestDB(t)
+
+	for _, page := range []string{"AAA Old Agenda", "Agenda Archive", "Agenda"} {
+		if err := dm.IndexFileWithProjection("vault", "NB", "", page,
+			nil, nil, "", nil, PageCoreFields{}); err != nil {
+			t.Fatalf("index %s: %v", page, err)
+		}
+	}
+	res, err := dm.SearchBlocksPaged("agenda", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 3 {
+		t.Fatalf("expected 3 title hits, got %d: %+v", res.Total, res.Results)
+	}
+	want := []string{"Agenda", "Agenda Archive", "AAA Old Agenda"}
+	for i, page := range want {
+		if res.Results[i].Page != page {
+			t.Fatalf("title rank order = %v, want %v", []string{
+				res.Results[0].Page, res.Results[1].Page, res.Results[2].Page,
+			}, want)
+		}
+	}
+}
+
+// TestSearch_TitleRankExactPageSurvivesCap pins the other half of the rank
+// contract: an exactly-named page must not be pushed past the flat cap by
+// alphabetically-earlier substring matches. Every decoy sorts before the exact
+// page, so without the rank tier the cap window would contain decoys only.
+func TestSearch_TitleRankExactPageSurvivesCap(t *testing.T) {
+	dm := newTestDB(t)
+
+	total := searchFlatCap + 10
+	results := make([]parser.ScanResult, 0, total+1)
+	projections := make([]ScanProjection, 0, total+1)
+	for i := 0; i < total; i++ {
+		results = append(results, parser.ScanResult{
+			Path:     fmt.Sprintf("NB/aaa%04d.md", i),
+			Notebook: "NB", Section: "", Page: fmt.Sprintf("AAA Kilroy Notes %04d", i),
+		})
+		projections = append(projections, ScanProjection{})
+	}
+	results = append(results, parser.ScanResult{Path: "NB/kilroy.md", Notebook: "NB", Page: "Kilroy"})
+	projections = append(projections, ScanProjection{})
+	if _, _, err := dm.IndexScanResultsWithProjection(results, projections); err != nil {
+		t.Fatalf("batch index: %v", err)
+	}
+
+	res, err := dm.SearchBlocksPaged("kilroy", 0, 5, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if len(res.Results) == 0 || res.Results[0].Page != "Kilroy" {
+		t.Fatalf("exactly-named page pushed past the cap by alphabetical substring hits: %+v", res.Results)
+	}
+	if res.Total != searchFlatCap {
+		t.Fatalf("title leg must cap at searchFlatCap=%d, got total=%d", searchFlatCap, res.Total)
+	}
+}
+
+// TestSearch_TitleHitsMatchSeparatorNamedPages pins the title leg's term
+// extraction against the name shapes users actually type: a date-named daily
+// note, an underscored name, and a dash-named page. Squashing each word's
+// separators (the body leg's term rule) makes none of them a LIKE candidate, so
+// typing the page's own name returned nothing.
+func TestSearch_TitleHitsMatchSeparatorNamedPages(t *testing.T) {
+	dm := newTestDB(t)
+
+	// Decoys contain every term of their query and sort first alphabetically, so
+	// the rank tiers — not the alphabetical fallback — decide the winner. (The
+	// exact-vs-prefix distinction is pinned separately; see
+	// TestSearch_TitleRankExactBeatsAlphabeticalPrefix.)
+	pages := []string{
+		"2026-06-13",
+		"0099 Old 2026-06-13 Copy",
+		"sprint_17",
+		"AAA sprint_17 notes",
+		"api-v2",
+		"AAA api-v2 notes",
+	}
+	for _, page := range pages {
+		if err := dm.IndexFileWithProjection("vault", "NB", "", page,
+			nil, nil, "", nil, PageCoreFields{}); err != nil {
+			t.Fatalf("index %s: %v", page, err)
+		}
+	}
+
+	for _, query := range []string{"2026-06-13", "sprint_17", "api-v2"} {
+		res, err := dm.SearchBlocksPaged(query, 0, 50, SearchFilters{})
+		if err != nil {
+			t.Fatalf("SearchBlocksPaged(%q): %v", query, err)
+		}
+		if res.Total == 0 {
+			t.Fatalf("query %q found no page named for it", query)
+		}
+		if res.Results[0].Page != query {
+			t.Errorf("query %q ranked %q first, want the exactly-named page", query, res.Results[0].Page)
+		}
+		if !strings.Contains(res.Results[0].Snippet, "<mark>") {
+			t.Errorf("query %q: title snippet not highlighted: %q", query, res.Results[0].Snippet)
+		}
+	}
+}
+
+// TestSearch_TitleRankEscapesLikeMetacharacters pins the escaping of the raw
+// query in the rank binds: `%` and `_` typed by the user must match literally,
+// not as wildcards. "100!Kilo" sorts before "100%Kilo" and would take the prefix
+// tier from it if the percent in the query expanded.
+func TestSearch_TitleRankEscapesLikeMetacharacters(t *testing.T) {
+	dm := newTestDB(t)
+
+	for _, page := range []string{"100!Kilo", "100%Kilo"} {
+		if err := dm.IndexFileWithProjection("vault", "NB", "", page,
+			nil, nil, "", nil, PageCoreFields{}); err != nil {
+			t.Fatalf("index %s: %v", page, err)
+		}
+	}
+	res, err := dm.SearchBlocksPaged("100%", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 2 {
+		t.Fatalf("expected both pages as candidates, got %+v", res.Results)
+	}
+	if res.Results[0].Page != "100%Kilo" {
+		t.Errorf("query \"100%%\" ranked %q first — the percent must match literally, not as a wildcard", res.Results[0].Page)
+	}
+}
+
+// TestSearch_TaskFiltersTrimmed pins the trim-before-activate contract: a
+// whitespace-only value must behave as unset, and padded date bounds compare as
+// their trimmed date.
+func TestSearch_TaskFiltersTrimmed(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	// "  " used to activate the Owner filter (suppressing the title leg) while
+	// binding an owner that can never match — an empty result set.
+	res, err := dm.SearchBlocksPaged("agenda", 0, 50, SearchFilters{Owner: "  "})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(blank owner): %v", err)
+	}
+	if res.Total != 3 {
+		t.Fatalf("whitespace-only owner changed the result set: total=%d %+v", res.Total, res.Results)
+	}
+
+	// Padded bound: due_date <= 2020-01-31 matches only the overdue cutover.
+	res, err = dm.SearchBlocksPaged("postgres", 0, 50, SearchFilters{DueBefore: " 2020-01-31 "})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(padded dueBefore): %v", err)
+	}
+	if res.Total != 1 || res.Results[0].ID == "" || res.Results[0].Owner != "Bob" {
+		t.Fatalf("padded dueBefore not trimmed: %+v", res.Results)
+	}
+}
+
+// TestSearch_InvalidDateBoundRejected: a bound that is not YYYY-MM-DD would
+// order lexicographically against stored dates and silently return nonsense.
+func TestSearch_InvalidDateBoundRejected(t *testing.T) {
+	dm := seedSearchPages(t)
+
+	for _, f := range []SearchFilters{
+		{DueBefore: "2020-1-1"},
+		{DueAfter: "tomorrow"},
+	} {
+		if _, err := dm.SearchBlocksPaged("postgres", 0, 50, f); err == nil {
+			t.Fatalf("malformed date bound accepted: %+v", f)
+		}
+	}
+}
+
+// TestSearch_TitleHitsMatchSingleCharPartNames pins the raw-query fallback: a
+// name whose separator-split parts are all single characters ("R&D", "Q&A",
+// "P&L", "C++", "A-B") yields no title term, so the leg must fall back to the
+// escaped raw query or typing the page's own name finds nothing. The decoys are
+// substring matches that sort first alphabetically, so only the exact-name tier
+// can put the real page on top.
+func TestSearch_TitleHitsMatchSingleCharPartNames(t *testing.T) {
+	dm := newTestDB(t)
+
+	names := []string{"R&D", "Q&A", "P&L", "C++", "A-B"}
+	for _, page := range names {
+		if err := dm.IndexFileWithProjection("vault", "NB", "", page,
+			nil, nil, "", nil, PageCoreFields{}); err != nil {
+			t.Fatalf("index %s: %v", page, err)
+		}
+		if err := dm.IndexFileWithProjection("vault", "NB", "", "AAA "+page+" notes",
+			nil, nil, "", nil, PageCoreFields{}); err != nil {
+			t.Fatalf("index decoy for %s: %v", page, err)
+		}
+	}
+
+	for _, query := range names {
+		res, err := dm.SearchBlocksPaged(query, 0, 50, SearchFilters{})
+		if err != nil {
+			t.Fatalf("SearchBlocksPaged(%q): %v", query, err)
+		}
+		if res.Total == 0 {
+			t.Fatalf("query %q found no page named for it", query)
+		}
+		if res.Results[0].Page != query {
+			t.Errorf("query %q ranked %q first, want the exactly-named page", query, res.Results[0].Page)
+		}
+		if !strings.Contains(res.Results[0].Snippet, "<mark>") {
+			t.Errorf("query %q: title snippet not highlighted: %q", query, res.Results[0].Snippet)
+		}
+	}
+
+	// One character is not a name search: the fallback stays a no-op so a
+	// single keystroke cannot match every page containing that character.
+	res, err := dm.SearchBlocksPaged("R", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(single char): %v", err)
+	}
+	if res.Total != 0 {
+		t.Errorf("single-character query matched %d title row(s), want 0", res.Total)
+	}
+
+	// The fallback's pattern must escape LIKE metacharacters. "a%b" has no
+	// two-byte part, so it takes the raw-query pattern: unescaped, "%" is a
+	// wildcard that also matches "AxxB"; escaped, only the literal name does.
+	for _, page := range []string{"A%B", "AxxB", "Q_D", "QxD"} {
+		if err := dm.IndexFileWithProjection("vault", "NB", "", page,
+			nil, nil, "", nil, PageCoreFields{}); err != nil {
+			t.Fatalf("index %s: %v", page, err)
+		}
+	}
+	res, err = dm.SearchBlocksPaged("a%b", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(a%%b): %v", err)
+	}
+	if res.Total != 1 || res.Results[0].Page != "A%B" {
+		t.Errorf("LIKE metacharacter was not literal in the fallback: %+v", res.Results)
+	}
+	res, err = dm.SearchBlocksPaged("q_d", 0, 50, SearchFilters{Notebook: "NB"})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(q_d): %v", err)
+	}
+	if res.Total != 1 || res.Results[0].Page != "Q_D" {
+		t.Errorf("LIKE underscore was not literal in the fallback: %+v", res.Results)
+	}
+}
+
+// TestSearch_FTSBooleanKeywordsAreLiteral pins that uppercase FTS5 operators
+// are searched as text. Unquoted, FTS5 parses OR/AND/NOT as boolean operators,
+// so the body leg errored before the title leg ran: every such query
+// hard-errored and a page literally named OR was unfindable.
+func TestSearch_FTSBooleanKeywordsAreLiteral(t *testing.T) {
+	dm := newTestDB(t)
+
+	body := []parser.ParsedBlock{{
+		ID: "aaaa1111-0000-4000-8000-00000000000b", Type: parser.BlockNote,
+		RawText: "salt and pepper grind", CleanText: "salt and pepper grind", LineNumber: 1,
+	}}
+	if err := dm.IndexFileBlocks("vault", "Recipes", "", "Pepper", body, nil); err != nil {
+		t.Fatalf("index body: %v", err)
+	}
+	// Zero-block page named for the operator: only the title leg can find it,
+	// and that leg only runs if the body leg no longer aborts.
+	if err := dm.IndexFileWithProjection("vault", "NB", "", "OR",
+		nil, nil, "", nil, PageCoreFields{}); err != nil {
+		t.Fatalf("index page named OR: %v", err)
+	}
+
+	for _, q := range []string{"OR", "AND", "NOT"} {
+		if _, err := dm.SearchBlocksPaged(q, 0, 50, SearchFilters{}); err != nil {
+			t.Fatalf("SearchBlocksPaged(%q): %v", q, err)
+		}
+	}
+
+	// An operator-bearing query still matches the literal words.
+	res, err := dm.SearchBlocksPaged("SALT AND PEPPER", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(SALT AND PEPPER): %v", err)
+	}
+	if res.Total != 1 || res.Results[0].ID == "" {
+		t.Fatalf("uppercase-operator query did not match the literal body: %+v", res.Results)
+	}
+
+	res, err = dm.SearchBlocksPaged("OR", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged(OR): %v", err)
+	}
+	found := false
+	for _, r := range res.Results {
+		if r.Page == "OR" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("page named OR is not findable: %+v", res.Results)
+	}
+}
+
+// TestSearch_TitleRankExactBeatsAlphabeticalPrefix pins the exact-vs-prefix arm
+// distinctly: an exactly-named page in an alphabetically LATER notebook must
+// still outrank an earlier notebook's prefix match. Every other "exact" fixture
+// is also a prefix match in the same notebook, so deleting only the exact CASE
+// arm would leave them green; this fixture reverses order without it.
+func TestSearch_TitleRankExactBeatsAlphabeticalPrefix(t *testing.T) {
+	dm := newTestDB(t)
+
+	for _, page := range []struct{ notebook, name string }{
+		{"Zulu", "Agenda"},
+		{"Alpha", "Agenda Archive"},
+	} {
+		if err := dm.IndexFileWithProjection("vault", page.notebook, "", page.name,
+			nil, nil, "", nil, PageCoreFields{}); err != nil {
+			t.Fatalf("index %s/%s: %v", page.notebook, page.name, err)
+		}
+	}
+
+	res, err := dm.SearchBlocksPaged("agenda", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 2 {
+		t.Fatalf("expected both pages as candidates, got %+v", res.Results)
+	}
+	if res.Results[0].Page != "Agenda" || res.Results[0].Notebook != "Zulu" {
+		t.Errorf("ranked %q/%q first, want the exactly-named Zulu/Agenda above the alphabetical prefix Alpha/Agenda Archive",
+			res.Results[0].Notebook, res.Results[0].Page)
+	}
+	if res.Results[1].Page != "Agenda Archive" {
+		t.Errorf("second result = %q, want the prefix match", res.Results[1].Page)
+	}
+}
+
+// TestSearch_TitleHitsAlphabeticalFlowAcrossSources pins the tiebreak placement:
+// match quality and the alphabetical (notebook, section, page) flow lead, and
+// source is the tail tiebreak only. Source-leading would group every linked hit
+// before every vault hit and could crowd vault rows past the flat cap.
+func TestSearch_TitleHitsAlphabeticalFlowAcrossSources(t *testing.T) {
+	dm := newTestDB(t)
+
+	// source-leading order would put the linked row first; the display path
+	// order puts the vault row (Alpha) first.
+	for _, row := range []struct{ source, notebook string }{
+		{"linked:test", "Zulu"},
+		{"vault", "Alpha"},
+	} {
+		if err := dm.IndexFileWithProjection(row.source, row.notebook, "", "Agenda",
+			nil, nil, "", nil, PageCoreFields{}); err != nil {
+			t.Fatalf("index %s/%s: %v", row.source, row.notebook, err)
+		}
+	}
+
+	res, err := dm.SearchBlocksPaged("agenda", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 2 {
+		t.Fatalf("expected both pages as candidates, got %+v", res.Results)
+	}
+	if res.Results[0].Notebook != "Alpha" || res.Results[1].Notebook != "Zulu" {
+		t.Errorf("cross-source title order = [%s %s], want alphabetical flow [Alpha Zulu]",
+			res.Results[0].Notebook, res.Results[1].Notebook)
+	}
+}

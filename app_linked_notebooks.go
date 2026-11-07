@@ -183,11 +183,21 @@ func (a *App) UnlinkNotebook(id string) error {
 	if a.watcher != nil && rootPath != "" {
 		a.watcher.RemoveWatchRoot(rootPath)
 	}
-	// Drop the local index rows for this source. The files table rows (keyed by
-	// absolute path) are pruned by PruneStaleFiles on the next startup scan;
-	// dropping them eagerly here would race the watcher's Remove events.
+	// Drop the local index rows for this source. The files table is path-keyed
+	// (no source column), so the vault-open prune — deliberately source-scoped —
+	// never reaches these rows; without this prune a never-relinked notebook
+	// keeps one files row per file for the app's lifetime. Late watcher events
+	// are already dropped once RemoveWatchRoot removed the root's metadata, the
+	// same arrival window ClearSourceBlocks relies on.
 	a.coordinator.WithDBWrite(func() {
 		_ = a.db.ClearSourceBlocks("linked:" + id)
+		// A malformed registry entry with no root has no scope to prune:
+		// PruneStaleFiles treats "" as "every row".
+		if rootPath != "" {
+			if _, err := a.db.PruneStaleFiles(rootPath, nil); err != nil {
+				log.Printf("UnlinkNotebook(%s): prune files rows: %v", id, err)
+			}
+		}
 	})
 	e := newAuditEntry("unlink")
 	e.ID = id
@@ -460,8 +470,8 @@ func (a *App) verifyLinkedNotebookFingerprints() {
 // restart. Per-file read/parse errors are surfaced in the skipped list
 // (IndexScanResults collects them) instead of logged inline.
 func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
-	files, warnings, err := parser.WalkMarkdown(ln.RootPath)
-	for _, w := range warnings {
+	files, walkSkips, walkErrs, err := parser.WalkMarkdown(ln.RootPath)
+	for _, w := range append(append([]string{}, walkSkips...), walkErrs...) {
 		log.Printf("LinkNotebook(%s): %s", ln.DisplayName, w)
 	}
 	if err != nil {
@@ -594,6 +604,39 @@ func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 	a.coordinator.WithDBWrite(func() {
 		if err := a.db.MarkFilesIndexed(fileStats); err != nil {
 			log.Printf("LinkNotebook(%s): MarkFilesIndexed: %v", ln.DisplayName, err)
+		}
+	})
+
+	// This tree scan is the authority for its own skip keys: a linked root has no
+	// startup scan, and the vault prune is source-scoped, so without this a path
+	// deleted from the root would keep its mtime row forever. Skip keys are
+	// re-derivable, but only a pass that saw the whole tree may drop them.
+	if len(walkErrs) == 0 {
+		seen := make([]string, 0, len(results))
+		for _, res := range results {
+			seen = append(seen, res.Path)
+		}
+		a.coordinator.WithDBWrite(func() {
+			if _, err := a.db.PruneStaleFiles(ln.RootPath, seen); err != nil {
+				log.Printf("LinkNotebook(%s): prune stale paths: %v", ln.DisplayName, err)
+			}
+		})
+	}
+
+	// Page inventory reconcile for this source: the linked scan is the
+	// authoritative view of the root (warm-skipped files included), so it both
+	// adds every file's loc and — only when the walk was complete — drops locs
+	// no file publishes any more, including page_core rows a pre-inventory build
+	// left behind. Scoped to this source so the vault and other links are
+	// untouched.
+	live, complete := scanInventory(results, walkErrs, source)
+	a.coordinator.WithDBWrite(func() {
+		if removed, rerr := a.db.ReconcilePageInventory(source, live, complete); rerr != nil {
+			log.Printf("LinkNotebook(%s): ReconcilePageInventory: %v", ln.DisplayName, rerr)
+		} else if removed > 0 {
+			log.Printf("LinkNotebook(%s): page inventory reconciled (%d abandoned identities dropped)", ln.DisplayName, removed)
+		} else if !complete {
+			log.Printf("LinkNotebook(%s): page inventory heal deferred (scan was incomplete)", ln.DisplayName)
 		}
 	})
 	return indexedCount, nil

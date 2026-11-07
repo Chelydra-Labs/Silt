@@ -339,6 +339,55 @@ func TestGetPluginSettingsForNotebook_LinkedRecursiveNestedMapMerge(t *testing.T
 	}
 }
 
+// TestUnlinkNotebook_PrunesFilesRows pins the files-table half of unlinking:
+// the table is path-keyed, so the source-scoped vault-open prune can never
+// remove an unlinked root's rows. The second link's rows prove the prune stays
+// inside the unlinked root.
+func TestUnlinkNotebook_PrunesFilesRows(t *testing.T) {
+	app := newTestApp(t)
+
+	rootA := filepath.Join(t.TempDir(), "Alpha")
+	pageA := filepath.Join(rootA, "Note.md")
+	writeFile(t, pageA, "# Note <!-- id: 11111111-2222-4000-8000-000000000001 -->\n")
+	lnA, err := app.LinkNotebook(rootA)
+	if err != nil {
+		t.Fatalf("LinkNotebook(Alpha): %v", err)
+	}
+
+	rootB := filepath.Join(t.TempDir(), "Beta")
+	pageB := filepath.Join(rootB, "Other.md")
+	writeFile(t, pageB, "# Other <!-- id: 11111111-2222-4000-8000-000000000002 -->\n")
+	if _, err := app.LinkNotebook(rootB); err != nil {
+		t.Fatalf("LinkNotebook(Beta): %v", err)
+	}
+
+	known, err := app.db.KnownFiles()
+	if err != nil {
+		t.Fatalf("KnownFiles: %v", err)
+	}
+	if _, ok := known[pageA]; !ok {
+		t.Fatalf("link did not index %s", pageA)
+	}
+	if _, ok := known[pageB]; !ok {
+		t.Fatalf("link did not index %s", pageB)
+	}
+
+	if err := app.UnlinkNotebook(lnA.ID); err != nil {
+		t.Fatalf("UnlinkNotebook: %v", err)
+	}
+
+	known, err = app.db.KnownFiles()
+	if err != nil {
+		t.Fatalf("KnownFiles after unlink: %v", err)
+	}
+	if _, ok := known[pageA]; ok {
+		t.Error("unlink kept the unlinked root's files row (nothing would ever prune it)")
+	}
+	if _, ok := known[pageB]; !ok {
+		t.Error("unlink pruned another root's files row")
+	}
+}
+
 // TestUnlinkNotebook_IdempotentOnUnknownID pins the documented idempotency
 // contract: unlinking an id that was never registered (or already unlinked) is
 // a no-op that returns nil, leaving the registry untouched. This is the

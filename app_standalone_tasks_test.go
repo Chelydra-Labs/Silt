@@ -194,7 +194,10 @@ func TestScanStandaloneTasks_IndexesExistingFile(t *testing.T) {
 	); err != nil {
 		t.Fatalf("delete standalone rows: %v", err)
 	}
-	results := parser.ScanStandaloneTasks(app.vaultPath, app.spacesPerTab)
+	results, err := parser.ScanStandaloneTasks(app.vaultPath, app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ScanStandaloneTasks: %v", err)
+	}
 	if len(results) != 1 {
 		t.Fatalf("expected 1 scan result, got %d", len(results))
 	}
@@ -211,9 +214,69 @@ func TestScanStandaloneTasks_IndexesExistingFile(t *testing.T) {
 // (no error) when no standalone tasks have been created yet.
 func TestScanStandaloneTasks_AbsentFileReturnsNil(t *testing.T) {
 	app := newTestApp(t)
-	results := parser.ScanStandaloneTasks(app.vaultPath, app.spacesPerTab)
+	results, err := parser.ScanStandaloneTasks(app.vaultPath, app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ScanStandaloneTasks: %v", err)
+	}
 	if results != nil {
 		t.Errorf("expected nil results for absent file, got %d", len(results))
+	}
+}
+
+// TestVaultOpen_BlindStandaloneTasksDoesNotPruneOrClear pins the only link that
+// turns `.silt/tasks.md` blindness into prune suppression: ScanStandaloneTasks'
+// non-absent stat error must reach walkErrs, or an open that could not see the
+// tasks page reports a complete inventory and prunes the still-present
+// `.silt/tasks` loc. WalkMarkdown skips dot-directories, so an EACCES on the
+// `.silt` dir is indistinguishable from deletion through the walk alone — this
+// channel is what makes the difference.
+func TestVaultOpen_BlindStandaloneTasksDoesNotPruneOrClear(t *testing.T) {
+	vaultPath := newInventoryVault(t)
+	tasksDir := filepath.Join(vaultPath, parser.StandaloneTasksNotebook)
+	tasksFile := filepath.Join(tasksDir, "tasks.md")
+	writeFile(t, tasksFile,
+		"---\nnotebook: \".silt\"\nsection: \"\"\npage: \"tasks\"\ndate: \"2026-08-01\"\ntags: []\n---\n"+
+			"- [ ] Blind me <!-- id: bbbb1111-0000-4000-8000-000000000001 -->\n")
+	settleInventoryVault(t, vaultPath)
+
+	// The tasks page is indexed like any other page before the blind pass, so
+	// the survival assertions below cannot pass vacuously.
+	app1 := &App{spacesPerTab: 4}
+	if err := app1.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("baseline open: %v", err)
+	}
+	if n := blockCount(t, app1, "vault", ".silt", "", "tasks"); n != 1 {
+		t.Fatalf("baseline open indexed %d standalone-task blocks, want 1", n)
+	}
+	if err := app1.CloseVault(); err != nil {
+		t.Fatalf("CloseVault (baseline): %v", err)
+	}
+
+	if err := os.Chmod(tasksDir, 0o000); err != nil {
+		t.Fatalf("chmod .silt: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(tasksDir, 0o755) })
+	skipUnlessPermissionsEnforced(t, func() error {
+		_, err := os.Stat(tasksFile)
+		return err
+	})
+
+	app2 := &App{spacesPerTab: 4}
+	if err := app2.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("blind open: %v", err)
+	}
+	defer func() { _ = app2.CloseVault() }()
+
+	if n := blockCount(t, app2, "vault", ".silt", "", "tasks"); n != 1 {
+		t.Errorf("blind open cleared the unseen standalone-task blocks: got %d, want 1", n)
+	}
+	if _, _, core := inventoryProjectionCounts(t, app2, ".silt", "", "tasks"); core != 1 {
+		t.Errorf("blind open cleared the unseen standalone-task page_core row: got %d, want 1", core)
+	}
+	if known, err := app2.db.KnownFiles(); err != nil {
+		t.Fatalf("KnownFiles: %v", err)
+	} else if _, ok := known[tasksFile]; !ok {
+		t.Error("blind open pruned the standalone-tasks skip key")
 	}
 }
 

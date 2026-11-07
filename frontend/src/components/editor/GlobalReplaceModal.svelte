@@ -73,6 +73,19 @@
   // Apply still leaves an undo path for the written pages.
   let revertLog = $state<BatchEntry[][]>([])
 
+  /** Snapshot of every input the preview's before/after values derive from.
+   *  Apply rebuilds the matcher from live inputs, so a response whose inputs
+   *  moved while the request was in flight must not replace `groups`. */
+  function previewInputs(): string {
+    return JSON.stringify([
+      findText,
+      replaceText,
+      caseSensitive,
+      wholeWord,
+      regexp
+    ])
+  }
+
   /** Preview: search FTS5 for the find term, group matches by page, compute
    *  before/after. Linked-notebook pages are flagged read-only (skipped on apply). */
   async function preview(): Promise<void> {
@@ -87,9 +100,9 @@
       truncatedCount = 0
       return
     }
+    const requested = previewInputs()
     loading = true
     statusMessage = ''
-    truncatedCount = 0
     try {
       const res = await SearchBlocksPaged(findText, 0, 200, {
         notebook: '',
@@ -97,16 +110,42 @@
         tag: '',
         type: '',
         sort: '',
-        vaultOnly: true
+        vaultOnly: true,
+        owner: '',
+        status: '',
+        dueBefore: '',
+        dueAfter: '',
+        priorityMin: 0,
+        overdue: false,
+        // Block-scoped budget: page rows would consume the 200-row window, so
+        // a find term matching many page names could hide the block matches
+        // this preview exists to replace.
+        excludePageTitles: true
       })
       const results = res.results || []
-      // res.total is the full match count; results is capped at the page limit.
-      if (res.total > results.length) {
+      // Inputs changed while the request was in flight: these groups were
+      // computed for the old matcher while Apply would rebuild from the new
+      // one, so keeping the previous preview (and its stale notice) is the
+      // only safe state.
+      if (previewInputs() !== requested) {
+        previewStale = true
+        return
+      }
+      truncatedCount = 0
+      // Defensive: the request excludes page rows at the source, but a page
+      // row (id === "") could only become a phantom match — the preview
+      // promises a replacement Apply can never make.
+      const blockResults = results.filter((r) => r.id !== '')
+      // res.total counts preview rows — the grouped envelope, at most 3 per
+      // page and at most 500 overall — not every matching block. Matches
+      // beyond those caps never reach this preview, so Apply cannot replace
+      // them and the banner must not promise them: it reports rows.
+      if (res.total > blockResults.length) {
         truncatedCount = res.total
       }
       // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
       const byPage = new Map<string, PageGroup>()
-      for (const r of results) {
+      for (const r of blockResults) {
         const key = `${r.notebook}\x00${r.section}\x00${r.page}`
         if (!byPage.has(key)) {
           byPage.set(key, {
@@ -133,6 +172,12 @@
       groups = [...byPage.values()]
       previewStale = false
     } catch (e) {
+      // A failed refresh wipes the actionable surface: groups, the truncation
+      // banner, and the stale notice all describe the preview that no longer
+      // exists. Leaving any of them would render a banner over an empty list.
+      groups = []
+      truncatedCount = 0
+      previewStale = false
       statusMessage = `Preview failed: ${String(e)}`
     } finally {
       loading = false
@@ -172,6 +217,11 @@
       applying = false
       return
     }
+    // Snapshot the replacement with the matcher. The batch awaits a fetch and a
+    // save per page, so reading the input inside the loop would let an edit made
+    // mid-apply substitute a different value on later pages — a mixed batch the
+    // preview never showed.
+    const replacement = replaceText
 
     // Flush every mounted editor whose page is a target BEFORE writing, so
     // the replace reads the real current content (including unsaved edits)
@@ -249,7 +299,7 @@
         for (const b of blocks) {
           if (!matchIds.has(b.id)) continue
           const before = b.clean_text ?? ''
-          const after = applyReplace(before, matcher, replaceText)
+          const after = applyReplace(before, matcher, replacement)
           if (before !== after) {
             b.clean_text = after
             // Do NOT overwrite raw_text — the renderer (RenderFileContent)
@@ -503,8 +553,9 @@
           role="status"
           aria-live="polite"
         >
-          Showing first {groups.length} pages — {truncatedCount} total matches. Refine
-          your search to replace all.
+          Showing first {groups.length} pages — {truncatedCount} preview rows (up
+          to 3 per page). Refine to see the rest; Apply replaces only the previewed
+          blocks.
         </div>
       {/if}
       {#if groups.length === 0}

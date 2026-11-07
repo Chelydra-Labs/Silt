@@ -1464,15 +1464,106 @@ func TestWalkMarkdown_SelfReferencingSymlinkDoesNotLoop(t *testing.T) {
 		// Some platforms / CI runners disable symlink creation; skip gracefully.
 		t.Skipf("cannot create symlink: %v", err)
 	}
-	files, warnings, err := WalkMarkdown(dir)
+	files, skips, walkErrs, err := WalkMarkdown(dir)
 	if err != nil {
 		t.Fatalf("WalkMarkdown: %v", err)
 	}
 	if len(files) != 1 {
 		t.Errorf("expected 1 real file (symlink not followed), got %d: %v", len(files), files)
 	}
-	if len(warnings) == 0 {
-		t.Error("expected a symlink warning, got none")
+	if len(skips) == 0 {
+		t.Error("expected a symlink skip, got none")
+	}
+	if len(walkErrs) != 0 {
+		t.Errorf("a deliberate skip must not report a walk error: %v", walkErrs)
+	}
+}
+
+// TestWalkMarkdown_SymlinkedRootIsWalked pins that a vault opened through a
+// symlinked alias is actually scanned. WalkDir Lstats its root, so handing it the
+// alias classified the whole vault as an un-followed symlink: zero files, no
+// error — a blind scan that every completeness gate would read as a complete,
+// empty vault. Returned paths stay spelled under the caller's root.
+func TestWalkMarkdown_SymlinkedRootIsWalked(t *testing.T) {
+	real := t.TempDir()
+	writeMdFile(t, filepath.Join(real, "NB", "Page.md"), "body")
+	alias := filepath.Join(t.TempDir(), "vault-alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Skipf("cannot create symlink: %v", err)
+	}
+
+	files, skips, walkErrs, err := WalkMarkdown(alias)
+	if err != nil {
+		t.Fatalf("WalkMarkdown(alias): %v", err)
+	}
+	want := filepath.Join(alias, "NB", "Page.md")
+	if len(files) != 1 || files[0] != want {
+		t.Errorf("files = %v, want [%s] (paths must stay under the caller's root)", files, want)
+	}
+	if len(skips) != 0 {
+		t.Errorf("root alias classified as a deliberate skip: %v", skips)
+	}
+	if len(walkErrs) != 0 {
+		t.Errorf("resolved alias reported walk errors: %v", walkErrs)
+	}
+}
+
+// TestWalkMarkdown_SymlinkedRootNamedLikeSkippedDirsIsWalked pins the root
+// exemption against an unclean caller spelling: rebase cleans the root, so a
+// root compared after rebase never equals an unclean spelling ("…//vault") and
+// the dot-dir/attachments guards would instead test the resolved target's name
+// — SkipDir'ing the whole vault as a blind-but-complete empty scan.
+func TestWalkMarkdown_SymlinkedRootNamedLikeSkippedDirsIsWalked(t *testing.T) {
+	for _, targetName := range []string{"vault", "attachments", ".hidden"} {
+		t.Run(targetName, func(t *testing.T) {
+			real := filepath.Join(t.TempDir(), targetName)
+			writeMdFile(t, filepath.Join(real, "NB", "Page.md"), "body")
+			alias := filepath.Join(t.TempDir(), "vault-alias")
+			if err := os.Symlink(real, alias); err != nil {
+				t.Skipf("cannot create symlink: %v", err)
+			}
+
+			// Unclean spelling: a doubled separator still Lstats as the alias,
+			// but never equals filepath.Clean(root) — the shape a hand-edited
+			// vault_path can produce.
+			sep := string(os.PathSeparator)
+			root := filepath.Dir(alias) + sep + sep + filepath.Base(alias)
+			files, skips, walkErrs, err := WalkMarkdown(root)
+			if err != nil {
+				t.Fatalf("WalkMarkdown(%q): %v", root, err)
+			}
+			want := filepath.Join(alias, "NB", "Page.md")
+			if len(files) != 1 || files[0] != want {
+				t.Errorf("files = %v, want [%s]", files, want)
+			}
+			if len(skips) != 0 {
+				t.Errorf("root entry classified as a deliberate skip: %v", skips)
+			}
+			if len(walkErrs) != 0 {
+				t.Errorf("walked root reported walk errors: %v", walkErrs)
+			}
+		})
+	}
+}
+
+// TestWalkMarkdown_UnresolvableRootIsBlind pins the dangling alias: it must land
+// on the walk-error channel so callers derive complete=false, not look like a
+// complete, empty vault.
+func TestWalkMarkdown_UnresolvableRootIsBlind(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "dangling")
+	if err := os.Symlink(filepath.Join(t.TempDir(), "missing-target"), root); err != nil {
+		t.Skipf("cannot create symlink: %v", err)
+	}
+
+	files, skips, walkErrs, err := WalkMarkdown(root)
+	if err != nil {
+		t.Fatalf("a dangling alias must not abort the open: %v", err)
+	}
+	if len(files) != 0 || len(skips) != 0 {
+		t.Errorf("dangling root = files=%v skips=%v, want neither", files, skips)
+	}
+	if len(walkErrs) == 0 {
+		t.Fatal("dangling root reported no walk error: the pass would look complete")
 	}
 }
 
@@ -1488,15 +1579,18 @@ func TestWalkMarkdown_MutualSymlinkCycleIsSkipped(t *testing.T) {
 	if err := os.Symlink(a, b); err != nil {
 		t.Skipf("cannot create symlink: %v", err)
 	}
-	files, warnings, err := WalkMarkdown(dir)
+	files, skips, walkErrs, err := WalkMarkdown(dir)
 	if err != nil {
 		t.Fatalf("WalkMarkdown: %v", err)
 	}
 	if len(files) != 1 {
 		t.Errorf("expected only the 1 real file, got %d: %v", len(files), files)
 	}
-	if len(warnings) < 2 {
-		t.Errorf("expected >=2 symlink warnings (one per symlink), got %d", len(warnings))
+	if len(skips) < 2 {
+		t.Errorf("expected >=2 symlink skips (one per symlink), got %d", len(skips))
+	}
+	if len(walkErrs) != 0 {
+		t.Errorf("a deliberate skip must not report a walk error: %v", walkErrs)
 	}
 }
 
@@ -1509,7 +1603,7 @@ func TestWalkMarkdown_OneHopSymlinkIsSkippedWithWarning(t *testing.T) {
 	if err := os.Symlink(filepath.Join(dir, "Real"), link); err != nil {
 		t.Skipf("cannot create symlink: %v", err)
 	}
-	files, warnings, err := WalkMarkdown(dir)
+	files, skips, walkErrs, err := WalkMarkdown(dir)
 	if err != nil {
 		t.Fatalf("WalkMarkdown: %v", err)
 	}
@@ -1517,15 +1611,21 @@ func TestWalkMarkdown_OneHopSymlinkIsSkippedWithWarning(t *testing.T) {
 	if len(files) != 1 {
 		t.Errorf("expected 1 file (real target only), got %d: %v", len(files), files)
 	}
-	foundSymlinkWarn := false
-	for _, w := range warnings {
+	foundSymlinkSkip := false
+	for _, w := range skips {
 		if strings.Contains(w, "symlink not followed") {
-			foundSymlinkWarn = true
+			foundSymlinkSkip = true
 			break
 		}
 	}
-	if !foundSymlinkWarn {
-		t.Errorf("expected a 'symlink not followed' warning, got %v", warnings)
+	if !foundSymlinkSkip {
+		t.Errorf("expected a 'symlink not followed' skip, got %v", skips)
+	}
+	// The skip must stay off the walk-error channel, or it would permanently
+	// gate the inventory reconcile's destructive half in any vault with a
+	// symlink.
+	if len(walkErrs) != 0 {
+		t.Errorf("a deliberate skip must not report a walk error: %v", walkErrs)
 	}
 }
 
@@ -1541,11 +1641,11 @@ func TestScanWorkspace_NoCrashOnSymlinkLoop(t *testing.T) {
 	}
 	done := make(chan struct{})
 	var results []ScanResult
-	var warnings []string
+	var skips []string
 	var scanErr error
 	go func() {
 		defer close(done)
-		results, warnings, scanErr = ScanWorkspace(dir, 4)
+		results, skips, _, scanErr = ScanWorkspace(dir, 4)
 	}()
 	select {
 	case <-done:
@@ -1558,8 +1658,8 @@ func TestScanWorkspace_NoCrashOnSymlinkLoop(t *testing.T) {
 	if len(results) != 1 {
 		t.Errorf("expected 1 result, got %d", len(results))
 	}
-	if len(warnings) == 0 {
-		t.Error("expected symlink warnings, got none")
+	if len(skips) == 0 {
+		t.Error("expected symlink skips, got none")
 	}
 }
 
@@ -1567,7 +1667,7 @@ func BenchmarkScanWorkspace_1000Files(b *testing.B) {
 	for range b.N {
 		dir := b.TempDir()
 		writeBenchVault(b, dir, 1000)
-		_, _, err := ScanWorkspace(dir, 4)
+		_, _, _, err := ScanWorkspace(dir, 4)
 		if err != nil {
 			b.Fatalf("ScanWorkspace: %v", err)
 		}
@@ -1595,7 +1695,7 @@ func TestScanWorkspace_BudgetRegression(t *testing.T) {
 	var best time.Duration
 	for i := range runs {
 		start := time.Now()
-		_, _, err := ScanWorkspace(dir, 4)
+		_, _, _, err := ScanWorkspace(dir, 4)
 		elapsed := time.Since(start)
 		if err != nil {
 			t.Fatalf("ScanWorkspace: %v", err)

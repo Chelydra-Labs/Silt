@@ -207,7 +207,7 @@ func TestScanner_SkipsAttachmentsDir(t *testing.T) {
 	os.WriteFile(filepath.Join(nbDir, "Projects", "Site.md"), []byte("# Site"), 0o644)
 	os.WriteFile(filepath.Join(nbDir, "Inbox.md"), []byte("# Inbox"), 0o644)
 
-	files, _, err := parser.WalkMarkdown(root)
+	files, _, _, err := parser.WalkMarkdown(root)
 	if err != nil {
 		t.Fatalf("WalkMarkdown: %v", err)
 	}

@@ -8,6 +8,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -118,34 +119,27 @@ func (dm *DatabaseManager) MarkFilesIndexed(files []FileIndexStat) error {
 	return nil
 }
 
-// PruneStaleFiles deletes `files` rows for paths that are no longer present on
-// disk (the file was deleted, moved, or renamed). `seenPaths` is the complete
-// set of file paths the latest vault scan observed. Returns the pruned paths so
-// callers can surface them as one-time init warnings (a renamed file shows up
-// as "pruned old path + indexed new path").
-func (dm *DatabaseManager) PruneStaleFiles(seenPaths []string) ([]string, error) {
+// PruneStaleFiles deletes `files` rows for paths under root that are no longer
+// present on disk (the file was deleted, moved, or renamed). `seenPaths` is the
+// complete set of file paths one scan of that root observed. Returns the pruned
+// paths so callers can surface them as one-time init warnings (a renamed file
+// shows up as "pruned old path + indexed new path") and clear their index rows.
+//
+// root scopes the prune to one source's tree. The table is keyed by absolute
+// path only, so a vault open must not drop the skip keys of a linked notebook:
+// those paths are outside its scan and their own tree scan is their authority.
+func (dm *DatabaseManager) PruneStaleFiles(root string, seenPaths []string) ([]string, error) {
 	db, release, err := dm.handle()
 	if err != nil {
 		return nil, ErrDBClosed
 	}
 	defer release()
-	// Build the parameter list for the "NOT IN (...)" clause. A single
-	// round-trip DELETE keeps this cheap even for thousands of files.
-	if len(seenPaths) == 0 {
-		// No files on disk at all: drop every recorded row.
-		_, err = db.Exec("DELETE FROM files")
-		return nil, err
-	}
-	placeholders := make([]string, len(seenPaths))
-	args := make([]interface{}, len(seenPaths))
-	for i, p := range seenPaths {
-		placeholders[i] = "?"
-		args[i] = p
-	}
 
-	// Collect the about-to-be-pruned paths first so we can report them.
-	rows, err := db.Query(
-		"SELECT path FROM files WHERE path NOT IN ("+strings.Join(placeholders, ",")+")", args...)
+	seen := make(map[string]struct{}, len(seenPaths))
+	for _, p := range seenPaths {
+		seen[p] = struct{}{}
+	}
+	rows, err := db.Query("SELECT path FROM files")
 	if err != nil {
 		return nil, fmt.Errorf("failed to query stale files: %w", err)
 	}
@@ -156,6 +150,12 @@ func (dm *DatabaseManager) PruneStaleFiles(seenPaths []string) ([]string, error)
 			rows.Close()
 			return nil, err
 		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		if !pathWithinRoot(root, p) {
+			continue
+		}
 		pruned = append(pruned, p)
 	}
 	if err := rows.Err(); err != nil {
@@ -164,14 +164,40 @@ func (dm *DatabaseManager) PruneStaleFiles(seenPaths []string) ([]string, error)
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	if len(pruned) == 0 {
+		return nil, nil
+	}
 
-	if len(pruned) > 0 {
-		if _, err := db.Exec(
-			"DELETE FROM files WHERE path NOT IN ("+strings.Join(placeholders, ",")+")", args...); err != nil {
-			return nil, fmt.Errorf("failed to prune stale files: %w", err)
+	// One transaction for the delete set: a mid-failure must not leave a
+	// partially pruned cache that the next warm start trusts.
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin prune stale files: %w", err)
+	}
+	defer tx.Rollback()
+	for _, p := range pruned {
+		if _, err := tx.Exec("DELETE FROM files WHERE path = ?", p); err != nil {
+			return nil, fmt.Errorf("failed to prune stale file %s: %w", p, err)
 		}
 	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit prune stale files: %w", err)
+	}
 	return pruned, nil
+}
+
+// pathWithinRoot reports whether path is strictly below root. Used to scope
+// path-keyed deletions to one scan's tree when the table carries no source
+// column.
+func pathWithinRoot(root, path string) bool {
+	if root == "" {
+		return true
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // ForgetFile deletes the files-table row for a single path. Called by the

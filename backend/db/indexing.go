@@ -654,6 +654,149 @@ func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, source, notebook, section
 	return nil
 }
 
+// clearPageLocProjectionsTx deletes the three loc-keyed projection rows
+// (page_types / page_properties / page_core) for one page loc, leaving any
+// blocks at the loc alone. The single definition of the projection set, shared
+// by the delete/clear paths and the inventory reconcile.
+func clearPageLocProjectionsTx(tx *sql.Tx, loc PageLoc) error {
+	for _, q := range []string{
+		"DELETE FROM page_types WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+		"DELETE FROM page_properties WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+		"DELETE FROM page_core WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+	} {
+		if _, err := tx.Exec(q, loc.Source, loc.Notebook, loc.Section, loc.Page); err != nil {
+			return fmt.Errorf("clear page loc %s/%s/%s: %w", loc.Notebook, loc.Section, loc.Page, err)
+		}
+	}
+	return nil
+}
+
+// ReconcilePageInventory makes the page inventory of `source` match the scan
+// that just ran.
+//
+// The inventory has exactly two evidence sources, and this is the only place
+// they are combined:
+//
+//   - a page loc published by a file the scan resolved, and
+//   - a page loc carrying block rows.
+//
+// Adding is unconditional: every live loc gets an identity-only page_core row
+// (INSERT OR IGNORE never clobbers published core fields), and every loc that
+// carries blocks is materialized the same way — the blocks-union both registers
+// block-only pages and repairs a page_core row a partial publish dropped.
+// Deleting is conditional on `complete`: only a scan that enumerated every
+// indexed file may conclude a loc with no evidence is gone. On a blind scan
+// (a walk error or a per-file read/parse error) "not seen" is not "absent", so
+// this is add-only and the healing defers to the next complete pass.
+//
+// Blocks are never touched. A loc that still carries blocks is treated as live
+// by the keep-set, so a dead loc with stale block rows keeps its projections
+// too: the stale block row is a pre-existing under-clear, and disagreeing
+// with it would resurrect the inventory-vs-blocks split-brain in the opposite
+// direction.
+//
+// Scope is the caller's source: a vault scan must not touch a linked
+// notebook's rows, and each linked root reconciles its own tree.
+//
+// Residual staleness is deliberate (ARCHITECTURE.md §3): an in-place external
+// identity edit leaves the old loc's projections until the next vault open or
+// linked re-scan. Silt's own rename/move/delete paths clear synchronously, so
+// only an external editor can author that state, and SQLite is reproducible
+// working memory re-derived at scan boundaries.
+func (dm *DatabaseManager) ReconcilePageInventory(source string, live []PageLoc, complete bool) (int, error) {
+	if source == "" {
+		source = "vault"
+	}
+	db, release, err := dm.handle()
+	if err != nil {
+		return 0, ErrDBClosed
+	}
+	defer release()
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin page inventory reconcile: %w", err)
+	}
+	defer tx.Rollback()
+
+	liveSet := make(map[PageLoc]struct{}, len(live))
+	for _, loc := range live {
+		loc.Source = source
+		liveSet[loc] = struct{}{}
+		if err := ensurePageCoreRowTx(tx, source, loc.Notebook, loc.Section, loc.Page); err != nil {
+			return 0, err
+		}
+	}
+	// Block-evidence half of the contract. INSERT OR IGNORE keeps it additive:
+	// a loc that already has a published core row keeps its fields, and
+	// idx_blocks_src_file serves the source scan. This restores existence only —
+	// a loc that is block-bearing but lost page_types/page_properties gets its
+	// inventory row back without the typed rows; the next publish re-derives
+	// those (they are never deleted while the block row exists).
+	if _, err := tx.Exec(`
+		INSERT OR IGNORE INTO page_core (source, notebook, section, page)
+		SELECT DISTINCT ?, notebook, section, page FROM blocks WHERE source = ?`,
+		source, source); err != nil {
+		return 0, fmt.Errorf("materialize block-evidence page locs for %s: %w", source, err)
+	}
+
+	if !complete {
+		if err := tx.Commit(); err != nil {
+			return 0, fmt.Errorf("commit page inventory reconcile: %w", err)
+		}
+		return 0, nil
+	}
+
+	// Existing locs of this source across every loc-keyed projection table so
+	// drift that skipped page_core (a failed partial publish, or a pre-inventory
+	// typed projection) is reachable too. A loc carrying any block row is
+	// evidence of a page regardless of the scan, so it is never stale.
+	rows, err := tx.Query(`
+		SELECT p.notebook, p.section, p.page FROM (
+			SELECT notebook, section, page FROM page_core WHERE source = ?
+			UNION
+			SELECT notebook, section, page FROM page_types WHERE source = ?
+			UNION
+			SELECT notebook, section, page FROM page_properties WHERE source = ?
+		) p
+		WHERE NOT EXISTS (
+			SELECT 1 FROM blocks b
+			WHERE b.source = ? AND b.notebook = p.notebook
+			  AND b.section = p.section AND b.page = p.page
+		)`,
+		source, source, source, source)
+	if err != nil {
+		return 0, fmt.Errorf("read page inventory locs for %s: %w", source, err)
+	}
+	var stale []PageLoc
+	for rows.Next() {
+		loc := PageLoc{Source: source}
+		if err := rows.Scan(&loc.Notebook, &loc.Section, &loc.Page); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if _, ok := liveSet[loc]; !ok {
+			stale = append(stale, loc)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, fmt.Errorf("iterate page inventory locs for %s: %w", source, err)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+
+	for _, loc := range stale {
+		if err := clearPageLocProjectionsTx(tx, loc); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit page inventory reconcile: %w", err)
+	}
+	return len(stale), nil
+}
+
 // DeleteBlockFromPage removes a single block by ID, but ONLY if it is at the
 // specified source/notebook/section/page. This page-scoping is critical for
 // the cross-page-move source-removal path: the block has already been indexed
@@ -795,13 +938,19 @@ func (dm *DatabaseManager) FindPageByLeaf(source, page string) (notebook, sectio
 }
 
 // indexFileBlocksStage clears prior block rows (by stable block ID + by page
-// metadata) and inserts the new block/task/tag/page_links/block_meta/
-// block_references/task_dependencies rows on the caller's open transaction.
-// Shared by IndexFileBlocks and IndexFileWithProjection so the block half of
-// the publish cannot drift between them. Empty blocks clears only; the caller
-// still owns the test-seam hook + commit (so the projection step in
-// IndexFileWithProjection runs after this returns). Within-file duplicate ids
-// are appended to dups for the caller's post-commit dispatch.
+// metadata) and inserts the new
+// block/task/tag/page_links/block_meta/block_references/task_dependencies
+// rows on the caller's open transaction. Shared by IndexFileBlocks and
+// IndexFileWithProjection so the block half of the publish cannot drift
+// between them. Empty blocks clears only; the caller still owns the test-seam
+// hook + commit (so the projection step in IndexFileWithProjection runs
+// after this returns). Within-file duplicate ids are appended to dups for the
+// caller's post-commit dispatch.
+//
+// No identity reconciliation happens here: page_core is only added and
+// rewritten, never cleared, so the loc a file leaves is healed by the next
+// complete inventory scan (ReconcilePageInventory). Clearing per publish was
+// the incremental machinery this design deleted.
 func (dm *DatabaseManager) indexFileBlocksStage(tx *sql.Tx, source, notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, logTag string, dups *duplicateIDCollector) error {
 	if len(blocks) > 0 {
 		placeholders := make([]string, len(blocks))
@@ -822,6 +971,13 @@ func (dm *DatabaseManager) indexFileBlocksStage(tx *sql.Tx, source, notebook, se
 	// clear the vault's rows (#100).
 	if err := dm.ClearFileBlocks(tx, source, notebook, section, page); err != nil {
 		return fmt.Errorf("failed to clear old blocks: %w", err)
+	}
+
+	// Page-inventory guarantee: inventory reads and page-title search see a
+	// row for every file that reaches this stage, including zero-block
+	// re-indexes that a SELECT DISTINCT over blocks could never surface.
+	if err := ensurePageCoreRowTx(tx, source, notebook, section, page); err != nil {
+		return err
 	}
 
 	if len(blocks) == 0 {
@@ -905,12 +1061,12 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 }
 
 // IndexFileWithProjection is the atomic block+projection publish: in one
-// transaction it clears the page's prior block rows (by ID + by metadata) and
-// its prior page_types/page_properties rows, inserts the new block rows
-// (blocks/tasks/tags/page_links/block_meta/block_references/task_dependencies),
-// and inserts the new projection rows (or clears the projection when typeID
-// is empty). A reader can never observe blocks without their projection or
-// vice versa — closing the gap left by IndexFileBlocks + projectPageType,
+// transaction it clears the page's prior block rows (by ID + by metadata), its
+// prior page_types/page_properties rows, then inserts the new block
+// rows (blocks/tasks/tags/page_links/block_meta/block_references/
+// task_dependencies) and the new projection rows (or clears the projection when
+// typeID is empty). A reader can never observe blocks without their projection
+// or vice versa — closing the gap left by IndexFileBlocks + projectPageType,
 // which previously committed blocks and projection in two separate
 // transactions.
 //
@@ -1138,9 +1294,19 @@ func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexSt
 			continue
 		}
 
+		// Source comes from the ScanResult so the batched linked-tree scan
+		// (#134) scopes its own rows; the vault startup scan leaves Source
+		// empty, defaulting to 'vault' (the historical behavior).
+		source := res.Source
+		if source == "" {
+			source = "vault"
+		}
+
 		// Clear any pre-existing rows for these block IDs (handles the case
 		// where frontmatter metadata changed since the previous index, since
 		// block IDs are stable but (notebook, section, date) is denormalized).
+		// The loc those IDs left is healed by the next complete inventory scan;
+		// the batch itself only adds and rewrites inventory rows.
 		if len(res.Blocks) > 0 {
 			placeholders := make([]string, len(res.Blocks))
 			args := make([]interface{}, len(res.Blocks))
@@ -1155,13 +1321,6 @@ func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexSt
 		}
 
 		// Also clear by metadata to catch blocks the user removed from the file.
-		// Source comes from the ScanResult so the batched linked-tree scan
-		// (#134) scopes its own rows; the vault startup scan leaves Source
-		// empty, defaulting to 'vault' (the historical behavior).
-		source := res.Source
-		if source == "" {
-			source = "vault"
-		}
 		// The per-file indexers log file warnings (see IndexFileBlocks); the
 		// batched scan used to drop them, so a hierarchy repair found on the
 		// cold-start scan was reported nowhere. Keep the per-file log shape.
@@ -1170,6 +1329,14 @@ func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexSt
 		}
 		if err := dm.ClearFileBlocks(tx, source, res.Notebook, res.Section, res.Page); err != nil {
 			return indexedCount, skipped, fmt.Errorf("failed to clear blocks for %s: %w", res.Path, err)
+		}
+
+		// Same page-inventory guarantee as the per-file stage: the batched
+		// block-only path (projections == nil) must still register page
+		// identity; the WithProjection path rewrites this row with real core
+		// fields in the same tx below.
+		if err := ensurePageCoreRowTx(tx, source, res.Notebook, res.Section, res.Page); err != nil {
+			return indexedCount, skipped, fmt.Errorf("failed to ensure page identity for %s: %w", res.Path, err)
 		}
 
 		if err := stmts.indexBlocks(source, res.Notebook, res.Section, res.Page, res.Blocks, res.Tags, "IndexScanResults", dups); err != nil {

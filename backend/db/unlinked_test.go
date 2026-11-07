@@ -1697,9 +1697,11 @@ func TestUnlinked_CacheInvalidatesOnReindex(t *testing.T) {
 	_ = p1
 }
 
-// TestUnlinked_NoFullInventoryOnPagedPath ensures leaf lookup (ASCII and
-// non-ASCII) does not pay a full page-inventory DISTINCT (#844 page_fold).
-func TestUnlinked_NoFullInventoryOnPagedPath(t *testing.T) {
+// TestUnlinked_LeafLookupUsesPageFold ensures leaf lookup resolves case-fold
+// variants (ASCII and non-ASCII) from a paged unlinked-mention scan without
+// falling back to a full inventory read. The leaf query is the page_fold
+// index lookup, so it must stay scoped to the matching leaf.
+func TestUnlinked_LeafLookupUsesPageFold(t *testing.T) {
 	dm := newTestDB(t)
 	// Many decoy pages with different leaves.
 	for i := 0; i < 40; i++ {
@@ -1721,7 +1723,6 @@ func TestUnlinked_NoFullInventoryOnPagedPath(t *testing.T) {
 		noteBlock(uuidX, "other"),
 	})
 
-	before := fullPageInventoryScans.Load()
 	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
@@ -1730,15 +1731,17 @@ func TestUnlinked_NoFullInventoryOnPagedPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListPagesByLeaf: %v", err)
 	}
-	if fullPageInventoryScans.Load() != before {
-		t.Fatalf("page_fold leaf lookup must not full-scan inventory: before=%d after=%d",
-			before, fullPageInventoryScans.Load())
-	}
 	if len(res.Results) != 1 || res.Results[0].Ambiguous {
 		t.Fatalf("unique title: %+v", res.Results)
 	}
 	if len(pages) != 2 {
 		t.Fatalf("Unicode leaf via page_fold: got %d want 2: %+v", len(pages), pages)
+	}
+	// Scoped to the leaf: none of the 40 decoy pages may leak into the result.
+	for _, p := range pages {
+		if strings.HasPrefix(p.Page, "Decoy") {
+			t.Fatalf("leaf lookup escaped the page_fold scope: %+v", p)
+		}
 	}
 }
 

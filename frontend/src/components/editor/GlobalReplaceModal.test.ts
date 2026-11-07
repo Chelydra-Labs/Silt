@@ -250,6 +250,69 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
     expect(mocks.SaveFileBlocksProgrammatic).not.toHaveBeenCalled()
   })
 
+  it('an input edit during the in-flight preview cannot install the stale response', async () => {
+    // First preview populates the actionable surface.
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: 'b1',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'page1',
+          snippet: 'foo bar'
+        }
+      ],
+      total: 1,
+      offset: 0,
+      limit: 200,
+      has_more: false
+    })
+    await renderAndPreview('foo', 'qux')
+
+    // Second preview: hold the response until after the user edits Find.
+    let resolveResponse: (value: unknown) => void = () => {}
+    mocks.SearchBlocksPaged.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveResponse = resolve
+        })
+    )
+    await fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    await tick()
+    await fireEvent.input(screen.getByLabelText('Find'), {
+      target: { value: 'bar' }
+    })
+    await tick()
+
+    // The response was computed for "foo", but Apply would rebuild the matcher
+    // from "bar" — adopting it would apply a replacement the user never saw.
+    resolveResponse({
+      results: [
+        {
+          id: 'stale1',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'stale-page',
+          snippet: 'bar bar'
+        }
+      ],
+      total: 1,
+      offset: 0,
+      limit: 200,
+      has_more: false
+    })
+
+    await waitFor(
+      () => {
+        expect(screen.getByRole('button', { name: /^Replace/ })).toBeDisabled()
+      },
+      { timeout: 2000 }
+    )
+    expect(screen.getByText(/Preview is stale/)).toBeInTheDocument()
+    expect(screen.queryByText('stale-page')).not.toBeInTheDocument()
+    expect(mocks.SaveFileBlocksProgrammatic).not.toHaveBeenCalled()
+  })
+
   it('a mid-loop Apply failure leaves Undo available for already-persisted pages', async () => {
     mocks.SearchBlocksPaged.mockResolvedValue({
       results: [
@@ -321,6 +384,74 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       .find((c) => c[2] === 'page1')!
     const restored = undoCall[3] as Array<{ clean_text: string }>
     expect(restored[0].clean_text).toBe('foo bar')
+  })
+
+  // Apply snapshots the replacement with the matcher. Reading the input inside
+  // the per-page loop let an edit made while page 2's fetch was in flight write
+  // "foo" → old value on page 1 and new value on page 2: a batch the preview
+  // never showed, reported as a normal success.
+  it('snapshots the replacement for the whole apply batch', async () => {
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: 'b1',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'page1',
+          snippet: 'foo bar'
+        },
+        {
+          id: 'b2',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'page2',
+          snippet: 'foo qux'
+        }
+      ],
+      total: 2,
+      offset: 0,
+      limit: 200,
+      has_more: false
+    })
+    let releasePage2: () => void = () => {}
+    mocks.FetchPageBlocksProgrammatic.mockImplementation(
+      (_nb: string, _sec: string, page: string) => {
+        if (page === 'page2') {
+          return new Promise((resolve) => {
+            releasePage2 = () => resolve([block('b2', 'foo qux')])
+          })
+        }
+        return Promise.resolve([block('b1', 'foo bar')])
+      }
+    )
+    mocks.SaveFileBlocksProgrammatic.mockResolvedValue(undefined)
+
+    await renderAndPreview('foo', 'qux')
+    await fireEvent.click(screen.getByRole('button', { name: /^Replace/ }))
+    await waitFor(
+      () => {
+        expect(mocks.FetchPageBlocksProgrammatic).toHaveBeenCalledTimes(2)
+      },
+      { timeout: 2000 }
+    )
+
+    // Page 2 is still awaiting its fetch: edit Replace before it resolves.
+    await fireEvent.input(screen.getByLabelText('Replace with'), {
+      target: { value: 'ZZZ' }
+    })
+    releasePage2()
+
+    await waitFor(
+      () => {
+        expect(mocks.SaveFileBlocksProgrammatic).toHaveBeenCalledTimes(2)
+      },
+      { timeout: 2000 }
+    )
+    const page2Call = mocks.SaveFileBlocksProgrammatic.mock.calls.find(
+      (c) => c[2] === 'page2'
+    )!
+    const saved = page2Call[3] as Array<{ clean_text: string }>
+    expect(saved[0].clean_text).toBe('qux qux')
   })
 
   it('refuses a linked-notebook page even if it slips into the preview (#343)', async () => {
@@ -540,5 +671,164 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       },
       { timeout: 2000 }
     )
+  })
+
+  // The preview budget is block rows only: with page rows in the window, a
+  // find term matching many page names could hide every block match and the
+  // banner would report a page-row-inflated total. The banner reports preview
+  // ROWS, not matches: the per-page (3) and flat (500) caps mean matching
+  // blocks can exist that this preview cannot offer.
+  it('asks for block-only results and reports the truncated preview rows', async () => {
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: 'b1',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'page1',
+          snippet: 'foo bar'
+        },
+        {
+          id: 'b2',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'page2',
+          snippet: 'foo baz'
+        }
+      ],
+      total: 340,
+      offset: 0,
+      limit: 200,
+      has_more: true
+    })
+    mocks.FetchPageBlocksProgrammatic.mockResolvedValue([
+      block('b1', 'foo bar')
+    ])
+    mocks.SaveFileBlocksProgrammatic.mockResolvedValue(undefined)
+
+    await renderAndPreview('foo', 'qux')
+
+    expect(mocks.SearchBlocksPaged).toHaveBeenCalledWith(
+      'foo',
+      0,
+      200,
+      expect.objectContaining({ excludePageTitles: true })
+    )
+    expect(screen.getByText(/340 preview rows/)).toBeInTheDocument()
+    expect(screen.getByText(/3 per page/)).toBeInTheDocument()
+  })
+
+  // A rejected refresh must clear the whole actionable surface, not just show
+  // the error: the groups, the truncation banner, and the stale notice all
+  // describe a preview that no longer exists. A truncated first preview makes
+  // the banner the observable difference (it renders on truncatedCount alone).
+  it('clears the applicable preview and its truncation banner when the refresh fails', async () => {
+    mocks.SearchBlocksPaged.mockResolvedValueOnce({
+      results: [
+        {
+          id: 'b1',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'page1',
+          snippet: 'foo bar'
+        }
+      ],
+      total: 340,
+      offset: 0,
+      limit: 200,
+      has_more: true
+    })
+
+    await renderAndPreview('foo', 'qux')
+    expect(
+      screen.getByRole('button', { name: 'Replace 1' })
+    ).toBeInTheDocument()
+    expect(screen.getByText(/340 preview rows/)).toBeInTheDocument()
+
+    // Make the displayed preview stale before rejecting the refresh, so the
+    // catch's previewStale reset is exercised too (the banner only pins the
+    // truncatedCount half).
+    await fireEvent.input(screen.getByLabelText('Replace with'), {
+      target: { value: 'quux' }
+    })
+    await waitFor(() => {
+      expect(screen.getByText(/Preview is stale/)).toBeInTheDocument()
+    })
+
+    mocks.SearchBlocksPaged.mockRejectedValueOnce(new Error('ipc down'))
+    await fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+
+    await waitFor(
+      () => {
+        expect(screen.getByText(/Preview failed/)).toBeInTheDocument()
+      },
+      { timeout: 2000 }
+    )
+    expect(screen.queryByText(/preview rows/)).toBeNull()
+    expect(screen.queryByText(/Preview is stale/)).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Replace \d/ })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Replace' })).toBeDisabled()
+  })
+
+  // Page-level title hits (id === "") are navigation rows, not blocks: the
+  // backend prepends them to the paged envelope. They used to become phantom
+  // matches (preview promised a replacement; Apply could never make it) and
+  // inflated the counts.
+  it('ignores page-level title rows in the preview', async () => {
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: '',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'Phantom Page A',
+          snippet: '<mark>foo</mark> page'
+        },
+        {
+          id: '',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'Phantom Page B',
+          snippet: 'another <mark>foo</mark> page'
+        },
+        {
+          id: 'b1',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'page1',
+          snippet: 'foo bar'
+        }
+      ],
+      total: 3,
+      offset: 0,
+      limit: 200,
+      has_more: false
+    })
+    mocks.FetchPageBlocksProgrammatic.mockResolvedValue([
+      block('b1', 'foo bar')
+    ])
+    mocks.SaveFileBlocksProgrammatic.mockResolvedValue(undefined)
+
+    await renderAndPreview('foo', 'qux')
+
+    // Only the real block is a match; the page rows are not offerable.
+    expect(
+      screen.getByRole('button', { name: 'Replace 1' })
+    ).toBeInTheDocument()
+    expect(screen.getByText('1 match selected')).toBeInTheDocument()
+    expect(screen.queryByText(/Phantom Page/)).toBeNull()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Replace 1' }))
+    await waitFor(
+      () => {
+        expect(mocks.SaveFileBlocksProgrammatic).toHaveBeenCalledTimes(1)
+      },
+      { timeout: 2000 }
+    )
+    const saved = mocks.SaveFileBlocksProgrammatic.mock.calls[0][3] as Array<{
+      clean_text: string
+    }>
+    expect(saved).toHaveLength(1)
+    expect(saved[0].clean_text).toBe('qux bar')
   })
 })

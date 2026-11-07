@@ -1055,3 +1055,89 @@ func TestWarmUpgrade_PageCoreBackfillRunsEvenWhenProjectionMarkerSet(t *testing.
 		t.Fatal("PageCoreBackfillMarker not recorded after warm-upgrade backfill — it would re-run on every open until recorded, defeating the one-shot contract")
 	}
 }
+
+// TestVaultOpen_PrunesPreInventoryGhost pins the initializeVaultServices wiring
+// for the page-inventory reconcile: page_core predates its use as the inventory,
+// so an upgrading vault can carry rows at locs no file publishes any more — and
+// no path-keyed record needs to exist for the scan to heal them. The warm-skip
+// half is verified with a sentinel core field: a re-parsed file would overwrite
+// it, so observing it after reopen proves the reconcile only ADDED.
+func TestVaultOpen_PrunesPreInventoryGhost(t *testing.T) {
+	t.Setenv("SILT_DATA_DIR", t.TempDir())
+	hostConfigDir := t.TempDir()
+	t.Setenv("APPDATA", hostConfigDir)
+	t.Setenv("XDG_CONFIG_HOME", hostConfigDir)
+
+	vaultPath := t.TempDir()
+	if err := vault.ScaffoldVault(vaultPath); err != nil {
+		t.Fatalf("ScaffoldVault: %v", err)
+	}
+	pagePath := filepath.Join(vaultPath, "Books", "Dune.md")
+	// Explicit block id: the parser must not rewrite the file after the scan
+	// records its mtime, or the reopen would re-index instead of warm-skipping.
+	writeFile(t, pagePath, "---\n"+
+		"notebook: \"Books\"\n"+
+		"page: \"Dune\"\n"+
+		"type: \"book\"\n"+
+		"tags: []\n"+
+		"---\n# Dune <!-- id: aaaa1111-0000-4000-8000-00000000000a -->\n\nBody.\n")
+
+	app := &App{spacesPerTab: 4}
+	if err := app.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("first initializeVaultServices: %v", err)
+	}
+	if row, _ := app.db.GetPageCoreProjection("vault", "Books", "", "Dune"); row == nil {
+		t.Fatal("first open: page_core row missing for Dune")
+	}
+	if err := app.CloseVault(); err != nil {
+		t.Fatalf("CloseVault: %v", err)
+	}
+
+	// Second open settles the files row: the parser's own id normalization can
+	// rewrite the fixture on the first parse, and only a stable file is
+	// warm-skipped afterwards.
+	app2 := &App{spacesPerTab: 4}
+	if err := app2.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("second initializeVaultServices: %v", err)
+	}
+	// Stage the upgrade shape: a ghost identity an older build left behind, and
+	// a sentinel core field that only a re-index can overwrite.
+	if _, err := app2.db.SQLDB().Exec(
+		`INSERT INTO page_core (source, notebook, section, page, type, date, aliases, created)
+		 VALUES ('vault', 'Books', '', 'Abandoned', 'meeting', '2025-01-01', '[]', '')`,
+	); err != nil {
+		t.Fatalf("seed ghost page_core: %v", err)
+	}
+	if _, err := app2.db.SQLDB().Exec(
+		`UPDATE page_core SET type = 'warm-sentinel' WHERE source = 'vault' AND page = 'Dune'`,
+	); err != nil {
+		t.Fatalf("seed sentinel: %v", err)
+	}
+	if err := app2.CloseVault(); err != nil {
+		t.Fatalf("CloseVault: %v", err)
+	}
+
+	app3 := &App{spacesPerTab: 4}
+	if err := app3.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("warm initializeVaultServices: %v", err)
+	}
+	defer func() { _ = app3.CloseVault() }()
+
+	ghost, err := app3.db.GetPageCoreProjection("vault", "Books", "", "Abandoned")
+	if err != nil {
+		t.Fatalf("GetPageCoreProjection(ghost): %v", err)
+	}
+	if ghost != nil {
+		t.Errorf("pre-inventory ghost survived the open: %+v", ghost)
+	}
+	live, err := app3.db.GetPageCoreProjection("vault", "Books", "", "Dune")
+	if err != nil {
+		t.Fatalf("GetPageCoreProjection(Dune): %v", err)
+	}
+	if live == nil {
+		t.Fatal("live page lost its page_core row at open")
+	}
+	if live.Type != "warm-sentinel" {
+		t.Errorf("live core.Type = %q, want warm-sentinel (the file was re-indexed, so this test did not exercise the warm skip)", live.Type)
+	}
+}

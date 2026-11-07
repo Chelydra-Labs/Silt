@@ -459,6 +459,8 @@ export function makePluginContext(
     // FTS5 block search — wraps the SearchBlocks binding so plugin code (the
     // dependency picker, #303) never imports bindings/silt/app.js directly
     // (AGENTS.md — deprecated, breaks on per-plugin webviews #151/#152).
+    // Block hits only: page-level title rows (id === "", which only the paged
+    // SearchBlocksPaged envelope returns) are filtered out by the binding.
     searchBlocks: (query) => SearchBlocks(query),
     // Task-only search for the dependency picker: filters server-side via
     // SearchBlocksPaged's Type filter so a non-task block can never become a
@@ -471,7 +473,14 @@ export function makePluginContext(
         tag: '',
         type: 'TASK',
         sort: '',
-        vaultOnly: false
+        vaultOnly: false,
+        owner: '',
+        status: '',
+        dueBefore: '',
+        dueAfter: '',
+        priorityMin: 0,
+        overdue: false,
+        excludePageTitles: false
       })
       return res.results ?? []
     },

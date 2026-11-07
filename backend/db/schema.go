@@ -242,6 +242,19 @@ func (dm *DatabaseManager) initSchema() error {
 		return fmt.Errorf("failed to create files table: %w", err)
 	}
 
+	// Removed table: file_page_locs held each indexed file's last published
+	// page identity so an in-place frontmatter identity edit could be cleared
+	// synchronously. The inventory is now reconciled set-wise against the scan
+	// (ReconcilePageInventory), which is the only complete view of the files on
+	// disk — the per-file record was evidence the scan already carries, and its
+	// incremental clears produced more drift than they healed. The table never
+	// shipped in a release, so there is no data to migrate: drop it on open
+	// (idempotent) so a database created by an earlier build of this branch
+	// cannot keep a table nothing reads.
+	if _, err := db.Exec(`DROP TABLE IF EXISTS file_page_locs`); err != nil {
+		return fmt.Errorf("failed to drop retired file_page_locs table: %w", err)
+	}
+
 	// Page Links Table — the reverse index of [[target]] wiki links parsed off
 	// block bodies (#545). Re-derivable from markdown (rule 4 — SQLite is
 	// working memory); the markdown is the source of truth. Each row is one
@@ -390,6 +403,10 @@ func (dm *DatabaseManager) initSchema() error {
 	// name with a vault notebook cannot collide (mirrors page_types/blocks).
 	// SEPARATE from page_properties (type-scoped) and tags (block-scoped index)
 	// by design (SPECS.md §11.6): composing the three is a read-side concern.
+	// The table also serves as the page-inventory projection: because every
+	// index path guarantees a row (identity-only for block-only paths), it is
+	// the one-row-per-indexed-file answer to "which pages exist", including
+	// zero-block files that `SELECT DISTINCT ... FROM blocks` cannot see.
 	createPageCoreTable := `
 	CREATE TABLE IF NOT EXISTS page_core (
 		source   TEXT NOT NULL,
@@ -434,6 +451,9 @@ func (dm *DatabaseManager) initSchema() error {
 	if err := backfillPageFold(db); err != nil {
 		return fmt.Errorf("failed to backfill page_fold: %w", err)
 	}
+	if err := backfillPageCoreFromBlocks(db); err != nil {
+		return fmt.Errorf("failed to backfill page_core identities: %w", err)
+	}
 
 	// Create covered indexes
 	indexes := []string{
@@ -462,6 +482,10 @@ func (dm *DatabaseManager) initSchema() error {
 		// filter/sort/group by property value.
 		"CREATE INDEX IF NOT EXISTS idx_page_types_type ON page_types(type_name);",
 		"CREATE INDEX IF NOT EXISTS idx_page_properties_type_prop ON page_properties(type_name, property, value_sort);",
+		// Page-inventory reads (listDistinctPages) order by
+		// (notebook, section, page); the PK leads with source, so this index
+		// serves the ordered full-inventory scan without a sort.
+		"CREATE INDEX IF NOT EXISTS idx_page_core_inventory ON page_core(notebook, section, page);",
 	}
 
 	for _, idxQuery := range indexes {
@@ -694,6 +718,67 @@ func backfillPageFold(db *sql.DB) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit page_fold backfill tx: %w", err)
+	}
+	return nil
+}
+
+// pageCoreBlocksBackfillMarker records a completed one-shot fill of
+// page_core identity rows from existing blocks rows. page_core doubles as
+// the page-inventory projection (one row per indexed page file, including
+// zero-block files), so any page present in `blocks` but absent from
+// page_core — a vault upgraded before every index path guaranteed a core
+// row, or drift from a failed backfill — would be invisible to page
+// inventory reads and title search until its file is touched.
+const pageCoreBlocksBackfillMarker = "page_core_blocks_backfill"
+
+// backfillPageCoreFromBlocks inserts an identity-only page_core row (empty
+// core fields — the frontmatter-derived values are republished by the next
+// frontmatter-affecting index of the file) for every distinct
+// (source, notebook, section, page) in blocks that lacks one. Restart-safe:
+// the schema_migrations marker is inserted in the same tx as the rows, so a
+// crash rolls both back and the next open redoes the work cleanly. The
+// statement only INSERTs into page_core — blocks is never UPDATEd, so the
+// external-content FTS sync triggers are never at risk (unlike a blocks
+// backfill such as page_fold, no trigger drop/restore is needed).
+func backfillPageCoreFromBlocks(db *sql.DB) error {
+	var appliedAt int64
+	err := db.QueryRow("SELECT applied_at FROM schema_migrations WHERE name = ?", pageCoreBlocksBackfillMarker).Scan(&appliedAt)
+	if err == nil {
+		return nil
+	}
+	if err != sql.ErrNoRows {
+		return fmt.Errorf("probe %s marker: %w", pageCoreBlocksBackfillMarker, err)
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin page_core backfill tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
+		INSERT INTO page_core (source, notebook, section, page)
+		SELECT DISTINCT COALESCE(b.source, 'vault'), b.notebook, b.section, b.page
+		FROM blocks b
+		WHERE NOT EXISTS (
+			SELECT 1 FROM page_core pc
+			WHERE pc.source = COALESCE(b.source, 'vault')
+			  AND pc.notebook = b.notebook
+			  AND pc.section = b.section
+			  AND pc.page = b.page
+		)`); err != nil {
+		return fmt.Errorf("backfill page_core identities: %w", err)
+	}
+
+	if _, err := tx.Exec(
+		"INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+		pageCoreBlocksBackfillMarker, time.Now().UnixNano(),
+	); err != nil {
+		return fmt.Errorf("record %s marker: %w", pageCoreBlocksBackfillMarker, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit page_core backfill tx: %w", err)
 	}
 	return nil
 }

@@ -3,7 +3,6 @@ package parser
 import (
 	"fmt"
 	"io/fs"
-	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -51,27 +50,69 @@ type ScanResult struct {
 //
 // filepath.WalkDir does not follow symlinks, so a symlink loop (e.g.
 // Work -> ../Work) cannot cause infinite recursion on its own. We make the
-// skip explicit AND surface it as a warning so the user knows the symlinked
-// directory's contents are not indexed (and so a symlink pointing outside the
-// vault is skipped deliberately rather than silently). System/hidden
-// directories (leading ".") are pruned.
+// skip explicit AND surface it so the user knows the symlinked directory's
+// contents are not indexed (and so a symlink pointing outside the vault is
+// skipped deliberately rather than silently). System/hidden directories
+// (leading ".") are pruned.
 //
-// Returns the markdown file list, non-fatal warnings (per symlink/perms
-// errors), and a fatal error only if the root cannot be walked at all.
-func WalkMarkdown(root string) (files []string, warnings []string, err error) {
-	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+// skips and walkErrs are separate channels because they mean different things
+// to callers gating destructive work on scan completeness: a skip is content
+// that is outside the index by design (never indexable, so its absence proves
+// nothing), while a walk error is a subtree the walker could not enter and
+// therefore could not see (its absence proves nothing either — but in the
+// dangerous direction). The fatal error is non-nil only when the root itself
+// cannot be walked at all.
+//
+// A root that is itself a symlink is walked through its resolved target: WalkDir
+// Lstats its root, so handing it the alias would classify the whole vault as an
+// un-followed symlink and report an empty, error-free scan — blind, but
+// indistinguishable from a complete empty vault. Returned paths stay spelled
+// under the caller's root so relative-path math and the files table keep one
+// identity.
+func WalkMarkdown(root string) (files []string, skips []string, walkErrs []string, err error) {
+	walkRoot := root
+	if fi, lerr := os.Lstat(root); lerr != nil {
+		return nil, nil, nil, fmt.Errorf("failed to stat scan root %s: %w", root, lerr)
+	} else if fi.Mode()&os.ModeSymlink != 0 {
+		resolved, rerr := filepath.EvalSymlinks(root)
+		if rerr != nil {
+			// The alias exists but its target cannot be resolved, so nothing
+			// below it was seen: report blindness, not an empty vault.
+			return nil, nil, []string{fmt.Sprintf("%s: %v", root, rerr)}, nil
+		}
+		walkRoot = resolved
+	}
+	// Rewrite a walked path back under the caller's root. filepath.Rel handles
+	// the separator difference on Windows, where the alias and target spell the
+	// same directories with the same separators anyway.
+	rebase := func(p string) string {
+		if walkRoot == root {
+			return p
+		}
+		rel, rerr := filepath.Rel(walkRoot, p)
+		if rerr != nil {
+			return p
+		}
+		return filepath.Join(root, rel)
+	}
+	err = filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, walkErr error) error {
+		// Decide root identity before rebase: rebase returns a cleaned path, so
+		// an unclean caller spelling ("…//vault") never equals the root and the
+		// exemptions below would instead test the resolved target's name.
+		isRoot := p == walkRoot
+		path := rebase(p)
 		if walkErr != nil {
 			// Surface walker errors (permission denied, removed during
-			// traversal, etc.) as warnings rather than aborting the whole
-			// scan — one unreadable subtree shouldn't block startup.
-			warnings = append(warnings, fmt.Sprintf("%s: %v", path, walkErr))
+			// traversal, etc.) rather than aborting the whole scan — one
+			// unreadable subtree shouldn't block startup.
+			walkErrs = append(walkErrs, fmt.Sprintf("%s: %v", path, walkErr))
 			return nil
 		}
 		// Explicit symlink handling: WalkDir already does not follow them,
 		// but skipping silently leaves the user wondering why a symlinked
 		// folder's notes never appear. Warn so it's discoverable.
 		if d.Type()&fs.ModeSymlink != 0 {
-			warnings = append(warnings, fmt.Sprintf("%s: symlink not followed", path))
+			skips = append(skips, fmt.Sprintf("%s: symlink not followed", path))
 			return nil
 		}
 		if d.IsDir() {
@@ -79,7 +120,7 @@ func WalkMarkdown(root string) (files []string, warnings []string, err error) {
 			// Skip system and hidden directories (but keep the root itself
 			// when its name legitimately starts with "." — the root is the
 			// entry point, not a child to prune).
-			if path != root && strings.HasPrefix(name, ".") {
+			if !isRoot && strings.HasPrefix(name, ".") {
 				return filepath.SkipDir
 			}
 			// Skip the attachments/ directory (#101): it holds copied-in
@@ -87,7 +128,7 @@ func WalkMarkdown(root string) (files []string, warnings []string, err error) {
 			// keeps the scanner from treating it as an empty Section and
 			// avoids ingesting non-markdown files. Visible placement
 			// (<notebook>/attachments/) per the #100 data-scoping principle.
-			if path != root && strings.EqualFold(name, "attachments") {
+			if !isRoot && strings.EqualFold(name, "attachments") {
 				return filepath.SkipDir
 			}
 			return nil
@@ -97,21 +138,22 @@ func WalkMarkdown(root string) (files []string, warnings []string, err error) {
 		}
 		return nil
 	})
-	return files, warnings, err
+	return files, skips, walkErrs, err
 }
 
 // ScanWorkspace scans the vault directory recursively and returns all parsed
-// file blocks and metadata, plus walk-level warnings (symlink skips,
-// permission errors) for the caller to surface as init-warnings (#32).
-func ScanWorkspace(vaultPath string, spacesPerTab int) (results []ScanResult, walkWarnings []string, err error) {
+// file blocks and metadata, plus the walk's deliberate skips and walk errors
+// (see WalkMarkdown) for the caller to surface as init-warnings (#32) and to
+// gate destructive inventory work on.
+func ScanWorkspace(vaultPath string, spacesPerTab int) (results []ScanResult, skips []string, walkErrs []string, err error) {
 	// 1. Gather all markdown files via the shared symlink-aware walker.
-	files, walkWarnings, err := WalkMarkdown(vaultPath)
+	files, skips, walkErrs, err := WalkMarkdown(vaultPath)
 	if err != nil {
-		return nil, walkWarnings, fmt.Errorf("failed to scan directories: %w", err)
+		return nil, skips, walkErrs, fmt.Errorf("failed to scan directories: %w", err)
 	}
 
 	if len(files) == 0 {
-		return nil, walkWarnings, nil
+		return nil, skips, walkErrs, nil
 	}
 
 	// 2. Parse files in parallel using a worker pool
@@ -155,7 +197,7 @@ func ScanWorkspace(vaultPath string, spacesPerTab int) (results []ScanResult, wa
 		collected = append(collected, res)
 	}
 
-	return collected, walkWarnings, nil
+	return collected, skips, walkErrs, nil
 }
 
 // StandaloneTasksNotebook is the synthetic notebook name under which the
@@ -170,23 +212,25 @@ const StandaloneTasksNotebook = ".silt"
 // dot-directories, so this targeted read is the only path by which the file
 // enters the index. It reuses parseSingleFile, which derives
 // notebook=".silt", section="", page="tasks" from the path — no parser
-// special-casing. Returns an empty slice when the file is absent (nothing
-// created yet). The caller appends these results to the vault scan results
-// before the incremental-reindex dedupe so the file gets a normal files-row
-// and survives warm restarts unchanged.
-func ScanStandaloneTasks(vaultPath string, spacesPerTab int) []ScanResult {
+// special-casing. Returns no results and no error when the file is absent.
+// The caller appends these results to the vault scan results before the
+// incremental-reindex dedupe so the file gets a normal files-row and survives
+// warm restarts unchanged.
+//
+// A stat failure other than "absent" is returned rather than logged: it means
+// this pass could not see the tasks page, so callers gating destructive work on
+// scan completeness must count it as blindness instead of treating the page as
+// deleted.
+func ScanStandaloneTasks(vaultPath string, spacesPerTab int) ([]ScanResult, error) {
 	tasksFile := filepath.Join(vaultPath, StandaloneTasksNotebook, "tasks.md")
 	if _, err := os.Stat(tasksFile); err != nil {
-		if !os.IsNotExist(err) {
-			// A non-absent stat error (locked, permission denied, corrupted)
-			// would otherwise silently drop all standalone tasks from the
-			// index until next launch. Surface it so the gap is diagnosable.
-			log.Printf("ScanStandaloneTasks: stat %s failed: %v", tasksFile, err)
+		if os.IsNotExist(err) {
+			return nil, nil // absent — no standalone tasks indexed this pass
 		}
-		return nil // absent or unreadable — no standalone tasks indexed this pass
+		return nil, fmt.Errorf("stat %s: %w", tasksFile, err)
 	}
 	res := parseSingleFile(tasksFile, vaultPath, spacesPerTab)
-	return []ScanResult{res}
+	return []ScanResult{res}, nil
 }
 
 func parseSingleFile(path string, vaultPath string, spacesPerTab int) ScanResult {
