@@ -111,7 +111,12 @@ func TestVerifiedMove_LocalRootTakesPlainRename(t *testing.T) {
 	blockID := "4b4b4b4b-5c5c-4d6d-8e7e-8f8f8f8f8f8f"
 	seedConflictPage(t, app, notebook, "", page, blockID, "local body")
 	src := conflictPagePath(app, notebook, "", page)
-	before, err := os.Stat(src)
+	fBefore, err := os.Open(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := fBefore.Stat()
+	_ = fBefore.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +137,12 @@ func TestVerifiedMove_LocalRootTakesPlainRename(t *testing.T) {
 	if trashed == "" {
 		t.Fatal("no trashed copy found under .system/trash")
 	}
-	after, err := os.Stat(trashed)
+	fAfter, err := os.Open(trashed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := fAfter.Stat()
+	_ = fAfter.Close()
 	if err != nil {
 		t.Fatal(err)
 	}

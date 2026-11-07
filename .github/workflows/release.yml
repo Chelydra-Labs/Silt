@@ -14,7 +14,21 @@ name: Release
 on:
   push:
     branches: [main]
+  # Manual dispatch: supports dry runs to evaluate the Dependabot skip-check
+  # against any target commit without bumping versions or cutting a release:
+  #   gh workflow run release.yml -f dry_run=true -f sha=<commit-sha>
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run: run checks without bumping version or publishing release'
+        required: false
+        type: boolean
+        default: false
+      sha:
+        description: 'Commit SHA to evaluate for release (defaults to workflow SHA)'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: write # commit VERSION bump, push tag, create release
@@ -54,21 +68,32 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" != "push" ]; then
+          DRY_RUN="${{ inputs.dry_run || 'false' }}"
+          if [ "${{ github.event_name }}" != "push" ] && [ "$DRY_RUN" != "true" ]; then
             echo "Not a push event (${{ github.event_name }}); proceeding."
             echo "skipped=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          SHA="${{ github.sha }}"
+          SHA="${{ inputs.sha || github.sha }}"
           if [ -z "$SHA" ]; then
-            echo "::warning::No head_commit SHA on push event; proceeding with release."
+            echo "::warning::No target commit SHA found; proceeding with release."
             echo "skipped=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           AUTHOR=$(gh api "repos/${{ github.repository }}/commits/${SHA}/pulls" \
             --jq '.[0].user.login // empty' 2>/dev/null || echo "")
-          if [ "$AUTHOR" = "app/dependabot" ]; then
-            echo "::notice::Skipping release: $SHA was merged from a Dependabot PR."
+          IS_DEPENDABOT=false
+          case "$AUTHOR" in
+            "dependabot[bot]"|"app/dependabot"|*dependabot*)
+              IS_DEPENDABOT=true
+              ;;
+          esac
+
+          if [ "$IS_DEPENDABOT" = "true" ]; then
+            echo "::notice::Skipping release: $SHA was merged from a Dependabot PR (author: $AUTHOR)."
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+          elif [ "$DRY_RUN" = "true" ]; then
+            echo "::notice::Dry run: $SHA was merged from non-Dependabot author (${AUTHOR:-none/direct-push}). Would release."
             echo "skipped=true" >> "$GITHUB_OUTPUT"
           else
             echo "::notice::Proceeding with release (PR author: ${AUTHOR:-none/direct-push})."
