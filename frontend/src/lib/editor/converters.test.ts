@@ -17,7 +17,9 @@ import {
   BlockReferenceNode,
   PageLinkNode,
   CalloutBlock,
-  CodeBlock
+  CodeBlock,
+  BlockMathNode,
+  EmbedBlockNode
 } from './schema'
 import {
   blocksToDoc,
@@ -118,6 +120,11 @@ function makeEditorWithNewBlocks() {
       ...SiltBlockExtensions,
       CalloutBlock,
       CodeBlock,
+      // The atomic region shapes (block math, generic embed) are part of the
+      // live schema (wired with NodeViews in nodeViews.ts); including them
+      // here lets the setContent round-trip pin their depth attrs too.
+      BlockMathNode,
+      EmbedBlockNode,
       ...SiltInlineMarkExtensions,
       ...SiltColorMarkExtensions,
       ...SiltDetailsExtensions,
@@ -2128,7 +2135,6 @@ describe('region-block depth round-trip (#1003)', () => {
   // depth case next to it.
   const EMBED_UUID = '11111111-1111-1111-1111-111111111111'
   function matrixBlocks(depth: number) {
-    const n = depth + 1
     return [
       mkBlock('TASK', { clean_text: 'task', depth, line_number: 1 }),
       mkBlock('CODE', {
@@ -2205,7 +2211,13 @@ describe('region-block depth round-trip (#1003)', () => {
   it('a real TipTap editor keeps the region depth attr through setContent', () => {
     // Without the depth attr in each region node's schema, ProseMirror
     // silently drops it on setContent — the exact regression class that
-    // collapsed regions to column 0 on save.
+    // collapsed regions to column 0 on save. All seven region-carrying nodes
+    // go through: the four block regions plus the three atomic NOTE shapes
+    // (embed, block math, generic embed block).
+    const embedMarker = embedBlockMarker({
+      embedType: 'attachment',
+      src: 'a.png'
+    })
     const doc = blocksToDoc([
       mkBlock('TASK', { clean_text: 'task', depth: 0 }),
       mkBlock('CODE', { clean_text: 'code', depth: 1, language: 'js' }),
@@ -2217,22 +2229,70 @@ describe('region-block depth round-trip (#1003)', () => {
       mkBlock('DETAILS', {
         clean_text: '<details>\n<summary>S</summary>\nline\n</details>',
         depth: 1
-      })
+      }),
+      mkBlock('NOTE', {
+        clean_text: `{{embed:${EMBED_UUID}}}`,
+        depth: 1
+      }),
+      mkBlock('NOTE', { clean_text: '$$x = 1$$', depth: 1 }),
+      mkBlock('NOTE', { clean_text: embedMarker, depth: 1 })
     ])
     const editor = makeEditorWithNewBlocks()
     editor.commands.setContent(doc)
     const saved = docToBlocks(editor.getJSON() as DocJSON)
     // The harness's TrailingNode seeds an empty noteBlock after a
-    // details/table last child (notAfter covers only prose types) — expected
-    // harness behavior, not a converter artifact.
+    // details/table/embedBlock last child (notAfter covers prose types) —
+    // expected harness behavior, not a converter artifact.
     expect(saved.map((b) => [b.type, b.depth])).toEqual([
       ['TASK', 0],
       ['CODE', 1],
       ['CALLOUT', 1],
       ['TABLE', 1],
       ['DETAILS', 1],
+      ['NOTE', 1],
+      ['NOTE', 1],
+      ['NOTE', 1],
       ['NOTE', 0]
     ])
+    // The atomic shapes keep both their depth and their token bodies.
+    expect(saved[5]).toMatchObject({
+      type: 'NOTE',
+      clean_text: `{{embed:${EMBED_UUID}}}`
+    })
+    expect(saved[6]).toMatchObject({ type: 'NOTE', clean_text: '$$x = 1$$' })
+    expect(saved[7]).toMatchObject({ type: 'NOTE', clean_text: embedMarker })
+    editor.destroy()
+  })
+
+  it('floors a negative depth on the load stamp and the save readback', () => {
+    // Crafted paste HTML can carry data-depth="-1" into node attrs. The
+    // shared clamp must floor it at both boundaries: a negative depth that
+    // reaches Go's renderBlock panics the save (strings.Repeat rejects
+    // negative counts).
+    const doc = blocksToDoc([
+      mkBlock('TASK', { clean_text: 'task', depth: 0 }),
+      mkBlock('CODE', { clean_text: 'code', depth: -1, language: 'js' })
+    ])
+    // Load stamp: a poisoned block cannot enter the doc model negative.
+    expect((doc.content?.[1]?.attrs as Record<string, unknown>).depth).toBe(0)
+    // Save readback: a node attr that bypassed the load stamp (paste landing
+    // directly on the attr) still floors through regionDepth → clampDepth.
+    doc.content![1]!.attrs!.depth = -1
+    const back = docToBlocks(doc)
+    expect(back[1]!.type).toBe('CODE')
+    expect(back[1]!.depth).toBe(0)
+  })
+
+  it('paste-shaped HTML with data-depth="-1" cannot enter the doc model negative', () => {
+    // The schema's parseHTML is the paste entry point; it guards like
+    // headerBlock's depth attr instead of trusting the attribute value.
+    const editor = makeEditorWithNewBlocks()
+    editor.commands.setContent(
+      '<div data-type="callout" data-variant="note" data-depth="-1"><p>body</p></div>'
+    )
+    const first = editor.state.doc.child(0)
+    expect(first.type.name).toBe('calloutBlock')
+    expect(first.attrs.depth).toBe(0)
     editor.destroy()
   })
 })

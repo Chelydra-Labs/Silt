@@ -28,9 +28,12 @@ import {
 // Files written by pre-fix builds can carry outline depths the editor cannot
 // render (the deepest CSS rule is depth 6) — the old indent's only cap was
 // prev.depth + 1. Repair on load: fold anything deeper to MAX_DEPTH so no
-// writer (autosave included) can ever re-emit the over-deep value.
+// writer (autosave included) can ever re-emit the over-deep value. Negative
+// values floor to 0: they can only originate in crafted paste HTML
+// (data-depth="-1"), and Go's renderBlock panics on a negative
+// strings.Repeat count at save.
 function clampDepth(depth: number | undefined | null): number {
-  return Math.min(depth ?? 0, MAX_DEPTH)
+  return Math.max(0, Math.min(depth ?? 0, MAX_DEPTH))
 }
 
 // The save-side depth of a region/atomic node (callout, code, table, details,

@@ -150,3 +150,129 @@ func TestRenderFileContent_RegionDepthStableFromNonCanonical(t *testing.T) {
 		t.Fatalf("second render not byte-stable:\n%q\n%q", rendered, got)
 	}
 }
+
+// Externally-authored files (no Silt id comments — the Obsidian/vault import
+// case) trigger the watcher's normalization write: ids are minted and the
+// scanner writes newContent back to disk. The normalization emit must carry
+// the region indent exactly like renderBlock does, or the mint-write dedents
+// indented regions on first ingest — destroying the depth before any editor
+// save ever runs.
+func TestParseFileContent_NormalizationEmitKeepsRegionDepth(t *testing.T) {
+	src := "- [ ] task\n" +
+		"    > [!note] T\n    > body\n" +
+		"    | a | b |\n    | --- | --- |\n    | 1 | 2 |\n" +
+		"    <details>\n    <summary>S</summary>\n    line\n    </details>\n" +
+		"    ```js\n    kept verbatim\n    ```\n"
+
+	blocks, _, newContent, modified, err := ParseFileContent(src, "", "", "", "2026-01-01", 4)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !modified {
+		t.Fatalf("minted ids must mark the file modified for the watcher to write it")
+	}
+	if len(blocks) != 5 {
+		t.Fatalf("got %d blocks, want 5 (task + 4 regions)", len(blocks))
+	}
+	for _, b := range blocks[1:] {
+		if b.Depth != 1 {
+			t.Errorf("%v region depth = %d, want 1", b.Type, b.Depth)
+		}
+	}
+	// Every region byte in the normalized content keeps the 4-space band —
+	// content lines AND the minted id lines. Line 0 is the task (depth 0;
+	// its minted lifecycle tokens are time-dependent, so only the region
+	// lines are asserted here).
+	for i, ln := range strings.Split(newContent, "\n") {
+		if i == 0 || ln == "" {
+			continue
+		}
+		if !strings.HasPrefix(ln, "    ") {
+			t.Errorf("normalization line %d lost the region indent: %q", i+1, ln)
+		}
+	}
+	// Second pass: ids exist now, nothing re-mints — the normalized bytes
+	// are stable, so the watcher rewrites exactly once.
+	_, _, newContent2, modified2, err := ParseFileContent(newContent, "", "", "", "2026-01-01", 4)
+	if err != nil {
+		t.Fatalf("re-parse: %v", err)
+	}
+	if modified2 {
+		t.Fatalf("second pass still modified — normalization not idempotent")
+	}
+	if newContent2 != newContent {
+		t.Fatalf("normalized bytes drifted on second parse:\n%q\n%q", newContent, newContent2)
+	}
+}
+
+// A depth>0 code region whose body contains an INDENTED ``` line: the fence
+// growth check must count indented fences (isClosingFence TrimSpaces, so an
+// indented 3-fence closes a 3-backtick opener on re-parse). A too-short
+// outer fence silently splits the region mid-body across saves.
+func TestRenderFileContent_IndentedInnerFenceRoundTrip(t *testing.T) {
+	src := "- [ ] task <!-- id: " + regionDepthTaskID + " @ 2026-01-01 -->\n" +
+		"    ````markdown\n" +
+		"    ```\n" +
+		"    ```js\n" +
+		"    x\n" +
+		"    ```\n" +
+		"    ````\n" +
+		"    <!-- id: " + regionDepthCodeID + " @ 2026-01-01 -->\n" +
+		"    - reply <!-- id: " + regionDepthReplyID + " @ 2026-01-01 -->\n"
+
+	blocks, _, _, _, err := ParseFileContent(src, "", "", "", "2026-01-01", 4)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(blocks) != 3 {
+		t.Fatalf("got %d blocks, want 3 (task + code region + reply)", len(blocks))
+	}
+	if blocks[1].Type != BlockCode || blocks[1].Depth != 1 {
+		t.Fatalf("code region = %v depth %d, want CODE depth 1", blocks[1].Type, blocks[1].Depth)
+	}
+	rendered := RenderFileContent(blocks, src, "", 4)
+	if rendered != src {
+		t.Fatalf("indented inner fence not byte-identical:\n%q\n%q", src, rendered)
+	}
+	blocks2, _, _, _, err := ParseFileContent(rendered, "", "", "", "2026-01-01", 4)
+	if err != nil {
+		t.Fatalf("re-parse: %v", err)
+	}
+	if len(blocks2) != 3 {
+		t.Fatalf("re-parse scrambled the region: got %d blocks, want 3", len(blocks2))
+	}
+	if got := RenderFileContent(blocks2, rendered, "", 4); got != rendered {
+		t.Fatalf("second render drifted:\n%q\n%q", rendered, got)
+	}
+}
+
+// Blank interior lines in a depth>0 region body stay bare on render (no
+// trailing whitespace) — details bodies absorb blank lines between the open
+// and close tags, and callouts use bare `>` lines as paragraph breaks.
+func TestRenderFileContent_BlankInteriorLinesStayBareAtDepth(t *testing.T) {
+	src := "- [ ] task <!-- id: " + regionDepthTaskID + " @ 2026-01-01 -->\n" +
+		"    <details>\n    <summary>S</summary>\n\n    line\n    </details>\n" +
+		"    <!-- id: " + regionDepthDetailID + " @ 2026-01-01 -->\n" +
+		"    > [!note] T\n    >\n    > after break\n" +
+		"    <!-- id: " + regionDepthCallID + " @ 2026-01-01 -->\n"
+
+	blocks, _, _, _, err := ParseFileContent(src, "", "", "", "2026-01-01", 4)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(blocks) != 3 {
+		t.Fatalf("got %d blocks, want 3 (task + details + callout)", len(blocks))
+	}
+	for _, b := range blocks[1:] {
+		if b.Depth != 1 {
+			t.Errorf("%v region depth = %d, want 1", b.Type, b.Depth)
+		}
+	}
+	rendered := RenderFileContent(blocks, src, "", 4)
+	if rendered != src {
+		t.Fatalf("blank interior lines not byte-identical:\n%q\n%q", src, rendered)
+	}
+	if strings.Contains(rendered, " \n") {
+		t.Fatalf("trailing whitespace leaked into a rendered line: %q", rendered)
+	}
+}

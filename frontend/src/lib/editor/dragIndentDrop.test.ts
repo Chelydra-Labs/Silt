@@ -270,8 +270,10 @@ describe('BlockIndentOnDrop extension (smoke)', () => {
 // Region blocks (codeBlock, table, callout, …) carry the same depth attr as
 // prose blocks, so a region drag now passes the handler's has-depth guard and
 // must receive the resolved depth instead of falling through to a depth-less
-// native reorder. Pin the fixup path with a codeBlock so a silent revert
-// (dropping the attr or re-adding a region bail) fails here.
+// native reorder. Pins the fixup + schema attr with a codeBlock: dropping the
+// attr fails here. A re-added region bail inside handleDrop itself cannot be
+// caught from jsdom — driving the extension's drag handler needs a real
+// drop event (browser e2e is out of scope for this repo).
 describe('applyDropDepthFixup — region blocks through the drop path', () => {
   function makeEditor(): Editor {
     return new Editor({
