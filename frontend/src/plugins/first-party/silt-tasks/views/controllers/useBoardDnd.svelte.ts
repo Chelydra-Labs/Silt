@@ -17,6 +17,7 @@
 // reorder mutation stays safe under rapid reorders. manualOrder.test.ts is the
 // golden master.
 import type { PluginContext } from '../../../../sdk'
+import { tick } from 'svelte'
 import type { GroupBy, SortMode } from '../../state.svelte'
 import type { TaskDetail } from '../../types'
 import type { useBlockedDoneGuard } from '../../shared.svelte'
@@ -286,6 +287,9 @@ export function createBoardDndController({
       revertTo(prev)
       liveMessage = 'Move failed — reverted.'
     }
+    // The keyed-each relocation replaces the card node, so the activating
+    // element is gone and hub Ctrl+Z would have no scope to run in.
+    void tick().then(() => focusCard(card.id))
   }
 
   async function confirmBlockedDone() {

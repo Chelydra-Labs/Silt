@@ -425,7 +425,9 @@
   // inside the hub container: the editor is a sibling subtree with its own
   // keymap, so its keystrokes never satisfy this guard. Editable fields keep
   // their native undo, and nested popovers/dialogs own their own context —
-  // the task drawer opts back in with data-tasks-undo-scope.
+  // the task drawer opts back in with data-tasks-undo-scope. The overlay roles
+  // are listed explicitly because attribute selectors match whole values, so
+  // an alertdialog (the blocked-DONE confirm) is a distinct role.
   function onHubUndoKeydown(e: KeyboardEvent) {
     if (!e.ctrlKey || e.shiftKey || e.altKey) return
     if (e.key.toLowerCase() !== 'z') return
@@ -434,7 +436,7 @@
     if (!target.closest('[data-tasks-hub]')) return
     if (isEditableTarget(target)) return
     const overlay = target.closest(
-      '[role="dialog"], [role="listbox"], [role="menu"]'
+      '[role="dialog"], [role="alertdialog"], [role="listbox"], [role="menu"]'
     )
     if (overlay && !overlay.hasAttribute('data-tasks-undo-scope')) return
     if (!tasksUndoAvailable()) return

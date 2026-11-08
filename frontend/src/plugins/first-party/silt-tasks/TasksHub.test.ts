@@ -1654,6 +1654,48 @@ describe('Tasks hub undo (#1011)', () => {
     expect(mocks.undoLastTaskMutation).toHaveBeenCalledTimes(1)
   })
 
+  it('leaves Ctrl+Z to the blocked-DONE alertdialog', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT DISTINCT owner'))
+        return { rows: [], truncated: false }
+      if (sql.includes('SELECT DISTINCT level_0'))
+        return { rows: [], truncated: false }
+      if (/(?:WHERE|AND) t\.status != 'DONE'/.test(sql))
+        return { rows: [boardRow({ is_blocked: 1 })], truncated: false }
+      return { rows: [], truncated: false }
+    })
+    const getTaskBlockers = vi
+      .fn()
+      .mockResolvedValue([{ id: 'dep-1', clean_content: 'Prereq' }])
+
+    render(TasksHub, { ctx: undoCtx({ getTaskBlockers }), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(
+      document.querySelector(
+        '[data-block-id="t1"] button[role="checkbox"]'
+      ) as HTMLElement
+    )
+    await flush()
+
+    // The modal's confirm button holds focus while it is open. role=alertdialog
+    // is a distinct attribute value from role=dialog, so the overlay exclusion
+    // has to name it explicitly.
+    const confirm = screen.getByText('Complete anyway')
+    expect(confirm.closest('[role="alertdialog"]')).not.toBeNull()
+    const modalUndo = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    confirm.dispatchEvent(modalUndo)
+    await flush()
+
+    expect(modalUndo.defaultPrevented).toBe(false)
+    expect(mocks.undoLastTaskMutation).not.toHaveBeenCalled()
+  })
+
   it('renders the undo failure banner and dismisses it', async () => {
     mocks.undoLastTaskMutation.mockRejectedValue(new Error('focus lock held'))
 

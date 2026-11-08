@@ -51,6 +51,11 @@ if (!Element.prototype.animate) {
     } as unknown as Animation
   }
 }
+// jsdom has no Web Animations API; Svelte's animate:flip calls getAnimations
+// when a row is removed and siblings shift.
+if (!Element.prototype.getAnimations) {
+  Element.prototype.getAnimations = () => []
+}
 if (typeof document !== 'undefined' && !document.elementFromPoint) {
   document.elementFromPoint = () => document.body
 }
@@ -438,6 +443,36 @@ describe('Tasks view', () => {
     await flush()
 
     expect(mocks.updateBlockState).toHaveBeenCalledWith('m1', 'DONE')
+  })
+
+  it('moves focus to the next row when mark-done removes the focused one', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [task('f1', 'first task'), task('f2', 'second task')],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const firstRow = document.querySelector('[data-block-id="f1"]')!
+    const checkbox = firstRow.querySelector<HTMLElement>(
+      'button[role="checkbox"]'
+    )!
+    checkbox.focus()
+    await fireEvent.click(checkbox)
+    await flush()
+
+    // Focus on <body> would fail the hub's Ctrl+Z containment check.
+    const nextRow = document.querySelector('[data-block-id="f2"]')!
+    expect(nextRow).toBeInTheDocument()
+    expect(document.activeElement).toBe(
+      nextRow.querySelector('button[aria-label^="Edit metadata for"]')
+    )
   })
 
   it('single-clicking an open row opens the inspector drawer (no longer navigates away)', async () => {

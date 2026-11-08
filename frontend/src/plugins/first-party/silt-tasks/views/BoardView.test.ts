@@ -749,8 +749,15 @@ describe('BoardView — dimension-aware Board (#421)', () => {
       .querySelector<HTMLElement>('[data-card]')!
     card.focus()
     await fireEvent.keyDown(card, { key: 'ArrowRight' })
+    await flush()
 
     expect(mocks.updateBlockState).toHaveBeenCalledWith('t1', 'DOING')
+    // The keyed-each relocation replaces the node; focus must follow the card
+    // or the hub loses its Ctrl+Z scope right after a keyboard move.
+    const moved = screen
+      .getByRole('group', { name: 'In Progress' })
+      .querySelector<HTMLElement>('[data-card="t1"]')
+    expect(document.activeElement).toBe(moved)
   })
 
   // --- High-cardinality guard -------------------------------------------
