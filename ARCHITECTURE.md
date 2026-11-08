@@ -756,7 +756,16 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   `SetTaskTags` takes the full new tag set (the backend does the surgical
   `#hashtag` add/remove on the prose); `SetTaskTitle` rewrites only the
   prose, preserving `#tags`, `((uuid))` refs, and inline `[key:: value]`
-  tokens. **Sub-editor**: `FetchSubtree`
+  tokens. **Task undo**: `UndoLastTaskMutation` /
+  `PluginUndoLastTaskMutation` pop the newest entry from the session-scoped,
+  in-memory mutation journal (bounded ring of 100, cleared on vault
+  close/switch) and replay the recorded pre-mutation block state through the
+  canonical write chain; undoing a recurring TODO/DOING→DONE transition also
+  removes the recurrence sibling that transition minted, in the same write.
+  The result names the restored block IDs, the changed task fields
+  (`status`, `dueDate`, …), any removed spawned ID, and the remaining journal
+  depth; an empty journal is a clean `undone: false` no-op. **Sub-editor**:
+  `FetchSubtree`
   (read-only child sub-tree extraction; also hydrates `block_meta`
   comment attribution for NOTE children) and `SaveSubtreeBlocks` (atomic
   sub-tree splice through the canonical write chain). **Local author**:
@@ -1755,6 +1764,7 @@ PluginContext is a thin frontend wrapper over four Wails bindings on App:
 
 - PluginRawQuery(sql, params) — read-only; rejects anything not starting with SELECT/WITH; routed through ExecutionCoordinator.WithDBRead; returns row maps.
 - PluginMutateBlock(id, text) / PluginUpdateBlockState(id, status) — wrap MutateBlock / UpdateBlockState (same atomic-write + re-index + lock path as the core editor). PluginUpdateBlockState returns `{ok, spawned_id}`, carrying the recurrence instance UUID minted by a recurring TODO/DOING→DONE transition (empty otherwise).
+- PluginUndoLastTaskMutation() — wraps UndoLastTaskMutation (content-mutate gated; session-token verified). Reverses the newest journaled task mutation for this vault session and returns `{undone, skipped, blockIds, skippedBlockIds, notebook, section, page, removedSpawnedId, changedFields, remaining}`.
 - GetPluginRegistry() / ListPlugins() / ReadPluginSource(id) — discovery.
 - ValidatePluginArchive / PickPluginArchive / InstallPlugin / UninstallPlugin / EnablePlugin / DisablePlugin — `.silt-plugin` distribution (see backend/plugins package; zip-slip + traversal guarded, atomic extract).
 
