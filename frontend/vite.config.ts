@@ -1,10 +1,29 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 import tailwindcss from '@tailwindcss/vite'
+import { transformAppBindingsForHarness } from './src/lib/testing/auditHarness'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
+
+function siltAuditHarnessPlugin(): Plugin {
+  const harnessModulePath = path
+    .resolve(root, 'src/lib/testing/auditHarness.ts')
+    .replace(/\\/g, '/')
+  return {
+    name: 'silt-audit-harness',
+    apply: 'serve',
+    transform(code, id) {
+      const cleanId = id.split('?')[0].replace(/\\/g, '/')
+      if (!cleanId.endsWith('/bindings/silt/app.js')) return null
+      return {
+        code: transformAppBindingsForHarness(code, harnessModulePath),
+        map: null
+      }
+    }
+  }
+}
 
 // https://vite.dev/config/
 // Vitest config lives in vitest.config.ts (which takes precedence over a
@@ -12,6 +31,7 @@ const root = path.dirname(fileURLToPath(import.meta.url))
 // files, and the svelteTesting plugin.
 export default defineConfig({
   plugins: [
+    siltAuditHarnessPlugin(),
     tailwindcss(),
     svelte()
   ],
