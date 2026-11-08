@@ -693,16 +693,18 @@
     const targetView = params.view ?? (params.tab ? 'settings' : 'notes')
     if (targetView !== 'onboarding') {
       activeNotebook = 'Product'
-      activeSection = 'Architecture'
-      activePage = 'Design System Roadmap'
-      tabManager.openPage(
-        {
-          notebook: 'Product',
-          section: 'Architecture',
-          page: 'Design System Roadmap'
-        },
-        'pin'
-      )
+      if (!(targetView === 'notes' && params.state === 'empty')) {
+        activeSection = 'Architecture'
+        activePage = 'Design System Roadmap'
+        tabManager.openPage(
+          {
+            notebook: 'Product',
+            section: 'Architecture',
+            page: 'Design System Roadmap'
+          },
+          'pin'
+        )
+      }
     }
 
     switch (targetView) {

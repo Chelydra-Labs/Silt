@@ -6,6 +6,7 @@
 
 import { setTransport } from '@wailsio/runtime'
 import {
+  AUDIT_ACTIVE_THEME_RESULT,
   AUDIT_AI_AUDIT_ENTRIES,
   AUDIT_AI_MODELS,
   AUDIT_AI_PROVIDER_CONFIG,
@@ -21,8 +22,10 @@ import {
   AUDIT_NAV_ORDER,
   AUDIT_OPEN_TABS,
   AUDIT_PAGE_BLOCKS,
+  AUDIT_PAGE_CORE_METADATA,
   AUDIT_PAGE_MARKDOWN,
   AUDIT_PAGE_PROPERTIES,
+  AUDIT_PAGE_TYPE_INFO,
   AUDIT_PLUGIN_SECURITY_STATS,
   AUDIT_SEARCH_RESULTS,
   AUDIT_SIDEBAR_WIDTH,
@@ -32,9 +35,10 @@ import {
   AUDIT_TAGGED_BLOCKS,
   AUDIT_TAG_HIERARCHY,
   AUDIT_TASKS_ROWS,
+  AUDIT_TASK_UNDO_RESULT,
   AUDIT_TASK_UNDO_STATE,
   AUDIT_TEMPLATES_LIST,
-  AUDIT_THEMES_LIST,
+  AUDIT_THEMES_RESULT,
   AUDIT_THEME_JSON,
   AUDIT_TYPES,
   AUDIT_TYPES_REPROJECTION_STATUS,
@@ -292,12 +296,20 @@ function cloneFixture<T>(value: T): T {
 
 function shouldTargetContentQuery(
   name: string,
-  view: AuditHarnessView | null
+  view: AuditHarnessView | null,
+  tab: AuditHarnessTab | null,
+  dialog: AuditHarnessDialog | null
 ): boolean {
   if (CONTENT_QUERY_BINDINGS.has(name)) {
     // In `PluginRawQuery`, facet queries (`SELECT DISTINCT ...`) can resolve
     // empty during loading/error while the main task query (`FROM blocks b JOIN tasks t`)
     // reflects the requested state.
+    return true
+  }
+  if (
+    name === 'ListTemplates' &&
+    (dialog === 'template-picker' || tab === 'templates')
+  ) {
     return true
   }
   if (
@@ -315,21 +327,42 @@ function shouldTargetContentQuery(
 function resolveTaskPluginRawQuery(
   args: unknown[],
   state: AuditHarnessState
-): unknown {
-  const sql = typeof args[0] === 'string' ? args[0] : ''
-  if (state === 'empty') return []
+): { rows: unknown[]; truncated: boolean } {
+  const sql =
+    typeof args[2] === 'string'
+      ? args[2]
+      : typeof args[0] === 'string'
+        ? args[0]
+        : ''
+  if (state === 'empty') return { rows: [], truncated: false }
   if (sql.includes('SELECT DISTINCT owner')) {
-    return [{ owner: 'alex' }, { owner: 'sam' }]
+    return { rows: [{ owner: 'alex' }, { owner: 'sam' }], truncated: false }
   }
   if (sql.includes('SELECT DISTINCT level_0')) {
-    return [
-      { tag: 'ui' },
-      { tag: 'design' },
-      { tag: 'a11y' },
-      { tag: 'release' }
-    ]
+    return {
+      rows: [
+        { tag: 'ui' },
+        { tag: 'design' },
+        { tag: 'a11y' },
+        { tag: 'release' }
+      ],
+      truncated: false
+    }
   }
-  return cloneFixture(AUDIT_TASKS_ROWS)
+  const allRows = cloneFixture(AUDIT_TASKS_ROWS)
+  if (sql.includes("t.status = 'DONE'")) {
+    return {
+      rows: allRows.filter((row) => row.status === 'DONE'),
+      truncated: false
+    }
+  }
+  if (sql.includes("t.status != 'DONE'")) {
+    return {
+      rows: allRows.filter((row) => row.status !== 'DONE'),
+      truncated: false
+    }
+  }
+  return { rows: allRows, truncated: false }
 }
 
 export function invokeHarnessBinding(
@@ -338,7 +371,7 @@ export function invokeHarnessBinding(
   explicitSearch?: string
 ): Promise<unknown> {
   const params = parseAuditHarnessParams(explicitSearch)
-  const { view, state } = params
+  const { view, state, tab, dialog } = params
 
   // Onboarding state handling
   if (name === 'IsVaultInitialized') {
@@ -365,7 +398,7 @@ export function invokeHarnessBinding(
   }
 
   // Simulated loading or error state for content queries
-  if (shouldTargetContentQuery(name, view)) {
+  if (shouldTargetContentQuery(name, view, tab, dialog)) {
     if (state === 'loading') {
       return neverResolvingPromise()
     }
@@ -378,13 +411,17 @@ export function invokeHarnessBinding(
   if (state === 'empty') {
     switch (name) {
       case 'ListTypes':
+        return Promise.resolve({ types: [], errors: [], warnings: [] })
+      case 'ListTemplates':
+        return Promise.resolve({ templates: [], errors: [], warnings: [] })
+      case 'PluginRawQuery':
+        return Promise.resolve({ rows: [], truncated: false })
       case 'QueryPagesByType':
       case 'GetTags':
       case 'QueryTagHierarchy':
       case 'GetBlocksByTag':
       case 'QueryBlocksByTag':
       case 'PluginQueryTasks':
-      case 'PluginRawQuery':
       case 'QueryTasks':
       case 'SearchPages':
         return Promise.resolve([])
@@ -399,6 +436,14 @@ export function invokeHarnessBinding(
           limit: 20,
           has_more: false
         })
+      case 'ListNavigation':
+        if (view === 'notes') return Promise.resolve({ notebooks: [] })
+        break
+      case 'GetOpenTabs':
+        if (view === 'notes') {
+          return Promise.resolve({ open_tabs: [], active_tab: null })
+        }
+        break
       case 'FetchPageBlocks':
       case 'FetchPageBlocksProgrammatic':
         if (view === 'notes') return Promise.resolve([])
@@ -455,15 +500,22 @@ export function invokeHarnessBinding(
     case 'FetchPageMarkdownProgrammatic':
       return Promise.resolve(AUDIT_PAGE_MARKDOWN)
     case 'GetPageType':
-      return Promise.resolve('project')
+      return Promise.resolve(cloneFixture(AUDIT_PAGE_TYPE_INFO))
     case 'GetPageProperties':
       return Promise.resolve(cloneFixture(AUDIT_PAGE_PROPERTIES))
+    case 'GetPageCoreMetadata':
+      return Promise.resolve(cloneFixture(AUDIT_PAGE_CORE_METADATA))
     case 'ListTypes':
-      return Promise.resolve(cloneFixture(AUDIT_TYPES))
+      return Promise.resolve({
+        types: cloneFixture(AUDIT_TYPES),
+        errors: [],
+        warnings: []
+      })
     case 'GetType': {
       const requested = typeof args[0] === 'string' ? args[0] : 'project'
       const found =
-        AUDIT_TYPES.find((t) => t.name === requested) ?? AUDIT_TYPES[0]
+        AUDIT_TYPES.find((t) => t.id === requested || t.name === requested) ??
+        AUDIT_TYPES[0]
       return Promise.resolve(cloneFixture(found))
     }
     case 'QueryPagesByType':
@@ -517,7 +569,7 @@ export function invokeHarnessBinding(
     case 'PluginGetTaskUndoState':
       return Promise.resolve(cloneFixture(AUDIT_TASK_UNDO_STATE))
     case 'PluginUndoLastTaskMutation':
-      return Promise.resolve(true)
+      return Promise.resolve(cloneFixture(AUDIT_TASK_UNDO_RESULT))
     case 'GetPluginSettingsForNotebook': {
       const mode =
         view === 'kanban' ? 'board' : view === 'calendar' ? 'calendar' : 'list'
@@ -528,13 +580,19 @@ export function invokeHarnessBinding(
       })
     }
     case 'GetActiveTheme':
-      return Promise.resolve({ id: 'cyber-ink', mode: 'dark' })
+    case 'ApplyTheme':
+    case 'SetThemeMode':
+      return Promise.resolve(cloneFixture(AUDIT_ACTIVE_THEME_RESULT))
     case 'ListThemes':
-      return Promise.resolve(cloneFixture(AUDIT_THEMES_LIST))
+      return Promise.resolve(cloneFixture(AUDIT_THEMES_RESULT))
     case 'GetThemeJSON':
       return Promise.resolve(AUDIT_THEME_JSON)
     case 'ListTemplates':
-      return Promise.resolve(cloneFixture(AUDIT_TEMPLATES_LIST))
+      return Promise.resolve({
+        templates: cloneFixture(AUDIT_TEMPLATES_LIST),
+        errors: [],
+        warnings: []
+      })
     case 'GetTemplate': {
       const id = typeof args[0] === 'string' ? args[0] : 'architecture-rfc'
       const found =
@@ -552,7 +610,10 @@ export function invokeHarnessBinding(
     case 'ListModels':
       return Promise.resolve(cloneFixture(AUDIT_AI_MODELS))
     case 'TestAIConnection':
-      return Promise.resolve('Connected to gpt-4o-mini (142ms)')
+      return Promise.resolve({
+        ok: true,
+        message: 'Connected to gpt-4o-mini (142ms)'
+      })
     case 'GetMCPStatus':
     case 'GetLocalMCPStatus':
       return Promise.resolve(cloneFixture(AUDIT_MCP_STATUS))

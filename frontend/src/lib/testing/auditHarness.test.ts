@@ -77,14 +77,30 @@ describe('auditHarness', () => {
   })
 
   describe('invokeHarnessBinding — default & onboarding states', () => {
-    it('returns populated fixtures across all domains in default state', async () => {
+    it('returns populated Wails envelope fixtures across all domains in default state', async () => {
       const q = '?harness=1&view=notes&state=default'
       expect(await invokeHarnessBinding('IsVaultInitialized', [], q)).toBe(true)
 
       const cfg = (await invokeHarnessBinding('GetSystemConfig', [], q)) as {
-        vault_id: string
+        notebooks: { path: string; default_active: string }
+        linked_notebooks: { id: string; root_path: string }[]
+        editor: { spellcheck_enabled: boolean; font_size_px: number }
+        parsing: { auto_inject_uuid: boolean }
+        plugins: { active: string[] }
+        ui: { sidebar_width: number }
+        ai: {
+          chat: { model: string }
+          local_mcp: { http_enabled: boolean; http_port: number }
+        }
       }
-      expect(cfg.vault_id).toBe('vault-audit-001')
+      expect(cfg.notebooks.default_active).toBe('Product')
+      expect(cfg.linked_notebooks[0].id).toBe('linked-eng')
+      expect(cfg.editor.spellcheck_enabled).toBe(true)
+      expect(cfg.parsing.auto_inject_uuid).toBe(true)
+      expect(cfg.plugins.active).toContain('silt-tasks')
+      expect(cfg.ui.sidebar_width).toBe(264)
+      expect(cfg.ai.chat.model).toBe('gpt-4o-mini')
+      expect(cfg.ai.local_mcp.http_enabled).toBe(true)
 
       const nav = (await invokeHarnessBinding('ListNavigation', [], q)) as {
         notebooks: { name: string }[]
@@ -95,17 +111,18 @@ describe('auditHarness', () => {
         'FetchPageBlocks',
         ['Product', 'Architecture', 'Design System Roadmap'],
         q
-      )) as { type: string }[]
+      )) as { type: string; raw_text: string; clean_text: string }[]
       expect(blocks.map((b) => b.type)).toEqual(
         expect.arrayContaining([
-          'heading',
-          'note',
-          'callout',
-          'task',
-          'code',
-          'table'
+          'HEADER',
+          'NOTE',
+          'CALLOUT',
+          'TASK',
+          'CODE',
+          'TABLE'
         ])
       )
+      expect(blocks[0].raw_text).toContain('# Design System Roadmap')
 
       const tags = (await invokeHarnessBinding('GetTags', [], q)) as unknown[]
       expect(tags.length).toBeGreaterThan(0)
@@ -117,45 +134,207 @@ describe('auditHarness', () => {
       )) as unknown[]
       expect(tagBlocks.length).toBeGreaterThan(0)
 
-      const types = (await invokeHarnessBinding(
-        'ListTypes',
+      const typesRes = (await invokeHarnessBinding('ListTypes', [], q)) as {
+        types: { id: string; name: string; heroField: string }[]
+        errors: unknown[]
+        warnings: unknown[]
+      }
+      expect(typesRes.types[0]).toMatchObject({
+        id: 'project',
+        name: 'Project',
+        heroField: 'status'
+      })
+      expect(typesRes.errors).toEqual([])
+
+      const pageTypeInfo = (await invokeHarnessBinding(
+        'GetPageType',
+        ['Product', 'Architecture', 'Design System Roadmap'],
+        q
+      )) as { typeId: string; isSet: boolean; rawType: string }
+      expect(pageTypeInfo).toMatchObject({
+        typeId: 'project',
+        isSet: true,
+        rawType: 'project'
+      })
+
+      const pageProps = (await invokeHarnessBinding(
+        'GetPageProperties',
+        ['Product', 'Architecture', 'Design System Roadmap'],
+        q
+      )) as { name: string; value: unknown; isSet: boolean }[]
+      expect(pageProps[0]).toMatchObject({
+        name: 'status',
+        value: 'In Progress',
+        isSet: true
+      })
+
+      const coreMeta = (await invokeHarnessBinding(
+        'GetPageCoreMetadata',
+        ['Product', 'Architecture', 'Design System Roadmap'],
+        q
+      )) as { type: string; tagsAreReadOnly: boolean }
+      expect(coreMeta.type).toBe('project')
+      expect(coreMeta.tagsAreReadOnly).toBe(false)
+
+      const typeRows = (await invokeHarnessBinding(
+        'QueryPagesByType',
+        ['project'],
+        q
+      )) as { properties: { name: string; valueText: string }[] }[]
+      expect(Array.isArray(typeRows[0].properties)).toBe(true)
+      expect(typeRows[0].properties[0]).toMatchObject({
+        name: 'status',
+        valueText: 'In Progress'
+      })
+
+      const reproj = (await invokeHarnessBinding(
+        'GetTypesReprojectionStatus',
         [],
         q
-      )) as unknown[]
-      expect(types.length).toBeGreaterThan(0)
+      )) as { active: boolean; processed: number; total: number }
+      expect(reproj).toEqual({ active: false, processed: 4, total: 4 })
 
-      const tasks = (await invokeHarnessBinding(
-        'PluginQueryTasks',
+      const rawTasks = (await invokeHarnessBinding(
+        'PluginRawQuery',
+        [
+          'silt-tasks',
+          'token',
+          "SELECT * FROM blocks b JOIN tasks t ON b.id = t.block_id WHERE t.status != 'DONE'",
+          []
+        ],
+        q
+      )) as { rows: { status: string; tags: string }[]; truncated: boolean }
+      expect(rawTasks.truncated).toBe(false)
+      expect(rawTasks.rows.length).toBe(2)
+      expect(rawTasks.rows.every((r) => r.status !== 'DONE')).toBe(true)
+      expect(rawTasks.rows[0].tags).toBe('ui/tokens|design')
+
+      const doneTasks = (await invokeHarnessBinding(
+        'PluginRawQuery',
+        [
+          'silt-tasks',
+          'token',
+          "SELECT * FROM blocks b JOIN tasks t ON b.id = t.block_id WHERE t.status = 'DONE'",
+          []
+        ],
+        q
+      )) as { rows: { status: string }[]; truncated: boolean }
+      expect(doneTasks.rows).toHaveLength(1)
+      expect(doneTasks.rows[0].status).toBe('DONE')
+
+      const undoState = (await invokeHarnessBinding(
+        'PluginGetTaskUndoState',
+        ['silt-tasks', 'token'],
+        q
+      )) as { canUndo: boolean; remaining: number }
+      expect(undoState.canUndo).toBe(true)
+      expect(undoState.remaining).toBe(1)
+
+      const undoRes = (await invokeHarnessBinding(
+        'PluginUndoLastTaskMutation',
+        ['silt-tasks', 'token'],
+        q
+      )) as { undone: boolean; remaining: number }
+      expect(undoRes.undone).toBe(true)
+      expect(undoRes.remaining).toBe(0)
+
+      const activeTheme = (await invokeHarnessBinding(
+        'GetActiveTheme',
         [],
         q
-      )) as unknown[]
-      expect(tasks.length).toBeGreaterThan(0)
+      )) as {
+        id: string
+        mode: string
+        tokens: Record<string, string>
+        dark_tokens: Record<string, string>
+        light_tokens: Record<string, string>
+        bg_void: string
+      }
+      expect(activeTheme.id).toBe('cyber_forest')
+      expect(activeTheme.mode).toBe('dark')
+      expect(activeTheme.dark_tokens['--color-surface-app']).toBe('#0d1117')
+      expect(activeTheme.light_tokens['--color-surface-app']).toBe('#f8fafc')
 
-      const themes = (await invokeHarnessBinding(
-        'ListThemes',
-        [],
-        q
-      )) as unknown[]
-      expect(themes.length).toBeGreaterThan(0)
+      const themesRes = (await invokeHarnessBinding('ListThemes', [], q)) as {
+        themes: { id: string; swatches: string[]; source: string }[]
+        errors: unknown[]
+        flat_tokens: Record<string, { dark: Record<string, string> }>
+      }
+      expect(themesRes.themes.length).toBeGreaterThan(0)
+      expect(themesRes.themes[0].swatches.length).toBeGreaterThan(0)
+      expect(themesRes.flat_tokens.cyber_forest.dark).toBeDefined()
 
-      const templates = (await invokeHarnessBinding(
+      const themeDoc = JSON.parse(
+        (await invokeHarnessBinding(
+          'GetThemeJSON',
+          ['cyber_forest'],
+          q
+        )) as string
+      ) as { schema_version: string; modes: { dark: { surfaces: unknown } } }
+      expect(themeDoc.schema_version).toBe('2.0.0')
+      expect(themeDoc.modes.dark.surfaces).toBeDefined()
+
+      const templatesRes = (await invokeHarnessBinding(
         'ListTemplates',
         [],
         q
-      )) as unknown[]
-      expect(templates.length).toBeGreaterThan(0)
+      )) as {
+        templates: { placeholders: { name: string; description: string }[] }[]
+        errors: unknown[]
+        warnings: unknown[]
+      }
+      expect(templatesRes.templates.length).toBeGreaterThan(0)
+      expect(templatesRes.templates[0].placeholders[0].description).toBe(
+        'Feature Name'
+      )
 
       const aiCfg = (await invokeHarnessBinding(
         'GetAIProviderConfig',
         [],
         q
-      )) as { model: string }
-      expect(aiCfg.model).toBe('gpt-4o-mini')
+      )) as { chat: { model: string; has_key: boolean } }
+      expect(aiCfg.chat.model).toBe('gpt-4o-mini')
+      expect(aiCfg.chat.has_key).toBe(true)
+
+      const aiProbe = (await invokeHarnessBinding(
+        'TestAIConnection',
+        [],
+        q
+      )) as { ok: boolean; message: string }
+      expect(aiProbe.ok).toBe(true)
+
+      const aiAudit = (await invokeHarnessBinding('GetAIAudit', [], q)) as {
+        plugin: string
+        kind: string
+        at: string
+      }[]
+      expect(aiAudit[0]).toMatchObject({
+        plugin: 'silt-ai-qa',
+        kind: 'chat'
+      })
 
       const mcpStatus = (await invokeHarnessBinding('GetMCPStatus', [], q)) as {
         state: string
       }
       expect(mcpStatus.state).toBe('running')
+
+      const updateSettings = (await invokeHarnessBinding(
+        'GetUpdateSettings',
+        [],
+        q
+      )) as { autoCheck: boolean; shouldAutoCheck: boolean }
+      expect(updateSettings.autoCheck).toBe(true)
+
+      const secStats = (await invokeHarnessBinding(
+        'GetPluginSecurityStats',
+        [],
+        q
+      )) as { pluginId: string; denials: number; rateLimited: number }[]
+      expect(secStats[0]).toEqual({
+        pluginId: 'silt-tasks',
+        denials: 0,
+        rateLimited: 0
+      })
 
       const dicts = (await invokeHarnessBinding(
         'ListSpellcheckDictionaries',
@@ -200,12 +379,28 @@ describe('auditHarness', () => {
     it('returns empty collections for content queries when state=empty while keeping bootstrap working', async () => {
       const q = '?harness=1&view=dashboard&state=empty'
       expect(await invokeHarnessBinding('IsVaultInitialized', [], q)).toBe(true)
-      expect(await invokeHarnessBinding('GetActiveTheme', [], q)).toEqual({
-        id: 'cyber-ink',
-        mode: 'dark'
-      })
+      const activeTheme = (await invokeHarnessBinding(
+        'GetActiveTheme',
+        [],
+        q
+      )) as { id: string; mode: string }
+      expect(activeTheme.id).toBe('cyber_forest')
+      expect(activeTheme.mode).toBe('dark')
 
-      expect(await invokeHarnessBinding('ListTypes', [], q)).toEqual([])
+      expect(await invokeHarnessBinding('ListTypes', [], q)).toEqual({
+        types: [],
+        errors: [],
+        warnings: []
+      })
+      expect(await invokeHarnessBinding('ListTemplates', [], q)).toEqual({
+        templates: [],
+        errors: [],
+        warnings: []
+      })
+      expect(await invokeHarnessBinding('PluginRawQuery', [], q)).toEqual({
+        rows: [],
+        truncated: false
+      })
       expect(
         await invokeHarnessBinding('QueryPagesByType', ['project'], q)
       ).toEqual([])
@@ -234,6 +429,19 @@ describe('auditHarness', () => {
         has_more: false
       })
       expect(await invokeHarnessBinding('SearchPages', [], q)).toEqual([])
+
+      const notesEmpty = '?harness=1&view=notes&state=empty'
+      expect(
+        await invokeHarnessBinding('ListNavigation', [], notesEmpty)
+      ).toEqual({
+        notebooks: []
+      })
+      expect(await invokeHarnessBinding('GetOpenTabs', [], notesEmpty)).toEqual(
+        {
+          open_tabs: [],
+          active_tab: null
+        }
+      )
     })
 
     it('rejects content queries and onboarding folder pick with HARNESS_ERROR when state=error', async () => {
