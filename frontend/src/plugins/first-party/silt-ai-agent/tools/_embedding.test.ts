@@ -91,7 +91,7 @@ describe('embedding cache identity', () => {
 describe('gatherCandidates FTS OR recall', () => {
   it('issues an OR MATCH via sqliteQuery, not fullTextSearch sanitization', async () => {
     const source = 'database durability'
-    const expectedMatch = 'database* OR durability*'
+    const expectedMatch = '"database"* OR "durability"*'
     expect(extractKeywords(source)).toEqual(['database', 'durability'])
 
     const sqliteQuery = vi.fn(async (sql: string, params?: unknown[]) => {

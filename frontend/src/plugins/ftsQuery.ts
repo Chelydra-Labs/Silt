@@ -1,3 +1,9 @@
+import {
+  buildFtsMatch,
+  normalizeFtsTerm,
+  quoteFtsTerm
+} from '../lib/ftsQuery'
+
 /**
  * Plugin fullTextSearch SQL. Join MUST use blocks.rowid (integer), never
  * blocks.id (TEXT UUID) — external-content FTS5 is keyed on content_rowid='rowid'
@@ -10,37 +16,31 @@ export const PLUGIN_FULL_TEXT_SEARCH_SQL = `SELECT b.id, b.notebook, b.section, 
 /**
  * Sanitize one free-text token for FTS5 MATCH: keep Unicode letters/digits,
  * drop punctuation (so hyphens never become FTS5 NOT), require length ≥ 2,
- * append prefix `*`. Returns '' when the token is unusable.
+ * quote it and append the prefix `*`. Returns '' when the token is unusable.
+ *
+ * Delegates to lib/ftsQuery (the builder global search mirrors) so
+ * `ctx.fullTextSearch` cannot diverge from the hub/agent semantics.
  */
 export function sanitizeFTSToken(token: string): string {
-  let clean = ''
-  for (const ch of token) {
-    if (/[\p{L}\p{N}]/u.test(ch)) clean += ch
-  }
-  if (clean.length < 2) return ''
-  return `${clean}*`
+  const term = normalizeFtsTerm(token)
+  return term ? quoteFtsTerm(term) : ''
 }
 
 /**
- * Build an FTS5 MATCH query from free-text user input.
- * Mirrors backend/db/search.go buildFTSQuery: strip non-alnum per token,
- * drop tokens shorter than 2 chars, append prefix `*`, join with spaces
- * (implicit AND). Prevents hyphens from becoming FTS5 NOT operators.
+ * Build an FTS5 MATCH query from free-text user input. Mirrors
+ * backend/db/search.go buildFTSQuery: strip non-alnum per token, drop tokens
+ * shorter than 2 UTF-8 bytes, quote + prefix `*`, join with spaces (implicit
+ * AND). Quoting prevents hyphens and bare `OR/AND/NOT` from becoming FTS5
+ * operators.
  */
 export function buildFTSQuery(query: string): string {
-  const parts: string[] = []
-  for (const w of query.trim().split(/\s+/)) {
-    if (!w) continue
-    const term = sanitizeFTSToken(w)
-    if (term) parts.push(term)
-  }
-  return parts.join(' ')
+  return buildFtsMatch(query)
 }
 
 /**
  * Build an FTS5 MATCH that ORs sanitized prefix terms (keyword candidate
  * recall). Do not pass this through buildFTSQuery / fullTextSearch — those
- * treat "OR" as a literal token and collapse the union into an AND.
+ * treat "OR" as a literal term and collapse the union into an AND.
  */
 export function buildFTSOrQuery(terms: string[]): string {
   const parts: string[] = []

@@ -1,3 +1,8 @@
+// Parallel to backend/db/db_test.go TestBuildFTSQuery_PreservesUnicode and to
+// lib/ftsQuery.test.ts. The plugin builder feeds ctx.fullTextSearch and AI
+// retrieval, so it must produce byte-identical MATCH expressions to the Go
+// search builder — a bare uppercase OR/AND/NOT would abort FTS5 with a
+// syntax error.
 import { describe, expect, it } from 'vitest'
 import {
   buildFTSOrQuery,
@@ -7,16 +12,33 @@ import {
 } from './ftsQuery'
 
 describe('buildFTSQuery', () => {
+  it.each([
+    ['café', '"café"*'],
+    ['über road', '"über"* "road"*'],
+    ['中文 笔记', '"中文"* "笔记"*'],
+    ['кирриллица', '"кирриллица"*'],
+    // A lone CJK character is 3 UTF-8 bytes → survives Go's len() cutoff.
+    ['中', '"中"*'],
+    // FTS5 query-syntax chars are stripped; the surviving uppercase OR is
+    // quoted so FTS5 reads it as a term, not a boolean operator.
+    ['"inject" OR (*)', '"inject"* "OR"*'],
+    // Bare boolean keywords are quoted terms, never operators.
+    ['postgres OR sqlite', '"postgres"* "OR"* "sqlite"*'],
+    ['a AND b NOT c', '"AND"* "NOT"*'],
+    // <2-byte noise dropped: "a"/"b" are too short, "*" is all punctuation.
+    ['a * b', '']
+  ])('%j → %j', (input, expected) => {
+    expect(buildFTSQuery(input)).toBe(expected)
+  })
+
   it('strips hyphens so FTS5 does not treat them as NOT', () => {
-    expect(buildFTSQuery('long-term')).toBe('longterm*')
+    expect(buildFTSQuery('long-term')).toBe('"longterm"*')
   })
 
-  it('tokenizes multi-word queries with prefix wildcards', () => {
-    expect(buildFTSQuery('Atomic Blocks')).toBe('Atomic* Blocks*')
-  })
-
-  it('drops tokens shorter than 2 characters after cleaning', () => {
-    expect(buildFTSQuery('a to be')).toBe('to* be*')
+  it('joins multiple terms with implicit AND in input order', () => {
+    expect(buildFTSQuery('ship postgres now')).toBe(
+      '"ship"* "postgres"* "now"*'
+    )
   })
 
   it('returns empty string when nothing survives cleaning', () => {
@@ -25,34 +47,40 @@ describe('buildFTSQuery', () => {
     expect(buildFTSQuery('   ')).toBe('')
   })
 
-  it('keeps unicode letters', () => {
-    expect(buildFTSQuery('Café notes')).toBe('Café* notes*')
-  })
-
   it('would collapse intentional OR into AND if used on keyword unions', () => {
-    // Documents the gatherCandidates regression: free-text sanitization must
+    // Documents the gatherCandidates contract: free-text sanitization must
     // not be applied to pre-built OR expressions.
     expect(buildFTSQuery('database OR durability')).toBe(
-      'database* OR* durability*'
+      '"database"* "OR"* "durability"*'
     )
   })
 })
 
 describe('buildFTSOrQuery', () => {
-  it('joins sanitized prefixes with FTS5 OR', () => {
+  it('joins quoted prefix terms with an explicit FTS5 OR', () => {
     expect(buildFTSOrQuery(['database', 'durability'])).toBe(
-      'database* OR durability*'
+      '"database"* OR "durability"*'
     )
   })
 
   it('strips hyphens per term and drops unusable tokens', () => {
     expect(buildFTSOrQuery(['long-term', 'a', '---', 'notes'])).toBe(
-      'longterm* OR notes*'
+      '"longterm"* OR "notes"*'
     )
   })
 
+  it('quotes a term that is itself a boolean keyword', () => {
+    expect(buildFTSOrQuery(['postgres', 'OR', 'sqlite'])).toBe(
+      '"postgres"* OR "OR"* OR "sqlite"*'
+    )
+  })
+
+  it('keeps a single CJK term', () => {
+    expect(buildFTSOrQuery(['中'])).toBe('"中"*')
+  })
+
   it('dedupes identical sanitized terms', () => {
-    expect(buildFTSOrQuery(['Note', 'note', 'NOTE'])).toBe('Note*')
+    expect(buildFTSOrQuery(['Note', 'note', 'NOTE'])).toBe('"Note"*')
   })
 
   it('returns empty when no terms survive', () => {
@@ -65,6 +93,11 @@ describe('sanitizeFTSToken', () => {
   it('returns empty for short or punctuation-only input', () => {
     expect(sanitizeFTSToken('a')).toBe('')
     expect(sanitizeFTSToken('--')).toBe('')
+  })
+
+  it('quotes the surviving term so FTS5 cannot read it as syntax', () => {
+    expect(sanitizeFTSToken('OR')).toBe('"OR"*')
+    expect(sanitizeFTSToken('sprint_17')).toBe('"sprint17"*')
   })
 })
 
