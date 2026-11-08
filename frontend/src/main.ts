@@ -2,6 +2,11 @@ import './index.css'
 import { mount } from 'svelte'
 import App from './App.svelte'
 import { initTheme } from './theme/store.svelte'
+import { installAuditHarnessTransport } from './lib/testing/auditHarness'
+
+if (import.meta.env.DEV) {
+  installAuditHarnessTransport()
+}
 
 // Start the theme engine as early as possible: it fetches the active theme
 // over IPC and injects it onto :root with a same-tick repaint, overriding

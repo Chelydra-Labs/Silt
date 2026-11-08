@@ -96,6 +96,11 @@
   import { clearSelectionFocus } from './plugins/ui-location'
   import ToastContainer from './components/ToastContainer.svelte'
   import Onboarding from './components/Onboarding.svelte'
+  import ConfirmDialog from './components/ConfirmDialog.svelte'
+  import ChoiceDialog from './components/ChoiceDialog.svelte'
+  import NamePromptDialog from './components/NamePromptDialog.svelte'
+  import { parseAuditHarnessParams } from './lib/testing/auditHarness'
+  import { setDisplayMode as setTaskHubDisplayMode } from './plugins/first-party/silt-tasks/state.svelte'
   import { pushNotification } from './notifications/store.svelte'
   import {
     initStartupUpdateCheck,
@@ -495,6 +500,7 @@
   let settingsSection = $state('general')
   let showTemplatePicker = $state(false)
   let templatePickerMode = $state<'new-page' | 'insert'>('new-page')
+  let harnessDialog = $state<'confirm' | 'choice' | 'name-prompt' | null>(null)
   // Settings / quarantine dialog controller (#768). Owns the three modal
   // overlays' open state + their IPC action handlers. Driven by the
   // startup-events handlers (open*) and the dialog props (close*/confirm*).
@@ -680,6 +686,94 @@
     openPageOrNotify
   })
 
+  function applyAuditHarnessBootstrap(): void {
+    const params = parseAuditHarnessParams()
+    if (!params.enabled) return
+
+    const targetView = params.view ?? (params.tab ? 'settings' : 'notes')
+    if (targetView !== 'onboarding') {
+      activeNotebook = 'Product'
+      if (!(targetView === 'notes' && params.state === 'empty')) {
+        activeSection = 'Architecture'
+        activePage = 'Design System Roadmap'
+        tabManager.openPage(
+          {
+            notebook: 'Product',
+            section: 'Architecture',
+            page: 'Design System Roadmap'
+          },
+          'pin'
+        )
+      }
+    }
+
+    switch (targetView) {
+      case 'onboarding':
+        break
+      case 'notes':
+      case 'backlinks':
+        activeView = targetView
+        if (targetView === 'backlinks') {
+          sidebarCollapsed = false
+          manuallyCollapsed = false
+        }
+        break
+      case 'tags':
+        activeView = 'tags'
+        selectedTag = params.tag ?? 'ui/tokens'
+        sidebarCollapsed = false
+        manuallyCollapsed = false
+        break
+      case 'dashboard':
+        dashboardType = 'project'
+        activeView = 'dashboard'
+        break
+      case 'tasks':
+      case 'calendar':
+      case 'kanban':
+        activeView = targetView
+        setTaskHubDisplayMode(
+          targetView === 'kanban'
+            ? 'board'
+            : targetView === 'calendar'
+              ? 'calendar'
+              : 'list'
+        )
+        break
+      case 'settings':
+        activeView = 'settings'
+        if (params.tab) {
+          settingsSection = params.tab
+        }
+        break
+    }
+
+    switch (params.dialog) {
+      case 'search':
+        showSearch = true
+        break
+      case 'quick-switcher':
+        showQuickSwitcher = true
+        break
+      case 'shortcuts':
+        if (!shortcutHelp.open) toggleShortcutHelp()
+        break
+      case 'template-picker':
+        templatePickerMode = 'new-page'
+        showTemplatePicker = true
+        break
+      case 'global-replace':
+        globalReplaceQuery = 'Design System'
+        showGlobalReplace = true
+        break
+      case 'confirm':
+      case 'choice':
+      case 'name-prompt':
+        harnessDialog = params.dialog
+        break
+    }
+  }
+
   onMount(() => {
     async function checkInit() {
       try {
@@ -691,6 +785,9 @@
       }
     }
     void checkInit()
+    if (import.meta.env.DEV) {
+      applyAuditHarnessBootstrap()
+    }
     // Best-effort: load the config first so the initial loadPlugins call
     // observes plugins.disabled on a cold start (a config.yaml that ships
     // with a pre-disabled first-party plugin must NOT load it on the first
@@ -1650,6 +1747,44 @@
     onUnlink={settingsDialogs.handleUnlinkNotebook}
     onRelink={settingsDialogs.handleRelinkNotebook}
   />
+
+  {#if import.meta.env.DEV && harnessDialog === 'confirm'}
+    <ConfirmDialog
+      title="Delete Custom Theme"
+      message="Are you sure you want to delete 'Nordic Slate'? Pages using this theme will revert to Cyber Ink."
+      confirmLabel="Delete Theme"
+      cancelLabel="Cancel"
+      destructive={true}
+      onConfirm={() => (harnessDialog = null)}
+      onCancel={() => (harnessDialog = null)}
+    />
+  {/if}
+
+  {#if import.meta.env.DEV && harnessDialog === 'choice'}
+    <ChoiceDialog
+      title="Unsaved Template Changes"
+      message="You have unsaved edits to 'Weekly Sprint Review'. Choose how to proceed before switching templates."
+      primaryLabel="Save and switch"
+      secondaryLabel="Discard changes"
+      cancelLabel="Stay in Editor"
+      onPrimary={() => (harnessDialog = null)}
+      onSecondary={() => (harnessDialog = null)}
+      onCancel={() => (harnessDialog = null)}
+    />
+  {/if}
+
+  {#if import.meta.env.DEV && harnessDialog === 'name-prompt'}
+    <NamePromptDialog
+      title="Rename Page"
+      label="Page title"
+      initialValue="Design System Roadmap"
+      placeholder="Enter page title"
+      confirmLabel="Rename"
+      cancelLabel="Cancel"
+      onConfirm={() => (harnessDialog = null)}
+      onCancel={() => (harnessDialog = null)}
+    />
+  {/if}
 
   <!-- Plugin rendered-UI surfaces (#117) -->
   <PluginModalHost />
