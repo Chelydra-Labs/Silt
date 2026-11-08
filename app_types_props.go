@@ -236,8 +236,7 @@ func (a *App) writePageFrontmatterEdit(filePath, source, notebook, section, page
 		// not false-conflict against this rewrite. The write also
 		// invalidates prior MCP fetch bases, mirroring trackedPageWrite
 		// (this is the one page writer that cannot route through it).
-		a.refreshFingerprintAfterWrite(filePath, []byte(newContent))
-		a.invalidateMCPReadBasis(filePath)
+		a.commitPostWriteState(filePath, []byte(newContent))
 		// Past this point the on-disk write has committed. The remaining steps
 		// (re-parse, atomic block+projection publish) refresh in-memory state
 		// only — a failure there means the dashboard is stale until the next

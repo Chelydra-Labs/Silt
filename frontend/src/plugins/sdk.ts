@@ -78,7 +78,8 @@ export interface TaskUndoResult {
  * `'vault'` or `'linked:<id>'`; the locator may be the recorded one when the
  * target has left the index. `canUndo` describes journal depth, not
  * replayability: an entry whose page has since been deleted or become
- * unreadable still reports `canUndo` and then skips (and pops) when undone.
+ * permanently unreadable still reports `canUndo` and then skips (and pops)
+ * when undone.
  */
 export interface TaskUndoState {
   canUndo: boolean

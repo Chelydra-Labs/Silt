@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io/fs"
 	"os"
@@ -10,6 +12,7 @@ import (
 	"syscall"
 	"testing"
 
+	"silt/backend/core"
 	"silt/backend/parser"
 )
 
@@ -285,14 +288,42 @@ func TestDeterministicTaskUndoPathError_Classes(t *testing.T) {
 // not a skip. The atomic writer renames the new page into place and only then
 // fsyncs the parent dir, so a section directory that denies reads (0o300) fails
 // the fsync after the content already changed on disk.
+//
+// The fixture arms both post-write baselines BEFORE the tail fails: a live
+// editor load baseline and a live MCP read basis. That is what makes the
+// landed-tail bookkeeping observable — with no baseline/in-flight fetch the
+// choke point's refresh and invalidation are no-ops, so deleting them would
+// leave the suite green.
 func TestUndoLastTaskMutation_WriteTailFailureStillReportsUndone(t *testing.T) {
 	app := newTestApp(t)
-	const id = "a11d0054-1111-1111-1111-111111111111"
-	filePath := indexTestFile(t, app, "W", "S", "UndoWriteTail", "2026-07-01",
+	const (
+		id       = "a11d0054-1111-1111-1111-111111111111"
+		notebook = "W"
+		section  = "S"
+		page     = "UndoWriteTail"
+	)
+	filePath := indexTestFile(t, app, notebook, section, page, "2026-07-01",
 		"- [ ] tail <!-- id: "+id+" -->\n")
 	if err := app.SetTaskOwner(id, "Alice"); err != nil {
 		t.Fatalf("SetTaskOwner: %v", err)
 	}
+	key := core.NormalizeFileLockPath(filePath)
+
+	// Editor load: captures the load baseline the post-write refresh moves.
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	loadBefore, ok := app.loadPageFingerprint(key)
+	if !ok || loadBefore.Size == rowBasisSentinelSize {
+		t.Fatalf("load baseline = %+v (present=%v), want a byte-anchored capture", loadBefore, ok)
+	}
+	// MCP fetch: arms a real basis and a read_generation the commit must
+	// invalidate.
+	mcpGen := app.captureMCPReadBasis(filePath)
+	if mcpGen == 0 {
+		t.Fatal("captureMCPReadBasis armed no basis")
+	}
+
 	dir := filepath.Dir(filePath)
 	skipUnlessPermissionsEnforced(t, func() error {
 		if err := os.Chmod(dir, 0o300); err != nil {
@@ -318,7 +349,41 @@ func TestUndoLastTaskMutation_WriteTailFailureStillReportsUndone(t *testing.T) {
 	if got := taskUndoLen(app); got != 0 {
 		t.Fatalf("journal = %d, want 0", got)
 	}
-	if line := requireTaskLine(t, readTaskPage(t, filePath), id); strings.Contains(line, "[owner::") {
+	landed, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read landed page: %v", err)
+	}
+	if line := requireTaskLine(t, string(landed), id); strings.Contains(line, "[owner::") {
 		t.Errorf("undo did not restore the owner on disk: %q", line)
+	}
+
+	// The landed bytes must have re-baselined the editor fingerprint: a stale
+	// pre-undo baseline would later read this page's own undo as an external
+	// edit and mint a phantom refused-write stash.
+	sum := sha256.Sum256(landed)
+	loadAfter, ok := app.loadPageFingerprint(key)
+	if !ok {
+		t.Fatal("post-landing load baseline is missing")
+	}
+	if loadAfter.SHA256 != hex.EncodeToString(sum[:]) {
+		t.Fatalf("baseline sha = %s, want the landed bytes %x (pre-undo %s)",
+			loadAfter.SHA256, sum, loadBefore.SHA256)
+	}
+	if loadAfter.SHA256 == loadBefore.SHA256 {
+		t.Fatal("fixture did not change the page: baseline hash is unchanged")
+	}
+
+	// The landing must also advance the MCP generation boundary: a client
+	// echoing the pre-undo read_generation must not revert the undo once a
+	// later fetch re-arms the shared basis slot.
+	app.mcpReadBaselinesMu.RLock()
+	basis, basisOK := app.mcpReadBaselines[key]
+	invalidated := app.mcpBasisInvalidatedGen[key]
+	app.mcpReadBaselinesMu.RUnlock()
+	if !basisOK || basis.Size != mcpBasisInvalidatedSize {
+		t.Fatalf("MCP basis = %+v (present=%v), want the invalidated marker", basis, basisOK)
+	}
+	if invalidated != mcpGen {
+		t.Fatalf("invalidated generation = %d, want the pre-undo fetch generation %d", invalidated, mcpGen)
 	}
 }

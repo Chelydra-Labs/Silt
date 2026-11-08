@@ -781,9 +781,9 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   locator names the target's current location while it is still indexed (the
   file undo would write), falling back to the recorded one for a block that
   left the index. `canUndo` reports that an entry exists, not that it will
-  replay: one whose page has since been deleted or made unreadable still
-  peeks and then skips. The plugin wrapper is gated by `read-files` (it
-  discloses vault locators and block IDs). The
+  replay: one whose page has since been deleted or become permanently
+  unreadable still peeks and then skips. The plugin wrapper is gated by
+  `read-files` (it discloses vault locators and block IDs). The
   undo result names the restored block IDs, the changed task fields
   (`status`, `dueDate`, …; empty on a skipped entry), any removed spawned ID,
   and the remaining journal depth; an empty journal is a clean

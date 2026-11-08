@@ -212,8 +212,8 @@ type TaskUndoResult struct {
 // falls back to the recorded location.
 //
 // CanUndo reports that an entry exists, not that it will replay: an entry whose
-// page has since been deleted or made unreadable still peeks as canUndo and
-// then skips (and pops) on the undo call.
+// page has since been deleted or become permanently unreadable still peeks as
+// canUndo and then skips (and pops) on the undo call.
 type TaskUndoState struct {
 	CanUndo       bool     `json:"canUndo"`
 	Remaining     int      `json:"remaining"`
@@ -592,8 +592,7 @@ func (a *App) replayTaskUndoEntry(entry taskUndoEntry) (TaskUndoResult, error) {
 				// The write landed but its durability tail failed, so the
 				// writer's post-write bookkeeping never ran; the page did
 				// change, so keep the baselines in step with it.
-				a.refreshFingerprintAfterWrite(filePath, []byte(newContent))
-				a.invalidateMCPReadBasis(filePath)
+				a.commitPostWriteState(filePath, []byte(newContent))
 			}
 			didWrite = true
 
