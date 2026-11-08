@@ -31,6 +31,7 @@ import {
   setSort,
   setWeekStart
 } from '../state.svelte'
+import { initTasksUndo } from '../undo.svelte'
 
 // jsdom polyfills: the shared drawer uses Svelte transition:fly (element.
 // animate()); the sub-editor modal's TipTap needs Range.getClientRects +
@@ -49,6 +50,11 @@ if (!Element.prototype.animate) {
       oncancel: null
     } as unknown as Animation
   }
+}
+// jsdom has no Web Animations API; Svelte's animate:flip calls getAnimations
+// when a row is removed and siblings shift.
+if (!Element.prototype.getAnimations) {
+  Element.prototype.getAnimations = () => []
 }
 if (typeof document !== 'undefined' && !document.elementFromPoint) {
   document.elementFromPoint = () => document.body
@@ -437,6 +443,36 @@ describe('Tasks view', () => {
     await flush()
 
     expect(mocks.updateBlockState).toHaveBeenCalledWith('m1', 'DONE')
+  })
+
+  it('moves focus to the next row when mark-done removes the focused one', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [task('f1', 'first task'), task('f2', 'second task')],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const firstRow = document.querySelector('[data-block-id="f1"]')!
+    const checkbox = firstRow.querySelector<HTMLElement>(
+      'button[role="checkbox"]'
+    )!
+    checkbox.focus()
+    await fireEvent.click(checkbox)
+    await flush()
+
+    // Focus on <body> would fail the hub's Ctrl+Z containment check.
+    const nextRow = document.querySelector('[data-block-id="f2"]')!
+    expect(nextRow).toBeInTheDocument()
+    expect(document.activeElement).toBe(
+      nextRow.querySelector('button[aria-label^="Edit metadata for"]')
+    )
   })
 
   it('single-clicking an open row opens the inspector drawer (no longer navigates away)', async () => {
@@ -2090,5 +2126,133 @@ describe('ListView — server-side filtering via buildQuery (#526)', () => {
     expect(screen.getByTestId('tasks-open-empty-filtered')).toBeInTheDocument()
     expect(screen.getByText(/No open tasks match/i)).toBeInTheDocument()
     expect(screen.queryByText(/All caught up/i)).toBeNull()
+  })
+})
+// --- Session undo (#1011) -------------------------------------------------
+
+describe('Tasks view — session undo (#1011)', () => {
+  const emptyJournal = {
+    canUndo: false,
+    remaining: 0,
+    changedFields: [] as string[],
+    blockIds: [] as string[],
+    notebook: '',
+    section: '',
+    page: '',
+    source: 'vault'
+  }
+
+  beforeEach(() => {
+    mocks.sqliteQuery.mockReset()
+    mocks.updateBlockState
+      .mockReset()
+      .mockResolvedValue({ ok: true, spawnedId: '' })
+    mocks.createTask.mockReset().mockResolvedValue('new-task-id')
+    mocks.blockChangedCallbacks.length = 0
+  })
+
+  afterEach(() => {
+    cleanup()
+    clearTaskPageRoute()
+  })
+
+  it('undoes a drawer due-date change and clears the field', async () => {
+    const rows: TaskRow[] = [
+      task('u1', 'Undo my due date', {
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily',
+        due_date: ''
+      })
+    ]
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) return { rows, truncated: false }
+      return { rows: [], truncated: false }
+    })
+
+    let journal = emptyJournal
+    const setTaskDueDate = vi.fn(async (_id: string, value: string) => {
+      rows[0].due_date = value
+      journal = {
+        ...emptyJournal,
+        canUndo: true,
+        remaining: 1,
+        changedFields: ['dueDate'],
+        blockIds: ['u1'],
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily'
+      }
+      return true
+    })
+    const getTaskUndoState = vi.fn(async () => ({ ...journal }))
+    const undoLastTaskMutation = vi.fn(async () => {
+      rows[0].due_date = ''
+      journal = emptyJournal
+      return {
+        undone: true,
+        skipped: false,
+        blockIds: ['u1'],
+        skippedBlockIds: [],
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily',
+        removedSpawnedId: '',
+        changedFields: ['dueDate'],
+        remaining: 0
+      }
+    })
+    const ctx = {
+      ...makeCtx(),
+      setTaskDueDate,
+      getTaskUndoState,
+      undoLastTaskMutation
+    } as unknown as PluginContext
+    initTasksUndo(ctx)
+
+    render(Tasks, { ctx, manifest: MANIFEST })
+    await flush()
+
+    const rowButton = document.querySelector(
+      '[data-block-id="u1"] button[aria-label^="Edit metadata for"]'
+    ) as HTMLElement
+    await fireEvent.click(rowButton)
+    await flush()
+
+    // The drawer is an allowed Ctrl+Z scope inside the hub.
+    expect(screen.getByTestId('task-edit-drawer')).toHaveAttribute(
+      'data-tasks-undo-scope'
+    )
+    const dueTrigger = document.getElementById('task-due-date-trigger')!
+    expect(dueTrigger.textContent).toContain('Set date…')
+
+    await fireEvent.click(dueTrigger)
+    await flush()
+    await fireEvent.click(screen.getByRole('button', { name: /^Tomorrow/ }))
+    await flush()
+    expect(setTaskDueDate).toHaveBeenCalledWith('u1', dateOffsetStr(1))
+
+    // The backend writes the block; the event refreshes the host + journal.
+    mocks.blockChangedCallbacks.forEach((cb) => cb())
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    await flush()
+    expect(dueTrigger.textContent).toContain(dateOffsetStr(1))
+
+    const undoButton = screen.getByTestId('tasks-undo-drawer')
+    expect(undoButton).not.toBeDisabled()
+    expect(undoButton).toHaveAttribute(
+      'aria-label',
+      'Undo due date change in Work › Journal › Daily'
+    )
+    await fireEvent.click(undoButton)
+    await flush()
+    expect(undoLastTaskMutation).toHaveBeenCalledTimes(1)
+
+    mocks.blockChangedCallbacks.forEach((cb) => cb())
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    await flush()
+    expect(
+      document.getElementById('task-due-date-trigger')!.textContent
+    ).toContain('Set date…')
   })
 })

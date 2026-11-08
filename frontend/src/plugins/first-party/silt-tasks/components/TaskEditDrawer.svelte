@@ -6,6 +6,7 @@
 
   import type { TaskDetail } from '../types'
   import TaskMetadataSidebar from './TaskMetadataSidebar.svelte'
+  import UndoButton from './UndoButton.svelte'
   import { motionDuration } from '../motion'
 
   /**
@@ -239,6 +240,13 @@
   <div
     class="flex-shrink-0 space-y-3 border-t border-surface-card-border px-5 py-4"
   >
+    <!-- The drawer is where metadata edits happen, so the undo it offers
+         belongs next to the task it would restore. Same control/state as the
+         hub header. -->
+    <section>
+      <UndoButton variant="block" />
+    </section>
+
     {#if onOpenSubEditor}
       <section>
         <button
@@ -292,6 +300,7 @@
     tabindex="-1"
     data-testid="task-edit-drawer"
     data-variant={isPane ? 'pane' : 'overlay'}
+    data-tasks-undo-scope
   >
     {@render drawerBody()}
   </div>

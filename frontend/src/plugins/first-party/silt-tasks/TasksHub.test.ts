@@ -9,6 +9,9 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 const mocks = vi.hoisted(() => ({
   sqliteQuery: vi.fn(),
   updatePluginSetting: vi.fn().mockResolvedValue(true),
+  updateBlockState: vi.fn(),
+  getTaskUndoState: vi.fn(),
+  undoLastTaskMutation: vi.fn(),
   tasksSettings: {},
   blockChangedCallbacks: [] as Array<() => void>,
   configChangedCallbacks: [] as Array<() => void>
@@ -55,11 +58,15 @@ import {
   getTaskPageRoute,
   resetTaskHubState
 } from './state.svelte'
+import { getTasksUndoView } from './undo.svelte'
 import { getTaskWeekStart } from '../../../lib/taskWeekStart.svelte'
 import { settings } from '../../../settings/store.svelte'
 
 // jsdom polyfills: ListView pulls in TaskEditDrawer/TaskSubEditorModal, whose
 // transition:fly + TipTap need Element.animate / elementFromPoint / Range rects.
+if (!Element.prototype.getAnimations) {
+  Element.prototype.getAnimations = () => []
+}
 if (!Element.prototype.animate) {
   Element.prototype.animate = function () {
     return {
@@ -1374,5 +1381,664 @@ describe('Tasks hub — saved views bookmark (#427)', () => {
       getTaskHubState().savedViews.find((v) => v.id === savedId)
     ).toBeUndefined()
     expect(getTaskHubState().activeSavedViewId).toBe('')
+  })
+})
+
+// --- Session undo (#1011) -------------------------------------------------
+
+function journalState(overrides: Record<string, unknown> = {}) {
+  return {
+    canUndo: true,
+    remaining: 3,
+    changedFields: ['status'],
+    blockIds: ['t1'],
+    notebook: 'Work',
+    section: 'Journal',
+    page: 'Daily',
+    source: 'vault',
+    ...overrides
+  }
+}
+
+function undoResult(overrides: Record<string, unknown> = {}) {
+  return {
+    undone: true,
+    skipped: false,
+    blockIds: ['t1'],
+    skippedBlockIds: [],
+    notebook: 'Work',
+    section: 'Journal',
+    page: 'Daily',
+    removedSpawnedId: '',
+    changedFields: ['status'],
+    remaining: 0,
+    ...overrides
+  }
+}
+
+function boardRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 't1',
+    source: 'vault',
+    notebook: 'Work',
+    section: 'Journal',
+    page: 'Daily',
+    file_date: '2026-07-01',
+    clean_content: 'Task',
+    status: 'TODO',
+    owner: '',
+    start_date: '',
+    due_date: '',
+    priority: 3,
+    pinned: 0,
+    progress: 0,
+    recurrence: '',
+    comments_count: 0,
+    links_count: 0,
+    created_at: '',
+    completed_at: '',
+    manual_order: 0,
+    modified_at: '',
+    estimate_minutes: null,
+    subtask_total: 0,
+    subtask_done: 0,
+    tags: '',
+    is_blocked: 0,
+    ...overrides
+  }
+}
+
+function undoCtx(overrides: Partial<PluginContext> = {}): PluginContext {
+  return makeCtx({
+    updateBlockState: mocks.updateBlockState,
+    getTaskUndoState: mocks.getTaskUndoState,
+    undoLastTaskMutation: mocks.undoLastTaskMutation,
+    ...overrides
+  })
+}
+
+describe('Tasks hub undo (#1011)', () => {
+  beforeEach(() => {
+    mocks.sqliteQuery.mockReset().mockResolvedValue({
+      rows: [],
+      truncated: false
+    })
+    mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
+    mocks.updateBlockState
+      .mockReset()
+      .mockResolvedValue({ ok: true, spawnedId: '' })
+    mocks.getTaskUndoState.mockReset().mockResolvedValue(journalState())
+    mocks.undoLastTaskMutation.mockReset().mockResolvedValue(undoResult())
+    mocks.tasksSettings = {}
+    mocks.blockChangedCallbacks.length = 0
+    mocks.configChangedCallbacks.length = 0
+    clearTaskPageRoute()
+    resetTaskHubState()
+  })
+
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('keeps the undo affordance visible but disabled with an empty journal', async () => {
+    mocks.getTaskUndoState
+      .mockReset()
+      .mockResolvedValue(
+        journalState({ canUndo: false, remaining: 0, changedFields: [] })
+      )
+
+    render(TasksHub, { ctx: undoCtx(), manifest: MANIFEST })
+    await flush()
+
+    const button = screen.getByTestId('tasks-undo')
+    expect(button).toBeInTheDocument()
+    expect(button).toBeDisabled()
+    expect(button).toHaveTextContent('Undo')
+    expect(button).toHaveAttribute('aria-keyshortcuts', 'Control+Z')
+    expect(button).toHaveAttribute('aria-label', 'Nothing to undo')
+  })
+
+  it('names the journal head and the remaining depth in the label', async () => {
+    mocks.getTaskUndoState.mockResolvedValue(journalState({ remaining: 3 }))
+
+    render(TasksHub, { ctx: undoCtx(), manifest: MANIFEST })
+    await flush()
+
+    const button = screen.getByTestId('tasks-undo')
+    expect(button).not.toBeDisabled()
+    expect(button).toHaveAttribute(
+      'aria-label',
+      'Undo status change in Work › Journal › Daily — 3 changes left'
+    )
+    // The visible chip is decorative (the label already says it), but it keeps
+    // the leftover depth visible for sighted users after a cross-file undo.
+    expect(button).toHaveTextContent('3')
+  })
+
+  it('scopes Ctrl+Z to hub focus and leaves the editor and editable fields alone', async () => {
+    render(TasksHub, { ctx: undoCtx(), manifest: MANIFEST })
+    await flush()
+
+    // The editor is a sibling subtree. Its Ctrl+Z must never reach the hub,
+    // and the hub must not consume it before the editor keymap can run.
+    const editor = document.createElement('div')
+    editor.className = 'ProseMirror'
+    editor.setAttribute('contenteditable', 'true')
+    document.body.appendChild(editor)
+    const editorUndo = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    editor.dispatchEvent(editorUndo)
+    expect(editorUndo.defaultPrevented).toBe(false)
+    expect(mocks.undoLastTaskMutation).not.toHaveBeenCalled()
+    editor.remove()
+
+    // Editable hub fields keep their native undo.
+    const fieldUndo = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    screen.getByTestId('tasks-hub-text-filter').dispatchEvent(fieldUndo)
+    expect(fieldUndo.defaultPrevented).toBe(false)
+    expect(mocks.undoLastTaskMutation).not.toHaveBeenCalled()
+
+    // Nested dialogs own their own context (the drawer opts back in).
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+    const dialogUndo = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    screen.getByTestId('tasks-hub-save-view-popover').dispatchEvent(dialogUndo)
+    expect(dialogUndo.defaultPrevented).toBe(false)
+    expect(mocks.undoLastTaskMutation).not.toHaveBeenCalled()
+    await fireEvent.keyDown(screen.getByTestId('tasks-hub-save-view-popover'), {
+      key: 'Escape'
+    })
+    await flush()
+
+    // Ctrl+Shift+Z is redo, which the session journal does not offer.
+    const redo = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    screen.getByTestId('tasks-hub-mode-switcher').dispatchEvent(redo)
+    expect(redo.defaultPrevented).toBe(false)
+    expect(mocks.undoLastTaskMutation).not.toHaveBeenCalled()
+
+    // A non-editable hub surface is the valid scope.
+    const hubUndo = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    screen.getByTestId('tasks-hub-mode-switcher').dispatchEvent(hubUndo)
+    await flush()
+    expect(hubUndo.defaultPrevented).toBe(true)
+    expect(mocks.undoLastTaskMutation).toHaveBeenCalledTimes(1)
+    expect(getTasksUndoView().announcement).toBe(
+      'Undid status change in Work › Journal › Daily. No more changes to undo.'
+    )
+  })
+
+  it('opts Ctrl+Z back in inside the task drawer but not its popovers', async () => {
+    const rows = [
+      boardRow({
+        id: 't1',
+        line_number: 1,
+        clean_content: 'Drawer undo',
+        due_date: ''
+      })
+    ]
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT DISTINCT owner'))
+        return { rows: [], truncated: false }
+      if (sql.includes('SELECT DISTINCT level_0'))
+        return { rows: [], truncated: false }
+      if (/(?:WHERE|AND) t\.status != 'DONE'/.test(sql))
+        return { rows, truncated: false }
+      return { rows: [], truncated: false }
+    })
+
+    render(TasksHub, { ctx: undoCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(
+      document.querySelector(
+        '[data-block-id="t1"] button[aria-label^="Edit metadata for"]'
+      )!
+    )
+    await flush()
+
+    // The overlay drawer is role=dialog, so its opt-in attribute is the only
+    // thing re-admitting hub undo inside it.
+    const drawer = screen.getByTestId('task-edit-drawer')
+    expect(drawer).toHaveAttribute('role', 'dialog')
+    expect(drawer).toHaveAttribute('data-tasks-undo-scope')
+
+    // Popovers portal out of the hub subtree, so Ctrl+Z inside one stays the
+    // popover's own — never the hub journal.
+    await fireEvent.click(document.getElementById('task-due-date-trigger')!)
+    await flush()
+    const popoverUndo = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    screen.getByRole('button', { name: /^Tomorrow/ }).dispatchEvent(popoverUndo)
+    expect(popoverUndo.defaultPrevented).toBe(false)
+    expect(mocks.undoLastTaskMutation).not.toHaveBeenCalled()
+
+    // A non-editable control on the opted-in drawer still reaches the journal.
+    const drawerUndo = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    screen.getByTestId('tasks-undo-drawer').dispatchEvent(drawerUndo)
+    await flush()
+    expect(drawerUndo.defaultPrevented).toBe(true)
+    expect(mocks.undoLastTaskMutation).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves Ctrl+Z to the blocked-DONE alertdialog', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT DISTINCT owner'))
+        return { rows: [], truncated: false }
+      if (sql.includes('SELECT DISTINCT level_0'))
+        return { rows: [], truncated: false }
+      if (/(?:WHERE|AND) t\.status != 'DONE'/.test(sql))
+        return { rows: [boardRow({ is_blocked: 1 })], truncated: false }
+      return { rows: [], truncated: false }
+    })
+    const getTaskBlockers = vi
+      .fn()
+      .mockResolvedValue([{ id: 'dep-1', clean_content: 'Prereq' }])
+
+    render(TasksHub, { ctx: undoCtx({ getTaskBlockers }), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(
+      document.querySelector(
+        '[data-block-id="t1"] button[role="checkbox"]'
+      ) as HTMLElement
+    )
+    await flush()
+
+    // The modal's confirm button holds focus while it is open. role=alertdialog
+    // is a distinct attribute value from role=dialog, so the overlay exclusion
+    // has to name it explicitly.
+    const confirm = screen.getByText('Complete anyway')
+    expect(confirm.closest('[role="alertdialog"]')).not.toBeNull()
+    const modalUndo = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    confirm.dispatchEvent(modalUndo)
+    await flush()
+
+    expect(modalUndo.defaultPrevented).toBe(false)
+    expect(mocks.undoLastTaskMutation).not.toHaveBeenCalled()
+  })
+
+  it('leaves Ctrl+Z to a blocked-DONE alertdialog nested inside the drawer', async () => {
+    const rows = [
+      boardRow({
+        id: 't1',
+        clean_content: 'Drawer blocked',
+        is_blocked: 1
+      })
+    ]
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT DISTINCT owner'))
+        return { rows: [], truncated: false }
+      if (sql.includes('SELECT DISTINCT level_0'))
+        return { rows: [], truncated: false }
+      if (/(?:WHERE|AND) t\.status != 'DONE'/.test(sql))
+        return { rows, truncated: false }
+      return { rows: [], truncated: false }
+    })
+    const getTaskBlockers = vi
+      .fn()
+      .mockResolvedValue([{ id: 'dep-1', clean_content: 'Prereq' }])
+
+    render(TasksHub, { ctx: undoCtx({ getTaskBlockers }), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(
+      document.querySelector(
+        '[data-block-id="t1"] button[aria-label^="Edit metadata for"]'
+      )!
+    )
+    await flush()
+
+    // The drawer opts back into hub undo with data-tasks-undo-scope; the
+    // guard's alertdialog renders inline inside that scope. The guard must
+    // resolve the nearer overlay, not the opted-in drawer root.
+    await fireEvent.click(screen.getByRole('radio', { name: 'Done' }))
+    await flush()
+
+    const confirm = screen.getByText('Complete anyway')
+    const alertdialog = confirm.closest('[role="alertdialog"]')
+    const drawer = screen.getByTestId('task-edit-drawer')
+    expect(alertdialog).not.toBeNull()
+    expect(drawer.contains(alertdialog)).toBe(true)
+
+    const nestedUndo = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    confirm.dispatchEvent(nestedUndo)
+    await flush()
+
+    expect(nestedUndo.defaultPrevented).toBe(false)
+    expect(mocks.undoLastTaskMutation).not.toHaveBeenCalled()
+  })
+
+  it('restores board focus after confirming a blocked DONE move', async () => {
+    mocks.tasksSettings = {
+      default_display_mode: 'board',
+      default_group_by: 'status'
+    }
+    const rows = [
+      boardRow({
+        id: 't1',
+        clean_content: 'Blocked move',
+        status: 'DOING',
+        is_blocked: 1
+      })
+    ]
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT DISTINCT owner'))
+        return { rows: [], truncated: false }
+      if (sql.includes('SELECT DISTINCT level_0'))
+        return { rows: [], truncated: false }
+      return { rows, truncated: false }
+    })
+    const getTaskBlockers = vi
+      .fn()
+      .mockResolvedValue([{ id: 'dep-1', clean_content: 'Prereq' }])
+
+    render(TasksHub, { ctx: undoCtx({ getTaskBlockers }), manifest: MANIFEST })
+    await flush()
+
+    const card = screen
+      .getByRole('group', { name: 'In Progress' })
+      .querySelector<HTMLElement>('[data-card="t1"]')!
+    card.focus()
+    await fireEvent.keyDown(card, { key: 'ArrowRight' })
+    await flush()
+
+    // The guard holds focus on its confirm button while open.
+    const confirm = screen.getByText('Complete anyway')
+    await fireEvent.click(confirm)
+    await flush()
+    await flush()
+
+    // The optimistic relocation replaced the card node and the dialog restores
+    // focus on unmount, so without an explicit hand-back focus lands on <body>
+    // and the hub's Ctrl+Z scope is gone until the user clicks back in.
+    const doneCard = screen
+      .getByRole('group', { name: 'Done' })
+      .querySelector<HTMLElement>('[data-card="t1"]')
+    expect(doneCard).not.toBeNull()
+    expect(document.activeElement).toBe(doneCard)
+
+    const undoEvent = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    doneCard!.dispatchEvent(undoEvent)
+    await flush()
+    expect(undoEvent.defaultPrevented).toBe(true)
+    expect(mocks.undoLastTaskMutation).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores board focus after cancelling a blocked DONE move', async () => {
+    mocks.tasksSettings = {
+      default_display_mode: 'board',
+      default_group_by: 'status'
+    }
+    const rows = [
+      boardRow({
+        id: 't1',
+        clean_content: 'Blocked move',
+        status: 'DOING',
+        is_blocked: 1
+      })
+    ]
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT DISTINCT owner'))
+        return { rows: [], truncated: false }
+      if (sql.includes('SELECT DISTINCT level_0'))
+        return { rows: [], truncated: false }
+      return { rows, truncated: false }
+    })
+    const getTaskBlockers = vi
+      .fn()
+      .mockResolvedValue([{ id: 'dep-1', clean_content: 'Prereq' }])
+
+    render(TasksHub, { ctx: undoCtx({ getTaskBlockers }), manifest: MANIFEST })
+    await flush()
+
+    const card = screen
+      .getByRole('group', { name: 'In Progress' })
+      .querySelector<HTMLElement>('[data-card="t1"]')!
+    card.focus()
+    await fireEvent.keyDown(card, { key: 'ArrowRight' })
+    await flush()
+
+    // Cancel from the keyboard rather than the button: the revert relocates the
+    // card node inside the same flush that unmounts the dialog, so the dialog's
+    // own focus restore can only target a detached node.
+    expect(screen.getByText('Complete anyway')).toBeInTheDocument()
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await flush()
+    await flush()
+
+    const reverted = screen
+      .getByRole('group', { name: 'In Progress' })
+      .querySelector<HTMLElement>('[data-card="t1"]')
+    expect(reverted).not.toBeNull()
+    expect(document.activeElement).toBe(reverted)
+
+    const undoEvent = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    reverted!.dispatchEvent(undoEvent)
+    await flush()
+    expect(undoEvent.defaultPrevented).toBe(true)
+    expect(mocks.undoLastTaskMutation).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps hub Ctrl+Z working after a failed over-WIP move confirm', async () => {
+    mocks.tasksSettings = {
+      default_display_mode: 'board',
+      default_group_by: 'status',
+      columns: [
+        { name: 'TODO' },
+        { name: 'DOING', wipLimit: 1 },
+        { name: 'DONE' }
+      ]
+    }
+    const rows = [
+      boardRow({ id: 't1', clean_content: 'Over WIP', status: 'TODO' }),
+      boardRow({ id: 't2', clean_content: 'Resident', status: 'DOING' })
+    ]
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT DISTINCT owner'))
+        return { rows: [], truncated: false }
+      if (sql.includes('SELECT DISTINCT level_0'))
+        return { rows: [], truncated: false }
+      return { rows, truncated: false }
+    })
+
+    render(TasksHub, { ctx: undoCtx(), manifest: MANIFEST })
+    await flush()
+
+    const card = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card="t1"]')!
+    card.focus()
+    await fireEvent.keyDown(card, { key: 'ArrowRight' })
+    await flush()
+    expect(screen.getByTestId('board-wip-confirm')).toBeInTheDocument()
+
+    // Confirm whose persist rejects: the revert relocates the card node back to
+    // To Do, so the continuation must re-establish focus afterwards or the hub
+    // keyboard guard has no scope to run in.
+    mocks.updateBlockState.mockRejectedValue(new Error('disk full'))
+    await fireEvent.click(screen.getByTestId('board-wip-confirm-confirm'))
+    await flush()
+    await flush()
+
+    const reverted = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card="t1"]')
+    expect(reverted).not.toBeNull()
+    expect(document.activeElement).toBe(reverted)
+
+    const undoEvent = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    reverted!.dispatchEvent(undoEvent)
+    await flush()
+    expect(undoEvent.defaultPrevented).toBe(true)
+    expect(mocks.undoLastTaskMutation).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders the undo failure banner and dismisses it', async () => {
+    mocks.undoLastTaskMutation.mockRejectedValue(new Error('focus lock held'))
+
+    render(TasksHub, { ctx: undoCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('tasks-undo'))
+    await flush()
+
+    const banner = screen.getByTestId('tasks-undo-error')
+    expect(banner).toHaveAttribute('role', 'alert')
+    expect(banner).toHaveTextContent("Couldn't undo: focus lock held")
+
+    await fireEvent.click(screen.getByTestId('tasks-undo-error-dismiss'))
+    await flush()
+    expect(screen.queryByTestId('tasks-undo-error')).toBeNull()
+  })
+
+  it('undoes a board status change and restores the card column', async () => {
+    mocks.tasksSettings = {
+      default_display_mode: 'board',
+      default_group_by: 'status'
+    }
+    const rows = [
+      boardRow({ id: 't1', clean_content: 'Ship it', status: 'TODO' })
+    ]
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT DISTINCT owner'))
+        return { rows: [], truncated: false }
+      if (sql.includes('SELECT DISTINCT level_0'))
+        return { rows: [], truncated: false }
+      return { rows, truncated: false }
+    })
+
+    let journal = journalState({
+      canUndo: false,
+      remaining: 0,
+      changedFields: []
+    })
+    mocks.getTaskUndoState.mockImplementation(async () => ({ ...journal }))
+
+    let resolveMove: (value: unknown) => void = () => {}
+    mocks.updateBlockState.mockImplementationOnce(() => {
+      rows[0].status = 'DOING'
+      return new Promise((resolve) => {
+        resolveMove = resolve
+      })
+    })
+    mocks.undoLastTaskMutation.mockImplementation(async () => {
+      rows[0].status = 'TODO'
+      journal = journalState({
+        canUndo: false,
+        remaining: 0,
+        changedFields: []
+      })
+      return undoResult({ remaining: 0 })
+    })
+
+    render(TasksHub, { ctx: undoCtx(), manifest: MANIFEST })
+    await flush()
+
+    const todoCard = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    const doingCol = screen.getByRole('group', { name: 'In Progress' })
+    await fireEvent.dragStart(todoCard)
+    await fireEvent.drop(doingCol)
+    await flush()
+
+    // Optimistic placement already landed.
+    expect(
+      doingCol.querySelector<HTMLElement>('[data-card]')?.textContent
+    ).toContain('Ship it')
+
+    // While the status write is in flight, undo is disabled and says why.
+    const undoButton = screen.getByTestId('tasks-undo')
+    expect(undoButton).toBeDisabled()
+    expect(undoButton).toHaveAttribute(
+      'aria-label',
+      'Undo unavailable while a change is saving'
+    )
+
+    journal = journalState({ remaining: 1, changedFields: ['status'] })
+    resolveMove({ ok: true, spawnedId: '' })
+    await flush()
+    await flush()
+
+    expect(undoButton).not.toBeDisabled()
+    expect(undoButton).toHaveAttribute(
+      'aria-label',
+      'Undo status change in Work › Journal › Daily'
+    )
+
+    await fireEvent.click(undoButton)
+    await flush()
+    expect(mocks.undoLastTaskMutation).toHaveBeenCalledTimes(1)
+
+    // The backend undo writes the block; its event drives the existing reload.
+    mocks.blockChangedCallbacks.forEach((cb) => cb())
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    await flush()
+
+    expect(screen.getByRole('group', { name: 'To Do' }).textContent).toContain(
+      'Ship it'
+    )
+    expect(screen.getByTestId('tasks-undo-live')).toHaveTextContent(
+      'Undid status change in Work › Journal › Daily. No more changes to undo.'
+    )
   })
 })

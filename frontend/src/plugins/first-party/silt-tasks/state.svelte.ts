@@ -33,6 +33,7 @@ import {
   resetTaskWeekStart,
   setTaskWeekStart
 } from '../../../lib/taskWeekStart.svelte'
+import { resetTasksUndo } from './undo.svelte'
 
 export type { BoardColumn } from './columns'
 
@@ -683,4 +684,7 @@ export function resetTaskHubState(): void {
   _state.savedViews = []
   _state.activeSavedViewId = ''
   _state.savedViewsDirty = false
+  // The backend journal is session-scoped and cleared on vault close/switch;
+  // drop the mirror so the next vault doesn't inherit a stale undo state.
+  resetTasksUndo()
 }

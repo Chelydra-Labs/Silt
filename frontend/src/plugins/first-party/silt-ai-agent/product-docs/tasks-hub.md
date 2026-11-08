@@ -55,6 +55,31 @@ Bookmark the current mode, grouping, sort, filters, and columns as a named
 Click a row or card to open the task edit drawer (status, due, priority, owner,
 tags, comments, and more). Sub-task progress can show as done/total on cards.
 
+## Undo a change
+
+**Undo** reverses the most recent task or block change made from Silt — a
+board move, a metadata edit, a manual reorder, or a task text edit. It is not
+the note editor's undo: while focus is in the editor, **Ctrl+Z** still belongs
+to the editor.
+
+- The hub header and the task drawer each show **Undo**. Its label names what
+  will be reversed (for example, "status change in Work › Journal › Daily")
+  and how many entries remain.
+- With focus inside the Tasks hub or its task drawer, **Ctrl+Z** triggers the
+  same action (editable fields and open popovers keep their own undo).
+- The history is **session-scoped**: closing or switching vaults clears it.
+- There is **no redo**. To go further back, undo again.
+- A single gesture can record more than one entry — a cross-file reorder
+  records one entry per file, and a Board drop with Manual sorting records the
+  field change and the order separately — so one undo may not reverse the
+  whole gesture. The number beside **Undo** says how many entries remain.
+- Undo is unavailable while a task write is still saving, so the history and
+  the view cannot disagree.
+- If the change can no longer be applied (the target page vanished or cannot
+  be written), the entry is dropped from the history and the count still shows
+  what is left. A skipped undo is not the same as an empty history.
+- Undo is itself an edit, so the task's **Modified** time updates.
+
 ## Tips
 
 - Undated quick-add tasks land naturally under List → **No Date**.

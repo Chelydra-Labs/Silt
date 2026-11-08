@@ -17,12 +17,14 @@
 // reorder mutation stays safe under rapid reorders. manualOrder.test.ts is the
 // golden master.
 import type { PluginContext } from '../../../../sdk'
+import { tick } from 'svelte'
 import type { GroupBy, SortMode } from '../../state.svelte'
 import type { TaskDetail } from '../../types'
 import type { useBlockedDoneGuard } from '../../shared.svelte'
 import { groupByDispatch, unionTags } from '../../groupByDispatch'
 import { nextManualOrder } from '../manualOrder'
 import { friendlyCaughtError } from '../../errors'
+import { trackTaskUndoWrite } from '../../undo.svelte'
 
 // A rendered Board lane. `value` is the dimension value a drop/quick-add
 // dispatches with — '' routes to the dimension's "clear" path (Unassigned
@@ -256,7 +258,7 @@ export function createBoardDndController({
 
     liveMessage = announceMove(toCol)
     try {
-      await dispatchDrop(card, toCol)
+      await trackTaskUndoWrite(dispatchDrop(card, toCol))
       // Cross-column manual sort (#426): the moved card joins after the
       // destination's highest existing order. Source columns aren't
       // renumbered on removal (gap-tolerant), so destination orders can be
@@ -266,7 +268,9 @@ export function createBoardDndController({
       if (sort === 'manual') {
         const destItems = prev.find((c) => c.key === toCol.key)?.items ?? []
         try {
-          await ctx.setTaskOrder(card.id, nextManualOrder(destItems))
+          await trackTaskUndoWrite(
+            ctx.setTaskOrder(card.id, nextManualOrder(destItems))
+          )
         } catch (e) {
           if (my !== moveSeq) return
           moveError = errMsg(e)
@@ -283,6 +287,7 @@ export function createBoardDndController({
       revertTo(prev)
       liveMessage = 'Move failed — reverted.'
     }
+    restoreCardFocus(card.id)
   }
 
   async function confirmBlockedDone() {
@@ -292,7 +297,7 @@ export function createBoardDndController({
     const { card, fromColKey, toCol } = pending.context
     const sort = getSort()
     try {
-      await ctx.updateBlockState(card.id, 'DONE')
+      await trackTaskUndoWrite(ctx.updateBlockState(card.id, 'DONE'))
       // Cross-column manual sort (#426): mirror commitDrop. The DONE jump is
       // a cross-column move under manual sort, so the card needs an order
       // token beyond the destination's tail. prev (snapshot at drag-start) is
@@ -301,13 +306,16 @@ export function createBoardDndController({
         const destItems =
           getColumns().find((c) => c.key === toCol.key)?.items ?? []
         try {
-          await ctx.setTaskOrder(card.id, nextManualOrder(destItems))
+          await trackTaskUndoWrite(
+            ctx.setTaskOrder(card.id, nextManualOrder(destItems))
+          )
         } catch (e) {
           moveError = errMsg(e)
           // The status change already persisted; reload picks up on-disk state
           // (new column, stale order value) rather than desyncing.
           await reload()
           liveMessage = 'Move partially failed — reloaded.'
+          restoreCardFocus(card.id)
           return
         }
       }
@@ -317,6 +325,7 @@ export function createBoardDndController({
       revertOptimistic(card, fromColKey, toCol)
       liveMessage = 'Move failed — reverted.'
     }
+    restoreCardFocus(card.id)
   }
 
   function cancelBlockedDone() {
@@ -326,10 +335,22 @@ export function createBoardDndController({
     const { card, fromColKey, toCol } = pending.context
     revertOptimistic(card, fromColKey, toCol)
     liveMessage = 'Move cancelled.'
+    restoreCardFocus(card.id)
   }
 
   function focusCard(cardId: string) {
-    document.querySelector<HTMLElement>(`[data-card="${cardId}"]`)?.focus?.()
+    const card = document.querySelector<HTMLElement>(`[data-card="${cardId}"]`)
+    const target =
+      card ?? document.querySelector<HTMLElement>('[data-tasks-hub] h1')
+    target?.focus?.()
+  }
+
+  // The keyed-each relocation replaces the card node, so the activating element
+  // is gone and hub Ctrl+Z would have no scope to run in. The guard dialogs
+  // capture focus when they open and restore it on unmount — <body> for a
+  // keyboard move — so they must re-establish it after settling too.
+  function restoreCardFocus(cardId: string) {
+    void tick().then(() => focusCard(cardId))
   }
 
   async function confirmWipOverLimit() {
@@ -347,6 +368,10 @@ export function createBoardDndController({
       const result = await blockedGuard.resolveBlockers(card.id)
       if (result.ok && result.blockers.length > 0) {
         blockedGuard.open(result.blockers, { card, fromColKey, toCol })
+        // Deliberately synchronous: the blocked-DONE dialog captures
+        // document.activeElement in onMount as its focus-return target, so the
+        // live card must already hold focus before that mount flush runs. The
+        // card node is stable here — no relocate/revert is queued behind it.
         focusCard(card.id)
         return
       }
@@ -354,7 +379,7 @@ export function createBoardDndController({
     }
     liveMessage = announceMove(toCol)
     try {
-      await dispatchDrop(card, toCol)
+      await trackTaskUndoWrite(dispatchDrop(card, toCol))
       if (sort === 'manual') {
         // Destination already includes the optimistic card; exclude it when
         // computing the prior max order so we don't count the card itself.
@@ -363,12 +388,17 @@ export function createBoardDndController({
             .find((c) => c.key === toCol.key)
             ?.items.filter((i) => i.id !== card.id) ?? []
         try {
-          await ctx.setTaskOrder(card.id, nextManualOrder(destItems))
+          await trackTaskUndoWrite(
+            ctx.setTaskOrder(card.id, nextManualOrder(destItems))
+          )
         } catch (e) {
           moveError = errMsg(e)
           await reload()
           liveMessage = 'Move partially failed — reloaded.'
-          focusCard(card.id)
+          // Same post-tick restore as the other cross-column continuations: the
+          // keyed-each relocation must settle before the lookup, and the hub-
+          // heading fallback covers a reload that filters the card out.
+          restoreCardFocus(card.id)
           return
         }
       }
@@ -377,7 +407,7 @@ export function createBoardDndController({
       revertOptimistic(card, fromColKey, toCol)
       liveMessage = 'Move failed — reverted.'
     }
-    focusCard(card.id)
+    restoreCardFocus(card.id)
   }
 
   function cancelWipOverLimit() {
@@ -386,7 +416,7 @@ export function createBoardDndController({
     setPendingWipConfirm(null)
     revertOptimistic(pending.card, pending.fromColKey, pending.toCol)
     liveMessage = 'Move cancelled — column is over its WIP limit.'
-    focusCard(pending.card.id)
+    restoreCardFocus(pending.card.id)
   }
 
   // --- Card DnD -----------------------------------------------------------
@@ -507,8 +537,8 @@ export function createBoardDndController({
     // patched above); this ensures disk agrees.
     if (reorderInFlight) await reorderInFlight.catch(() => {})
     try {
-      const p = ctx.setTaskOrders(
-        changes.map((c) => ({ id: c.id, order: c.order }))
+      const p = trackTaskUndoWrite(
+        ctx.setTaskOrders(changes.map((c) => ({ id: c.id, order: c.order })))
       )
       reorderInFlight = p.then(
         () => {},

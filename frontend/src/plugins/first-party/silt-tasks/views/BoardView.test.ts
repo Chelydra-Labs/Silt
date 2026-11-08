@@ -749,8 +749,15 @@ describe('BoardView — dimension-aware Board (#421)', () => {
       .querySelector<HTMLElement>('[data-card]')!
     card.focus()
     await fireEvent.keyDown(card, { key: 'ArrowRight' })
+    await flush()
 
     expect(mocks.updateBlockState).toHaveBeenCalledWith('t1', 'DOING')
+    // The keyed-each relocation replaces the node; focus must follow the card
+    // or the hub loses its Ctrl+Z scope right after a keyboard move.
+    const moved = screen
+      .getByRole('group', { name: 'In Progress' })
+      .querySelector<HTMLElement>('[data-card="t1"]')
+    expect(document.activeElement).toBe(moved)
   })
 
   // --- High-cardinality guard -------------------------------------------
@@ -1305,6 +1312,79 @@ describe('BoardView — dimension-aware Board (#421)', () => {
       screen.getByRole('group', { name: 'To Do' }).querySelector('[data-card]')
         ?.textContent
     ).toContain('A')
+  })
+
+  it('restores card focus after cancelling an over-WIP keyboard move', async () => {
+    mocks.tasksSettings = {
+      columns: [
+        { name: 'TODO' },
+        { name: 'DOING', wipLimit: 1 },
+        { name: 'DONE' }
+      ]
+    }
+    await initTasksSettings(makeCtx())
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', clean_content: 'A' }),
+      row({ id: 't2', status: 'DOING', clean_content: 'B' })
+    ])
+
+    const todoCard = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card="t1"]')!
+    todoCard.focus()
+    await fireEvent.keyDown(todoCard, { key: 'ArrowRight' })
+    await flush()
+
+    expect(screen.getByTestId('board-wip-confirm')).toBeInTheDocument()
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await flush()
+    await flush()
+
+    // Cancel reverts the optimistic placement; that same flush replaces the
+    // focused node and the modal's unmount restore targets a detached node, so
+    // focus must be re-established afterwards or hub Ctrl+Z has no scope.
+    const reverted = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card="t1"]')
+    expect(reverted).not.toBeNull()
+    expect(document.activeElement).toBe(reverted)
+  })
+
+  it('restores card focus when an over-WIP keyboard move confirm fails to persist', async () => {
+    mocks.tasksSettings = {
+      columns: [
+        { name: 'TODO' },
+        { name: 'DOING', wipLimit: 1 },
+        { name: 'DONE' }
+      ]
+    }
+    await initTasksSettings(makeCtx())
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', clean_content: 'A' }),
+      row({ id: 't2', status: 'DOING', clean_content: 'B' })
+    ])
+
+    const todoCard = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card="t1"]')!
+    todoCard.focus()
+    await fireEvent.keyDown(todoCard, { key: 'ArrowRight' })
+    await flush()
+    expect(screen.getByTestId('board-wip-confirm')).toBeInTheDocument()
+
+    mocks.updateBlockState.mockRejectedValue(new Error('disk full'))
+    await fireEvent.click(screen.getByTestId('board-wip-confirm-confirm'))
+    await flush()
+    await flush()
+
+    // The failed confirm reverts the optimistic placement; that same flush
+    // replaces the focused node, so focus must be re-established afterwards or
+    // hub Ctrl+Z has no scope.
+    const reverted = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card="t1"]')
+    expect(reverted).not.toBeNull()
+    expect(document.activeElement).toBe(reverted)
   })
 
   it('proceeds with the status change when WIP over-limit is confirmed', async () => {

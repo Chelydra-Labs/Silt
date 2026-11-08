@@ -8,7 +8,7 @@
   //
   // The header (title + count) lives in TasksHub.svelte; this component
   // reports its open/done counts upward via onCountChange.
-  import { onMount, onDestroy, untrack } from 'svelte'
+  import { onMount, onDestroy, tick, untrack } from 'svelte'
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
   import type { PluginManifest } from '../../../sdk'
@@ -50,6 +50,7 @@
   import { binByDimension, type GroupSection } from '../grouping'
   import { buildQuery } from '../query'
   import { useBlockChangedReload, useBlockedDoneGuard } from '../shared.svelte'
+  import { trackTaskUndoWrite } from '../undo.svelte'
 
   interface Props extends TaskViewProps {
     /** Unused now (title lives in the hub); kept for direct-render compat. */
@@ -482,12 +483,42 @@
     else collapsedSections.add(key)
   }
 
+  // Removing the focused row takes the hub's Ctrl+Z scope with it (focus
+  // falls to a detached node or <body>), so land focus on the row that slides
+  // into its place — or the heading when the list empties.
+  function rowIdAfterRemoval(removedId: string): string {
+    const rowIds = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '[data-group]:not([data-group="completed"]) [data-block-id]'
+      )
+    ).map((row) => row.dataset.blockId ?? '')
+    const removedIdx = rowIds.indexOf(removedId)
+    if (removedIdx < 0) return ''
+    return rowIds[removedIdx + 1] ?? rowIds[removedIdx - 1] ?? ''
+  }
+
+  async function focusAfterRowRemoval(nextId: string): Promise<void> {
+    await tick()
+    const row = nextId
+      ? Array.from(
+          document.querySelectorAll<HTMLElement>('[data-block-id]')
+        ).find((el) => el.dataset.blockId === nextId)
+      : null
+    const target =
+      row?.querySelector<HTMLElement>(
+        'button[aria-label^="Edit metadata for"]'
+      ) ?? document.querySelector<HTMLElement>('[data-tasks-hub] h1')
+    target?.focus()
+  }
+
   async function commitMarkDown(item: TaskDetail) {
     markDownError = ''
     if (markDownTimer) clearTimeout(markDownTimer)
     try {
-      await ctx.updateBlockState(item.id, 'DONE')
+      await trackTaskUndoWrite(ctx.updateBlockState(item.id, 'DONE'))
+      const nextRowId = rowIdAfterRemoval(item.id)
       openItems = openItems.filter((i) => i.id !== item.id)
+      await focusAfterRowRemoval(nextRowId)
     } catch (e) {
       markDownError = friendlyCaughtError(e)
       markDownTimer = setTimeout(() => {
@@ -742,21 +773,21 @@
       changes.find((c) => c.id === srcId)?.order ?? ''
     }.`
 
-    void ctx
-      .setTaskOrders(changes.map((c) => ({ id: c.id, order: c.order })))
-      .catch((err) => {
-        // Revert every optimistic update; the next reload will surface the
-        // file's actual state. One batch write = one revert on failure.
-        openItems = openItems.map((r) => {
-          if (!changes.some((x) => x.id === r.id)) return r
-          return {
-            ...r,
-            manual_order: prevOrders.get(r.id) ?? r.manual_order
-          }
-        })
-        flashOrderError(err)
-        liveMessage = 'Reorder failed — reverted.'
+    void trackTaskUndoWrite(
+      ctx.setTaskOrders(changes.map((c) => ({ id: c.id, order: c.order })))
+    ).catch((err) => {
+      // Revert every optimistic update; the next reload will surface the
+      // file's actual state. One batch write = one revert on failure.
+      openItems = openItems.map((r) => {
+        if (!changes.some((x) => x.id === r.id)) return r
+        return {
+          ...r,
+          manual_order: prevOrders.get(r.id) ?? r.manual_order
+        }
       })
+      flashOrderError(err)
+      liveMessage = 'Reorder failed — reverted.'
+    })
     // Prevent the wasOverId leak when the drop fires before dragleave.
     void wasOverId
   }

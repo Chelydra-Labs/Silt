@@ -33,6 +33,14 @@ Type **`/`** in the editor for headings, tasks, **tables**, callouts, code,
 templates, and more. See product help topics **Slash commands** and
 **Tables**.
 
+## Undo
+
+**Ctrl+Z** is contextual. In a note it undoes editor changes; with focus in
+the **Tasks** hub or its task drawer it undoes the most recent task or block
+change made from Silt (editable fields and open popovers keep their own
+undo). The hub's **Undo** button names the change it will reverse. See
+product help topic **Tasks hub**.
+
 ## Onboarding
 
 When you pick or open a vault, onboarding tips may appear for first-run

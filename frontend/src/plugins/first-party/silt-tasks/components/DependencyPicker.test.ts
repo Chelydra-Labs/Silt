@@ -43,6 +43,11 @@ vi.mock('@wailsio/runtime', () => ({
 }))
 
 import DependencyPicker from './DependencyPicker.svelte'
+import {
+  initTasksUndo,
+  resetTasksUndo,
+  tasksUndoAvailable
+} from '../undo.svelte'
 import { wailsIPCError } from '../../../../lib/testing/wailsIpcError'
 import type { PluginContext } from '../../../sdk'
 import { v2CtxStubs } from '../../../test-helpers'
@@ -70,6 +75,7 @@ async function flush() {
 
 describe('DependencyPicker (#303)', () => {
   beforeEach(() => {
+    resetTasksUndo()
     mocks.searchTasks.mockReset()
     mocks.setTaskBlockedBy.mockReset().mockResolvedValue(true)
     // Label resolution: refreshDeps runs a single SELECT id, clean_content
@@ -452,5 +458,47 @@ describe('DependencyPicker (#303)', () => {
     expect(mocks.setTaskBlockedBy).toHaveBeenCalledWith('task-1', ['dep-focus'])
     // Focus came back to the input, not document.body.
     expect(document.activeElement).toBe(input)
+  })
+
+  it('keeps undo disabled until the dependency write settles', async () => {
+    const getTaskUndoState = vi.fn().mockResolvedValue({
+      canUndo: true,
+      remaining: 1,
+      changedFields: ['blockedBy'],
+      blockIds: ['task-1'],
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      source: 'vault'
+    })
+    const ctx = makeCtx({ getTaskUndoState, on: () => () => {} })
+    initTasksUndo(ctx)
+    await flush()
+    expect(tasksUndoAvailable()).toBe(true)
+
+    let settle: (v: boolean) => void = () => {}
+    mocks.setTaskBlockedBy.mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => (settle = resolve))
+    )
+
+    render(DependencyPicker, {
+      cardId: 'task-1',
+      blockedBy: ['dep-1'],
+      ctx
+    })
+    await flush()
+    await fireEvent.click(
+      screen.getByLabelText('Remove dependency Resolved label')
+    )
+    await flush()
+
+    expect(mocks.setTaskBlockedBy).toHaveBeenCalledWith('task-1', [])
+    // The chips already show the edge as gone; the journal has not recorded
+    // it yet, so undo must stay closed.
+    expect(tasksUndoAvailable()).toBe(false)
+
+    settle(true)
+    await flush()
+    expect(tasksUndoAvailable()).toBe(true)
   })
 })

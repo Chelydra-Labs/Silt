@@ -135,6 +135,7 @@ describe('shipped product-docs corpus', () => {
         docId: 'search-and-find'
       },
       { q: 'tasks hub find task search field saved view', docId: 'tasks-hub' },
+      { q: 'undo task change ctrl z', docId: 'tasks-hub' },
       { q: 'preview tab pin double click page', docId: 'navigation-and-tabs' }
     ]
     for (const { q, docId } of goldens) {
@@ -169,5 +170,47 @@ describe('shipped product-docs corpus', () => {
     expect(hubDoc).toMatch(/Find task…/)
     expect(hubDoc).toMatch(/transient/i)
     expect(hubDoc).toMatch(/saved-view dimensions/i)
+  })
+
+  it('documents session-scoped undo for task changes (#1011)', () => {
+    resetProductDocCorpusCache()
+    const sections = loadProductDocCorpus()
+    const hubDoc = sections
+      .filter((s) => s.docId === 'tasks-hub')
+      .map((s) => s.body)
+      .join('\n')
+    // Honest semantics: the journal is not "last task change", it is the most
+    // recent task/block mutation; it is session-only and has no redo.
+    expect(hubDoc).toMatch(/most recent task or block change/i)
+    expect(hubDoc).toMatch(/session-scoped/i)
+    expect(hubDoc).toMatch(/no redo/i)
+    // A gesture can journal more than once: cross-file reorders record one
+    // entry per file, and a Manual-sort Board drop records the field change and
+    // the order separately. A skip drops the entry without emptying the
+    // history.
+    expect(hubDoc).toMatch(/one entry per file/i)
+    expect(hubDoc).toMatch(
+      /Board drop with Manual sorting records the\s+field change and the order\s+separately/i
+    )
+    expect(hubDoc).toMatch(/skipped undo is not the same as an empty history/i)
+    expect(hubDoc).toMatch(/Ctrl\+Z/)
+    // The tasks article must carry the same exception the keyboard article
+    // states, so both PR-added docs describe hub undo with equal precision.
+    expect(hubDoc).toMatch(
+      /editable fields and open popovers keep their own\s+undo/i
+    )
+
+    // The keyboard article keeps the editor/hub ownership split discoverable.
+    const keyboardDoc = sections
+      .filter((s) => s.docId === 'keyboard-and-help')
+      .map((s) => s.body)
+      .join('\n')
+    expect(keyboardDoc).toMatch(/contextual/i)
+    expect(keyboardDoc).toMatch(/task drawer/i)
+    // The implementation keeps native text undo in editable fields and leaves
+    // nested popovers alone; the article must not over-promise hub undo there.
+    expect(keyboardDoc).toMatch(
+      /editable fields and open popovers keep their own\s+undo/i
+    )
   })
 })

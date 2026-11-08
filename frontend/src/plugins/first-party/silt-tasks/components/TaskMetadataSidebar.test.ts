@@ -80,6 +80,11 @@ vi.mock('../../../../settings/store.svelte', () => ({
 }))
 
 import TaskMetadataSidebar from './TaskMetadataSidebar.svelte'
+import {
+  initTasksUndo,
+  resetTasksUndo,
+  tasksUndoAvailable
+} from '../undo.svelte'
 import type { PluginContext } from '../../../sdk'
 import type { TaskDetail } from '../types'
 import { v2CtxStubs } from '../../../test-helpers'
@@ -135,7 +140,10 @@ async function flush() {
 }
 
 describe('TaskMetadataSidebar', () => {
-  beforeEach(() => cleanup())
+  beforeEach(() => {
+    resetTasksUndo()
+    cleanup()
+  })
 
   it('keeps primary actions and essential metadata immediately visible', () => {
     const ctx = makeCtx()
@@ -199,6 +207,49 @@ describe('TaskMetadataSidebar', () => {
     expect(setTaskDueDate).not.toHaveBeenCalled()
     expect(setTaskEstimate).not.toHaveBeenCalled()
     expect(onMetaChanged).toHaveBeenCalled()
+  })
+
+  it('holds undo until a field write settles, even after the drawer unmounts', async () => {
+    const getTaskUndoState = vi.fn().mockResolvedValue({
+      canUndo: true,
+      remaining: 1,
+      changedFields: ['startDate'],
+      blockIds: ['task-1'],
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      source: 'vault'
+    })
+    let settle: (v: boolean) => void = () => {}
+    const setTaskStartDate = vi.fn(
+      () => new Promise<boolean>((resolve) => (settle = resolve))
+    )
+    const ctx = makeCtx({ getTaskUndoState, setTaskStartDate })
+    initTasksUndo(ctx)
+    await flush()
+    expect(tasksUndoAvailable()).toBe(true)
+
+    render(TaskMetadataSidebar, {
+      props: { task: makeTask(), ctx }
+    })
+
+    await fireEvent.click(
+      document.getElementById('task-start-date-trigger') as HTMLElement
+    )
+    await fireEvent.click(screen.getByText('Today'))
+    await flush()
+
+    // The optimistic value and the journal disagree until the write lands.
+    expect(tasksUndoAvailable()).toBe(false)
+
+    // Closing the drawer mid-write must not release the hold: the async write
+    // closure outlives the component.
+    cleanup()
+    expect(tasksUndoAvailable()).toBe(false)
+
+    settle(true)
+    await flush()
+    expect(tasksUndoAvailable()).toBe(true)
   })
 
   it('clears Start day via Clear start day', async () => {
