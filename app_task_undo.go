@@ -212,8 +212,9 @@ type TaskUndoResult struct {
 // falls back to the recorded location.
 //
 // CanUndo reports that an entry exists, not that it will replay: an entry whose
-// page has since been deleted or become permanently unreadable still peeks as
-// canUndo and then skips (and pops) on the undo call.
+// page has since been deleted or become permanently unreadable, or one that has
+// exhausted its retry budget, still peeks as canUndo and then skips (and pops)
+// on the undo call.
 type TaskUndoState struct {
 	CanUndo       bool     `json:"canUndo"`
 	Remaining     int      `json:"remaining"`
