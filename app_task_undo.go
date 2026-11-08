@@ -294,7 +294,7 @@ func (a *App) replayTaskUndoEntry(entry taskUndoEntry) (TaskUndoResult, error) {
 			}
 			for _, undo := range entry.Blocks {
 				i, ok := indexByID[undo.BlockID]
-				if !ok || parsedBlocks[i].Type != parser.BlockTask {
+				if !ok {
 					missingIDs = append(missingIDs, undo.BlockID)
 					continue
 				}
