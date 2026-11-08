@@ -4,14 +4,16 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 const mocks = vi.hoisted(() => ({
   SearchBlocksPaged: vi.fn(),
   ListNavigation: vi.fn(),
-  QueryTagHierarchy: vi.fn()
+  QueryTagHierarchy: vi.fn(),
+  DistinctOwners: vi.fn()
 }))
 
 vi.mock('$silt-app', () =>
   createAppIpcMocks({
     SearchBlocksPaged: mocks.SearchBlocksPaged,
     ListNavigation: mocks.ListNavigation,
-    QueryTagHierarchy: mocks.QueryTagHierarchy
+    QueryTagHierarchy: mocks.QueryTagHierarchy,
+    DistinctOwners: mocks.DistinctOwners
   })
 )
 
@@ -22,6 +24,7 @@ describe('SearchModal', () => {
     mocks.SearchBlocksPaged.mockReset()
     mocks.ListNavigation.mockReset()
     mocks.QueryTagHierarchy.mockReset()
+    mocks.DistinctOwners.mockReset()
     mocks.SearchBlocksPaged.mockResolvedValue({
       results: [],
       total: 0,
@@ -38,6 +41,7 @@ describe('SearchModal', () => {
     mocks.QueryTagHierarchy.mockResolvedValue([
       { name: 'project', path: 'project', count: 2, children: [] }
     ])
+    mocks.DistinctOwners.mockResolvedValue(['Alice', 'Bob'])
   })
   afterEach(() => cleanup())
 
@@ -376,6 +380,7 @@ describe('SearchModal', () => {
     render(SearchModal, {
       props: { onClose: vi.fn(), onJump: vi.fn() }
     })
+    await fireEvent.click(screen.getByTestId('search-task-filters-toggle'))
 
     const status = screen.getByLabelText(
       'Filter by task status'
@@ -420,12 +425,68 @@ describe('SearchModal', () => {
     })
     expect(screen.queryByTestId('search-title-leg-hint')).toBeNull()
 
+    await fireEvent.click(screen.getByTestId('search-task-filters-toggle'))
     await fireEvent.click(screen.getByRole('button', { name: 'P1+' }))
     expect(screen.getByTestId('search-title-leg-hint')).toBeInTheDocument()
 
     // Clearing the priority floor restores the title leg (no hint).
     await fireEvent.click(screen.getByLabelText('Clear priority filter'))
     expect(screen.queryByTestId('search-title-leg-hint')).toBeNull()
+  })
+
+  it('groups task-attribute controls behind a Task filters disclosure (#1071)', async () => {
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn() }
+    })
+    const toggle = screen.getByTestId('search-task-filters-toggle')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    // Collapsed: the attribute controls are out of the tab order/density.
+    expect(screen.queryByLabelText('Filter by task status')).toBeNull()
+    // Query-adjacent controls stay visible.
+    expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Relevance' })).toBeInTheDocument()
+
+    await fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByLabelText('Filter by task status')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('search-task-filters-count')
+    ).not.toBeInTheDocument()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'P2+' }))
+    expect(screen.getByTestId('search-task-filters-count')).toHaveTextContent(
+      '1'
+    )
+
+    // Collapsing keeps the badge (active filters remain in effect).
+    await fireEvent.click(toggle)
+    expect(screen.queryByLabelText('Filter by task status')).toBeNull()
+    expect(screen.getByTestId('search-task-filters-count')).toHaveTextContent(
+      '1'
+    )
+  })
+
+  it('seeds the owner datalist from DistinctOwners and explains task-row semantics (#1071)', async () => {
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn() }
+    })
+    await fireEvent.click(screen.getByTestId('search-task-filters-toggle'))
+
+    await vi.waitFor(() => {
+      expect(mocks.DistinctOwners).toHaveBeenCalledWith('')
+      const datalist = document.getElementById(
+        'search-owner-options'
+      ) as HTMLDataListElement
+      expect(Array.from(datalist.options).map((o) => o.value)).toEqual([
+        'Alice',
+        'Bob'
+      ])
+    })
+
+    await fireEvent.click(screen.getByRole('button', { name: 'P1+' }))
+    expect(screen.getByTestId('search-title-leg-hint')).toHaveTextContent(
+      /notes and headings are hidden/i
+    )
   })
 
   it('renders page-level rows and opens them with the empty block id', async () => {

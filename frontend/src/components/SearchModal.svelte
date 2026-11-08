@@ -20,7 +20,8 @@
   import {
     SearchBlocksPaged,
     ListNavigation,
-    QueryTagHierarchy
+    QueryTagHierarchy,
+    DistinctOwners
   } from '../../bindings/silt/app.js'
   import { STANDALONE_TASKS_NOTEBOOK } from '../lib/standaloneTasksNav'
 
@@ -62,6 +63,7 @@
   let tagFilter = $state('')
   let notebookOptions = $state<string[]>([])
   let tagOptions = $state<string[]>([])
+  let ownerOptions = $state<string[]>([])
 
   // Task-attribute filters (#1010). These ride SearchFilters' structured
   // predicates; setting any of them restricts results to matching TASK blocks
@@ -72,6 +74,19 @@
   let dueBeforeFilter = $state('')
   let priorityFloor = $state(0)
   let overdueOnly = $state(false)
+  // Density: the seven attribute controls stay behind a disclosure so the
+  // toolbar keeps single-row height at the dialog's 31.25rem cap.
+  let taskFiltersOpen = $state(false)
+
+  function taskFilterCount(): number {
+    let n = 0
+    if (statusFilter) n++
+    if (ownerFilter.trim()) n++
+    if (priorityFloor > 0) n++
+    if (overdueOnly) n++
+    if (dueAfterFilter || dueBeforeFilter) n++
+    return n
+  }
 
   const TYPE_CHIPS: { id: string; label: string }[] = [
     { id: '', label: 'All' },
@@ -270,6 +285,15 @@
     } catch (e) {
       console.error('SearchModal: QueryTagHierarchy failed:', e)
       tagOptions = []
+    }
+    try {
+      const owners = (await DistinctOwners('')) || []
+      ownerOptions = owners
+        .filter((o: string) => o.trim() !== '')
+        .sort((a: string, b: string) => a.localeCompare(b))
+    } catch (e) {
+      console.error('SearchModal: DistinctOwners failed:', e)
+      ownerOptions = []
     }
   }
 
@@ -580,89 +604,41 @@
 
       <!-- Task-attribute filters (#1010): these map to SearchFilters'
            structured predicates. Any active here restricts results to task
-           blocks and hides page-title hits (see the hint below). -->
-      <label class="flex items-center gap-1 text-type-xs text-text-muted">
-        <span class="sr-only">Task status</span>
-        <select
-          aria-label="Filter by task status"
-          bind:value={statusFilter}
-          class="max-w-[7.5rem] rounded-md border border-surface-modal-border bg-surface-modal px-1.5 py-1 text-type-xs text-text-primary cursor-pointer"
-        >
-          <option value="">Any status</option>
-          <option value="TODO">To do</option>
-          <option value="DOING">Doing</option>
-          <option value="DONE">Done</option>
-        </select>
-      </label>
-
-      <label class="flex items-center gap-1 text-type-xs text-text-muted">
-        <span class="sr-only">Owner</span>
-        <input
-          type="text"
-          aria-label="Filter by owner"
-          placeholder="Owner…"
-          bind:value={ownerFilter}
-          class="w-24 rounded-md border border-surface-modal-border bg-surface-modal px-1.5 py-1 text-type-xs text-text-primary placeholder:text-text-muted"
-        />
-      </label>
-
-      <div
-        class="flex items-center gap-1"
-        role="group"
-        aria-label="Filter by priority urgency"
-      >
-        {#each PRIORITY_FLOORS as p (p.value)}
-          <button
-            type="button"
-            title={p.title}
-            aria-pressed={priorityFloor === p.value}
-            onclick={() => (priorityFloor = p.value)}
-            class="px-2 py-1 rounded-md text-type-xs font-label-sm-bold transition-colors border cursor-pointer"
-            class:bg-accent-primary-start={priorityFloor === p.value}
-            class:text-text-on-accent={priorityFloor === p.value}
-            class:bg-transparent={priorityFloor !== p.value}
-            class:text-text-muted={priorityFloor !== p.value}
-            class:border-surface-modal-border={priorityFloor !== p.value}
-          >
-            {p.label}
-          </button>
-        {/each}
-      </div>
-
+           blocks and hides page-title hits (see the hint below). Grouped
+           behind a disclosure so the toolbar keeps one row at the dialog's
+           fixed height; query + type chips + sort stay visible. -->
       <button
         type="button"
-        data-testid="search-overdue-toggle"
-        aria-pressed={overdueOnly}
-        title="Tasks whose due date is before today and are not done"
-        onclick={() => (overdueOnly = !overdueOnly)}
-        class="px-2 py-1 rounded-md text-type-xs font-label-sm-bold transition-colors border cursor-pointer"
-        class:bg-accent-primary-start={overdueOnly}
-        class:text-text-on-accent={overdueOnly}
-        class:bg-transparent={!overdueOnly}
-        class:text-text-muted={!overdueOnly}
-        class:border-surface-modal-border={!overdueOnly}
+        data-testid="search-task-filters-toggle"
+        aria-expanded={taskFiltersOpen}
+        aria-controls="search-task-filters"
+        onclick={() => (taskFiltersOpen = !taskFiltersOpen)}
+        class="flex items-center gap-1 rounded-md border px-2 py-1 text-type-xs font-label-sm-bold transition-colors cursor-pointer"
+        class:border-accent-primary-start={taskFiltersOpen ||
+          taskFilterCount() > 0}
+        class:bg-accent-primary-start={taskFiltersOpen}
+        class:text-text-on-accent={taskFiltersOpen}
+        class:border-surface-modal-border={!taskFiltersOpen &&
+          taskFilterCount() === 0}
+        class:text-text-muted={!taskFiltersOpen}
       >
-        Overdue
+        <span class="material-symbols-outlined text-type-xs" aria-hidden="true"
+          >filter_alt</span
+        >
+        <span>Task filters</span>
+        {#if taskFilterCount() > 0}
+          <span
+            data-testid="search-task-filters-count"
+            class="rounded-full px-1 text-type-3xs {taskFiltersOpen
+              ? 'bg-text-on-accent/20'
+              : 'bg-accent-primary-start/20'}"
+            >{taskFilterCount()}</span
+          >
+        {/if}
+        <span class="material-symbols-outlined text-type-xs" aria-hidden="true"
+          >{taskFiltersOpen ? 'expand_less' : 'expand_more'}</span
+        >
       </button>
-
-      <label class="flex items-center gap-1 text-type-xs text-text-muted">
-        <span class="sr-only">Due on or after</span>
-        <input
-          type="date"
-          aria-label="Due on or after"
-          bind:value={dueAfterFilter}
-          class="w-[8.5rem] rounded-md border border-surface-modal-border bg-surface-modal px-1.5 py-1 text-type-xs text-text-primary"
-        />
-      </label>
-      <label class="flex items-center gap-1 text-type-xs text-text-muted">
-        <span class="sr-only">Due on or before</span>
-        <input
-          type="date"
-          aria-label="Due on or before"
-          bind:value={dueBeforeFilter}
-          class="w-[8.5rem] rounded-md border border-surface-modal-border bg-surface-modal px-1.5 py-1 text-type-xs text-text-primary"
-        />
-      </label>
 
       <!-- Sort: Relevance vs Recent (segmented). -->
       <div
@@ -689,16 +665,117 @@
       </div>
     </div>
 
+    {#if taskFiltersOpen}
+      <div
+        id="search-task-filters"
+        class="flex items-center gap-2 px-4 py-2 border-b border-surface-modal-border bg-surface-modal/10 flex-wrap"
+        role="group"
+        aria-label="Task filters"
+      >
+        <label class="flex items-center gap-1 text-type-xs text-text-muted">
+          <span class="sr-only">Task status</span>
+          <select
+            aria-label="Filter by task status"
+            bind:value={statusFilter}
+            class="max-w-[7.5rem] rounded-md border border-surface-modal-border bg-surface-modal px-1.5 py-1 text-type-xs text-text-primary cursor-pointer"
+          >
+            <option value="">Any status</option>
+            <option value="TODO">To do</option>
+            <option value="DOING">Doing</option>
+            <option value="DONE">Done</option>
+          </select>
+        </label>
+
+        <label class="flex items-center gap-1 text-type-xs text-text-muted">
+          <span class="sr-only">Owner</span>
+          <input
+            type="text"
+            list="search-owner-options"
+            aria-label="Filter by owner"
+            placeholder="Owner…"
+            bind:value={ownerFilter}
+            class="w-24 rounded-md border border-surface-modal-border bg-surface-modal px-1.5 py-1 text-type-xs text-text-primary placeholder:text-text-muted"
+          />
+          <datalist id="search-owner-options">
+            {#each ownerOptions as owner (owner)}
+              <option value={owner}></option>
+            {/each}
+          </datalist>
+        </label>
+
+        <div
+          class="flex items-center gap-1"
+          role="group"
+          aria-label="Filter by priority urgency"
+        >
+          {#each PRIORITY_FLOORS as p (p.value)}
+            <button
+              type="button"
+              title={p.title}
+              aria-pressed={priorityFloor === p.value}
+              onclick={() => (priorityFloor = p.value)}
+              class="px-2 py-1 rounded-md text-type-xs font-label-sm-bold transition-colors border cursor-pointer"
+              class:bg-accent-primary-start={priorityFloor === p.value}
+              class:text-text-on-accent={priorityFloor === p.value}
+              class:bg-transparent={priorityFloor !== p.value}
+              class:text-text-muted={priorityFloor !== p.value}
+              class:border-surface-modal-border={priorityFloor !== p.value}
+            >
+              {p.label}
+            </button>
+          {/each}
+        </div>
+
+        <button
+          type="button"
+          data-testid="search-overdue-toggle"
+          aria-pressed={overdueOnly}
+          title="Tasks whose due date is before today and are not done"
+          onclick={() => (overdueOnly = !overdueOnly)}
+          class="px-2 py-1 rounded-md text-type-xs font-label-sm-bold transition-colors border cursor-pointer"
+          class:bg-accent-primary-start={overdueOnly}
+          class:text-text-on-accent={overdueOnly}
+          class:bg-transparent={!overdueOnly}
+          class:text-text-muted={!overdueOnly}
+          class:border-surface-modal-border={!overdueOnly}
+        >
+          Overdue
+        </button>
+
+        <label class="flex items-center gap-1 text-type-xs text-text-muted">
+          <span class="sr-only">Due on or after</span>
+          <input
+            type="date"
+            aria-label="Due on or after"
+            bind:value={dueAfterFilter}
+            class="w-[8.5rem] rounded-md border border-surface-modal-border bg-surface-modal px-1.5 py-1 text-type-xs text-text-primary"
+          />
+        </label>
+        <label class="flex items-center gap-1 text-type-xs text-text-muted">
+          <span class="sr-only">Due on or before</span>
+          <input
+            type="date"
+            aria-label="Due on or before"
+            bind:value={dueBeforeFilter}
+            class="w-[8.5rem] rounded-md border border-surface-modal-border bg-surface-modal px-1.5 py-1 text-type-xs text-text-primary"
+          />
+        </label>
+      </div>
+    {/if}
+
     {#if hidesPageTitles()}
-      <!-- Honest surfacing of the backend contract: page-title hits are only
-           merged when no type/tag/task-attribute filter is active. -->
+      <!-- Honest surfacing of the backend contract: the page-title leg is only
+           merged when no type/tag/task-attribute filter is active, and task
+           filters additionally join the task projection (dropping notes and
+           headings). -->
       <p
         role="status"
         data-testid="search-title-leg-hint"
         class="px-4 py-1 text-type-2xs text-text-muted border-b border-surface-modal-border bg-surface-modal/10"
       >
         Page-title matches are hidden while a type, tag, or task filter is
-        active.
+        active. Task filters also restrict results to matching task rows —
+        notes and headings are hidden.
       </p>
     {/if}
 
