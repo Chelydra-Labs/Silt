@@ -774,6 +774,9 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   popping — `{canUndo, remaining, changedFields, blockIds, notebook, section,
   page, source}` describes the entry an undo would reverse, so surfaces can
   disable the affordance when empty and disclose what will be undone. The
+  locator names the target's current location while it is still indexed (the
+  file undo would write), falling back to the recorded one for a block that
+  left the index. The
   undo result names the restored block IDs, the changed task fields
   (`status`, `dueDate`, …; empty on a skipped entry), any removed spawned ID,
   and the remaining journal depth; an empty journal is a clean

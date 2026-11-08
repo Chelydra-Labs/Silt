@@ -84,7 +84,9 @@ func (a *App) recordTaskUndo(entry taskUndoEntry) {
 
 // changedTaskFields returns the frontend-facing names of the task fields that
 // differ across the entry's blocks. ModifiedAt is intentionally excluded: every
-// write (and the undo itself) re-stamps it, so it carries no user intent.
+// write (and the undo itself) re-stamps it, so it carries no user intent. The
+// names mirror applyTaskUndoSnapshot and the TaskChangedField union in
+// frontend/src/plugins/sdk.ts.
 func changedTaskFields(blocks []taskUndoBlock) []string {
 	var fields []string
 	seen := make(map[string]bool)
@@ -179,9 +181,9 @@ type TaskUndoResult struct {
 // TaskUndoState is the read-only peek returned by GetTaskUndoState: it
 // describes the newest journaled mutation without popping it, so a surface can
 // disable its undo affordance when the journal is empty and disclose what undo
-// would reverse. The locator is the entry's recorded location (undo itself
-// re-resolves the block's current location, so a moved/renamed block is still
-// reversed).
+// would reverse. The locator is the target block's current location while it is
+// still indexed (the file undo would write); a block that has left the index
+// falls back to the recorded location.
 type TaskUndoState struct {
 	CanUndo       bool     `json:"canUndo"`
 	Remaining     int      `json:"remaining"`
@@ -193,12 +195,38 @@ type TaskUndoState struct {
 	Source        string   `json:"source"`
 }
 
+// undoEntryLocator resolves an entry's live target location: the primary
+// block's current indexed location when it still exists, else the locator
+// recorded at capture time. The undo replay and the state peek share it so the
+// disclosed page and the written page cannot disagree after a page rename or a
+// cross-source move.
+func (a *App) undoEntryLocator(entry taskUndoEntry) (db.BlockLocation, bool) {
+	if len(entry.Blocks) == 0 || a.db == nil {
+		return db.BlockLocation{}, false
+	}
+	var loc db.BlockLocation
+	err := a.coordinator.WithDBReadResult(func() error {
+		var e error
+		loc, e = a.db.GetBlockLocation(entry.Blocks[0].BlockID)
+		return e
+	})
+	if err != nil {
+		return db.BlockLocation{}, false
+	}
+	return loc, true
+}
+
 // GetTaskUndoState peeks at the journal without mutating it. Undo is global
 // LIFO — it reverses the most recent mutation from any Silt surface — so this
 // reports that newest entry (changed fields + page/section/notebook/source and
 // block IDs) rather than filtering by the calling surface. An empty journal is
 // a clean zero state, not an error.
 func (a *App) GetTaskUndoState() TaskUndoState {
+	// Vault-session guard, then the journal mutex — the same order the replay
+	// and teardown take (teardown: vaultMu.Lock → taskUndo.clear), so the peek
+	// cannot deadlock against either.
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	state := TaskUndoState{ChangedFields: []string{}, BlockIDs: []string{}}
 	a.taskUndo.mu.Lock()
 	defer a.taskUndo.mu.Unlock()
@@ -217,10 +245,14 @@ func (a *App) GetTaskUndoState() TaskUndoState {
 	for _, b := range entry.Blocks {
 		state.BlockIDs = append(state.BlockIDs, b.BlockID)
 	}
-	state.Notebook = entry.Notebook
-	state.Section = entry.Section
-	state.Page = entry.Page
-	state.Source = entry.Source
+	source, notebook, section, page := entry.Source, entry.Notebook, entry.Section, entry.Page
+	if curLoc, ok := a.undoEntryLocator(entry); ok {
+		source, notebook, section, page = curLoc.Source, curLoc.Notebook, curLoc.Section, curLoc.Page
+	}
+	state.Notebook = notebook
+	state.Section = section
+	state.Page = page
+	state.Source = source
 	return state
 }
 
@@ -315,13 +347,7 @@ func (a *App) replayTaskUndoEntry(entry taskUndoEntry) (TaskUndoResult, error) {
 	// locator pointing at a vanished file, which would silently pop the entry
 	// as skipped. Prefer the block's current indexed location; fall back to
 	// the recorded locator when the block is gone from the index.
-	var curLoc db.BlockLocation
-	locErr := a.coordinator.WithDBReadResult(func() error {
-		var e error
-		curLoc, e = a.db.GetBlockLocation(primary)
-		return e
-	})
-	if locErr == nil {
+	if curLoc, ok := a.undoEntryLocator(entry); ok {
 		source, notebook, section, page = curLoc.Source, curLoc.Notebook, curLoc.Section, curLoc.Page
 	}
 
@@ -409,7 +435,11 @@ func (a *App) replayTaskUndoEntry(entry taskUndoEntry) (TaskUndoResult, error) {
 				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(fmDate))
 			}
 			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
-			a.maybeCapturePageVersion(historyLoc(entry.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), historyReasonUndo)
+			// Both the history snapshot and the index row follow the
+			// re-resolved source: the file just written lives there, so the
+			// recorded source would leave the real row stale and could clobber
+			// a same-named page in the root the block left.
+			a.maybeCapturePageVersion(historyLoc(source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), historyReasonUndo)
 			if err := a.trackedPageWrite(filePath, []byte(newContent)); err != nil {
 				writeErr = err
 				return
@@ -418,7 +448,7 @@ func (a *App) replayTaskUndoEntry(entry taskUndoEntry) (TaskUndoResult, error) {
 
 			blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
 			if err == nil {
-				if idxErr := a.indexFile(entry.Source, remeta.Notebook, remeta.Section, remeta.Page, blocks, remeta, remeta.Warnings...); idxErr != nil {
+				if idxErr := a.indexFile(source, remeta.Notebook, remeta.Section, remeta.Page, blocks, remeta, remeta.Warnings...); idxErr != nil {
 					log.Printf("task undo: indexFile failed for %s/%s/%s: %v", remeta.Notebook, remeta.Section, remeta.Page, idxErr)
 				}
 			} else {
