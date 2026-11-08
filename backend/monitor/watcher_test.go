@@ -1566,3 +1566,69 @@ func TestDirectoryWatcher_NestedSymlinkStillSkipped(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+// TestDirectoryWatcher_NestedSymlinkCreatedAfterStartStillSkipped guards the
+// live path: listenLoop calls AddRecursive for every new directory, so a
+// symlink created mid-session must not become a resolved watch root (#32).
+func TestDirectoryWatcher_NestedSymlinkCreatedAfterStartStillSkipped(t *testing.T) {
+	vaultPath := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(vaultPath, "Work", "Journal", "Daily"), 0o755); err != nil {
+		t.Fatalf("mkdir vault tree: %v", err)
+	}
+
+	dw, dm := newWatcherTestHarnessAt(t, vaultPath)
+	if err := dw.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = dw.Close() })
+
+	elsewhere := t.TempDir()
+	link := filepath.Join(vaultPath, "Work", "dynlink")
+	createSymlinkOrSkip(t, elsewhere, link)
+
+	// Sentinel: a real sibling created after the symlink. Its watch proves the
+	// ordered Create events for Work's children were drained, so the symlink's
+	// own Create has been processed too.
+	sentinel := filepath.Join(vaultPath, "Work", "real-after")
+	if err := os.Mkdir(sentinel, 0o755); err != nil {
+		t.Fatalf("mkdir sentinel: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for !watchListHas(dw.watcher.WatchList(), sentinel) {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for the real sibling %q to be watched; got %v", sentinel, dw.watcher.WatchList())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	watches := dw.watcher.WatchList()
+	if watchListHas(watches, link) {
+		t.Errorf("symlink created after Start is watched (%q); #32 requires it stay un-followed", link)
+	}
+	if under := watchListUnder(watches, elsewhere); len(under) != 0 {
+		t.Errorf("symlink target %q was watched after Start; #32 requires it stay un-followed: %v", elsewhere, under)
+	}
+
+	// A write inside the target must not be indexed through the link.
+	pageID := "77777777-7777-7777-7777-777777777777"
+	if err := os.WriteFile(filepath.Join(elsewhere, "Elsewhere.md"),
+		[]byte("# Elsewhere <!-- id: "+pageID+" -->\n"), 0o644); err != nil {
+		t.Fatalf("write target file: %v", err)
+	}
+	deadline = time.Now().Add(600 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		var n int
+		if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM blocks WHERE id = ?", pageID).Scan(&n); err == nil && n != 0 {
+			t.Fatalf("file under a post-Start nested symlink was indexed (blocks=%d); #32 requires the skip", n)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	watches = dw.watcher.WatchList()
+	if watchListHas(watches, link) {
+		t.Errorf("symlink %q gained a watch after a target write", link)
+	}
+	if under := watchListUnder(watches, elsewhere); len(under) != 0 {
+		t.Errorf("symlink target %q gained watches after a write: %v", elsewhere, under)
+	}
+}

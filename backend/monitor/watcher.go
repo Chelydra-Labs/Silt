@@ -322,22 +322,43 @@ func resolveWatchRoot(root string) (walkRoot string, rebase func(string) string,
 	return resolved, rebase, nil
 }
 
+// isRegisteredRoot reports whether path is a configured watch root: the vault
+// root (registered by the constructor) or a linked root (registered by
+// AddWatchRoot before it walks). Only these aliases are deliberately resolved.
+func (dw *DirectoryWatcher) isRegisteredRoot(path string) bool {
+	dw.rootMu.RLock()
+	defer dw.rootMu.RUnlock()
+	_, ok := dw.rootInfo[path]
+	return ok
+}
+
 func (dw *DirectoryWatcher) AddRecursive(path string) error {
 	// Identity keys are filepath.Clean-ed in registerRoot / the constructor,
 	// so normalise the caller's spelling before it becomes a watch string.
 	path = filepath.Clean(path)
-	walkRoot, rebase, err := resolveWatchRoot(path)
-	if err != nil {
-		// An unstattable root stays a hard error (today's WalkDir behaviour);
-		// an alias whose target cannot be resolved is reported as a coverage
-		// gap instead, matching WalkMarkdown's blindness-not-empty semantics.
-		if _, lerr := os.Lstat(path); lerr != nil {
-			return err
+	// Resolve only a configured root. listenLoop also calls this for ANY new
+	// directory; resolving those would follow a directory symlink created
+	// after Start and index its target, breaking the un-followed nested-symlink
+	// invariant (#32, matching WalkMarkdown). Intermediate alias components are
+	// still followed by the OS, so a new real directory under a symlinked root
+	// keeps working.
+	walkRoot, rebase := path, func(p string) string { return p }
+	if dw.isRegisteredRoot(path) {
+		var err error
+		walkRoot, rebase, err = resolveWatchRoot(path)
+		if err != nil {
+			// An unstattable root stays a hard error (today's WalkDir
+			// behaviour); an alias whose target cannot be resolved is reported
+			// as a coverage gap instead, matching WalkMarkdown's
+			// blindness-not-empty semantics.
+			if _, lerr := os.Lstat(path); lerr != nil {
+				return err
+			}
+			dw.failedMu.Lock()
+			dw.failedPaths = append(dw.failedPaths, fmt.Sprintf("%s: %v", path, err))
+			dw.failedMu.Unlock()
+			return nil
 		}
-		dw.failedMu.Lock()
-		dw.failedPaths = append(dw.failedPaths, fmt.Sprintf("%s: %v", path, err))
-		dw.failedMu.Unlock()
-		return nil
 	}
 	return filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {

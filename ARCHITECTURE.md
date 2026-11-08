@@ -518,9 +518,12 @@ is the first path component (a vault holds many notebooks); for a linked root
 the notebook is the registered display name (the root IS one notebook). A root
 that is itself a symlink is walked through its resolved target, while watches,
 event paths, registered roots and `files` rows stay spelled under the caller's
-root (one path identity with the startup scan). An alias whose target cannot be
-resolved is recorded in `FailedPaths` — surfaced as `EventVaultWatchCoverage` —
-instead of leaving a silent, blind-but-empty watch set.
+root (one path identity with the startup scan). Only configured roots are
+resolved: a nested symlinked directory — including one created mid-session —
+stays un-followed (#32), matching the startup scan. An alias whose target
+cannot be resolved is recorded in `FailedPaths` — surfaced as
+`EventVaultWatchCoverage` — instead of leaving a silent, blind-but-empty watch
+set.
 
 Lifecycle bindings. `LinkNotebook(folderPath)` validates, assigns a stable id,
 rejects collisions, folders already inside the vault, **and ancestors of the
