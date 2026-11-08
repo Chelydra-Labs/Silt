@@ -203,6 +203,31 @@ describe('persistSavedViews (#427)', () => {
     const [, value] = mocks.updatePluginSetting.mock.calls[0]
     expect(value).toEqual([])
   })
+
+  it('strips the transient search from persisted filters (#1071)', async () => {
+    await persistSavedViews([
+      {
+        id: 'u1',
+        name: 'Searchless',
+        filters: {
+          owners: ['Alice'],
+          priorities: [1],
+          dueDate: 'today',
+          tags: ['x'],
+          text: 'postgres'
+        }
+      }
+    ])
+    const [, value] = mocks.updatePluginSetting.mock.calls[0]
+    const written = value as Array<{ filters: Record<string, unknown> }>
+    expect(written[0].filters).toEqual({
+      owners: ['Alice'],
+      priorities: [1],
+      dueDate: 'today',
+      tags: ['x']
+    })
+    expect(written[0].filters).not.toHaveProperty('text')
+  })
 })
 
 describe('loadColumns (#421/#437)', () => {

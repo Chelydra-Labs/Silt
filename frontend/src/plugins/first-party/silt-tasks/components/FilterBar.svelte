@@ -94,6 +94,7 @@
   // round-trip; commits are trailing-debounced (~200ms). External clears
   // (Clear all, applying a saved view) sync back through the effect below.
   let textDraft = $state(untrack(() => filters.text ?? ''))
+  let textInput = $state<HTMLInputElement | null>(null)
   let lastCommittedText = untrack(() => filters.text ?? '')
   const commitText = trailingDebounce(() => {
     const committed = textDraft.trim()
@@ -119,6 +120,9 @@
     textDraft = ''
     lastCommittedText = ''
     onTextChange('')
+    // The button unmounts with the draft; return focus to the field so a
+    // keyboard user isn't dropped back to the document.
+    void tick().then(() => textInput?.focus())
   }
 
   function toggleChip(k: ChipKey, trigger: HTMLButtonElement) {
@@ -354,6 +358,7 @@
       >
       <input
         id="tasks-hub-text-filter"
+        bind:this={textInput}
         type="search"
         value={textDraft}
         oninput={onTextInput}

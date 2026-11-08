@@ -398,6 +398,19 @@ describe('FilterBar text narrowing', () => {
     ).toBeNull()
   })
 
+  it('refocuses the input after the clear button removes itself', async () => {
+    render(FilterBar, {
+      props: makeProps({ filters: emptyTextFilters('pg') })
+    })
+    const clear = screen.getByRole('button', { name: 'Clear task search' })
+    clear.focus()
+    expect(document.activeElement).toBe(clear)
+
+    await fireEvent.click(clear)
+    await tick()
+    expect(document.activeElement).toBe(screen.getByLabelText('Find tasks'))
+  })
+
   it('syncs an external clear (Clear all) back into the draft', async () => {
     const { rerender } = render(FilterBar, {
       props: makeProps({ filters: emptyTextFilters('pg') })
