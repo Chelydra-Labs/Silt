@@ -342,8 +342,9 @@ func (dw *DirectoryWatcher) AddRecursive(path string) error {
 	// invariant (#32, matching WalkMarkdown). Intermediate alias components are
 	// still followed by the OS, so a new real directory under a symlinked root
 	// keeps working.
+	rootWalk := dw.isRegisteredRoot(path)
 	walkRoot, rebase := path, func(p string) string { return p }
-	if dw.isRegisteredRoot(path) {
+	if rootWalk {
 		var err error
 		walkRoot, rebase, err = resolveWatchRoot(path)
 		if err != nil {
@@ -365,8 +366,11 @@ func (dw *DirectoryWatcher) AddRecursive(path string) error {
 			return err
 		}
 		// Decide root identity before rebase: rebase returns a cleaned path,
-		// so an unclean caller spelling never equals the root.
-		isRoot := p == walkRoot
+		// so an unclean caller spelling never equals the root. Only a
+		// configured-root walk earns the exemption: listenLoop recurses here
+		// for any new directory, and those must keep the unconditional skips
+		// below so a mid-session `.trash`/`attachments` stays unwatched.
+		isRoot := rootWalk && p == walkRoot
 		if d.IsDir() {
 			name := d.Name()
 			// Skip system and hidden directories, but keep the root itself:

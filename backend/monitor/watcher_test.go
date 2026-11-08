@@ -1375,6 +1375,24 @@ func waitForBlockCount(t *testing.T, dm *db.DatabaseManager, id string, want int
 	t.Fatalf("timed out waiting for block %s count=%d (want %d)", id, n, want)
 }
 
+// waitForFileRow polls until files has want rows for path (50ms ticks, 3s cap).
+// reindexFile commits the files row after the blocks row, so reading it
+// immediately after waitForBlockCount can miss the second write.
+func waitForFileRow(t *testing.T, dm *db.DatabaseManager, path string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		var n int
+		if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM files WHERE path = ?", path).Scan(&n); err == nil && n == want {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	var n int
+	_ = dm.SQLDB().QueryRow("SELECT COUNT(*) FROM files WHERE path = ?", path).Scan(&n)
+	t.Fatalf("timed out waiting for files row %s count=%d (want %d)", path, n, want)
+}
+
 // TestDirectoryWatcher_SymlinkedVaultRootIsWatched pins the #1070 fix end to
 // end: a symlinked vault root is walked through its resolved target, but every
 // watch, delivered event and files row stays spelled under the caller's alias.
@@ -1422,13 +1440,7 @@ func TestDirectoryWatcher_SymlinkedVaultRootIsWatched(t *testing.T) {
 	waitForBlockCount(t, dm, pageID, 1)
 
 	aliasPage := filepath.Join(alias, "Work", "Journal", "Daily", "ext.md")
-	var files int
-	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM files WHERE path = ?", aliasPage).Scan(&files); err != nil {
-		t.Fatalf("count files: %v", err)
-	}
-	if files != 1 {
-		t.Fatalf("files rows for alias-spelled path = %d, want 1 (event identity must match the startup scan's spelling)", files)
-	}
+	waitForFileRow(t, dm, aliasPage, 1)
 }
 
 // TestDirectoryWatcher_SymlinkedRootNamedLikeSkippedDir pins the root
@@ -1630,5 +1642,69 @@ func TestDirectoryWatcher_NestedSymlinkCreatedAfterStartStillSkipped(t *testing.
 	}
 	if under := watchListUnder(watches, elsewhere); len(under) != 0 {
 		t.Errorf("symlink target %q gained watches after a write: %v", elsewhere, under)
+	}
+}
+
+// TestDirectoryWatcher_MidSessionSkippedDirsStayUnwatched keeps the root
+// exemption gated to configured roots: listenLoop calls AddRecursive for every
+// new directory, and a dot-dir or attachments/ created mid-session must keep
+// the unconditional skips the startup walk applies.
+func TestDirectoryWatcher_MidSessionSkippedDirsStayUnwatched(t *testing.T) {
+	vaultPath := t.TempDir()
+	work := filepath.Join(vaultPath, "Work")
+	if err := os.Mkdir(work, 0o755); err != nil {
+		t.Fatalf("mkdir vault tree: %v", err)
+	}
+
+	dw, dm := newWatcherTestHarnessAt(t, vaultPath)
+	if err := dw.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = dw.Close() })
+
+	dotDir := filepath.Join(work, ".trash")
+	attachments := filepath.Join(work, "attachments")
+	for _, dir := range []string{dotDir, attachments} {
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+
+	// Sentinel: a real sibling created after both directories. Its watch proves
+	// the ordered Create events for Work's children were drained, so their own
+	// walks (had they been registered) already ran.
+	sentinel := filepath.Join(work, "real-after")
+	if err := os.Mkdir(sentinel, 0o755); err != nil {
+		t.Fatalf("mkdir sentinel: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for !watchListHas(dw.watcher.WatchList(), sentinel) {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for the real sibling %q to be watched; got %v", sentinel, dw.watcher.WatchList())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	watches := dw.watcher.WatchList()
+	for _, dir := range []string{dotDir, attachments} {
+		if watchListHas(watches, dir) {
+			t.Errorf("mid-session dir %q is watched; the startup walk skips it and so must listenLoop recursion", dir)
+		}
+	}
+
+	// The skip must also hold for indexing: a .md dropped into the dot-dir is
+	// invisible to the startup scan, so the watcher must not index it either.
+	pageID := "55555555-5555-5555-5555-555555555555"
+	if err := os.WriteFile(filepath.Join(dotDir, "deleted.md"),
+		[]byte("# Page <!-- id: "+pageID+" -->\n"), 0o644); err != nil {
+		t.Fatalf("write dot-dir page: %v", err)
+	}
+	deadline = time.Now().Add(600 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		var n int
+		if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM blocks WHERE id = ?", pageID).Scan(&n); err == nil && n != 0 {
+			t.Fatalf("file inside a mid-session dot-dir was indexed (blocks=%d); the startup scan skips it", n)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
