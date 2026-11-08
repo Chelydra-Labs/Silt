@@ -57,6 +57,7 @@
 
 <button
   bind:this={ref}
+  {...rest}
   {type}
   {id}
   {disabled}
@@ -65,7 +66,6 @@
   aria-label={ariaLabel ?? rest['aria-label']}
   data-testid={dataTestId ??
     ((rest as Record<string, unknown>)['data-testid'] as string | undefined)}
-  {...rest}
   class="ui-btn inline-flex items-center justify-center gap-1.5 font-label-sm-bold border transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 {variantClasses[
     variant
   ]} {sizeClasses[size]} {className}"

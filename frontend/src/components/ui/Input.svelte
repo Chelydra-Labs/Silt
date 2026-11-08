@@ -95,6 +95,7 @@
 <input
   bind:this={ref}
   bind:value
+  {...rest}
   {id}
   {name}
   {type}
@@ -117,7 +118,6 @@
   aria-describedby={resolvedDescribedBy}
   data-testid={dataTestId ??
     ((rest as Record<string, unknown>)['data-testid'] as string | undefined)}
-  {...rest}
   class="ui-input w-full h-9 px-2.5 rounded-md bg-surface-panel border text-text-primary font-body-md text-type-sm transition-colors placeholder:text-text-muted/60 disabled:opacity-50 disabled:cursor-not-allowed {hasError
     ? 'border-status-danger'
     : 'border-surface-panel-border'} {className}"

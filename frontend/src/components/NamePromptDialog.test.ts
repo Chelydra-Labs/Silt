@@ -57,7 +57,7 @@ describe('NamePromptDialog', () => {
     expect(screen.getByText(/name is required/i)).toBeTruthy()
   })
 
-  it('calls onCancel on Escape', async () => {
+  it('calls onCancel on Escape and associates label with input when dataTestId is omitted', async () => {
     const onCancel = vi.fn()
     render(NamePromptDialog, {
       props: {
@@ -67,6 +67,10 @@ describe('NamePromptDialog', () => {
         onCancel
       }
     })
+    const input = screen.getByLabelText('Name') as HTMLInputElement
+    expect(input).toBeTruthy()
+    expect(input.id).toBeTruthy()
+    expect(input.getAttribute('data-testid')).toBeNull()
     await fireEvent.keyDown(window, { key: 'Escape' })
     expect(onCancel).toHaveBeenCalledTimes(1)
   })

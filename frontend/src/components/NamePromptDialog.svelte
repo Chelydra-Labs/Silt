@@ -44,8 +44,13 @@
   let value = $state(initialValue)
   let error = $state<string | null>(null)
 
-  const inputId = $derived(dataTestId ? `${dataTestId}-input` : undefined)
-  const errorId = $derived(dataTestId ? `${dataTestId}-error` : undefined)
+  const fallbackId = $props.id()
+  const inputId = $derived(
+    dataTestId ? `${dataTestId}-input` : `${fallbackId}-input`
+  )
+  const errorId = $derived(
+    dataTestId ? `${dataTestId}-error` : `${fallbackId}-error`
+  )
   const activeError = $derived(error || errorMessage || null)
 
   function submit() {
@@ -111,7 +116,7 @@
       {errorId}
       errorRole={errorMessage ? 'alert' : 'status'}
       errorLive={errorMessage ? 'assertive' : 'polite'}
-      dataTestId={inputId}
+      dataTestId={dataTestId ? `${dataTestId}-input` : undefined}
       oninput={() => {
         if (error) error = null
       }}

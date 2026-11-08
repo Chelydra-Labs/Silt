@@ -41,7 +41,10 @@
   }: Props = $props()
 
   const resolvedAriaLabel = $derived(
-    ariaLabel ?? (rest['aria-label'] as string | undefined) ?? title ?? ''
+    ariaLabel ??
+      (rest['aria-label'] as string | undefined) ??
+      title ??
+      undefined
   )
 
   const variantClasses: Record<NonNullable<Props['variant']>, string> = {
@@ -66,6 +69,7 @@
 
 <button
   bind:this={ref}
+  {...rest}
   {type}
   {disabled}
   {onclick}
@@ -74,7 +78,6 @@
   title={title ?? resolvedAriaLabel}
   data-testid={dataTestId ??
     ((rest as Record<string, unknown>)['data-testid'] as string | undefined)}
-  {...rest}
   class="ui-icon-btn inline-flex items-center justify-center border transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 {sizeClasses[
     size
   ]} {active
