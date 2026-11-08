@@ -1,13 +1,13 @@
 <script lang="ts">
   import { SvelteDate } from 'svelte/reactivity'
   import { fly } from 'svelte/transition'
-  import { onDestroy, tick, untrack } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import type { PluginContext, TaskStatus } from '../../../sdk'
   import { trailingDebounce } from '../debounce'
   import { friendlyCaughtError } from '../errors'
   import { optimisticField } from '../optimisticField.svelte'
   import { useBlockedDoneGuard } from '../shared.svelte'
-  import { beginTaskUndoWrite, refreshTasksUndo } from '../undo.svelte'
+  import { trackTaskUndoWrite } from '../undo.svelte'
   import ErrorBanner from './ErrorBanner.svelte'
 
   import type { TaskDetail } from '../types'
@@ -99,75 +99,74 @@
   let progressState = $state(0)
   let progressPending = $state(false)
 
-  const notifyMeta = () => {
-    onMetaChanged?.()
-    // The journal captures alongside the successful write, so this peek makes
-    // undo available without waiting for the block:changed round-trip.
-    void refreshTasksUndo()
-  }
   const setMetaError = (m: string) => {
     metaError = m
   }
+  const notifyMeta = () => onMetaChanged?.()
 
   // Optimistic-commit fields. Each owns its { value, pending } and the
-  // snapshot → optimistic set → write → revert-on-error skeleton.
+  // snapshot → optimistic set → write → revert-on-error skeleton. The write is
+  // tracked per promise: the hold must outlive the component (the async
+  // closure does), so unmounting the drawer mid-write cannot re-enable undo
+  // against a journal that has not recorded the edit yet.
   const pinField = optimisticField<boolean>({
     initial: false,
-    write: (v) => ctx.updateTaskMeta(task!.id, { pinned: v }),
+    write: (v) =>
+      trackTaskUndoWrite(ctx.updateTaskMeta(task!.id, { pinned: v })),
     onChanged: notifyMeta,
     onError: setMetaError
   })
   const recurrenceField = optimisticField<string>({
     initial: '',
-    write: (v) => ctx.setTaskRecurrence(task!.id, v),
+    write: (v) => trackTaskUndoWrite(ctx.setTaskRecurrence(task!.id, v)),
     onChanged: notifyMeta,
     onError: setMetaError
   })
   const dueDateField = optimisticField<string>({
     initial: '',
-    write: (v) => ctx.setTaskDueDate(task!.id, v),
+    write: (v) => trackTaskUndoWrite(ctx.setTaskDueDate(task!.id, v)),
     onChanged: notifyMeta,
     onError: setMetaError
   })
   const startDateField = optimisticField<string>({
     initial: '',
-    write: (v) => ctx.setTaskStartDate(task!.id, v),
+    write: (v) => trackTaskUndoWrite(ctx.setTaskStartDate(task!.id, v)),
     onChanged: notifyMeta,
     onError: setMetaError
   })
   const statusField = optimisticField<TaskStatus>({
     initial: 'TODO',
-    write: (s) => ctx.updateBlockState(task!.id, s),
+    write: (s) => trackTaskUndoWrite(ctx.updateBlockState(task!.id, s)),
     onChanged: notifyMeta,
     onError: setMetaError
   })
   const estimateField = optimisticField<string>({
     initial: '',
-    write: (v) => ctx.setTaskEstimate(task!.id, v),
+    write: (v) => trackTaskUndoWrite(ctx.setTaskEstimate(task!.id, v)),
     onChanged: notifyMeta,
     onError: setMetaError
   })
   const ownerField = optimisticField<string>({
     initial: '',
-    write: (v) => ctx.setTaskOwner(task!.id, v),
+    write: (v) => trackTaskUndoWrite(ctx.setTaskOwner(task!.id, v)),
     onChanged: notifyMeta,
     onError: setMetaError
   })
   const priorityField = optimisticField<number>({
     initial: 2,
-    write: (p) => ctx.setTaskPriority(task!.id, p),
+    write: (p) => trackTaskUndoWrite(ctx.setTaskPriority(task!.id, p)),
     onChanged: notifyMeta,
     onError: setMetaError
   })
   const tagsField = optimisticField<string[]>({
     initial: [],
-    write: (tags) => ctx.setTaskTags(task!.id, tags),
+    write: (tags) => trackTaskUndoWrite(ctx.setTaskTags(task!.id, tags)),
     onChanged: notifyMeta,
     onError: setMetaError
   })
   const titleField = optimisticField<string>({
     initial: '',
-    write: (v) => ctx.setTaskTitle(task!.id, v),
+    write: (v) => trackTaskUndoWrite(ctx.setTaskTitle(task!.id, v)),
     onChanged: notifyMeta,
     onError: setMetaError
   })
@@ -219,34 +218,6 @@
   $effect(() => {
     busy =
       recurrenceOpen || dueDateOpen || startDateOpen || !!blockedGuard.pending
-  })
-
-  // Any optimistic field (or the progress write) in flight disables undo: the
-  // journal entry and the rendered value disagree until the write lands.
-  let releaseUndoWrite: (() => void) | null = null
-  $effect(() => {
-    const pending =
-      pinField.pending ||
-      progressPending ||
-      recurrenceField.pending ||
-      dueDateField.pending ||
-      startDateField.pending ||
-      statusField.pending ||
-      estimateField.pending ||
-      ownerField.pending ||
-      priorityField.pending ||
-      tagsField.pending ||
-      titleField.pending
-    if (pending && !releaseUndoWrite) {
-      releaseUndoWrite = beginTaskUndoWrite()
-    } else if (!pending && releaseUndoWrite) {
-      releaseUndoWrite()
-      releaseUndoWrite = null
-    }
-  })
-  onDestroy(() => {
-    releaseUndoWrite?.()
-    releaseUndoWrite = null
   })
 
   $effect(() => {
@@ -314,7 +285,7 @@
     metaError = ''
     void (async () => {
       try {
-        await ctx.updateTaskMeta(task.id, { progress: v })
+        await trackTaskUndoWrite(ctx.updateTaskMeta(task.id, { progress: v }))
         onMetaChanged?.()
       } catch (err) {
         if (my !== progressSeq) return

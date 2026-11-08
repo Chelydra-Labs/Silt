@@ -35,6 +35,10 @@ let unsubscribe: (() => void) | null = null
 let refreshTimer: ReturnType<typeof setTimeout> | null = null
 // Monotonic token: a stale peek must not overwrite a newer one.
 let refreshSeq = 0
+// Bumped by reset: a write that straddles a reset settled against a counter
+// the reset already zeroed, so it must not decrement (that underflows to -1
+// and keeps undo disabled for the rest of the mount).
+let writeGeneration = 0
 
 let journal = $state<TaskUndoState>({ ...EMPTY_STATE })
 let undoPending = $state(false)
@@ -69,6 +73,7 @@ export function resetTasksUndo(): void {
   refreshTimer = null
   ctxRef = null
   refreshSeq++
+  writeGeneration++
   journal = { ...EMPTY_STATE }
   undoPending = false
   activeWrites = 0
@@ -99,30 +104,19 @@ export function tasksUndoAvailable(): boolean {
 
 /** Track a mutation write so undo pauses while it is in flight. */
 export async function trackTaskUndoWrite<T>(write: Promise<T>): Promise<T> {
+  const generation = writeGeneration
   activeWrites++
   try {
     return await write
   } finally {
-    activeWrites--
-    // The journal captures alongside the successful write; peeking here makes
-    // undo available without waiting for the block:changed round-trip.
-    void refreshTasksUndo()
-  }
-}
-
-/**
- * Begin an in-flight write that is not expressed as a promise at the call
- * site (the drawer's optimistic fields). Returns a release function; calling
- * it more than once is safe.
- */
-export function beginTaskUndoWrite(): () => void {
-  activeWrites++
-  let released = false
-  return () => {
-    if (released) return
-    released = true
-    activeWrites = Math.max(0, activeWrites - 1)
-    void refreshTasksUndo()
+    // A reset already zeroed the counter; the straggler belongs to the old
+    // session and must not touch the current one.
+    if (generation === writeGeneration) {
+      activeWrites = Math.max(0, activeWrites - 1)
+      // The journal captures alongside the successful write; peeking here makes
+      // undo available without waiting for the block:changed round-trip.
+      void refreshTasksUndo()
+    }
   }
 }
 

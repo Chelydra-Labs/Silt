@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { PluginContext, SearchHit } from '../../../sdk'
   import { friendlyCaughtError } from '../errors'
+  import { trackTaskUndoWrite } from '../undo.svelte'
   import { coerceIPCError } from '../../../../lib/ipcError'
   import Popover from '../../../../components/Popover.svelte'
 
@@ -122,9 +123,13 @@
     errorMsg = ''
     pending = true
     try {
-      await ctx.setTaskBlockedBy(
-        cardId,
-        deps.map((d) => d.id)
+      // The edge write is journaled server-side; track it so undo stays off
+      // while the rendered chips and the journal disagree.
+      await trackTaskUndoWrite(
+        ctx.setTaskBlockedBy(
+          cardId,
+          deps.map((d) => d.id)
+        )
       )
       onMetaChanged?.()
     } catch (e) {
@@ -158,9 +163,11 @@
     errorMsg = ''
     pending = true
     try {
-      await ctx.setTaskBlockedBy(
-        cardId,
-        deps.map((d) => d.id)
+      await trackTaskUndoWrite(
+        ctx.setTaskBlockedBy(
+          cardId,
+          deps.map((d) => d.id)
+        )
       )
       onMetaChanged?.()
     } catch (e) {

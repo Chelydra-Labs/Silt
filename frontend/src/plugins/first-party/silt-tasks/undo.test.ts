@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PluginContext, TaskUndoResult, TaskUndoState } from '../../sdk'
 import {
-  beginTaskUndoWrite,
   clearTasksUndoError,
   getTasksUndoView,
   initTasksUndo,
@@ -201,13 +200,66 @@ describe('undo store (#1011)', () => {
     initTasksUndo(ctx)
     await flush()
 
-    const releaseOne = beginTaskUndoWrite()
-    const releaseTwo = beginTaskUndoWrite()
+    let settleOne: (v: boolean) => void = () => {}
+    let settleTwo: (v: boolean) => void = () => {}
+    const one = trackTaskUndoWrite(
+      new Promise<boolean>((resolve) => (settleOne = resolve))
+    )
+    const two = trackTaskUndoWrite(
+      new Promise<boolean>((resolve) => (settleTwo = resolve))
+    )
     expect(getTasksUndoView().available).toBe(false)
-    releaseOne()
+
+    settleOne(true)
+    await one
     expect(getTasksUndoView().available).toBe(false)
-    releaseTwo()
+
+    settleTwo(true)
+    await two
+    await flush()
     expect(getTasksUndoView().available).toBe(true)
+  })
+
+  it('restores undo when a tracked write rejects', async () => {
+    const { ctx } = makeCtx()
+    initTasksUndo(ctx)
+    await flush()
+
+    let fail: (e: Error) => void = () => {}
+    const write = trackTaskUndoWrite(
+      new Promise<boolean>((_resolve, reject) => (fail = reject))
+    )
+    expect(getTasksUndoView().available).toBe(false)
+
+    fail(new Error('write failed'))
+    await expect(write).rejects.toThrow('write failed')
+    await flush()
+    expect(tasksUndoAvailable()).toBe(true)
+  })
+
+  it('ignores a write that settles after a reset', async () => {
+    const { ctx } = makeCtx()
+    initTasksUndo(ctx)
+    await flush()
+
+    let settle: (v: boolean) => void = () => {}
+    const straggler = trackTaskUndoWrite(
+      new Promise<boolean>((resolve) => (settle = resolve))
+    )
+    await flush()
+
+    // Hub remount or vault switch: the reset zeroes the counter for the new
+    // session while the previous mount's write is still on the wire.
+    initTasksUndo(ctx)
+    await flush()
+    settle(true)
+    await straggler
+    await flush()
+
+    // A raw decrement would leave the counter at -1, which reads as a pending
+    // write forever and silently disables undo for the new mount.
+    expect(getTasksUndoView().writePending).toBe(false)
+    expect(tasksUndoAvailable()).toBe(true)
   })
 
   it('surfaces a rejected undo and clears the success announcement', async () => {
@@ -261,6 +313,25 @@ describe('undo store (#1011)', () => {
 
     expect(getTasksUndoView().remaining).toBe(1)
     expect(getTasksUndoView().changedFields).toEqual([])
+  })
+
+  it('drops a peek that was started before a reset', async () => {
+    const { ctx, getTaskUndoState } = makeCtx()
+    let resolvePeek: (state: TaskUndoState) => void = () => {}
+    getTaskUndoState.mockImplementationOnce(
+      () => new Promise<TaskUndoState>((resolve) => (resolvePeek = resolve))
+    )
+    initTasksUndo(ctx)
+    await flush()
+
+    resetTasksUndo()
+    resolvePeek(undoState({ canUndo: true, remaining: 4 }))
+    await flush()
+
+    // The old session's answer must not repopulate the new session's mirror.
+    expect(getTasksUndoView().canUndo).toBe(false)
+    expect(getTasksUndoView().remaining).toBe(0)
+    expect(tasksUndoAvailable()).toBe(false)
   })
 
   it('reset drops the bound context and the mirror', async () => {
