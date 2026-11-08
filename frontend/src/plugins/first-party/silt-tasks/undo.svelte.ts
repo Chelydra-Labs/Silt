@@ -177,5 +177,3 @@ export function getTasksUndoView() {
     error
   }
 }
-
-export type TasksUndoView = ReturnType<typeof getTasksUndoView>
