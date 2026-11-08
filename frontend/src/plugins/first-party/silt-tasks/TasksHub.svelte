@@ -14,6 +14,8 @@
   import FilterBar from './components/FilterBar.svelte'
   import ConfirmModal from './components/ConfirmModal.svelte'
   import TasksCommandPalette from './components/TasksCommandPalette.svelte'
+  import UndoButton from './components/UndoButton.svelte'
+  import ErrorBanner from './components/ErrorBanner.svelte'
   import ListView from './views/ListView.svelte'
   import BoardView from './views/BoardView.svelte'
   import CalendarView from './views/CalendarView.svelte'
@@ -65,7 +67,13 @@
   import { cloneColumns, columnsEqual } from './columns'
   import { viewMatchesState } from './savedViews'
   import { motionDuration } from './motion'
-  import { initTasksUndo } from './undo.svelte'
+  import {
+    clearTasksUndoError,
+    getTasksUndoView,
+    initTasksUndo,
+    runTaskUndo,
+    tasksUndoAvailable
+  } from './undo.svelte'
 
   interface Props {
     ctx: PluginContext
@@ -85,6 +93,7 @@
   let hubState = $derived(getTaskHubViewState())
   let weekStart = $derived(getTaskWeekStart())
   let pageRoute = $derived(getTaskPageRoute())
+  let undoView = $derived(getTasksUndoView())
   let hubHeading = $state<HTMLHeadingElement | null>(null)
   let routeAnnouncement = $state('')
   let handledRouteNonce = $state('')
@@ -409,6 +418,28 @@
     onGlobalKeydown(e)
     onPaletteHotkey(e)
     onPopoverKeydown(e)
+    onHubUndoKeydown(e)
+  }
+
+  // Undo is Ctrl+Z only while a Tasks surface holds focus. The target must be
+  // inside the hub container: the editor is a sibling subtree with its own
+  // keymap, so its keystrokes never satisfy this guard. Editable fields keep
+  // their native undo, and nested popovers/dialogs own their own context —
+  // the task drawer opts back in with data-tasks-undo-scope.
+  function onHubUndoKeydown(e: KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return
+    if (e.key.toLowerCase() !== 'z') return
+    const target = e.target
+    if (!(target instanceof HTMLElement)) return
+    if (!target.closest('[data-tasks-hub]')) return
+    if (isEditableTarget(target)) return
+    const overlay = target.closest(
+      '[role="dialog"], [role="listbox"], [role="menu"]'
+    )
+    if (overlay && !overlay.hasAttribute('data-tasks-undo-scope')) return
+    if (!tasksUndoAvailable()) return
+    e.preventDefault()
+    void runTaskUndo()
   }
 
   function handlePaletteFindTask() {
@@ -846,6 +877,11 @@
           class="flex items-center gap-1.5"
           data-testid="tasks-hub-utility-cluster"
         >
+          <!-- Session undo (#1011). Always mounted so the affordance is
+               discoverable; disabled while the journal is empty, an undo is
+               running, or a hub write is still landing. -->
+          <UndoButton />
+
           <!-- Saved-view bookmark (#427). Three regimes: no view active →
              save composer; view active + modified → update/save-as menu;
              view active + clean → rename/delete menu. Popover is a positioned
@@ -1229,6 +1265,14 @@
     />
   </header>
 
+  {#if undoView.error}
+    <ErrorBanner
+      message={undoView.error}
+      dataTestId="tasks-undo-error"
+      onDismiss={clearTasksUndoError}
+    />
+  {/if}
+
   {#if pageRoute && countsReady && totalCount === 0}
     <div
       class="px-3 pt-4 text-type-sm font-body-md text-text-muted sm:px-5 lg:px-6"
@@ -1291,6 +1335,11 @@
   </div>
   <div class="sr-only" aria-live="polite" data-testid="tasks-page-route-live">
     {routeAnnouncement}
+  </div>
+  <!-- Undo feedback: names the restored attributes + page and the remaining
+       journal depth. One region for every surface, including the drawer. -->
+  <div class="sr-only" aria-live="polite" data-testid="tasks-undo-live">
+    {undoView.announcement}
   </div>
 
   <!-- Delete confirmation modal (#470). Replaces window.confirm(). -->
