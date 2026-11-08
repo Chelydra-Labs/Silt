@@ -427,7 +427,7 @@
   // their native undo, and nested popovers/dialogs own their own context —
   // the task drawer opts back in with data-tasks-undo-scope.
   function onHubUndoKeydown(e: KeyboardEvent) {
-    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return
+    if (!e.ctrlKey || e.shiftKey || e.altKey) return
     if (e.key.toLowerCase() !== 'z') return
     const target = e.target
     if (!(target instanceof HTMLElement)) return
