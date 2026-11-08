@@ -444,7 +444,9 @@ describe('SearchModal', () => {
     expect(screen.queryByLabelText('Filter by task status')).toBeNull()
     // Query-adjacent controls stay visible.
     expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Relevance' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Relevance' })
+    ).toBeInTheDocument()
 
     await fireEvent.click(toggle)
     expect(toggle).toHaveAttribute('aria-expanded', 'true')

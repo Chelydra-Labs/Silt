@@ -1,8 +1,4 @@
-import {
-  buildFtsMatch,
-  normalizeFtsTerm,
-  quoteFtsTerm
-} from '../lib/ftsQuery'
+import { buildFtsMatch, normalizeFtsTerm, quoteFtsTerm } from '../lib/ftsQuery'
 
 /**
  * Plugin fullTextSearch SQL. Join MUST use blocks.rowid (integer), never

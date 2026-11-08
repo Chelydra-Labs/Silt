@@ -631,8 +631,7 @@
             data-testid="search-task-filters-count"
             class="rounded-full px-1 text-type-3xs {taskFiltersOpen
               ? 'bg-text-on-accent/20'
-              : 'bg-accent-primary-start/20'}"
-            >{taskFilterCount()}</span
+              : 'bg-accent-primary-start/20'}">{taskFilterCount()}</span
           >
         {/if}
         <span class="material-symbols-outlined text-type-xs" aria-hidden="true"
@@ -774,8 +773,8 @@
         class="px-4 py-1 text-type-2xs text-text-muted border-b border-surface-modal-border bg-surface-modal/10"
       >
         Page-title matches are hidden while a type, tag, or task filter is
-        active. Task filters also restrict results to matching task rows —
-        notes and headings are hidden.
+        active. Task filters also restrict results to matching task rows — notes
+        and headings are hidden.
       </p>
     {/if}
 
