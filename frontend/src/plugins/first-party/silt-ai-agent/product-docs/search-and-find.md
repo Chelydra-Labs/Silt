@@ -8,8 +8,21 @@ title: Search vault, switch page, and AI search
 Open **Search vault** (default **Ctrl+Shift+F**). The modal placeholder is
 along the lines of “Search notebooks, sections, or task content…”.
 
-- Filters can limit to the main vault or **+ Linked** notebooks, and by tag.  
-- Results jump to a page or block. Standalone tasks open the **Tasks** hub.  
+- Filters can limit to the main vault or **+ Linked** notebooks, and by
+  notebook, tag, or block type (tasks, notes, headings).
+- **Task filters** narrow to task attributes: status, owner (exact name),
+  priority floor, an inclusive due-date range, and overdue-only. The priority
+  floor follows the app’s 1 = Critical scale: **P1+** means Critical only,
+  **P2+** means Critical or Normal, **P3+** means any recorded priority.
+- Task filters need a query — they narrow a search rather than listing tasks
+  on their own. To browse tasks, use the **Tasks** hub.
+- Any active filter hides **page-title** matches, because a page row carries no
+  task attributes. Task filters go further and restrict results to task rows,
+  so notes and headings are hidden too.
+- Text matching covers block content **and** the notebook/section names, so a
+  term that appears only in a notebook or section name matches every block in
+  that notebook or section.
+- Results jump to a page or block. Standalone tasks open the **Tasks** hub.
 - Works **without** AI — this is classic full-text / keyword search.
 
 ## Switch page (quick open)
