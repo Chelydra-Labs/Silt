@@ -1443,6 +1443,79 @@ func TestDirectoryWatcher_SymlinkedVaultRootIsWatched(t *testing.T) {
 	waitForFileRow(t, dm, aliasPage, 1)
 }
 
+// TestDirectoryWatcher_NewDirUnderSymlinkedRootAfterStart pins the mid-session
+// half of the #1070 fix: a directory created through the alias after Start is
+// discovered by listenLoop (the OS follows the intermediate alias components)
+// and its watch, events and files row stay alias-spelled.
+func TestDirectoryWatcher_NewDirUnderSymlinkedRootAfterStart(t *testing.T) {
+	realRoot := t.TempDir()
+	realWork := filepath.Join(realRoot, "Work")
+	if err := os.Mkdir(realWork, 0o755); err != nil {
+		t.Fatalf("mkdir real tree: %v", err)
+	}
+	alias := filepath.Join(t.TempDir(), "vault-alias")
+	createSymlinkOrSkip(t, realRoot, alias)
+
+	dw, dm := newWatcherTestHarnessAt(t, alias)
+	if err := dw.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = dw.Close() })
+
+	// Create the tree through the ALIAS spelling: the directories themselves
+	// are real, only their parent components traverse the symlink.
+	aliasFresh := filepath.Join(alias, "Work", "Fresh")
+	aliasDaily := filepath.Join(aliasFresh, "Daily")
+	if err := os.MkdirAll(aliasDaily, 0o755); err != nil {
+		t.Fatalf("mkdir new tree through alias: %v", err)
+	}
+
+	// Sentinel: a real sibling created after the new tree. Its watch proves
+	// the ordered Create events for Work's children were drained, so the walks
+	// for Fresh and Daily already ran.
+	sentinel := filepath.Join(alias, "Work", "real-after")
+	if err := os.Mkdir(sentinel, 0o755); err != nil {
+		t.Fatalf("mkdir sentinel: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for !watchListHas(dw.watcher.WatchList(), sentinel) {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for the sentinel %q to be watched; got %v", sentinel, dw.watcher.WatchList())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	watches := dw.watcher.WatchList()
+	for _, want := range []string{aliasFresh, aliasDaily} {
+		if !watchListHas(watches, want) {
+			t.Errorf("new mid-session dir %q is not watched; got %v", want, watches)
+		}
+	}
+	for _, leaked := range watchListUnder(watches, realRoot) {
+		t.Errorf("watch list leaked resolved-target spelling %q; watches must stay under the alias", leaked)
+	}
+
+	// External write through the REAL path: the new directory's watch is
+	// registered on the same inode, so the event must arrive alias-spelled and
+	// the files row must be stored under the alias, not the resolved target.
+	pageID := "88888888-8888-8888-8888-888888888888"
+	if err := os.WriteFile(filepath.Join(realRoot, "Work", "Fresh", "Daily", "live.md"),
+		[]byte("# Live <!-- id: "+pageID+" -->\n"), 0o644); err != nil {
+		t.Fatalf("write page into new dir: %v", err)
+	}
+	waitForBlockCount(t, dm, pageID, 1)
+	waitForFileRow(t, dm, filepath.Join(aliasDaily, "live.md"), 1)
+
+	var resolvedRows int
+	resolvedPage := filepath.Join(realRoot, "Work", "Fresh", "Daily", "live.md")
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM files WHERE path = ?", resolvedPage).Scan(&resolvedRows); err != nil {
+		t.Fatalf("query resolved-spelling files row: %v", err)
+	}
+	if resolvedRows != 0 {
+		t.Errorf("files row stored under resolved spelling %q (rows=%d); path identity must stay alias-spelled", resolvedPage, resolvedRows)
+	}
+}
+
 // TestDirectoryWatcher_SymlinkedRootNamedLikeSkippedDir pins the root
 // exemption: walking a resolved target makes d.Name() the TARGET's basename,
 // so a target named .hidden or attachments must not SkipDir the whole vault.
