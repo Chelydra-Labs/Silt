@@ -3,11 +3,13 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	"silt/backend/db"
@@ -21,6 +23,14 @@ import (
 // board drag session or a metadata-editing pass while keeping memory bounded
 // (each entry holds two ParsedBlock snapshots per touched task).
 const taskUndoJournalCap = 100
+
+// taskUndoEntryFailureLimit bounds how often one entry may fail retryably and
+// stay journaled. Transient faults (a mounted root that blips, a disk hiccup)
+// must not discard a still-valid entry on the first error, but a fault that
+// reproduces on every click wedges the journal behind that one entry exactly
+// like a dead locator — so the entry drains once it has failed this many
+// attempts.
+const taskUndoEntryFailureLimit = 3
 
 // taskUndoBlock captures one block's full parsed state on both sides of a
 // successful write. A whole snapshot (rather than just CleanText) is required
@@ -48,6 +58,9 @@ type taskUndoEntry struct {
 	// ChangedFields is derived at capture time so the frontend can describe
 	// what an undo restored without re-deriving it from before/after state.
 	ChangedFields []string
+	// failures counts retryable replay failures for this entry, so a fault
+	// that never heals still drains (see taskUndoEntryFailureLimit).
+	failures int
 }
 
 // taskUndoJournal is the in-memory, session-scoped undo stack. The mutex is
@@ -169,10 +182,12 @@ func taskUndoStringSlicesEqual(a, b []string) bool {
 }
 
 // TaskUndoResult is the IPC shape returned by UndoLastTaskMutation. Undone is
-// false for a clean no-op (empty journal) and for a skipped entry whose target
-// blocks vanished; SkippedBlockIDs names those blocks. ChangedFields lists the
-// task attributes the undo restored ("status", "dueDate", …) and is empty for
-// a skipped entry (nothing was restored).
+// false for a clean no-op (empty journal) and for a skipped entry that could
+// not be replayed at all (target blocks vanished, locator no longer resolves,
+// or the page path is permanently unreadable/unwritable); SkippedBlockIDs
+// names those blocks. ChangedFields lists the task attributes the undo
+// restored ("status", "dueDate", …) and is empty for a skipped entry (nothing
+// was restored).
 type TaskUndoResult struct {
 	Undone           bool     `json:"undone"`
 	Skipped          bool     `json:"skipped"`
@@ -192,6 +207,10 @@ type TaskUndoResult struct {
 // would reverse. The locator is the target block's current location while it is
 // still indexed (the file undo would write); a block that has left the index
 // falls back to the recorded location.
+//
+// CanUndo reports that an entry exists, not that it will replay: an entry whose
+// page has since been deleted or made unreadable still peeks as canUndo and
+// then skips (and pops) on the undo call.
 type TaskUndoState struct {
 	CanUndo       bool     `json:"canUndo"`
 	Remaining     int      `json:"remaining"`
@@ -261,11 +280,16 @@ func (a *App) GetTaskUndoState() TaskUndoState {
 	return state
 }
 
-// PluginGetTaskUndoState is the plugin-SDK wrapper for GetTaskUndoState. It is
-// a read-only journal peek, so it needs only a valid plugin session (no
-// content-mutate grant — compare PluginUndoLastTaskMutation, which writes).
+// PluginGetTaskUndoState is the plugin-SDK wrapper for GetTaskUndoState. The
+// peek writes nothing, but it discloses live vault locators and block IDs for
+// whatever the user last changed, so it carries the same read-files grant
+// every other locator-bearing read binding requires (no content-mutate grant —
+// compare PluginUndoLastTaskMutation, which writes).
 func (a *App) PluginGetTaskUndoState(pluginID, sessionToken string) (TaskUndoState, error) {
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return TaskUndoState{}, err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapReadFiles); err != nil {
 		return TaskUndoState{}, err
 	}
 	return a.GetTaskUndoState(), nil
@@ -273,8 +297,9 @@ func (a *App) PluginGetTaskUndoState(pluginID, sessionToken string) (TaskUndoSta
 
 // unrecoverableTaskUndoError marks a replay failure that a retry cannot fix:
 // the recorded locator no longer resolves (unlinked or quarantined notebook,
-// invalid path) or the path could never be written. UndoLastTaskMutation pops
-// these as skipped so a dead entry cannot wedge the whole session journal
+// invalid path), or the page path is permanently unreadable/unwritable
+// (permission denied, path is a directory, read-only mount). UndoLastTaskMutation
+// pops these as skipped so a dead entry cannot wedge the whole session journal
 // behind a failure that repeats identically on every click.
 type unrecoverableTaskUndoError struct{ err error }
 
@@ -286,6 +311,22 @@ func unrecoverableTaskUndo(err error) error {
 		return nil
 	}
 	return &unrecoverableTaskUndoError{err: err}
+}
+
+// deterministicTaskUndoPathError reports whether a page read/write failed
+// because of the path itself rather than a transient IO fault. These are the
+// error classes where retrying is guaranteed to fail the same way: no
+// permission, a directory or non-directory where a page file belongs, a
+// symlink loop, a read-only mount. Focus-lock refusals, ENOSPC and EIO stay
+// retryable — they can clear without the entry becoming invalid. A verified
+// (network-root) write replaces the OS cause with user-facing prose, so there
+// the per-entry failure cap is the backstop.
+func deterministicTaskUndoPathError(err error) bool {
+	return errors.Is(err, fs.ErrPermission) ||
+		errors.Is(err, syscall.EISDIR) ||
+		errors.Is(err, syscall.ENOTDIR) ||
+		errors.Is(err, syscall.ELOOP) ||
+		errors.Is(err, syscall.EROFS)
 }
 
 func entryBlockIDs(entry taskUndoEntry) []string {
@@ -312,11 +353,13 @@ func entryBlockIDs(entry taskUndoEntry) []string {
 //
 // The undo write itself is deliberately NOT journaled (there is no redo); the
 // journal mutex stays held across the replay so a concurrent mutation cannot
-// slip between the peek and the pop. On a retryable failure (focus lock, disk
-// error) the entry stays journaled; a vanished target, or an entry whose
-// recorded locator can no longer resolve (unlinked/quarantined notebook,
-// invalid path), is popped and reported as Skipped so one dead entry cannot
-// block the older mutations for the rest of the session.
+// slip between the peek and the pop. A focus-lock refusal keeps the entry for a
+// later retry; any other failure is retryable too, but an entry that fails
+// taskUndoEntryFailureLimit times is drained like a dead one. A vanished
+// target, an entry whose recorded locator can no longer resolve
+// (unlinked/quarantined notebook, invalid path), or a page path that can never
+// be read/written again is popped and reported as Skipped, so one dead entry
+// cannot block the older mutations for the rest of the session.
 func (a *App) UndoLastTaskMutation() (TaskUndoResult, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -334,24 +377,40 @@ func (a *App) UndoLastTaskMutation() (TaskUndoResult, error) {
 	}
 	entry := a.taskUndo.entries[n-1]
 	result, err := a.replayTaskUndoEntry(entry)
-	if err != nil {
-		var unrecoverable *unrecoverableTaskUndoError
-		if !errors.As(err, &unrecoverable) {
-			return TaskUndoResult{Remaining: n}, err
-		}
-		// Retrying cannot fix a dead locator, so keeping the entry would make
-		// every later undo fail on it and hide all older mutations for the
-		// session. Pop it and report the skip; the next undo moves on.
+	if err == nil {
 		a.taskUndo.entries = a.taskUndo.entries[:n-1]
-		log.Printf("task undo: dropped unrecoverable entry: %v", err)
-		result.Skipped = true
-		result.Undone = false
-		result.ChangedFields = nil
-		result.SkippedBlockIDs = entryBlockIDs(entry)
 		result.Remaining = n - 1
 		return result, nil
 	}
+	// A focus-lock refusal is not a failure of the entry: the editor owns the
+	// file and the retry after it blurs still reverses the mutation, so it
+	// neither counts toward the drain cap nor drops the entry.
+	if errors.Is(err, errBlockBeingEdited) {
+		return TaskUndoResult{Remaining: n}, err
+	}
+	var unrecoverable *unrecoverableTaskUndoError
+	retryable := !errors.As(err, &unrecoverable)
+	if retryable {
+		entry.failures++
+		if entry.failures < taskUndoEntryFailureLimit {
+			a.taskUndo.entries[n-1].failures = entry.failures
+			return TaskUndoResult{Remaining: n}, err
+		}
+	}
+	// Either retrying cannot fix the failure (dead locator, unwritable path) or
+	// it has already failed identically on every attempt: keeping the entry
+	// would make every later undo fail on it and hide all older mutations for
+	// the session. Pop it and report the skip; the next undo moves on.
 	a.taskUndo.entries = a.taskUndo.entries[:n-1]
+	if retryable {
+		log.Printf("task undo: dropped entry after %d failed attempts: %v", entry.failures, err)
+	} else {
+		log.Printf("task undo: dropped unrecoverable entry: %v", err)
+	}
+	result.Skipped = true
+	result.Undone = false
+	result.ChangedFields = nil
+	result.SkippedBlockIDs = entryBlockIDs(entry)
 	result.Remaining = n - 1
 	return result, nil
 }
@@ -411,6 +470,14 @@ func (a *App) replayTaskUndoEntry(entry taskUndoEntry) (TaskUndoResult, error) {
 	result.Page = safePage
 	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
 	if err != nil {
+		// A linked root that cannot be stat'd may just be unmounted right now
+		// (credential prompt, dropped network share); only a definitively
+		// unlinked/quarantined source is unrecoverable. The failure cap above
+		// drains the entry if the root never comes back.
+		var rootOutage *linkedRootInaccessibleError
+		if errors.As(err, &rootOutage) {
+			return result, fmt.Errorf("task undo: resolve notebook dir: %w", err)
+		}
 		return result, unrecoverableTaskUndo(fmt.Errorf("task undo: resolve notebook dir: %w", err))
 	}
 	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
@@ -435,6 +502,10 @@ func (a *App) replayTaskUndoEntry(entry taskUndoEntry) (TaskUndoResult, error) {
 			if err != nil {
 				if os.IsNotExist(err) {
 					// The page (and therefore every recorded block) is gone.
+					return
+				}
+				if deterministicTaskUndoPathError(err) {
+					writeErr = unrecoverableTaskUndo(fmt.Errorf("task undo: read %s: %w", filePath, err))
 					return
 				}
 				writeErr = err
@@ -487,6 +558,10 @@ func (a *App) replayTaskUndoEntry(entry taskUndoEntry) (TaskUndoResult, error) {
 			// a same-named page in the root the block left.
 			a.maybeCapturePageVersion(historyLoc(source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), historyReasonUndo)
 			if err := a.trackedPageWrite(filePath, []byte(newContent)); err != nil {
+				if deterministicTaskUndoPathError(err) {
+					writeErr = unrecoverableTaskUndo(fmt.Errorf("task undo: write %s: %w", filePath, err))
+					return
+				}
 				writeErr = err
 				return
 			}

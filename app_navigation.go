@@ -11,6 +11,17 @@ import (
 	"strings"
 )
 
+// linkedRootInaccessibleError marks a linked root whose fingerprint re-check
+// could not stat the root at all — an unmounted drive, a pending credential
+// prompt — as opposed to a link that is provably gone or tampered with. The
+// message stays path-free (it reaches MCP/UI surfaces), while the type lets a
+// caller distinguish "retry once the root returns" from "this link is dead".
+type linkedRootInaccessibleError struct{ id string }
+
+func (e *linkedRootInaccessibleError) Error() string {
+	return fmt.Sprintf("linked notebook %q root is inaccessible", e.id)
+}
+
 // resolveNotebookDir returns the content directory for a notebook under the
 // given source (#100): the folder whose direct children are the notebook's
 // sections and section-less pages. For an in-vault notebook ('vault') that is
@@ -60,7 +71,7 @@ func (a *App) resolveNotebookDir(notebookName, source string) (string, error) {
 			currentFP, fpErr := config.ComputeRootFingerprint(ln.RootPath)
 			if fpErr != nil {
 				// Fixed string only — never wrap OS path errors for MCP/UI.
-				return "", fmt.Errorf("linked notebook %q root is inaccessible", id)
+				return "", &linkedRootInaccessibleError{id: id}
 			}
 			if currentFP != ln.RootFingerprint {
 				a.quarantineLink(id, "fingerprint_mismatch")

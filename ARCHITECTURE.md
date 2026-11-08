@@ -780,14 +780,21 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   disable the affordance when empty and disclose what will be undone. The
   locator names the target's current location while it is still indexed (the
   file undo would write), falling back to the recorded one for a block that
-  left the index. The
+  left the index. `canUndo` reports that an entry exists, not that it will
+  replay: one whose page has since been deleted or made unreadable still
+  peeks and then skips. The plugin wrapper is gated by `read-files` (it
+  discloses vault locators and block IDs). The
   undo result names the restored block IDs, the changed task fields
   (`status`, `dueDate`, …; empty on a skipped entry), any removed spawned ID,
   and the remaining journal depth; an empty journal is a clean
   `undone: false` no-op. An entry whose target can no longer resolve (the
-  linked notebook was unlinked or quarantined, the locator is invalid) is
-  popped and reported as `skipped` instead of erroring forever, so one dead
-  entry never blocks the older mutations in the session journal. **Sub-editor**:
+  linked notebook was unlinked or quarantined, the locator is invalid), or
+  whose page path is permanently unreadable/unwritable (permission denied, a
+  directory at the `.md` path, a read-only mount), is popped and reported as
+  `skipped` instead of erroring forever. A transient failure (unmounted
+  linked root, disk hiccup) is retried and keeps the entry, which drains once
+  it has failed three attempts — so one dead entry never blocks the older
+  mutations in the session journal. **Sub-editor**:
   `FetchSubtree`
   (read-only child sub-tree extraction; also hydrates `block_meta`
   comment attribution for NOTE children) and `SaveSubtreeBlocks` (atomic

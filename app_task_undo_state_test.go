@@ -96,7 +96,10 @@ func TestGetTaskUndoState_FollowsBlockMove(t *testing.T) {
 	}
 }
 
-func TestPluginGetTaskUndoState_NeedsSessionNotGrant(t *testing.T) {
+// The peek writes nothing, but it discloses live locators and block IDs for
+// whatever the user last changed, so it carries the same read-files grant as
+// every other locator-bearing read binding.
+func TestPluginGetTaskUndoState_NeedsSessionAndReadFiles(t *testing.T) {
 	app := newTestApp(t)
 	const pluginID = "third-party"
 	token := registerTestSession(t, app, pluginID)
@@ -104,7 +107,12 @@ func TestPluginGetTaskUndoState_NeedsSessionNotGrant(t *testing.T) {
 	if _, err := app.PluginGetTaskUndoState(pluginID, "wrong-token"); err == nil {
 		t.Fatal("read-only state must reject a mismatched session token")
 	}
-	// No content-mutate grant is requested: a peek writes nothing.
+	if _, err := app.PluginGetTaskUndoState(pluginID, token); err == nil {
+		t.Fatal("state must be denied without read-files: it discloses vault locators")
+	}
+	if err := app.RequestCapability(pluginID, string(plugins.CapReadFiles), ""); err != nil {
+		t.Fatalf("RequestCapability: %v", err)
+	}
 	state, err := app.PluginGetTaskUndoState(pluginID, token)
 	if err != nil {
 		t.Fatalf("PluginGetTaskUndoState: %v", err)

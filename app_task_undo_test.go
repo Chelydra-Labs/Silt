@@ -58,6 +58,24 @@ func requireTaskProjection(t *testing.T, app *App, id string, check func(t *test
 	t.Fatalf("task %s is missing from the index after undo", id)
 }
 
+// requireBlockProjection asserts the indexed footer for a block that is not a
+// task: search and block rendering read this row, so a restored file with a
+// stale row still shows the old prose.
+func requireBlockProjection(t *testing.T, app *App, notebook, section, page, id string, check func(t *testing.T, block parser.ParsedBlock)) {
+	t.Helper()
+	blocks, err := app.db.FetchPageBlocks("vault", notebook, section, page)
+	if err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	for _, block := range blocks {
+		if block.ID == id {
+			check(t, block)
+			return
+		}
+	}
+	t.Fatalf("block %s is missing from the index after undo", id)
+}
+
 // assertOnlyTargetLineChanged pins the adjacency guarantee: undo must not
 // re-render unrelated blocks. The target line may differ (the accepted
 // [modified::] re-stamp), every other line must be byte-identical.
@@ -192,6 +210,16 @@ func TestUndoLastTaskMutation_DueDateUndoPreservesLaterTextEdit(t *testing.T) {
 	if strings.Contains(line, "[due::") {
 		t.Errorf("undo did not clear the journaled due token: %q", line)
 	}
+	requireTaskProjection(t, app, id, func(t *testing.T, task parser.TaskResult) {
+		if task.DueDate != "" {
+			t.Errorf("index due date after undo = %q, want empty", task.DueDate)
+		}
+	})
+	requireBlockProjection(t, app, "W", "S", "UndoStaleText", id, func(t *testing.T, block parser.ParsedBlock) {
+		if !strings.Contains(block.CleanText, "rewritten by editor") {
+			t.Errorf("indexed block text after undo = %q, want the later edit preserved", block.CleanText)
+		}
+	})
 }
 
 func TestUndoLastTaskMutation_OnlyTargetLineChanges(t *testing.T) {
@@ -219,6 +247,11 @@ func TestUndoLastTaskMutation_OnlyTargetLineChanges(t *testing.T) {
 
 	updated := readTaskPage(t, filePath)
 	assertOnlyTargetLineChanged(t, beforeUndo, updated, idB)
+	requireTaskProjection(t, app, idB, func(t *testing.T, task parser.TaskResult) {
+		if task.DueDate != "" {
+			t.Errorf("index due date after undo = %q, want empty", task.DueDate)
+		}
+	})
 }
 
 func TestUndoLastTaskMutation_RecurrenceRemovesSpawnedSibling(t *testing.T) {
@@ -296,6 +329,11 @@ func TestUndoLastTaskMutation_RestoresBlockBodyText(t *testing.T) {
 	if line := requireTaskLine(t, readTaskPage(t, filePath), id); !strings.Contains(line, "original note") {
 		t.Errorf("block body not restored: %q", line)
 	}
+	requireBlockProjection(t, app, "W", "S", "UndoBody", id, func(t *testing.T, block parser.ParsedBlock) {
+		if !strings.Contains(block.CleanText, "original note") {
+			t.Errorf("indexed block text after undo = %q, want the restored prose", block.CleanText)
+		}
+	})
 }
 
 func TestUndoLastTaskMutation_BatchOrderRestoresAll(t *testing.T) {
@@ -511,6 +549,11 @@ func TestUndoLastTaskMutation_NoOpMutationDoesNotJournal(t *testing.T) {
 	if line := requireTaskLine(t, readTaskPage(t, filePath), id); strings.Contains(line, "[owner::") {
 		t.Errorf("undo did not clear the owner: %q", line)
 	}
+	requireTaskProjection(t, app, id, func(t *testing.T, task parser.TaskResult) {
+		if task.Owner != "" {
+			t.Errorf("index owner after undo = %q, want empty", task.Owner)
+		}
+	})
 }
 
 func TestTeardownClearsTaskUndoJournal(t *testing.T) {
@@ -599,6 +642,11 @@ func TestPluginUndoLastTaskMutation_GatedAndUndoes(t *testing.T) {
 	if line := requireTaskLine(t, readTaskPage(t, filePath), id); strings.Contains(line, "[owner::") {
 		t.Errorf("plugin undo did not clear the owner: %q", line)
 	}
+	requireTaskProjection(t, app, id, func(t *testing.T, task parser.TaskResult) {
+		if task.Owner != "" {
+			t.Errorf("index owner after plugin undo = %q, want empty", task.Owner)
+		}
+	})
 }
 
 func taskUndoContains(values []string, want string) bool {

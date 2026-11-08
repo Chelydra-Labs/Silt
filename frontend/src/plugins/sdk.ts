@@ -39,12 +39,13 @@ export type TaskChangedField =
 /**
  * Result of `ctx.undoLastTaskMutation()` (#1011). `undone` is false for a
  * clean no-op (nothing left in this session's journal) and for a skipped
- * entry — one whose target blocks vanished, or whose recorded locator can no
- * longer resolve (e.g. its linked notebook was unlinked); a skip is popped
- * from the journal rather than erroring. `skippedBlockIds` names the affected
- * blocks and `changedFields` is empty (a skip restores nothing).
- * `changedFields` lists the attributes the undo restored, and `remaining` is
- * the journal depth after the call.
+ * entry — one whose target blocks vanished, whose recorded locator can no
+ * longer resolve (e.g. its linked notebook was unlinked), or whose page path
+ * can no longer be read or written (permission denied, a directory at the
+ * page path); a skip is popped from the journal rather than erroring.
+ * `skippedBlockIds` names the affected blocks and `changedFields` is empty (a
+ * skip restores nothing). `changedFields` lists the attributes the undo
+ * restored, and `remaining` is the journal depth after the call.
  */
 export interface TaskUndoResult {
   undone: boolean
@@ -70,7 +71,9 @@ export interface TaskUndoResult {
  * `remaining` includes the peeked entry (the depth BEFORE an undo), whereas
  * `TaskUndoResult.remaining` is the depth after the call. `source` is
  * `'vault'` or `'linked:<id>'`; the locator may be the recorded one when the
- * target has left the index.
+ * target has left the index. `canUndo` describes journal depth, not
+ * replayability: an entry whose page has since been deleted or become
+ * unreadable still reports `canUndo` and then skips (and pops) when undone.
  */
 export interface TaskUndoState {
   canUndo: boolean
@@ -336,8 +339,8 @@ export interface PluginContext {
    * Peek at the undo journal without mutating it (#1011). Use this to disable
    * an undo affordance when `canUndo` is false and to disclose what will be
    * reversed — `changedFields` plus the page/section/notebook/source locator
-   * of the newest entry. Read-only: needs a valid plugin session, not the
-   * content-mutate grant.
+   * of the newest entry. Read-only and gated by `read-files`, not
+   * content-mutate: the state discloses vault locators and block IDs.
    */
   getTaskUndoState: () => Promise<TaskUndoState>
   /**

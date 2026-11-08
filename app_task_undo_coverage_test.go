@@ -324,5 +324,12 @@ func TestUndoLastTaskMutation_MultiFileBatchOrderNeedsTwoUndos(t *testing.T) {
 		if strings.Contains(line, "[order::") {
 			t.Errorf("undo left an order token on %s: %q", tf.id, line)
 		}
+		// The cross-file batch is the canonical stale-row case: both rows must
+		// follow the restored files, not keep the order the drag wrote.
+		requireTaskProjection(t, app, tf.id, func(t *testing.T, task parser.TaskResult) {
+			if task.ManualOrder != 0 {
+				t.Errorf("index order after undo for %s = %d, want 0", task.ID, task.ManualOrder)
+			}
+		})
 	}
 }
