@@ -1696,6 +1696,67 @@ describe('Tasks hub undo (#1011)', () => {
     expect(mocks.undoLastTaskMutation).not.toHaveBeenCalled()
   })
 
+  it('restores board focus after confirming a blocked DONE move', async () => {
+    mocks.tasksSettings = {
+      default_display_mode: 'board',
+      default_group_by: 'status'
+    }
+    const rows = [
+      boardRow({
+        id: 't1',
+        clean_content: 'Blocked move',
+        status: 'DOING',
+        is_blocked: 1
+      })
+    ]
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT DISTINCT owner'))
+        return { rows: [], truncated: false }
+      if (sql.includes('SELECT DISTINCT level_0'))
+        return { rows: [], truncated: false }
+      return { rows, truncated: false }
+    })
+    const getTaskBlockers = vi
+      .fn()
+      .mockResolvedValue([{ id: 'dep-1', clean_content: 'Prereq' }])
+
+    render(TasksHub, { ctx: undoCtx({ getTaskBlockers }), manifest: MANIFEST })
+    await flush()
+
+    const card = screen
+      .getByRole('group', { name: 'In Progress' })
+      .querySelector<HTMLElement>('[data-card="t1"]')!
+    card.focus()
+    await fireEvent.keyDown(card, { key: 'ArrowRight' })
+    await flush()
+
+    // The guard holds focus on its confirm button while open.
+    const confirm = screen.getByText('Complete anyway')
+    await fireEvent.click(confirm)
+    await flush()
+    await flush()
+
+    // The optimistic relocation replaced the card node and the dialog restores
+    // focus on unmount, so without an explicit hand-back focus lands on <body>
+    // and the hub's Ctrl+Z scope is gone until the user clicks back in.
+    const doneCard = screen
+      .getByRole('group', { name: 'Done' })
+      .querySelector<HTMLElement>('[data-card="t1"]')
+    expect(doneCard).not.toBeNull()
+    expect(document.activeElement).toBe(doneCard)
+
+    const undoEvent = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    doneCard!.dispatchEvent(undoEvent)
+    await flush()
+    expect(undoEvent.defaultPrevented).toBe(true)
+    expect(mocks.undoLastTaskMutation).toHaveBeenCalledTimes(1)
+  })
+
   it('renders the undo failure banner and dismisses it', async () => {
     mocks.undoLastTaskMutation.mockRejectedValue(new Error('focus lock held'))
 

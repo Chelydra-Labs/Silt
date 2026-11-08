@@ -287,9 +287,7 @@ export function createBoardDndController({
       revertTo(prev)
       liveMessage = 'Move failed — reverted.'
     }
-    // The keyed-each relocation replaces the card node, so the activating
-    // element is gone and hub Ctrl+Z would have no scope to run in.
-    void tick().then(() => focusCard(card.id))
+    restoreCardFocus(card.id)
   }
 
   async function confirmBlockedDone() {
@@ -317,6 +315,7 @@ export function createBoardDndController({
           // (new column, stale order value) rather than desyncing.
           await reload()
           liveMessage = 'Move partially failed — reloaded.'
+          restoreCardFocus(card.id)
           return
         }
       }
@@ -326,6 +325,7 @@ export function createBoardDndController({
       revertOptimistic(card, fromColKey, toCol)
       liveMessage = 'Move failed — reverted.'
     }
+    restoreCardFocus(card.id)
   }
 
   function cancelBlockedDone() {
@@ -335,10 +335,22 @@ export function createBoardDndController({
     const { card, fromColKey, toCol } = pending.context
     revertOptimistic(card, fromColKey, toCol)
     liveMessage = 'Move cancelled.'
+    restoreCardFocus(card.id)
   }
 
   function focusCard(cardId: string) {
-    document.querySelector<HTMLElement>(`[data-card="${cardId}"]`)?.focus?.()
+    const card = document.querySelector<HTMLElement>(`[data-card="${cardId}"]`)
+    const target =
+      card ?? document.querySelector<HTMLElement>('[data-tasks-hub] h1')
+    target?.focus?.()
+  }
+
+  // The keyed-each relocation replaces the card node, so the activating element
+  // is gone and hub Ctrl+Z would have no scope to run in. The guard dialogs
+  // capture focus when they open and restore it on unmount — <body> for a
+  // keyboard move — so they must re-establish it after settling too.
+  function restoreCardFocus(cardId: string) {
+    void tick().then(() => focusCard(cardId))
   }
 
   async function confirmWipOverLimit() {
