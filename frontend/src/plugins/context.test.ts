@@ -28,6 +28,18 @@ const mocks = vi.hoisted(() => ({
       remaining: 2
     })
   ),
+  pluginGetTaskUndoState: vi.fn(() =>
+    Promise.resolve({
+      canUndo: true,
+      remaining: 2,
+      changedFields: ['status'],
+      blockIds: ['b1'],
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      source: 'vault'
+    })
+  ),
   getPluginSettingsForNotebook: vi.fn(() => Promise.resolve({})),
   pluginListPageVersions: vi.fn(
     (): Promise<
@@ -52,6 +64,7 @@ vi.mock('$silt-app', () =>
     PluginSetTaskOrder: mocks.pluginSetTaskOrder,
     PluginSetTaskStartDate: mocks.pluginSetTaskStartDate,
     PluginUndoLastTaskMutation: mocks.pluginUndoLastTaskMutation,
+    PluginGetTaskUndoState: mocks.pluginGetTaskUndoState,
     GetPluginSettingsForNotebook: mocks.getPluginSettingsForNotebook,
     PluginListPageVersions: mocks.pluginListPageVersions,
     PluginGetPageVersion: mocks.pluginGetPageVersion,
@@ -448,6 +461,48 @@ describe('makePluginContext — undoLastTaskMutation', () => {
       removedSpawnedId: '',
       changedFields: ['status'],
       remaining: 2
+    })
+  })
+})
+
+describe('makePluginContext — getTaskUndoState', () => {
+  beforeEach(() => {
+    mocks.pluginGetTaskUndoState.mockClear()
+  })
+
+  it('threads pluginID + session token and returns the journal peek', async () => {
+    const ctx = makePluginContext('silt-tasks', 'tok-undo')
+    const state = await ctx.getTaskUndoState()
+    expect(mocks.pluginGetTaskUndoState).toHaveBeenCalledWith(
+      'silt-tasks',
+      'tok-undo'
+    )
+    expect(state).toEqual({
+      canUndo: true,
+      remaining: 2,
+      changedFields: ['status'],
+      blockIds: ['b1'],
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      source: 'vault'
+    })
+  })
+
+  it('normalizes an undefined response into the empty zero state', async () => {
+    mocks.pluginGetTaskUndoState.mockResolvedValueOnce(
+      undefined as unknown as never
+    )
+    const ctx = makePluginContext('silt-tasks', 'tok-undo')
+    await expect(ctx.getTaskUndoState()).resolves.toEqual({
+      canUndo: false,
+      remaining: 0,
+      changedFields: [],
+      blockIds: [],
+      notebook: '',
+      section: '',
+      page: '',
+      source: ''
     })
   })
 })

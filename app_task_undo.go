@@ -160,7 +160,8 @@ func taskUndoStringSlicesEqual(a, b []string) bool {
 // TaskUndoResult is the IPC shape returned by UndoLastTaskMutation. Undone is
 // false for a clean no-op (empty journal) and for a skipped entry whose target
 // blocks vanished; SkippedBlockIDs names those blocks. ChangedFields lists the
-// task attributes the undo restored ("status", "dueDate", …).
+// task attributes the undo restored ("status", "dueDate", …) and is empty for
+// a skipped entry (nothing was restored).
 type TaskUndoResult struct {
 	Undone           bool     `json:"undone"`
 	Skipped          bool     `json:"skipped"`
@@ -174,12 +175,75 @@ type TaskUndoResult struct {
 	Remaining        int      `json:"remaining"`
 }
 
-// UndoLastTaskMutation restores the newest journaled task mutation. The replay
-// is block-addressed: it re-parses the recorded page inside the same
-// lock/focus-gate path as every writer, restores each target block's typed
-// fields from the before snapshot, removes the recurrence sibling when the
-// undone transition minted one, then renders/writes/re-indexes once. Adjacent
-// blocks are copied through the renderer untouched.
+// TaskUndoState is the read-only peek returned by GetTaskUndoState: it
+// describes the newest journaled mutation without popping it, so a surface can
+// disable its undo affordance when the journal is empty and disclose what undo
+// would reverse. The locator is the entry's recorded location (undo itself
+// re-resolves the block's current location, so a moved/renamed block is still
+// reversed).
+type TaskUndoState struct {
+	CanUndo       bool     `json:"canUndo"`
+	Remaining     int      `json:"remaining"`
+	ChangedFields []string `json:"changedFields"`
+	BlockIDs      []string `json:"blockIds"`
+	Notebook      string   `json:"notebook"`
+	Section       string   `json:"section"`
+	Page          string   `json:"page"`
+	Source        string   `json:"source"`
+}
+
+// GetTaskUndoState peeks at the journal without mutating it. Undo is global
+// LIFO — it reverses the most recent mutation from any Silt surface — so this
+// reports that newest entry (changed fields + page/section/notebook/source and
+// block IDs) rather than filtering by the calling surface. An empty journal is
+// a clean zero state, not an error.
+func (a *App) GetTaskUndoState() TaskUndoState {
+	state := TaskUndoState{ChangedFields: []string{}, BlockIDs: []string{}}
+	a.taskUndo.mu.Lock()
+	defer a.taskUndo.mu.Unlock()
+	n := len(a.taskUndo.entries)
+	if n == 0 {
+		return state
+	}
+	entry := a.taskUndo.entries[n-1]
+	state.CanUndo = true
+	state.Remaining = n
+	state.ChangedFields = append([]string(nil), entry.ChangedFields...)
+	if state.ChangedFields == nil {
+		state.ChangedFields = []string{}
+	}
+	state.BlockIDs = make([]string, 0, len(entry.Blocks))
+	for _, b := range entry.Blocks {
+		state.BlockIDs = append(state.BlockIDs, b.BlockID)
+	}
+	state.Notebook = entry.Notebook
+	state.Section = entry.Section
+	state.Page = entry.Page
+	state.Source = entry.Source
+	return state
+}
+
+// PluginGetTaskUndoState is the plugin-SDK wrapper for GetTaskUndoState. It is
+// a read-only journal peek, so it needs only a valid plugin session (no
+// content-mutate grant — compare PluginUndoLastTaskMutation, which writes).
+func (a *App) PluginGetTaskUndoState(pluginID, sessionToken string) (TaskUndoState, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return TaskUndoState{}, err
+	}
+	return a.GetTaskUndoState(), nil
+}
+
+// UndoLastTaskMutation restores the newest journaled mutation. The journal is
+// global LIFO — undo reverses the most recent mutation recorded from any Silt
+// surface, with no surface filtering — and it also covers non-task block-body
+// text edits made through the shared write chain (MutateBlock, writeBlockText,
+// plugin mutations), not only task-attribute setters.
+//
+// The replay is block-addressed: it re-parses the recorded page inside the
+// same lock/focus-gate path as every writer, restores only the fields the
+// mutation changed, removes the recurrence sibling when the undone transition
+// minted one, then renders/writes/re-indexes once. Adjacent blocks are copied
+// through the renderer untouched.
 //
 // The undo write itself is deliberately NOT journaled (there is no redo); the
 // journal mutex stays held across the replay so a concurrent mutation cannot
@@ -238,6 +302,7 @@ func (a *App) replayTaskUndoEntry(entry taskUndoEntry) (TaskUndoResult, error) {
 	}
 	if len(entry.Blocks) == 0 {
 		result.Skipped = true
+		result.ChangedFields = nil
 		return result, nil
 	}
 
@@ -345,6 +410,9 @@ func (a *App) replayTaskUndoEntry(entry taskUndoEntry) (TaskUndoResult, error) {
 	}
 	if !didWrite {
 		result.Skipped = true
+		// A skip restores nothing, so the result must not advertise fields as
+		// restored (the frontend would describe an undo that never happened).
+		result.ChangedFields = nil
 		if len(missingIDs) == 0 {
 			for _, b := range entry.Blocks {
 				missingIDs = append(missingIDs, b.BlockID)

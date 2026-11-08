@@ -1,4 +1,9 @@
-import type { PluginContext, SqliteQueryResult, TaskStatus } from './sdk'
+import type {
+  PluginContext,
+  SqliteQueryResult,
+  TaskChangedField,
+  TaskStatus
+} from './sdk'
 import { localToday } from './sdk'
 import { captureUiLocation } from './ui-location'
 import { stripReasoningContent } from './stripReasoning'
@@ -22,6 +27,7 @@ import {
   PluginSetTaskTitle,
   PluginSetTaskEstimate,
   PluginUndoLastTaskMutation,
+  PluginGetTaskUndoState,
   GetTaskBlockers,
   FetchSubtree,
   GetLocalAuthor,
@@ -312,9 +318,11 @@ export function makePluginContext(
         items.map((i) => i.id),
         items.map((i) => i.order)
       ).then(() => true),
-    // Undo the newest journaled task mutation in this vault session (#1011).
-    // The Go result already uses camelCase JSON tags; normalize missing
-    // collections so a pre-mount/empty response still renders safely.
+    // Undo the newest journaled mutation in this vault session (#1011). The
+    // journal is global LIFO across Silt surfaces and also covers non-task
+    // block-body text edits made through the shared write chain. The Go result
+    // already uses camelCase JSON tags; normalize missing collections so a
+    // pre-mount/empty response still renders safely.
     undoLastTaskMutation: async () => {
       const res = await PluginUndoLastTaskMutation(pluginID, sessionToken ?? '')
       return {
@@ -326,8 +334,24 @@ export function makePluginContext(
         section: res?.section ?? '',
         page: res?.page ?? '',
         removedSpawnedId: res?.removedSpawnedId ?? '',
-        changedFields: res?.changedFields ?? [],
+        changedFields: (res?.changedFields ?? []) as TaskChangedField[],
         remaining: res?.remaining ?? 0
+      }
+    },
+    // Read-only journal peek (#1011): drives the disabled-when-empty state
+    // and the "what will be undone" disclosure. Same normalization for an
+    // absent/partial response.
+    getTaskUndoState: async () => {
+      const res = await PluginGetTaskUndoState(pluginID, sessionToken ?? '')
+      return {
+        canUndo: res?.canUndo ?? false,
+        remaining: res?.remaining ?? 0,
+        changedFields: (res?.changedFields ?? []) as TaskChangedField[],
+        blockIds: res?.blockIds ?? [],
+        notebook: res?.notebook ?? '',
+        section: res?.section ?? '',
+        page: res?.page ?? '',
+        source: res?.source ?? ''
       }
     },
     // Rewrite a task's [priority:: N] token (#412). 1=Critical, 2=Normal, 3=Low.

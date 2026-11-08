@@ -16,11 +16,33 @@ export type { UiLocationSnapshot, UiLocationTab } from './ui-location'
 export type TaskStatus = 'TODO' | 'DOING' | 'DONE'
 
 /**
+ * Task attributes a journaled mutation can change. Used by the undo result and
+ * the read-only undo-state peek so surfaces render labels from a closed set
+ * rather than free-form strings. `text` is the prose/body of the block,
+ * including non-task blocks (see `undoLastTaskMutation`).
+ */
+export type TaskChangedField =
+  | 'text'
+  | 'status'
+  | 'completed'
+  | 'owner'
+  | 'startDate'
+  | 'dueDate'
+  | 'priority'
+  | 'pinned'
+  | 'progress'
+  | 'recurrence'
+  | 'blockedBy'
+  | 'estimate'
+  | 'order'
+
+/**
  * Result of `ctx.undoLastTaskMutation()` (#1011). `undone` is false for a
  * clean no-op (nothing left in this session's journal) and for a skipped
- * entry whose target blocks vanished; `skippedBlockIds` names those. `changed`
- * fields are the task attributes the undo restored ("status", "dueDate", …),
- * and `remaining` is the journal depth after the call.
+ * entry whose target blocks vanished; `skippedBlockIds` names those and
+ * `changedFields` is empty (a skip restores nothing). `changedFields` lists
+ * the attributes the undo restored, and `remaining` is the journal depth after
+ * the call.
  */
 export interface TaskUndoResult {
   undone: boolean
@@ -31,8 +53,27 @@ export interface TaskUndoResult {
   section: string
   page: string
   removedSpawnedId: string
-  changedFields: string[]
+  changedFields: TaskChangedField[]
   remaining: number
+}
+
+/**
+ * Read-only snapshot of the session undo journal (#1011). `canUndo` is true
+ * when at least one mutation is journaled; `changedFields` plus the locator
+ * describe the newest entry — the one an undo would reverse. Undo is global
+ * LIFO: it reverses the most recent mutation from ANY Silt surface, not just
+ * the surface that calls it, so surfaces should disclose this entry rather
+ * than assume the undo belongs to their own gesture.
+ */
+export interface TaskUndoState {
+  canUndo: boolean
+  remaining: number
+  changedFields: TaskChangedField[]
+  blockIds: string[]
+  notebook: string
+  section: string
+  page: string
+  source: string
 }
 
 /**
@@ -265,15 +306,27 @@ export interface PluginContext {
    */
   setTaskOrders: (items: { id: string; order: number }[]) => Promise<boolean>
   /**
-   * Undo the newest task mutation recorded in this vault session (#1011).
-   * Restores the affected block(s) from their pre-mutation disk state through
-   * the canonical write chain and, when the undone transition minted a
+   * Undo the newest journaled mutation in this vault session (#1011). Undo is
+   * global LIFO: it reverses the most recent mutation recorded from any Silt
+   * surface (board, drawer, editor, plugin, AI), not only this plugin's own.
+   * It also covers non-task block-body text edits made through the shared
+   * write chain, so `changedFields: ['text']` can refer to a note/embed
+   * rewrite. Restores the affected block(s) from their pre-mutation disk state
+   * through the canonical write chain and, when the undone transition minted a
    * recurrence sibling, removes that spawned block too. The journal is
    * in-memory and session-scoped (bounded ring, cleared on vault switch), so
    * this only ever reverses this session's mutations. Gated by
    * content-mutate.
    */
   undoLastTaskMutation: () => Promise<TaskUndoResult>
+  /**
+   * Peek at the undo journal without mutating it (#1011). Use this to disable
+   * an undo affordance when `canUndo` is false and to disclose what will be
+   * reversed — `changedFields` plus the page/section/notebook/source locator
+   * of the newest entry. Read-only: needs a valid plugin session, not the
+   * content-mutate grant.
+   */
+  getTaskUndoState: () => Promise<TaskUndoState>
   /**
    * Rewrite a task's `[priority:: N]` inline token on disk atomically (#412).
    * 1=Critical, 2=Normal, 3=Low (matches PRIORITY_LABELS). Round-trips through

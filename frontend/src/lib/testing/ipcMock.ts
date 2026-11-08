@@ -27,6 +27,24 @@ export function undoLastTaskMutationMock() {
 }
 
 /**
+ * Default stub for the read-only task-undo state binding (#1011). An empty
+ * journal keeps components that probe the undo surface stable in unrelated
+ * tests; override it with a `vi.fn` to assert the call or supply state.
+ */
+export function getTaskUndoStateMock() {
+  return Promise.resolve({
+    canUndo: false,
+    remaining: 0,
+    changedFields: [] as string[],
+    blockIds: [] as string[],
+    notebook: '',
+    section: '',
+    page: '',
+    source: ''
+  })
+}
+
+/**
  * Build a bindings mock map for `vi.mock('$silt-app', ...)`.
  *
  * **Critical:** `vi.mock` / `vi.hoisted` run before ESM imports initialize.
@@ -53,10 +71,11 @@ export function createAppIpcMocks<T extends Record<string, unknown>>(
   overrides: T = {} as T
 ): T {
   return {
-    // Task undo (#1011): a resolved empty-journal stub keeps components that
-    // probe the undo surface from crashing in unrelated tests; override it
-    // where the call itself matters.
+    // Task undo (#1011): generated stubs keep components that probe the undo
+    // surface from crashing in unrelated tests; override them where the call
+    // itself matters.
     PluginUndoLastTaskMutation: undoLastTaskMutationMock,
+    PluginGetTaskUndoState: getTaskUndoStateMock,
     ...overrides
   } as unknown as T
 }

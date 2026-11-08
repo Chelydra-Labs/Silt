@@ -34,6 +34,7 @@ export const v2CtxStubs: Pick<
   | 'setTaskTitle'
   | 'setTaskEstimate'
   | 'undoLastTaskMutation'
+  | 'getTaskUndoState'
   | 'getTaskBlockers'
   | 'fetchSubtree'
   | 'getLocalAuthor'
@@ -118,6 +119,17 @@ export const v2CtxStubs: Pick<
       removedSpawnedId: '',
       changedFields: [],
       remaining: 0
+    }),
+  getTaskUndoState: () =>
+    Promise.resolve({
+      canUndo: false,
+      remaining: 0,
+      changedFields: [],
+      blockIds: [],
+      notebook: '',
+      section: '',
+      page: '',
+      source: ''
     }),
   getTaskBlockers: () => Promise.resolve([]),
   fetchSubtree: () => Promise.resolve([]),
