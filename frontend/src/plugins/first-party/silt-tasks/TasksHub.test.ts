@@ -1873,6 +1873,65 @@ describe('Tasks hub undo (#1011)', () => {
     expect(mocks.undoLastTaskMutation).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps hub Ctrl+Z working after a failed over-WIP move confirm', async () => {
+    mocks.tasksSettings = {
+      default_display_mode: 'board',
+      default_group_by: 'status',
+      columns: [
+        { name: 'TODO' },
+        { name: 'DOING', wipLimit: 1 },
+        { name: 'DONE' }
+      ]
+    }
+    const rows = [
+      boardRow({ id: 't1', clean_content: 'Over WIP', status: 'TODO' }),
+      boardRow({ id: 't2', clean_content: 'Resident', status: 'DOING' })
+    ]
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT DISTINCT owner'))
+        return { rows: [], truncated: false }
+      if (sql.includes('SELECT DISTINCT level_0'))
+        return { rows: [], truncated: false }
+      return { rows, truncated: false }
+    })
+
+    render(TasksHub, { ctx: undoCtx(), manifest: MANIFEST })
+    await flush()
+
+    const card = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card="t1"]')!
+    card.focus()
+    await fireEvent.keyDown(card, { key: 'ArrowRight' })
+    await flush()
+    expect(screen.getByTestId('board-wip-confirm')).toBeInTheDocument()
+
+    // Confirm whose persist rejects: the revert relocates the card node back to
+    // To Do, so the continuation must re-establish focus afterwards or the hub
+    // keyboard guard has no scope to run in.
+    mocks.updateBlockState.mockRejectedValue(new Error('disk full'))
+    await fireEvent.click(screen.getByTestId('board-wip-confirm-confirm'))
+    await flush()
+    await flush()
+
+    const reverted = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card="t1"]')
+    expect(reverted).not.toBeNull()
+    expect(document.activeElement).toBe(reverted)
+
+    const undoEvent = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    reverted!.dispatchEvent(undoEvent)
+    await flush()
+    expect(undoEvent.defaultPrevented).toBe(true)
+    expect(mocks.undoLastTaskMutation).toHaveBeenCalledTimes(1)
+  })
+
   it('renders the undo failure banner and dismisses it', async () => {
     mocks.undoLastTaskMutation.mockRejectedValue(new Error('focus lock held'))
 

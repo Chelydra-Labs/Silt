@@ -368,6 +368,10 @@ export function createBoardDndController({
       const result = await blockedGuard.resolveBlockers(card.id)
       if (result.ok && result.blockers.length > 0) {
         blockedGuard.open(result.blockers, { card, fromColKey, toCol })
+        // Deliberately synchronous: the blocked-DONE dialog captures
+        // document.activeElement in onMount as its focus-return target, so the
+        // live card must already hold focus before that mount flush runs. The
+        // card node is stable here — no relocate/revert is queued behind it.
         focusCard(card.id)
         return
       }
@@ -391,7 +395,10 @@ export function createBoardDndController({
           moveError = errMsg(e)
           await reload()
           liveMessage = 'Move partially failed — reloaded.'
-          focusCard(card.id)
+          // Same post-tick restore as the other cross-column continuations: the
+          // keyed-each relocation must settle before the lookup, and the hub-
+          // heading fallback covers a reload that filters the card out.
+          restoreCardFocus(card.id)
           return
         }
       }
@@ -400,7 +407,7 @@ export function createBoardDndController({
       revertOptimistic(card, fromColKey, toCol)
       liveMessage = 'Move failed — reverted.'
     }
-    focusCard(card.id)
+    restoreCardFocus(card.id)
   }
 
   function cancelWipOverLimit() {
