@@ -1813,6 +1813,66 @@ describe('Tasks hub undo (#1011)', () => {
     expect(mocks.undoLastTaskMutation).toHaveBeenCalledTimes(1)
   })
 
+  it('restores board focus after cancelling a blocked DONE move', async () => {
+    mocks.tasksSettings = {
+      default_display_mode: 'board',
+      default_group_by: 'status'
+    }
+    const rows = [
+      boardRow({
+        id: 't1',
+        clean_content: 'Blocked move',
+        status: 'DOING',
+        is_blocked: 1
+      })
+    ]
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT DISTINCT owner'))
+        return { rows: [], truncated: false }
+      if (sql.includes('SELECT DISTINCT level_0'))
+        return { rows: [], truncated: false }
+      return { rows, truncated: false }
+    })
+    const getTaskBlockers = vi
+      .fn()
+      .mockResolvedValue([{ id: 'dep-1', clean_content: 'Prereq' }])
+
+    render(TasksHub, { ctx: undoCtx({ getTaskBlockers }), manifest: MANIFEST })
+    await flush()
+
+    const card = screen
+      .getByRole('group', { name: 'In Progress' })
+      .querySelector<HTMLElement>('[data-card="t1"]')!
+    card.focus()
+    await fireEvent.keyDown(card, { key: 'ArrowRight' })
+    await flush()
+
+    // Cancel from the keyboard rather than the button: the revert relocates the
+    // card node inside the same flush that unmounts the dialog, so the dialog's
+    // own focus restore can only target a detached node.
+    expect(screen.getByText('Complete anyway')).toBeInTheDocument()
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await flush()
+    await flush()
+
+    const reverted = screen
+      .getByRole('group', { name: 'In Progress' })
+      .querySelector<HTMLElement>('[data-card="t1"]')
+    expect(reverted).not.toBeNull()
+    expect(document.activeElement).toBe(reverted)
+
+    const undoEvent = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    reverted!.dispatchEvent(undoEvent)
+    await flush()
+    expect(undoEvent.defaultPrevented).toBe(true)
+    expect(mocks.undoLastTaskMutation).toHaveBeenCalledTimes(1)
+  })
+
   it('renders the undo failure banner and dismisses it', async () => {
     mocks.undoLastTaskMutation.mockRejectedValue(new Error('focus lock held'))
 

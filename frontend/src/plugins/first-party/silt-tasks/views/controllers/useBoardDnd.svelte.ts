@@ -409,7 +409,7 @@ export function createBoardDndController({
     setPendingWipConfirm(null)
     revertOptimistic(pending.card, pending.fromColKey, pending.toCol)
     liveMessage = 'Move cancelled — column is over its WIP limit.'
-    focusCard(pending.card.id)
+    restoreCardFocus(pending.card.id)
   }
 
   // --- Card DnD -----------------------------------------------------------
