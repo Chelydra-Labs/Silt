@@ -40,12 +40,17 @@ export type TaskChangedField =
  * Result of `ctx.undoLastTaskMutation()` (#1011). `undone` is false for a
  * clean no-op (nothing left in this session's journal) and for a skipped
  * entry — one whose target blocks vanished, whose recorded locator can no
- * longer resolve (e.g. its linked notebook was unlinked), or whose page path
- * can no longer be read or written (permission denied, a directory at the
- * page path); a skip is popped from the journal rather than erroring.
+ * longer resolve (e.g. its linked notebook was unlinked), whose page path can
+ * no longer be read or written (permission denied, a directory at the page
+ * path), or which exhausted its retry budget after three consecutive
+ * failures; a skip is popped from the journal rather than erroring.
  * `skippedBlockIds` names the affected blocks and `changedFields` is empty (a
  * skip restores nothing). `changedFields` lists the attributes the undo
  * restored, and `remaining` is the journal depth after the call.
+ *
+ * A skip means the journal entry is gone, not that the target is gone: only a
+ * rejected promise guarantees the entry survived, so a transient fault that
+ * exhausts the retry budget also reports `skipped` (with nothing restored).
  */
 export interface TaskUndoResult {
   undone: boolean
@@ -331,7 +336,10 @@ export interface PluginContext {
    * in-memory and session-scoped (bounded ring, cleared on vault switch), so
    * this only ever reverses this session's mutations. There is no redo, and a
    * refused write (e.g. the page is open in the editor) rejects without
-   * consuming the entry, so a retry still reverses it. Gated by
+   * consuming the entry, so a retry still reverses it. Any other failure also
+   * rejects without consuming the entry, but one that fails three consecutive
+   * attempts is dropped and reported as `skipped: true` with nothing
+   * restored — so do not read a skip as "the target is gone". Gated by
    * content-mutate.
    */
   undoLastTaskMutation: () => Promise<TaskUndoResult>

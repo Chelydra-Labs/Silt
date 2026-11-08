@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -184,10 +185,12 @@ func taskUndoStringSlicesEqual(a, b []string) bool {
 // TaskUndoResult is the IPC shape returned by UndoLastTaskMutation. Undone is
 // false for a clean no-op (empty journal) and for a skipped entry that could
 // not be replayed at all (target blocks vanished, locator no longer resolves,
-// or the page path is permanently unreadable/unwritable); SkippedBlockIDs
-// names those blocks. ChangedFields lists the task attributes the undo
-// restored ("status", "dueDate", …) and is empty for a skipped entry (nothing
-// was restored).
+// the page path is permanently unreadable/unwritable, or the entry exhausted
+// its retry budget); SkippedBlockIDs names those blocks. ChangedFields lists
+// the task attributes the undo restored ("status", "dueDate", …) and is empty
+// for a skipped entry (nothing was restored). Skipped therefore means "this
+// journal entry is gone", not "the target is gone": only an error return
+// guarantees the entry survives for a retry.
 type TaskUndoResult struct {
 	Undone           bool     `json:"undone"`
 	Skipped          bool     `json:"skipped"`
@@ -321,12 +324,33 @@ func unrecoverableTaskUndo(err error) error {
 // retryable — they can clear without the entry becoming invalid. A verified
 // (network-root) write replaces the OS cause with user-facing prose, so there
 // the per-entry failure cap is the backstop.
-func deterministicTaskUndoPathError(err error) bool {
-	return errors.Is(err, fs.ErrPermission) ||
+func deterministicTaskUndoPathError(filePath string, err error) bool {
+	if errors.Is(err, fs.ErrPermission) ||
 		errors.Is(err, syscall.EISDIR) ||
 		errors.Is(err, syscall.ENOTDIR) ||
 		errors.Is(err, syscall.ELOOP) ||
-		errors.Is(err, syscall.EROFS)
+		errors.Is(err, syscall.EROFS) {
+		return true
+	}
+	// Windows has no EISDIR: a directory at the page path surfaces as an
+	// access/sharing errno indistinguishable from a transient lock, so probe
+	// the shape instead of trusting the errno.
+	info, statErr := os.Stat(filePath)
+	return statErr == nil && info.IsDir()
+}
+
+// taskUndoContentLanded reports whether a failed write nonetheless left the
+// intended content on disk. WriteFileAtomic replaces the page by rename and
+// only then fsyncs the parent dir, so a tail failure (the dir is unreadable so
+// os.Open for the fsync is denied, an fsync-stage EROFS) reports an error for
+// a write that already landed; trusting the error would drain a live entry and
+// report an undo that did happen as skipped.
+func taskUndoContentLanded(filePath string, content []byte, writeErr error) bool {
+	if writeErr == nil {
+		return true
+	}
+	onDisk, err := os.ReadFile(filePath)
+	return err == nil && bytes.Equal(onDisk, content)
 }
 
 func entryBlockIDs(entry taskUndoEntry) []string {
@@ -504,7 +528,7 @@ func (a *App) replayTaskUndoEntry(entry taskUndoEntry) (TaskUndoResult, error) {
 					// The page (and therefore every recorded block) is gone.
 					return
 				}
-				if deterministicTaskUndoPathError(err) {
+				if deterministicTaskUndoPathError(filePath, err) {
 					writeErr = unrecoverableTaskUndo(fmt.Errorf("task undo: read %s: %w", filePath, err))
 					return
 				}
@@ -557,13 +581,19 @@ func (a *App) replayTaskUndoEntry(entry taskUndoEntry) (TaskUndoResult, error) {
 			// recorded source would leave the real row stale and could clobber
 			// a same-named page in the root the block left.
 			a.maybeCapturePageVersion(historyLoc(source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), historyReasonUndo)
-			if err := a.trackedPageWrite(filePath, []byte(newContent)); err != nil {
-				if deterministicTaskUndoPathError(err) {
+			if err := a.trackedPageWrite(filePath, []byte(newContent)); !taskUndoContentLanded(filePath, []byte(newContent), err) {
+				if deterministicTaskUndoPathError(filePath, err) {
 					writeErr = unrecoverableTaskUndo(fmt.Errorf("task undo: write %s: %w", filePath, err))
 					return
 				}
 				writeErr = err
 				return
+			} else if err != nil {
+				// The write landed but its durability tail failed, so the
+				// writer's post-write bookkeeping never ran; the page did
+				// change, so keep the baselines in step with it.
+				a.refreshFingerprintAfterWrite(filePath, []byte(newContent))
+				a.invalidateMCPReadBasis(filePath)
 			}
 			didWrite = true
 

@@ -12,10 +12,11 @@ import (
 )
 
 // linkedRootInaccessibleError marks a linked root whose fingerprint re-check
-// could not stat the root at all — an unmounted drive, a pending credential
-// prompt — as opposed to a link that is provably gone or tampered with. The
-// message stays path-free (it reaches MCP/UI surfaces), while the type lets a
-// caller distinguish "retry once the root returns" from "this link is dead".
+// could not stat the root at all — a dropped network share, a pending
+// credential prompt — as opposed to a link that is provably gone or tampered
+// with. The message stays path-free (it reaches MCP/UI surfaces), while the
+// type lets a caller distinguish "retry once the root returns" from "this link
+// is dead".
 type linkedRootInaccessibleError struct{ id string }
 
 func (e *linkedRootInaccessibleError) Error() string {

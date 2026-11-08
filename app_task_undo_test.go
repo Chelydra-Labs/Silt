@@ -17,6 +17,18 @@ func taskUndoLen(app *App) int {
 	return len(app.taskUndo.entries)
 }
 
+// taskUndoNewestFailures reports the retry-failure count of the newest journal
+// entry, so tests can pin that a non-failure outcome (a focus refusal) never
+// counts toward the drain cap.
+func taskUndoNewestFailures(app *App) int {
+	app.taskUndo.mu.Lock()
+	defer app.taskUndo.mu.Unlock()
+	if len(app.taskUndo.entries) == 0 {
+		return -1
+	}
+	return app.taskUndo.entries[len(app.taskUndo.entries)-1].failures
+}
+
 // readTaskPage reads an undo test page and fails on any read error. A bare
 // `content, _ := os.ReadFile` would let a destroyed or unreadable file read as
 // "the token is absent", turning a destructive undo green.

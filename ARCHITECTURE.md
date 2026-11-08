@@ -791,8 +791,9 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   linked notebook was unlinked or quarantined, the locator is invalid), or
   whose page path is permanently unreadable/unwritable (permission denied, a
   directory at the `.md` path, a read-only mount), is popped and reported as
-  `skipped` instead of erroring forever. A transient failure (unmounted
-  linked root, disk hiccup) is retried and keeps the entry, which drains once
+  `skipped` instead of erroring forever. A transient failure of the
+  linked-root stat check (a dropped network share, a pending credential
+  prompt) or a disk hiccup is retried and keeps the entry, which drains once
   it has failed three attempts — so one dead entry never blocks the older
   mutations in the session journal. **Sub-editor**:
   `FetchSubtree`
@@ -1790,12 +1791,12 @@ See `frontend/src/plugins/sdk.ts` for the full typed contract and
 
 7.4 PluginContext → Go Bindings
 
-PluginContext is a thin frontend wrapper over four Wails bindings on App:
+PluginContext is a thin frontend wrapper over the plugin-facing Wails bindings on App:
 
 - PluginRawQuery(sql, params) — read-only; rejects anything not starting with SELECT/WITH; routed through ExecutionCoordinator.WithDBRead; returns row maps.
 - PluginMutateBlock(id, text) / PluginUpdateBlockState(id, status) — wrap MutateBlock / UpdateBlockState (same atomic-write + re-index + lock path as the core editor). PluginUpdateBlockState returns `{ok, spawned_id}`, carrying the recurrence instance UUID minted by a recurring TODO/DOING→DONE transition (empty otherwise).
 - PluginUndoLastTaskMutation() — wraps UndoLastTaskMutation (content-mutate gated; session-token verified). Reverses the newest journaled mutation for this vault session (global LIFO across surfaces; also covers non-task block-body edits) and returns `{undone, skipped, blockIds, skippedBlockIds, notebook, section, page, removedSpawnedId, changedFields, remaining}`.
-- PluginGetTaskUndoState() — read-only journal peek (session-token verified; no mutate grant). Returns `{canUndo, remaining, changedFields, blockIds, notebook, section, page, source}` for the newest entry without popping it.
+- PluginGetTaskUndoState() — read-only journal peek (session-token verified; gated by `read-files` — it discloses vault locators and block IDs; no content-mutate grant). Returns `{canUndo, remaining, changedFields, blockIds, notebook, section, page, source}` for the newest entry without popping it.
 - GetPluginRegistry() / ListPlugins() / ReadPluginSource(id) — discovery.
 - ValidatePluginArchive / PickPluginArchive / InstallPlugin / UninstallPlugin / EnablePlugin / DisablePlugin — `.silt-plugin` distribution (see backend/plugins package; zip-slip + traversal guarded, atomic extract).
 

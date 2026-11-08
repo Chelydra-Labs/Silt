@@ -1,10 +1,13 @@
 package main
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 
 	"silt/backend/parser"
@@ -193,12 +196,18 @@ func TestUndoLastTaskMutation_PersistentRootOutageDrainsAfterFailureLimit(t *tes
 	}
 	t.Cleanup(func() { _ = os.Rename(offline, root) })
 
-	for attempt := 1; attempt < taskUndoEntryFailureLimit; attempt++ {
+	// The advertised contract is "three attempts": the first two fail and
+	// retain, the third drains. Deriving the boundary from the constant would
+	// let a changed limit pass unnoticed.
+	for attempt := 1; attempt <= 2; attempt++ {
 		if _, err := app.UndoLastTaskMutation(); err == nil {
 			t.Fatalf("attempt %d: expected the outage error", attempt)
 		}
 		if got := taskUndoLen(app); got != 2 {
 			t.Fatalf("attempt %d dropped the entry early: journal = %d, want 2", attempt, got)
+		}
+		if got := taskUndoNewestFailures(app); got != attempt {
+			t.Fatalf("attempt %d: failures = %d, want %d", attempt, got, attempt)
 		}
 	}
 
@@ -225,5 +234,91 @@ func TestUndoLastTaskMutation_PersistentRootOutageDrainsAfterFailureLimit(t *tes
 	}
 	if line := requireTaskLine(t, readTaskPage(t, vaultPath), vaultID); strings.Contains(line, "[owner::") {
 		t.Errorf("older mutation was not reversed: %q", line)
+	}
+}
+
+// The classifier decides whether a path failure is worth retrying at all, so
+// both directions are pinned: a permanent path fault drains on the first
+// click, while a full disk or an IO blip must keep the entry for the retry
+// budget instead of discarding a still-valid mutation.
+func TestDeterministicTaskUndoPathError_Classes(t *testing.T) {
+	dir := t.TempDir()
+	pagePath := filepath.Join(dir, "Page.md")
+	writeFile(t, pagePath, "x")
+
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"permission-denied", fs.ErrPermission, true},
+		{"permission-wrapped", &os.PathError{Op: "read", Path: pagePath, Err: fs.ErrPermission}, true},
+		{"is-a-directory", syscall.EISDIR, true},
+		{"path-component-not-a-directory", syscall.ENOTDIR, true},
+		{"symlink-loop", syscall.ELOOP, true},
+		{"read-only-filesystem", syscall.EROFS, true},
+		{"out-of-space", syscall.ENOSPC, false},
+		{"io-error", syscall.EIO, false},
+		{"connection-reset", syscall.ECONNRESET, false},
+		{"unclassified", errors.New("boom"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := deterministicTaskUndoPathError(pagePath, tc.err); got != tc.want {
+				t.Fatalf("deterministicTaskUndoPathError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+
+	// A directory where the page file belongs is permanent even when the OS
+	// reports it as a generic IO error — Windows has no EISDIR, and its open
+	// errno for a directory is not a stable class to match on.
+	if !deterministicTaskUndoPathError(dir, errors.New("boom")) {
+		t.Error("a directory at the page path must classify as permanent")
+	}
+	if deterministicTaskUndoPathError(pagePath, errors.New("boom")) {
+		t.Error("a regular page file must not classify a generic error as permanent")
+	}
+}
+
+// A write that landed but failed in its durability tail must report the undo,
+// not a skip. The atomic writer renames the new page into place and only then
+// fsyncs the parent dir, so a section directory that denies reads (0o300) fails
+// the fsync after the content already changed on disk.
+func TestUndoLastTaskMutation_WriteTailFailureStillReportsUndone(t *testing.T) {
+	app := newTestApp(t)
+	const id = "a11d0054-1111-1111-1111-111111111111"
+	filePath := indexTestFile(t, app, "W", "S", "UndoWriteTail", "2026-07-01",
+		"- [ ] tail <!-- id: "+id+" -->\n")
+	if err := app.SetTaskOwner(id, "Alice"); err != nil {
+		t.Fatalf("SetTaskOwner: %v", err)
+	}
+	dir := filepath.Dir(filePath)
+	skipUnlessPermissionsEnforced(t, func() error {
+		if err := os.Chmod(dir, 0o300); err != nil {
+			t.Fatalf("chmod section dir: %v", err)
+		}
+		// The tail fsync opens the directory for reading, so the fixture only
+		// reproduces the window when that open is what now fails.
+		f, err := os.Open(dir)
+		if f != nil {
+			_ = f.Close()
+		}
+		return err
+	})
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	result, err := app.UndoLastTaskMutation()
+	if err != nil {
+		t.Fatalf("a write that already landed must not surface as an error: %v", err)
+	}
+	if !result.Undone || result.Skipped {
+		t.Fatalf("result = %+v, want the undo reported as landed", result)
+	}
+	if got := taskUndoLen(app); got != 0 {
+		t.Fatalf("journal = %d, want 0", got)
+	}
+	if line := requireTaskLine(t, readTaskPage(t, filePath), id); strings.Contains(line, "[owner::") {
+		t.Errorf("undo did not restore the owner on disk: %q", line)
 	}
 }

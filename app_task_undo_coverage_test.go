@@ -196,11 +196,18 @@ func TestUndoLastTaskMutation_FocusLockRefusalRetainsEntry(t *testing.T) {
 	if err := app.AcquireFocusLock("W", "S", "UndoFocusRefusal"); err != nil {
 		t.Fatalf("AcquireFocusLock: %v", err)
 	}
-	if _, err := app.UndoLastTaskMutation(); !errors.Is(err, errBlockBeingEdited) {
-		t.Fatalf("expected errBlockBeingEdited, got %v", err)
-	}
-	if got := taskUndoLen(app); got != 1 {
-		t.Fatalf("refused undo popped the entry: journal = %d, want 1", got)
+	// A refusal is not a failure of the entry, so even more refusals than the
+	// drain cap allows must leave both the entry and its failure count intact.
+	for attempt := 1; attempt <= taskUndoEntryFailureLimit+1; attempt++ {
+		if _, err := app.UndoLastTaskMutation(); !errors.Is(err, errBlockBeingEdited) {
+			t.Fatalf("attempt %d: expected errBlockBeingEdited, got %v", attempt, err)
+		}
+		if got := taskUndoLen(app); got != 1 {
+			t.Fatalf("attempt %d: refused undo popped the entry: journal = %d, want 1", attempt, got)
+		}
+		if got := taskUndoNewestFailures(app); got != 0 {
+			t.Fatalf("attempt %d: focus refusal counted as a replay failure: failures = %d, want 0", attempt, got)
+		}
 	}
 	locked := readTaskPage(t, filePath)
 	if !strings.Contains(requireTaskLine(t, locked, id), "[owner:: Alice]") {
