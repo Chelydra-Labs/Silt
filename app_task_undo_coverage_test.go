@@ -2,8 +2,8 @@ package main
 
 import (
 	"errors"
-	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -17,11 +17,13 @@ import (
 // write chain, undoes, and asserts the field is gone from disk again.
 func TestUndoLastTaskMutation_RestoresEveryField(t *testing.T) {
 	cases := []struct {
-		name    string
-		mutate  func(t *testing.T, app *App, id string)
-		field   string
-		gone    string
-		present string
+		name      string
+		mutate    func(t *testing.T, app *App, id string)
+		fields    []string
+		mutated   string
+		gone      string
+		present   string
+		projected func(t *testing.T, task parser.TaskResult)
 	}{
 		{
 			name: "priority",
@@ -30,8 +32,15 @@ func TestUndoLastTaskMutation_RestoresEveryField(t *testing.T) {
 					t.Fatalf("SetTaskPriority: %v", err)
 				}
 			},
-			field: "priority",
-			gone:  "[priority::",
+			fields:  []string{"priority"},
+			mutated: "[priority:: 1]",
+			gone:    "[priority::",
+			projected: func(t *testing.T, task parser.TaskResult) {
+				if task.Priority != parser.LegacyMissingTaskPriority {
+					t.Errorf("index priority after undo = %d, want the token-absent default %d",
+						task.Priority, parser.LegacyMissingTaskPriority)
+				}
+			},
 		},
 		{
 			name: "startDate",
@@ -45,8 +54,14 @@ func TestUndoLastTaskMutation_RestoresEveryField(t *testing.T) {
 					t.Fatalf("PluginSetTaskStartDate: %v", err)
 				}
 			},
-			field: "startDate",
-			gone:  "[start::",
+			fields:  []string{"startDate"},
+			mutated: "[start:: 2026-08-01]",
+			gone:    "[start::",
+			projected: func(t *testing.T, task parser.TaskResult) {
+				if task.StartDate != "" {
+					t.Errorf("index start date after undo = %q, want empty", task.StartDate)
+				}
+			},
 		},
 		{
 			name: "estimate",
@@ -60,8 +75,14 @@ func TestUndoLastTaskMutation_RestoresEveryField(t *testing.T) {
 					t.Fatalf("PluginSetTaskEstimate: %v", err)
 				}
 			},
-			field: "estimate",
-			gone:  "[estimate::",
+			fields:  []string{"estimate"},
+			mutated: "[estimate::",
+			gone:    "[estimate::",
+			projected: func(t *testing.T, task parser.TaskResult) {
+				if task.EstimateMinutes != 0 {
+					t.Errorf("index estimate minutes after undo = %d, want 0", task.EstimateMinutes)
+				}
+			},
 		},
 		{
 			name: "pinned",
@@ -75,8 +96,14 @@ func TestUndoLastTaskMutation_RestoresEveryField(t *testing.T) {
 					t.Fatalf("PluginUpdateTaskMeta pin: %v", err)
 				}
 			},
-			field: "pinned",
-			gone:  "[pin::",
+			fields:  []string{"pinned"},
+			mutated: "[pin:: true]",
+			gone:    "[pin::",
+			projected: func(t *testing.T, task parser.TaskResult) {
+				if task.Pinned != nil {
+					t.Errorf("index pinned after undo = %v, want nil", task.Pinned)
+				}
+			},
 		},
 		{
 			name: "progress",
@@ -90,8 +117,14 @@ func TestUndoLastTaskMutation_RestoresEveryField(t *testing.T) {
 					t.Fatalf("PluginUpdateTaskMeta progress: %v", err)
 				}
 			},
-			field: "progress",
-			gone:  "[progress::",
+			fields:  []string{"progress"},
+			mutated: "[progress:: 50]",
+			gone:    "[progress::",
+			projected: func(t *testing.T, task parser.TaskResult) {
+				if task.Progress != 0 {
+					t.Errorf("index progress after undo = %d, want 0", task.Progress)
+				}
+			},
 		},
 		{
 			name: "completed",
@@ -100,9 +133,15 @@ func TestUndoLastTaskMutation_RestoresEveryField(t *testing.T) {
 					t.Fatalf("UpdateBlockState DONE: %v", err)
 				}
 			},
-			field:   "completed",
+			fields:  []string{"status", "completed"},
+			mutated: "- [x] ",
 			gone:    "[completed::",
 			present: "- [ ] ",
+			projected: func(t *testing.T, task parser.TaskResult) {
+				if task.Status != "TODO" || task.CompletedAt != "" {
+					t.Errorf("index row after undo = status %q completed %q, want TODO/empty", task.Status, task.CompletedAt)
+				}
+			},
 		},
 	}
 
@@ -117,21 +156,27 @@ func TestUndoLastTaskMutation_RestoresEveryField(t *testing.T) {
 			if got := taskUndoLen(app); got != 1 {
 				t.Fatalf("mutation journaled %d entries, want 1", got)
 			}
+			if line := requireTaskLine(t, readTaskPage(t, filePath), id); !strings.Contains(line, tc.mutated) {
+				t.Fatalf("mutation did not land on disk (want %q): %q", tc.mutated, line)
+			}
 			result, err := app.UndoLastTaskMutation()
 			if err != nil {
 				t.Fatalf("UndoLastTaskMutation: %v", err)
 			}
-			if !result.Undone || !taskUndoContains(result.ChangedFields, tc.field) {
-				t.Fatalf("undo result = %+v, want %q restored", result, tc.field)
+			if !result.Undone || !taskUndoContains(result.ChangedFields, tc.fields[0]) {
+				t.Fatalf("undo result = %+v, want %q restored", result, tc.fields[0])
 			}
-			restored, _ := os.ReadFile(filePath)
-			line := taskLineForID(string(restored), id)
+			if !reflect.DeepEqual(result.ChangedFields, tc.fields) {
+				t.Errorf("undo changed fields = %v, want exactly %v", result.ChangedFields, tc.fields)
+			}
+			line := requireTaskLine(t, readTaskPage(t, filePath), id)
 			if strings.Contains(line, tc.gone) {
 				t.Errorf("undo left %q on disk: %q", tc.gone, line)
 			}
 			if tc.present != "" && !strings.HasPrefix(line, tc.present) {
 				t.Errorf("line = %q, want prefix %q", line, tc.present)
 			}
+			requireTaskProjection(t, app, id, tc.projected)
 		})
 	}
 }
@@ -157,8 +202,8 @@ func TestUndoLastTaskMutation_FocusLockRefusalRetainsEntry(t *testing.T) {
 	if got := taskUndoLen(app); got != 1 {
 		t.Fatalf("refused undo popped the entry: journal = %d, want 1", got)
 	}
-	locked, _ := os.ReadFile(filePath)
-	if !strings.Contains(taskLineForID(string(locked), id), "[owner:: Alice]") {
+	locked := readTaskPage(t, filePath)
+	if !strings.Contains(requireTaskLine(t, locked, id), "[owner:: Alice]") {
 		t.Fatalf("refused undo changed the file: %q", locked)
 	}
 
@@ -172,8 +217,8 @@ func TestUndoLastTaskMutation_FocusLockRefusalRetainsEntry(t *testing.T) {
 	if !result.Undone {
 		t.Fatalf("retry result = %+v, want undone", result)
 	}
-	restored, _ := os.ReadFile(filePath)
-	if line := taskLineForID(string(restored), id); strings.Contains(line, "[owner::") {
+	restored := readTaskPage(t, filePath)
+	if line := requireTaskLine(t, restored, id); strings.Contains(line, "[owner::") {
 		t.Errorf("retry did not restore the owner: %q", line)
 	}
 }
@@ -204,6 +249,9 @@ func TestUndoLastTaskMutation_LinkedRoot(t *testing.T) {
 	if got := taskUndoLen(app); got != 1 {
 		t.Fatalf("linked write journaled %d entries, want 1", got)
 	}
+	if line := requireTaskLine(t, readTaskPage(t, filePath), id); !strings.Contains(line, "[owner:: Alice]") {
+		t.Fatalf("linked mutation did not land on disk: %q", line)
+	}
 	result, err := app.UndoLastTaskMutation()
 	if err != nil {
 		t.Fatalf("UndoLastTaskMutation: %v", err)
@@ -211,13 +259,17 @@ func TestUndoLastTaskMutation_LinkedRoot(t *testing.T) {
 	if !result.Undone {
 		t.Fatalf("linked undo result = %+v, want undone", result)
 	}
-	restored, err := os.ReadFile(filePath)
-	if err != nil {
-		t.Fatalf("read linked page: %v", err)
-	}
-	if line := taskLineForID(string(restored), id); strings.Contains(line, "[owner::") {
+	if line := requireTaskLine(t, readTaskPage(t, filePath), id); strings.Contains(line, "[owner::") {
 		t.Errorf("linked undo did not restore the owner: %q", line)
 	}
+	requireTaskProjection(t, app, id, func(t *testing.T, task parser.TaskResult) {
+		if task.Owner != "" {
+			t.Errorf("linked index owner after undo = %q, want empty", task.Owner)
+		}
+		if task.Source != source {
+			t.Errorf("linked index source after undo = %q, want %q", task.Source, source)
+		}
+	})
 }
 
 // A batch reorder spanning two files journals one entry per file-write, so it
@@ -239,6 +291,15 @@ func TestUndoLastTaskMutation_MultiFileBatchOrderNeedsTwoUndos(t *testing.T) {
 	if got := taskUndoLen(app); got != 2 {
 		t.Fatalf("multi-file batch journaled %d entries, want one per file", got)
 	}
+	for _, tf := range []struct {
+		path  string
+		id    string
+		order string
+	}{{fileA, idA, "[order:: 1]"}, {fileB, idB, "[order:: 2]"}} {
+		if line := requireTaskLine(t, readTaskPage(t, tf.path), tf.id); !strings.Contains(line, tf.order) {
+			t.Fatalf("mutation did not land on disk for %s: %q", tf.id, line)
+		}
+	}
 
 	first, err := app.UndoLastTaskMutation()
 	if err != nil {
@@ -259,8 +320,8 @@ func TestUndoLastTaskMutation_MultiFileBatchOrderNeedsTwoUndos(t *testing.T) {
 		path string
 		id   string
 	}{{fileA, idA}, {fileB, idB}} {
-		content, _ := os.ReadFile(tf.path)
-		if line := taskLineForID(string(content), tf.id); strings.Contains(line, "[order::") {
+		line := requireTaskLine(t, readTaskPage(t, tf.path), tf.id)
+		if strings.Contains(line, "[order::") {
 			t.Errorf("undo left an order token on %s: %q", tf.id, line)
 		}
 	}

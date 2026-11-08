@@ -39,10 +39,12 @@ export type TaskChangedField =
 /**
  * Result of `ctx.undoLastTaskMutation()` (#1011). `undone` is false for a
  * clean no-op (nothing left in this session's journal) and for a skipped
- * entry whose target blocks vanished; `skippedBlockIds` names those and
- * `changedFields` is empty (a skip restores nothing). `changedFields` lists
- * the attributes the undo restored, and `remaining` is the journal depth after
- * the call.
+ * entry — one whose target blocks vanished, or whose recorded locator can no
+ * longer resolve (e.g. its linked notebook was unlinked); a skip is popped
+ * from the journal rather than erroring. `skippedBlockIds` names the affected
+ * blocks and `changedFields` is empty (a skip restores nothing).
+ * `changedFields` lists the attributes the undo restored, and `remaining` is
+ * the journal depth after the call.
  */
 export interface TaskUndoResult {
   undone: boolean
@@ -64,6 +66,11 @@ export interface TaskUndoResult {
  * LIFO: it reverses the most recent mutation from ANY Silt surface, not just
  * the surface that calls it, so surfaces should disclose this entry rather
  * than assume the undo belongs to their own gesture.
+ *
+ * `remaining` includes the peeked entry (the depth BEFORE an undo), whereas
+ * `TaskUndoResult.remaining` is the depth after the call. `source` is
+ * `'vault'` or `'linked:<id>'`; the locator may be the recorded one when the
+ * target has left the index.
  */
 export interface TaskUndoState {
   canUndo: boolean
@@ -308,14 +315,20 @@ export interface PluginContext {
   /**
    * Undo the newest journaled mutation in this vault session (#1011). Undo is
    * global LIFO: it reverses the most recent mutation recorded from any Silt
-   * surface (board, drawer, editor, plugin, AI), not only this plugin's own.
-   * It also covers non-task block-body text edits made through the shared
+   * surface (board, drawer, plugin/MCP task setters), not only this plugin's
+   * own. It also covers non-task block-body text edits made through the shared
    * write chain, so `changedFields: ['text']` can refer to a note/embed
-   * rewrite. Restores the affected block(s) from their pre-mutation disk state
-   * through the canonical write chain and, when the undone transition minted a
-   * recurrence sibling, removes that spawned block too. The journal is
+   * rewrite. Whole-page saves are not journaled — the editor's autosave (and
+   * therefore in-editor edits), global replace, and plugin `applyBlocks` batch
+   * writes bypass the journal, and the editor keeps its own in-editor undo.
+   * Restores the task fields the mutation changed to their pre-mutation values
+   * through the canonical write chain; fields the mutation left untouched keep
+   * their current (possibly later-edited) values. When the undone transition
+   * minted a recurrence sibling, removes that spawned block too. The journal is
    * in-memory and session-scoped (bounded ring, cleared on vault switch), so
-   * this only ever reverses this session's mutations. Gated by
+   * this only ever reverses this session's mutations. There is no redo, and a
+   * refused write (e.g. the page is open in the editor) rejects without
+   * consuming the entry, so a retry still reverses it. Gated by
    * content-mutate.
    */
   undoLastTaskMutation: () => Promise<TaskUndoResult>

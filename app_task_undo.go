@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -79,6 +80,13 @@ func (j *taskUndoJournal) clear() {
 // failures, and write errors must never become undoable.
 func (a *App) recordTaskUndo(entry taskUndoEntry) {
 	entry.ChangedFields = changedTaskFields(entry.Blocks)
+	if len(entry.ChangedFields) == 0 {
+		// A write that changed no user-visible field (re-sending the current
+		// owner/orders, TODO→TODO) is not a mutation: journaling it would burn
+		// a slot and make undo rewrite the page for no effect. ModifiedAt is
+		// excluded on purpose, so it cannot keep such an entry alive.
+		return
+	}
 	a.taskUndo.record(entry)
 }
 
@@ -241,10 +249,7 @@ func (a *App) GetTaskUndoState() TaskUndoState {
 	if state.ChangedFields == nil {
 		state.ChangedFields = []string{}
 	}
-	state.BlockIDs = make([]string, 0, len(entry.Blocks))
-	for _, b := range entry.Blocks {
-		state.BlockIDs = append(state.BlockIDs, b.BlockID)
-	}
+	state.BlockIDs = entryBlockIDs(entry)
 	source, notebook, section, page := entry.Source, entry.Notebook, entry.Section, entry.Page
 	if curLoc, ok := a.undoEntryLocator(entry); ok {
 		source, notebook, section, page = curLoc.Source, curLoc.Notebook, curLoc.Section, curLoc.Page
@@ -266,6 +271,31 @@ func (a *App) PluginGetTaskUndoState(pluginID, sessionToken string) (TaskUndoSta
 	return a.GetTaskUndoState(), nil
 }
 
+// unrecoverableTaskUndoError marks a replay failure that a retry cannot fix:
+// the recorded locator no longer resolves (unlinked or quarantined notebook,
+// invalid path) or the path could never be written. UndoLastTaskMutation pops
+// these as skipped so a dead entry cannot wedge the whole session journal
+// behind a failure that repeats identically on every click.
+type unrecoverableTaskUndoError struct{ err error }
+
+func (e *unrecoverableTaskUndoError) Error() string { return e.err.Error() }
+func (e *unrecoverableTaskUndoError) Unwrap() error { return e.err }
+
+func unrecoverableTaskUndo(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &unrecoverableTaskUndoError{err: err}
+}
+
+func entryBlockIDs(entry taskUndoEntry) []string {
+	ids := make([]string, 0, len(entry.Blocks))
+	for _, b := range entry.Blocks {
+		ids = append(ids, b.BlockID)
+	}
+	return ids
+}
+
 // UndoLastTaskMutation restores the newest journaled mutation. The journal is
 // global LIFO — undo reverses the most recent mutation recorded from any Silt
 // surface, with no surface filtering — and it also covers non-task block-body
@@ -282,9 +312,11 @@ func (a *App) PluginGetTaskUndoState(pluginID, sessionToken string) (TaskUndoSta
 //
 // The undo write itself is deliberately NOT journaled (there is no redo); the
 // journal mutex stays held across the replay so a concurrent mutation cannot
-// slip between the peek and the pop. On a write refusal (focus lock, disk
-// error) the entry stays journaled; a vanished target is popped and reported
-// as Skipped so a stale UI invocation doesn't error-storm.
+// slip between the peek and the pop. On a retryable failure (focus lock, disk
+// error) the entry stays journaled; a vanished target, or an entry whose
+// recorded locator can no longer resolve (unlinked/quarantined notebook,
+// invalid path), is popped and reported as Skipped so one dead entry cannot
+// block the older mutations for the rest of the session.
 func (a *App) UndoLastTaskMutation() (TaskUndoResult, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -303,7 +335,21 @@ func (a *App) UndoLastTaskMutation() (TaskUndoResult, error) {
 	entry := a.taskUndo.entries[n-1]
 	result, err := a.replayTaskUndoEntry(entry)
 	if err != nil {
-		return TaskUndoResult{Remaining: n}, err
+		var unrecoverable *unrecoverableTaskUndoError
+		if !errors.As(err, &unrecoverable) {
+			return TaskUndoResult{Remaining: n}, err
+		}
+		// Retrying cannot fix a dead locator, so keeping the entry would make
+		// every later undo fail on it and hide all older mutations for the
+		// session. Pop it and report the skip; the next undo moves on.
+		a.taskUndo.entries = a.taskUndo.entries[:n-1]
+		log.Printf("task undo: dropped unrecoverable entry: %v", err)
+		result.Skipped = true
+		result.Undone = false
+		result.ChangedFields = nil
+		result.SkippedBlockIDs = entryBlockIDs(entry)
+		result.Remaining = n - 1
+		return result, nil
 	}
 	a.taskUndo.entries = a.taskUndo.entries[:n-1]
 	result.Remaining = n - 1
@@ -354,22 +400,22 @@ func (a *App) replayTaskUndoEntry(entry taskUndoEntry) (TaskUndoResult, error) {
 	safeNotebook := sanitizePathSegment(notebook)
 	safeSection, secErr := historySection(section)
 	if secErr != nil {
-		return result, invalidNavigationPath(secErr)
+		return result, unrecoverableTaskUndo(invalidNavigationPath(secErr))
 	}
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
-		return result, fmt.Errorf("task undo: invalid recorded locator %s/%s/%s", notebook, section, page)
+		return result, unrecoverableTaskUndo(fmt.Errorf("task undo: invalid recorded locator %s/%s/%s", notebook, section, page))
 	}
 	result.Notebook = safeNotebook
 	result.Section = safeSection
 	result.Page = safePage
 	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
 	if err != nil {
-		return result, fmt.Errorf("task undo: resolve notebook dir: %w", err)
+		return result, unrecoverableTaskUndo(fmt.Errorf("task undo: resolve notebook dir: %w", err))
 	}
 	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
 	if !isPathWithinRoot(filePath, notebookDir) {
-		return result, fmt.Errorf("task undo: resolved file %q escapes notebook root", filePath)
+		return result, unrecoverableTaskUndo(fmt.Errorf("task undo: resolved file %q escapes notebook root", filePath))
 	}
 
 	var writeErr error

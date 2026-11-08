@@ -762,9 +762,13 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   close/switch) and replay the recorded pre-mutation block state through the
   canonical write chain. The journal is **global LIFO and not task-only**:
   undo reverses the most recent mutation from any Silt surface (board, drawer,
-  editor, plugin, AI) — with no surface filtering — and it also covers
+  plugin/MCP task setters) — with no surface filtering — and it also covers
   non-task block-body text edits made through the shared write chain
-  (`MutateBlock`, `writeBlockText`, plugin block mutations). Replay restores
+  (`MutateBlock`, `writeBlockText`, plugin block mutations). Whole-page saves
+  are **not** journaled: the editor's autosave (and therefore in-editor
+  checkbox/text edits), global replace, and plugin `applyBlocks` /
+  `SaveFileBlocks` batch writes bypass the journal — the editor keeps its own
+  in-editor undo. Replay restores
   only the fields the mutation actually changed, so a later editor/external
   edit to an untouched field survives the undo; a page rename or block move
   after the mutation is re-resolved through `GetBlockLocation` so the entry is
@@ -780,7 +784,10 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   undo result names the restored block IDs, the changed task fields
   (`status`, `dueDate`, …; empty on a skipped entry), any removed spawned ID,
   and the remaining journal depth; an empty journal is a clean
-  `undone: false` no-op. **Sub-editor**:
+  `undone: false` no-op. An entry whose target can no longer resolve (the
+  linked notebook was unlinked or quarantined, the locator is invalid) is
+  popped and reported as `skipped` instead of erroring forever, so one dead
+  entry never blocks the older mutations in the session journal. **Sub-editor**:
   `FetchSubtree`
   (read-only child sub-tree extraction; also hydrates `block_meta`
   comment attribution for NOTE children) and `SaveSubtreeBlocks` (atomic

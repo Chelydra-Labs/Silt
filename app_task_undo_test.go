@@ -3,9 +3,11 @@ package main
 import (
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
+	"silt/backend/parser"
 	"silt/backend/plugins"
 )
 
@@ -13,6 +15,47 @@ func taskUndoLen(app *App) int {
 	app.taskUndo.mu.Lock()
 	defer app.taskUndo.mu.Unlock()
 	return len(app.taskUndo.entries)
+}
+
+// readTaskPage reads an undo test page and fails on any read error. A bare
+// `content, _ := os.ReadFile` would let a destroyed or unreadable file read as
+// "the token is absent", turning a destructive undo green.
+func readTaskPage(t *testing.T, path string) string {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(content)
+}
+
+// requireTaskLine returns the line carrying id and fails when the block is
+// gone, so disk assertions cannot pass on a page that lost the whole block.
+func requireTaskLine(t *testing.T, content, id string) string {
+	t.Helper()
+	line := taskLineForID(content, id)
+	if line == "" {
+		t.Fatalf("block %s is missing from the page:\n%s", id, content)
+	}
+	return line
+}
+
+// requireTaskProjection asserts the SQLite row the board reads after the undo.
+// Disk-only assertions miss a stale projection (e.g. a board card still DOING
+// after the file was restored to TODO).
+func requireTaskProjection(t *testing.T, app *App, id string, check func(t *testing.T, task parser.TaskResult)) {
+	t.Helper()
+	tasks, err := app.db.QueryTasksWithFilters(parser.TaskQueryFilter{BlockIDs: []string{id}})
+	if err != nil {
+		t.Fatalf("QueryTasksWithFilters: %v", err)
+	}
+	for _, task := range tasks {
+		if task.ID == id {
+			check(t, task)
+			return
+		}
+	}
+	t.Fatalf("task %s is missing from the index after undo", id)
 }
 
 // assertOnlyTargetLineChanged pins the adjacency guarantee: undo must not
@@ -56,6 +99,9 @@ func TestUndoLastTaskMutation_RestoresBoardStatus(t *testing.T) {
 	if got := taskUndoLen(app); got != 1 {
 		t.Fatalf("journal after status write = %d, want 1", got)
 	}
+	if line := requireTaskLine(t, readTaskPage(t, filePath), id); !strings.HasPrefix(line, "- [/] ") {
+		t.Fatalf("mutation did not land on disk: %q", line)
+	}
 
 	result, err := app.UndoLastTaskMutation()
 	if err != nil {
@@ -71,17 +117,18 @@ func TestUndoLastTaskMutation_RestoresBoardStatus(t *testing.T) {
 		t.Fatalf("changed fields = %v, want status", result.ChangedFields)
 	}
 
-	updated, err := os.ReadFile(filePath)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	line := taskLineForID(string(updated), id)
+	line := requireTaskLine(t, readTaskPage(t, filePath), id)
 	if !strings.HasPrefix(line, "- [ ] ") {
 		t.Errorf("disk status not restored to TODO: %q", line)
 	}
 	if strings.Contains(line, "[completed::") {
 		t.Errorf("undo left a completion stamp: %q", line)
 	}
+	requireTaskProjection(t, app, id, func(t *testing.T, task parser.TaskResult) {
+		if task.Status != "TODO" {
+			t.Errorf("index status after undo = %q, want TODO", task.Status)
+		}
+	})
 }
 
 func TestUndoLastTaskMutation_ClearsDueDate(t *testing.T) {
@@ -93,6 +140,9 @@ func TestUndoLastTaskMutation_ClearsDueDate(t *testing.T) {
 	if err := app.SetTaskDueDate(id, "2026-08-01"); err != nil {
 		t.Fatalf("SetTaskDueDate: %v", err)
 	}
+	if line := requireTaskLine(t, readTaskPage(t, filePath), id); !strings.Contains(line, "[due:: 2026-08-01]") {
+		t.Fatalf("mutation did not land on disk: %q", line)
+	}
 	result, err := app.UndoLastTaskMutation()
 	if err != nil {
 		t.Fatalf("UndoLastTaskMutation: %v", err)
@@ -101,11 +151,15 @@ func TestUndoLastTaskMutation_ClearsDueDate(t *testing.T) {
 		t.Fatalf("undo result = %+v, want dueDate restored", result)
 	}
 
-	updated, _ := os.ReadFile(filePath)
-	line := taskLineForID(string(updated), id)
+	line := requireTaskLine(t, readTaskPage(t, filePath), id)
 	if strings.Contains(line, "[due::") {
 		t.Errorf("undo left the due token on disk: %q", line)
 	}
+	requireTaskProjection(t, app, id, func(t *testing.T, task parser.TaskResult) {
+		if task.DueDate != "" {
+			t.Errorf("index due date after undo = %q, want empty", task.DueDate)
+		}
+	})
 }
 
 // A mutation that changed only the due date must undo only the due date: an
@@ -131,8 +185,7 @@ func TestUndoLastTaskMutation_DueDateUndoPreservesLaterTextEdit(t *testing.T) {
 	if !result.Undone || !taskUndoContains(result.ChangedFields, "dueDate") {
 		t.Fatalf("undo result = %+v, want dueDate restored", result)
 	}
-	restored, _ := os.ReadFile(filePath)
-	line := taskLineForID(string(restored), id)
+	line := requireTaskLine(t, readTaskPage(t, filePath), id)
 	if !strings.Contains(line, "rewritten by editor") {
 		t.Errorf("undo reverted a later non-journaled text edit: %q", line)
 	}
@@ -159,13 +212,13 @@ func TestUndoLastTaskMutation_OnlyTargetLineChanges(t *testing.T) {
 	// Compare the canonical post-setter file with the post-undo file: the
 	// first mutation also lands the page frontmatter and block dates, which
 	// are outside undo's scope.
-	beforeUndo, _ := os.ReadFile(filePath)
+	beforeUndo := readTaskPage(t, filePath)
 	if _, err := app.UndoLastTaskMutation(); err != nil {
 		t.Fatalf("UndoLastTaskMutation: %v", err)
 	}
 
-	updated, _ := os.ReadFile(filePath)
-	assertOnlyTargetLineChanged(t, string(beforeUndo), string(updated), idB)
+	updated := readTaskPage(t, filePath)
+	assertOnlyTargetLineChanged(t, beforeUndo, updated, idB)
 }
 
 func TestUndoLastTaskMutation_RecurrenceRemovesSpawnedSibling(t *testing.T) {
@@ -184,8 +237,8 @@ func TestUndoLastTaskMutation_RecurrenceRemovesSpawnedSibling(t *testing.T) {
 	if spawnedID == "" {
 		t.Fatal("expected a spawned recurrence instance")
 	}
-	afterDone, _ := os.ReadFile(filePath)
-	if got := strings.Count(string(afterDone), "- ["); got != 3 {
+	afterDone := readTaskPage(t, filePath)
+	if got := strings.Count(afterDone, "- ["); got != 3 {
 		t.Fatalf("after DONE expected 3 task lines, got %d:\n%s", got, afterDone)
 	}
 
@@ -200,21 +253,25 @@ func TestUndoLastTaskMutation_RecurrenceRemovesSpawnedSibling(t *testing.T) {
 		t.Errorf("removed spawned id = %q, want %q", result.RemovedSpawnedID, spawnedID)
 	}
 
-	restored, _ := os.ReadFile(filePath)
-	restoredStr := string(restored)
+	restoredStr := readTaskPage(t, filePath)
 	if got := strings.Count(restoredStr, "- ["); got != 2 {
 		t.Fatalf("undo must remove the spawned sibling; got %d task lines:\n%s", got, restoredStr)
 	}
 	if strings.Contains(restoredStr, "<!-- id: "+spawnedID) {
 		t.Errorf("spawned block still on disk after undo:\n%s", restoredStr)
 	}
-	line := taskLineForID(restoredStr, id)
+	line := requireTaskLine(t, restoredStr, id)
 	if !strings.HasPrefix(line, "- [ ] ") || !strings.Contains(line, "[recur:: every week]") {
 		t.Errorf("original task not restored to TODO with its recurrence rule: %q", line)
 	}
 	if _, err := app.db.GetBlockLocation(spawnedID); err == nil {
 		t.Error("spawned block still indexed after undo")
 	}
+	requireTaskProjection(t, app, id, func(t *testing.T, task parser.TaskResult) {
+		if task.Status != "TODO" || task.Recurrence != "every week" {
+			t.Errorf("index row after undo = status %q recurrence %q, want TODO with the rule", task.Status, task.Recurrence)
+		}
+	})
 }
 
 func TestUndoLastTaskMutation_RestoresBlockBodyText(t *testing.T) {
@@ -226,6 +283,9 @@ func TestUndoLastTaskMutation_RestoresBlockBodyText(t *testing.T) {
 	if err := app.MutateBlock(id, "rewritten note"); err != nil {
 		t.Fatalf("MutateBlock: %v", err)
 	}
+	if line := requireTaskLine(t, readTaskPage(t, filePath), id); !strings.Contains(line, "rewritten note") {
+		t.Fatalf("mutation did not land on disk: %q", line)
+	}
 	result, err := app.UndoLastTaskMutation()
 	if err != nil {
 		t.Fatalf("UndoLastTaskMutation: %v", err)
@@ -233,8 +293,7 @@ func TestUndoLastTaskMutation_RestoresBlockBodyText(t *testing.T) {
 	if !result.Undone || !taskUndoContains(result.ChangedFields, "text") {
 		t.Fatalf("undo result = %+v, want body text restored", result)
 	}
-	restored, _ := os.ReadFile(filePath)
-	if line := taskLineForID(string(restored), id); !strings.Contains(line, "original note") {
+	if line := requireTaskLine(t, readTaskPage(t, filePath), id); !strings.Contains(line, "original note") {
 		t.Errorf("block body not restored: %q", line)
 	}
 }
@@ -255,9 +314,9 @@ func TestUndoLastTaskMutation_BatchOrderRestoresAll(t *testing.T) {
 	if got := taskUndoLen(app); got != 1 {
 		t.Fatalf("batch write journaled %d entries, want one per file-write", got)
 	}
-	ordered, _ := os.ReadFile(filePath)
-	if !strings.Contains(taskLineForID(string(ordered), idA), "[order:: 1]") ||
-		!strings.Contains(taskLineForID(string(ordered), idB), "[order:: 2]") {
+	ordered := readTaskPage(t, filePath)
+	if !strings.Contains(requireTaskLine(t, ordered, idA), "[order:: 1]") ||
+		!strings.Contains(requireTaskLine(t, ordered, idB), "[order:: 2]") {
 		t.Fatalf("order tokens not written:\n%s", ordered)
 	}
 
@@ -268,11 +327,19 @@ func TestUndoLastTaskMutation_BatchOrderRestoresAll(t *testing.T) {
 	if !result.Undone || len(result.BlockIDs) != 2 {
 		t.Fatalf("undo result = %+v, want both blocks restored", result)
 	}
-	restored, _ := os.ReadFile(filePath)
+	if !reflect.DeepEqual(result.ChangedFields, []string{"order"}) {
+		t.Errorf("undo changed fields = %v, want exactly [order]", result.ChangedFields)
+	}
+	restored := readTaskPage(t, filePath)
 	for _, id := range []string{idA, idB} {
-		if line := taskLineForID(string(restored), id); strings.Contains(line, "[order::") {
+		if line := requireTaskLine(t, restored, id); strings.Contains(line, "[order::") {
 			t.Errorf("undo left an order token on %s: %q", id, line)
 		}
+		requireTaskProjection(t, app, id, func(t *testing.T, task parser.TaskResult) {
+			if task.ManualOrder != 0 {
+				t.Errorf("index manual order after undo = %d, want 0", task.ManualOrder)
+			}
+		})
 	}
 }
 
@@ -310,6 +377,139 @@ func TestUndoLastTaskMutation_EmptyJournalIsCleanNoOp(t *testing.T) {
 	}
 	if result.Undone || result.Skipped || result.Remaining != 0 {
 		t.Fatalf("result = %+v, want clean no-op", result)
+	}
+}
+
+// Undo is global LIFO: with two journaled mutations the first undo must
+// reverse the NEWER one, leave the older one on disk, and drop the journal
+// depth by exactly one.
+func TestUndoLastTaskMutation_PopsNewestMutationFirst(t *testing.T) {
+	app := newTestApp(t)
+	const id = "a11d0040-1111-1111-1111-111111111111"
+	content := "- [ ] ship <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "UndoLIFO", "2026-07-01", content)
+
+	if err := app.SetTaskOwner(id, "Alice"); err != nil {
+		t.Fatalf("SetTaskOwner: %v", err)
+	}
+	if err := app.SetTaskDueDate(id, "2026-08-01"); err != nil {
+		t.Fatalf("SetTaskDueDate: %v", err)
+	}
+	if got := taskUndoLen(app); got != 2 {
+		t.Fatalf("journal after two mutations = %d, want 2", got)
+	}
+
+	result, err := app.UndoLastTaskMutation()
+	if err != nil {
+		t.Fatalf("UndoLastTaskMutation: %v", err)
+	}
+	if !result.Undone || result.Remaining != 1 {
+		t.Fatalf("undo result = %+v, want undone with one entry left", result)
+	}
+	if !reflect.DeepEqual(result.ChangedFields, []string{"dueDate"}) {
+		t.Fatalf("undo restored fields = %v, want [dueDate] (the newer mutation)", result.ChangedFields)
+	}
+	line := requireTaskLine(t, readTaskPage(t, filePath), id)
+	if strings.Contains(line, "[due::") {
+		t.Errorf("newer mutation (due date) was not reverted: %q", line)
+	}
+	if !strings.Contains(line, "[owner:: Alice]") {
+		t.Errorf("undo reverted the older owner mutation: %q", line)
+	}
+
+	// The older mutation is still journaled and is the next undo.
+	second, err := app.UndoLastTaskMutation()
+	if err != nil {
+		t.Fatalf("second UndoLastTaskMutation: %v", err)
+	}
+	if !second.Undone || second.Remaining != 0 {
+		t.Fatalf("second undo result = %+v, want the older entry", second)
+	}
+	if line := requireTaskLine(t, readTaskPage(t, filePath), id); strings.Contains(line, "[owner::") {
+		t.Errorf("older owner mutation was not reverted: %q", line)
+	}
+}
+
+// The state peek must describe the entry an undo would reverse — the newest
+// one — even when an older entry exists on another page.
+func TestGetTaskUndoState_DescribesNewestEntry(t *testing.T) {
+	app := newTestApp(t)
+	const (
+		olderID = "a11d0041-1111-1111-1111-111111111111"
+		newerID = "a11d0042-1111-1111-1111-111111111111"
+	)
+	indexTestFile(t, app, "W", "S", "UndoPeekOlder", "2026-07-01",
+		"- [ ] older <!-- id: "+olderID+" -->\n")
+	indexTestFile(t, app, "W", "S", "UndoPeekNewer", "2026-07-01",
+		"- [ ] newer <!-- id: "+newerID+" -->\n")
+
+	if err := app.SetTaskOwner(olderID, "Alice"); err != nil {
+		t.Fatalf("SetTaskOwner: %v", err)
+	}
+	if err := app.SetTaskPriority(newerID, 1); err != nil {
+		t.Fatalf("SetTaskPriority: %v", err)
+	}
+
+	state := app.GetTaskUndoState()
+	if !state.CanUndo || state.Remaining != 2 {
+		t.Fatalf("state = %+v, want canUndo with two entries", state)
+	}
+	if !reflect.DeepEqual(state.BlockIDs, []string{newerID}) {
+		t.Errorf("peeked block ids = %v, want the newer entry [%s]", state.BlockIDs, newerID)
+	}
+	if state.Notebook != "W" || state.Section != "S" || state.Page != "UndoPeekNewer" {
+		t.Errorf("peeked locator = %+v, want the newer entry's page", state)
+	}
+	if !reflect.DeepEqual(state.ChangedFields, []string{"priority"}) {
+		t.Errorf("peeked changed fields = %v, want [priority]", state.ChangedFields)
+	}
+
+	// After one undo the peek falls back to the older entry.
+	if _, err := app.UndoLastTaskMutation(); err != nil {
+		t.Fatalf("UndoLastTaskMutation: %v", err)
+	}
+	state = app.GetTaskUndoState()
+	if state.Remaining != 1 || state.Page != "UndoPeekOlder" ||
+		!reflect.DeepEqual(state.ChangedFields, []string{"owner"}) {
+		t.Fatalf("peek after one undo = %+v, want the older owner entry", state)
+	}
+}
+
+// A write that changes no user-visible field must not consume a journal slot:
+// re-sending the current owner would otherwise leave an undo that rewrites the
+// page for no effect and advertises an empty changed-field set.
+func TestUndoLastTaskMutation_NoOpMutationDoesNotJournal(t *testing.T) {
+	app := newTestApp(t)
+	const id = "a11d0043-1111-1111-1111-111111111111"
+	content := "- [ ] ship <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "UndoNoOp", "2026-07-01", content)
+
+	if err := app.SetTaskOwner(id, "Alice"); err != nil {
+		t.Fatalf("SetTaskOwner: %v", err)
+	}
+	if got := taskUndoLen(app); got != 1 {
+		t.Fatalf("journal after first owner write = %d, want 1", got)
+	}
+	if err := app.SetTaskOwner(id, "Alice"); err != nil {
+		t.Fatalf("repeated SetTaskOwner: %v", err)
+	}
+	if got := taskUndoLen(app); got != 1 {
+		t.Fatalf("no-op mutation journaled an entry: journal = %d, want 1", got)
+	}
+	state := app.GetTaskUndoState()
+	if len(state.ChangedFields) == 0 {
+		t.Fatalf("peek advertised a mutation with no changed fields: %+v", state)
+	}
+
+	result, err := app.UndoLastTaskMutation()
+	if err != nil {
+		t.Fatalf("UndoLastTaskMutation: %v", err)
+	}
+	if !result.Undone || !reflect.DeepEqual(result.ChangedFields, []string{"owner"}) {
+		t.Fatalf("undo result = %+v, want the owner mutation reversed", result)
+	}
+	if line := requireTaskLine(t, readTaskPage(t, filePath), id); strings.Contains(line, "[owner::") {
+		t.Errorf("undo did not clear the owner: %q", line)
 	}
 }
 
@@ -367,7 +567,7 @@ func TestPluginUndoLastTaskMutation_GatedAndUndoes(t *testing.T) {
 		id       = "a11d000d-1111-1111-1111-111111111111"
 	)
 	content := "- [ ] ship <!-- id: " + id + " -->\n"
-	indexTestFile(t, app, "W", "S", "UndoPlugin", "2026-07-01", content)
+	filePath := indexTestFile(t, app, "W", "S", "UndoPlugin", "2026-07-01", content)
 	token := registerTestSession(t, app, pluginID)
 
 	if _, err := app.PluginUndoLastTaskMutation(pluginID, token); err == nil {
@@ -380,6 +580,9 @@ func TestPluginUndoLastTaskMutation_GatedAndUndoes(t *testing.T) {
 	if err := app.SetTaskOwner(id, "Alice"); err != nil {
 		t.Fatalf("SetTaskOwner: %v", err)
 	}
+	if line := requireTaskLine(t, readTaskPage(t, filePath), id); !strings.Contains(line, "[owner:: Alice]") {
+		t.Fatalf("mutation did not land on disk: %q", line)
+	}
 	if _, err := app.PluginUndoLastTaskMutation(pluginID, "wrong-token"); err == nil {
 		t.Fatal("undo must reject a mismatched session token")
 	}
@@ -389,6 +592,12 @@ func TestPluginUndoLastTaskMutation_GatedAndUndoes(t *testing.T) {
 	}
 	if !result.Undone || !taskUndoContains(result.ChangedFields, "owner") {
 		t.Fatalf("plugin undo result = %+v, want owner restored", result)
+	}
+	if !reflect.DeepEqual(result.ChangedFields, []string{"owner"}) {
+		t.Errorf("plugin undo changed fields = %v, want exactly [owner]", result.ChangedFields)
+	}
+	if line := requireTaskLine(t, readTaskPage(t, filePath), id); strings.Contains(line, "[owner::") {
+		t.Errorf("plugin undo did not clear the owner: %q", line)
 	}
 }
 

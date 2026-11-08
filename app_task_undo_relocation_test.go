@@ -1,8 +1,8 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -25,6 +25,10 @@ func TestUndoLastTaskMutation_SurvivesPageRename(t *testing.T) {
 	if err := app.RenamePage("W", "S", "BeforeRename", "AfterRename"); err != nil {
 		t.Fatalf("RenamePage: %v", err)
 	}
+	renamedPath := filepath.Join(app.vaultPath, "W", "S", "AfterRename.md")
+	if line := requireTaskLine(t, readTaskPage(t, renamedPath), id); !strings.Contains(line, "[owner:: Alice]") {
+		t.Fatalf("mutation lost during rename: %q", line)
+	}
 
 	result, err := app.UndoLastTaskMutation()
 	if err != nil {
@@ -37,13 +41,14 @@ func TestUndoLastTaskMutation_SurvivesPageRename(t *testing.T) {
 		t.Errorf("result locator = %+v, want the renamed page", result)
 	}
 
-	restored, err := os.ReadFile(filepath.Join(app.vaultPath, "W", "S", "AfterRename.md"))
-	if err != nil {
-		t.Fatalf("read renamed page: %v", err)
-	}
-	if line := taskLineForID(string(restored), id); strings.Contains(line, "[owner::") {
+	if line := requireTaskLine(t, readTaskPage(t, renamedPath), id); strings.Contains(line, "[owner::") {
 		t.Errorf("undo did not restore the owner on the renamed page: %q", line)
 	}
+	requireTaskProjection(t, app, id, func(t *testing.T, task parser.TaskResult) {
+		if task.Page != "AfterRename" || task.Owner != "" {
+			t.Errorf("index row after undo = page %q owner %q, want AfterRename/empty", task.Page, task.Owner)
+		}
+	})
 }
 
 // A block moved to another page after the mutation leaves the recorded page
@@ -76,6 +81,9 @@ func TestUndoLastTaskMutation_SurvivesBlockMoveToAnotherPage(t *testing.T) {
 	if err != nil || loc.Page != "MoveTarget" {
 		t.Fatalf("block did not move: loc=%+v err=%v", loc, err)
 	}
+	if line := requireTaskLine(t, readTaskPage(t, targetPath), id); !strings.Contains(line, "[owner:: Alice]") {
+		t.Fatalf("mutation lost during move: %q", line)
+	}
 
 	result, err := app.UndoLastTaskMutation()
 	if err != nil {
@@ -88,13 +96,14 @@ func TestUndoLastTaskMutation_SurvivesBlockMoveToAnotherPage(t *testing.T) {
 		t.Errorf("result page = %q, want MoveTarget", result.Page)
 	}
 
-	restored, err := os.ReadFile(targetPath)
-	if err != nil {
-		t.Fatalf("read target page: %v", err)
-	}
-	if line := taskLineForID(string(restored), id); strings.Contains(line, "[owner::") {
+	if line := requireTaskLine(t, readTaskPage(t, targetPath), id); strings.Contains(line, "[owner::") {
 		t.Errorf("undo did not restore the owner at the block's new location: %q", line)
 	}
+	requireTaskProjection(t, app, id, func(t *testing.T, task parser.TaskResult) {
+		if task.Page != "MoveTarget" || task.Owner != "" {
+			t.Errorf("index row after undo = page %q owner %q, want MoveTarget/empty", task.Page, task.Owner)
+		}
+	})
 }
 
 // A cross-source move (vault page → linked root) after the mutation must
@@ -151,6 +160,10 @@ func TestUndoLastTaskMutation_SurvivesCrossSourceMove(t *testing.T) {
 	if loc.Source != linkedSource || loc.Page != "Plan" {
 		t.Fatalf("block did not move across sources: loc=%+v", loc)
 	}
+	linkedPath := filepath.Join(ext, "Plan.md")
+	if line := requireTaskLine(t, readTaskPage(t, linkedPath), id); !strings.Contains(line, "[owner:: Alice]") {
+		t.Fatalf("mutation lost during cross-source move: %q", line)
+	}
 
 	result, err := app.UndoLastTaskMutation()
 	if err != nil {
@@ -159,6 +172,15 @@ func TestUndoLastTaskMutation_SurvivesCrossSourceMove(t *testing.T) {
 	if !result.Undone || result.Skipped {
 		t.Fatalf("cross-source undo = %+v, want restored", result)
 	}
+	if line := requireTaskLine(t, readTaskPage(t, linkedPath), id); strings.Contains(line, "[owner::") {
+		t.Errorf("cross-source undo did not restore the owner: %q", line)
+	}
+	requireTaskProjection(t, app, id, func(t *testing.T, task parser.TaskResult) {
+		if task.Owner != "" || task.Source != linkedSource || task.Page != "Plan" {
+			t.Errorf("linked index row after undo = owner %q source %q page %q, want empty/%s/Plan",
+				task.Owner, task.Source, task.Page, linkedSource)
+		}
+	})
 
 	// The written file is the linked one, so the linked row must carry the
 	// restored state...
@@ -202,5 +224,83 @@ func TestUndoLastTaskMutation_SurvivesCrossSourceMove(t *testing.T) {
 	}
 	if !undoVersion {
 		t.Errorf("linked page history has no undo snapshot (versions: %+v)", versions)
+	}
+}
+
+// A mutation recorded against a linked notebook that is unlinked before the
+// undo can never be replayed: the source no longer resolves. That entry must
+// be skipped and popped, not error forever — otherwise every older mutation in
+// the session journal becomes unreachable behind it.
+func TestUndoLastTaskMutation_SkipsUnresolvableLinkedTarget(t *testing.T) {
+	app := newTestApp(t)
+	ext := t.TempDir()
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+	const (
+		vaultID  = "a11d0029-1111-1111-1111-111111111111"
+		linkedID = "a11d002a-1111-1111-1111-111111111111"
+	)
+	vaultPath := indexTestFile(t, app, "W", "S", "AfterUnlink", "2026-07-01",
+		"- [ ] vault task <!-- id: "+vaultID+" -->\n")
+
+	linkedContent := "- [ ] linked task <!-- id: " + linkedID + " -->\n"
+	linkedPath := filepath.Join(ext, "Plan.md")
+	writeFile(t, linkedPath, linkedContent)
+	source := "linked:" + ln.ID
+	linkedBlocks, linkedMeta, _, _, err := parser.ParseFileContent(linkedContent, ln.DisplayName, "", "Plan", "2026-07-01", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent linked: %v", err)
+	}
+	if err := app.db.IndexFileBlocks(source, linkedMeta.Notebook, linkedMeta.Section, linkedMeta.Page, linkedBlocks, linkedMeta.Tags); err != nil {
+		t.Fatalf("IndexFileBlocks linked: %v", err)
+	}
+
+	// An older vault mutation sits under the newer linked one.
+	if err := app.SetTaskOwner(vaultID, "Alice"); err != nil {
+		t.Fatalf("SetTaskOwner vault: %v", err)
+	}
+	if err := app.SetTaskOwner(linkedID, "Bob"); err != nil {
+		t.Fatalf("SetTaskOwner linked: %v", err)
+	}
+	if got := taskUndoLen(app); got != 2 {
+		t.Fatalf("journal after two mutations = %d, want 2", got)
+	}
+	if err := app.UnlinkNotebook(ln.ID); err != nil {
+		t.Fatalf("UnlinkNotebook: %v", err)
+	}
+
+	result, err := app.UndoLastTaskMutation()
+	if err != nil {
+		t.Fatalf("unlinked target must skip, not error: %v", err)
+	}
+	if !result.Skipped || result.Undone {
+		t.Fatalf("result = %+v, want a skipped entry", result)
+	}
+	if len(result.ChangedFields) != 0 {
+		t.Errorf("skipped result advertised restored fields: %v", result.ChangedFields)
+	}
+	if !reflect.DeepEqual(result.SkippedBlockIDs, []string{linkedID}) {
+		t.Errorf("skipped block ids = %v, want [%s]", result.SkippedBlockIDs, linkedID)
+	}
+	if got := taskUndoLen(app); got != 1 {
+		t.Fatalf("dead entry was not popped: journal = %d, want 1", got)
+	}
+	// Unlinking never touches the external files.
+	if line := requireTaskLine(t, readTaskPage(t, linkedPath), linkedID); !strings.Contains(line, "[owner:: Bob]") {
+		t.Errorf("skip modified the unlinked file: %q", line)
+	}
+
+	// The older vault mutation is still reachable.
+	result, err = app.UndoLastTaskMutation()
+	if err != nil {
+		t.Fatalf("second UndoLastTaskMutation: %v", err)
+	}
+	if !result.Undone || result.Remaining != 0 {
+		t.Fatalf("older undo result = %+v, want the vault entry reversed", result)
+	}
+	if line := requireTaskLine(t, readTaskPage(t, vaultPath), vaultID); strings.Contains(line, "[owner::") {
+		t.Errorf("older vault mutation was not reversed: %q", line)
 	}
 }

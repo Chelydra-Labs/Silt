@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"reflect"
 	"testing"
 
 	"silt/backend/plugins"
@@ -139,5 +140,42 @@ func TestUndoLastTaskMutation_SkippedResultHasNoChangedFields(t *testing.T) {
 	}
 	if taskUndoLen(app) != 0 {
 		t.Error("skipped entry must be popped")
+	}
+}
+
+// A page that still exists but no longer contains the journaled block must be
+// skipped without a rewrite: the replay must not resurrect the block, and the
+// file must stay byte-identical.
+func TestUndoLastTaskMutation_SkipsVanishedBlockInExistingPage(t *testing.T) {
+	app := newTestApp(t)
+	const (
+		id      = "a11d002b-1111-1111-1111-111111111111"
+		otherID = "a11d002c-1111-1111-1111-111111111111"
+	)
+	filePath := indexTestFile(t, app, "W", "S", "UndoVanishedBlock", "2026-07-01",
+		"- [ ] ship <!-- id: "+id+" -->\n")
+
+	if err := app.SetTaskOwner(id, "Alice"); err != nil {
+		t.Fatalf("SetTaskOwner: %v", err)
+	}
+	// The block left the page behind the index's back (external edit / delete).
+	writeFile(t, filePath, "- [ ] survivor <!-- id: "+otherID+" -->\n")
+	before := readTaskPage(t, filePath)
+
+	result, err := app.UndoLastTaskMutation()
+	if err != nil {
+		t.Fatalf("vanished block must skip, not error: %v", err)
+	}
+	if !result.Skipped || result.Undone {
+		t.Fatalf("result = %+v, want a skipped entry", result)
+	}
+	if !reflect.DeepEqual(result.SkippedBlockIDs, []string{id}) {
+		t.Errorf("skipped block ids = %v, want [%s]", result.SkippedBlockIDs, id)
+	}
+	if taskUndoLen(app) != 0 {
+		t.Error("skipped entry must be popped")
+	}
+	if after := readTaskPage(t, filePath); after != before {
+		t.Errorf("skip rewrote the page\nbefore:\n%s\nafter:\n%s", before, after)
 	}
 }
