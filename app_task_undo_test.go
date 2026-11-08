@@ -108,6 +108,39 @@ func TestUndoLastTaskMutation_ClearsDueDate(t *testing.T) {
 	}
 }
 
+// A mutation that changed only the due date must undo only the due date: an
+// editor/external prose rewrite that landed after the mutation (not journaled)
+// has to survive the undo instead of being reverted to the stale snapshot.
+func TestUndoLastTaskMutation_DueDateUndoPreservesLaterTextEdit(t *testing.T) {
+	app := newTestApp(t)
+	const id = "a11d0016-1111-1111-1111-111111111111"
+	content := "- [ ] original title <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "UndoStaleText", "2026-07-01", content)
+
+	if err := app.SetTaskDueDate(id, "2026-08-01"); err != nil {
+		t.Fatalf("SetTaskDueDate: %v", err)
+	}
+	// Simulate a later non-journaled write (editor save / external app): the
+	// prose changes but the due date the mutation set stays.
+	writeFile(t, filePath, "- [ ] rewritten by editor [due:: 2026-08-01] <!-- id: "+id+" -->\n")
+
+	result, err := app.UndoLastTaskMutation()
+	if err != nil {
+		t.Fatalf("UndoLastTaskMutation: %v", err)
+	}
+	if !result.Undone || !taskUndoContains(result.ChangedFields, "dueDate") {
+		t.Fatalf("undo result = %+v, want dueDate restored", result)
+	}
+	restored, _ := os.ReadFile(filePath)
+	line := taskLineForID(string(restored), id)
+	if !strings.Contains(line, "rewritten by editor") {
+		t.Errorf("undo reverted a later non-journaled text edit: %q", line)
+	}
+	if strings.Contains(line, "[due::") {
+		t.Errorf("undo did not clear the journaled due token: %q", line)
+	}
+}
+
 func TestUndoLastTaskMutation_OnlyTargetLineChanges(t *testing.T) {
 	app := newTestApp(t)
 	const (

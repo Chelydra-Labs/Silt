@@ -298,7 +298,7 @@ func (a *App) replayTaskUndoEntry(entry taskUndoEntry) (TaskUndoResult, error) {
 					missingIDs = append(missingIDs, undo.BlockID)
 					continue
 				}
-				applyTaskUndoSnapshot(&parsedBlocks[i], undo.Before)
+				applyTaskUndoSnapshot(&parsedBlocks[i], undo.Before, undo.After)
 				// Undo is a real mutation; re-stamping [modified::] is accepted
 				// (suppressing it would fork the write chain's stamp rule).
 				parsedBlocks[i].ModifiedAt = time.Now().Format("2006-01-02T15:04:05")
@@ -367,24 +367,52 @@ func (a *App) replayTaskUndoEntry(entry taskUndoEntry) (TaskUndoResult, error) {
 	return result, nil
 }
 
-// applyTaskUndoSnapshot copies the task-mutable fields from a before snapshot
-// onto the freshly parsed target. Identity/structure fields (ID, ParentID,
-// Depth, LineNumber, FileDate) are deliberately left as parsed so undo cannot
-// relocate a block or break nesting.
-func applyTaskUndoSnapshot(dst *parser.ParsedBlock, snap parser.ParsedBlock) {
-	dst.CleanText = snap.CleanText
-	dst.Status = snap.Status
-	dst.Owner = snap.Owner
-	dst.StartDate = snap.StartDate
-	dst.DueDate = snap.DueDate
-	dst.Priority = snap.Priority
-	dst.Pinned = cloneBoolPtr(snap.Pinned)
-	dst.Progress = snap.Progress
-	dst.Recurrence = snap.Recurrence
-	dst.BlockedBy = append([]string(nil), snap.BlockedBy...)
-	dst.Estimate = snap.Estimate
-	dst.CompletedAt = snap.CompletedAt
-	dst.ManualOrder = snap.ManualOrder
+// applyTaskUndoSnapshot restores only the fields the mutation actually changed
+// (the same Before != After predicate changedTaskFields uses). Fields it left
+// untouched keep their fresher parsed values, so an editor/external edit that
+// landed after the mutation is not silently reverted by the undo. Identity and
+// structure fields (ID, ParentID, Depth, LineNumber, FileDate) are never
+// restored so undo cannot relocate a block or break nesting.
+func applyTaskUndoSnapshot(dst *parser.ParsedBlock, before, after parser.ParsedBlock) {
+	if before.CleanText != after.CleanText {
+		dst.CleanText = before.CleanText
+	}
+	if before.Status != after.Status {
+		dst.Status = before.Status
+	}
+	if before.CompletedAt != after.CompletedAt {
+		dst.CompletedAt = before.CompletedAt
+	}
+	if before.Owner != after.Owner {
+		dst.Owner = before.Owner
+	}
+	if before.StartDate != after.StartDate {
+		dst.StartDate = before.StartDate
+	}
+	if before.DueDate != after.DueDate {
+		dst.DueDate = before.DueDate
+	}
+	if before.Priority != after.Priority {
+		dst.Priority = before.Priority
+	}
+	if !equalBoolPtr(before.Pinned, after.Pinned) {
+		dst.Pinned = cloneBoolPtr(before.Pinned)
+	}
+	if before.Progress != after.Progress {
+		dst.Progress = before.Progress
+	}
+	if before.Recurrence != after.Recurrence {
+		dst.Recurrence = before.Recurrence
+	}
+	if !taskUndoStringSlicesEqual(before.BlockedBy, after.BlockedBy) {
+		dst.BlockedBy = append([]string(nil), before.BlockedBy...)
+	}
+	if before.Estimate != after.Estimate {
+		dst.Estimate = before.Estimate
+	}
+	if before.ManualOrder != after.ManualOrder {
+		dst.ManualOrder = before.ManualOrder
+	}
 }
 
 func cloneBoolPtr(p *bool) *bool {
