@@ -1696,6 +1696,62 @@ describe('Tasks hub undo (#1011)', () => {
     expect(mocks.undoLastTaskMutation).not.toHaveBeenCalled()
   })
 
+  it('leaves Ctrl+Z to a blocked-DONE alertdialog nested inside the drawer', async () => {
+    const rows = [
+      boardRow({
+        id: 't1',
+        clean_content: 'Drawer blocked',
+        is_blocked: 1
+      })
+    ]
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT DISTINCT owner'))
+        return { rows: [], truncated: false }
+      if (sql.includes('SELECT DISTINCT level_0'))
+        return { rows: [], truncated: false }
+      if (/(?:WHERE|AND) t\.status != 'DONE'/.test(sql))
+        return { rows, truncated: false }
+      return { rows: [], truncated: false }
+    })
+    const getTaskBlockers = vi
+      .fn()
+      .mockResolvedValue([{ id: 'dep-1', clean_content: 'Prereq' }])
+
+    render(TasksHub, { ctx: undoCtx({ getTaskBlockers }), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(
+      document.querySelector(
+        '[data-block-id="t1"] button[aria-label^="Edit metadata for"]'
+      )!
+    )
+    await flush()
+
+    // The drawer opts back into hub undo with data-tasks-undo-scope; the
+    // guard's alertdialog renders inline inside that scope. The guard must
+    // resolve the nearer overlay, not the opted-in drawer root.
+    await fireEvent.click(screen.getByRole('radio', { name: 'Done' }))
+    await flush()
+
+    const confirm = screen.getByText('Complete anyway')
+    const alertdialog = confirm.closest('[role="alertdialog"]')
+    const drawer = screen.getByTestId('task-edit-drawer')
+    expect(alertdialog).not.toBeNull()
+    expect(drawer.contains(alertdialog)).toBe(true)
+
+    const nestedUndo = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    confirm.dispatchEvent(nestedUndo)
+    await flush()
+
+    expect(nestedUndo.defaultPrevented).toBe(false)
+    expect(mocks.undoLastTaskMutation).not.toHaveBeenCalled()
+  })
+
   it('restores board focus after confirming a blocked DONE move', async () => {
     mocks.tasksSettings = {
       default_display_mode: 'board',

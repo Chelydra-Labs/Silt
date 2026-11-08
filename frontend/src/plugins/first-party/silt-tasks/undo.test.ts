@@ -262,6 +262,47 @@ describe('undo store (#1011)', () => {
     expect(tasksUndoAvailable()).toBe(true)
   })
 
+  it('keeps a live write held when an older generation write straggles', async () => {
+    const { ctx, getTaskUndoState } = makeCtx()
+    initTasksUndo(ctx)
+    await flush()
+
+    // Write A belongs to the outgoing session and is still on the wire.
+    let settleA: (v: boolean) => void = () => {}
+    const straggler = trackTaskUndoWrite(
+      new Promise<boolean>((resolve) => (settleA = resolve))
+    )
+    await flush()
+
+    // Hub remount: reset zeroes the counter and bumps the generation.
+    initTasksUndo(ctx)
+    await flush()
+
+    // The new session starts write B, which is still in flight when A settles.
+    let settleB: (v: boolean) => void = () => {}
+    const live = trackTaskUndoWrite(
+      new Promise<boolean>((resolve) => (settleB = resolve))
+    )
+    expect(getTasksUndoView().writePending).toBe(true)
+    getTaskUndoState.mockClear()
+
+    settleA(true)
+    await straggler
+    await flush()
+
+    // A must not release B's hold (undo would pop the previous journal entry
+    // while B is still saving) and must not peek on the new session's behalf.
+    expect(getTasksUndoView().writePending).toBe(true)
+    expect(tasksUndoAvailable()).toBe(false)
+    expect(getTaskUndoState).not.toHaveBeenCalled()
+
+    settleB(true)
+    await live
+    await flush()
+    expect(getTasksUndoView().writePending).toBe(false)
+    expect(tasksUndoAvailable()).toBe(true)
+  })
+
   it('surfaces a rejected undo and clears the success announcement', async () => {
     const { ctx, undoLastTaskMutation } = makeCtx()
     initTasksUndo(ctx)
