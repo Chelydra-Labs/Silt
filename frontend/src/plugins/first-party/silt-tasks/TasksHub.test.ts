@@ -1519,29 +1519,45 @@ describe('Tasks hub undo (#1011)', () => {
     render(TasksHub, { ctx: undoCtx(), manifest: MANIFEST })
     await flush()
 
-    // The editor is a sibling subtree. Its Ctrl+Z must never reach the hub.
+    // The editor is a sibling subtree. Its Ctrl+Z must never reach the hub,
+    // and the hub must not consume it before the editor keymap can run.
     const editor = document.createElement('div')
     editor.className = 'ProseMirror'
     editor.setAttribute('contenteditable', 'true')
     document.body.appendChild(editor)
-    await fireEvent.keyDown(editor, { key: 'z', ctrlKey: true })
+    const editorUndo = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    editor.dispatchEvent(editorUndo)
+    expect(editorUndo.defaultPrevented).toBe(false)
     expect(mocks.undoLastTaskMutation).not.toHaveBeenCalled()
     editor.remove()
 
     // Editable hub fields keep their native undo.
-    await fireEvent.keyDown(screen.getByTestId('tasks-hub-text-filter'), {
+    const fieldUndo = new KeyboardEvent('keydown', {
       key: 'z',
-      ctrlKey: true
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
     })
+    screen.getByTestId('tasks-hub-text-filter').dispatchEvent(fieldUndo)
+    expect(fieldUndo.defaultPrevented).toBe(false)
     expect(mocks.undoLastTaskMutation).not.toHaveBeenCalled()
 
     // Nested dialogs own their own context (the drawer opts back in).
     await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
     await flush()
-    await fireEvent.keyDown(screen.getByTestId('tasks-hub-save-view-popover'), {
+    const dialogUndo = new KeyboardEvent('keydown', {
       key: 'z',
-      ctrlKey: true
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
     })
+    screen.getByTestId('tasks-hub-save-view-popover').dispatchEvent(dialogUndo)
+    expect(dialogUndo.defaultPrevented).toBe(false)
     expect(mocks.undoLastTaskMutation).not.toHaveBeenCalled()
     await fireEvent.keyDown(screen.getByTestId('tasks-hub-save-view-popover'), {
       key: 'Escape'
@@ -1549,19 +1565,27 @@ describe('Tasks hub undo (#1011)', () => {
     await flush()
 
     // Ctrl+Shift+Z is redo, which the session journal does not offer.
-    await fireEvent.keyDown(screen.getByTestId('tasks-hub-mode-switcher'), {
+    const redo = new KeyboardEvent('keydown', {
       key: 'z',
       ctrlKey: true,
-      shiftKey: true
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true
     })
+    screen.getByTestId('tasks-hub-mode-switcher').dispatchEvent(redo)
+    expect(redo.defaultPrevented).toBe(false)
     expect(mocks.undoLastTaskMutation).not.toHaveBeenCalled()
 
     // A non-editable hub surface is the valid scope.
-    await fireEvent.keyDown(screen.getByTestId('tasks-hub-mode-switcher'), {
+    const hubUndo = new KeyboardEvent('keydown', {
       key: 'z',
-      ctrlKey: true
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
     })
+    screen.getByTestId('tasks-hub-mode-switcher').dispatchEvent(hubUndo)
     await flush()
+    expect(hubUndo.defaultPrevented).toBe(true)
     expect(mocks.undoLastTaskMutation).toHaveBeenCalledTimes(1)
     expect(getTasksUndoView().announcement).toBe(
       'Undid status change in Work › Journal › Daily. No more changes to undo.'
