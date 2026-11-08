@@ -361,6 +361,10 @@
         "signature": "GetTaskBlockers(blockID string) ([]parser.TaskResult, error)"
       },
       {
+        "name": "GetTaskUndoState",
+        "signature": "GetTaskUndoState() TaskUndoState"
+      },
+      {
         "name": "GetTemplate",
         "signature": "GetTemplate(id string) (templates.Template, error)"
       },
@@ -629,6 +633,10 @@
         "signature": "PluginGetPageVersion(pluginID, sessionToken, notebook, section, page, versionID string) (string, error)"
       },
       {
+        "name": "PluginGetTaskUndoState",
+        "signature": "PluginGetTaskUndoState(pluginID, sessionToken string) (TaskUndoState, error)"
+      },
+      {
         "name": "PluginGetType",
         "signature": "PluginGetType(pluginID, sessionToken, id string) (types.TypeDef, error)"
       },
@@ -763,6 +771,10 @@
       {
         "name": "PluginSetTaskTitle",
         "signature": "PluginSetTaskTitle(pluginID, sessionToken, blockID, title string) (bool, error)"
+      },
+      {
+        "name": "PluginUndoLastTaskMutation",
+        "signature": "PluginUndoLastTaskMutation(pluginID, sessionToken string) (TaskUndoResult, error)"
       },
       {
         "name": "PluginUpdateBlockState",
@@ -1119,6 +1131,10 @@
       {
         "name": "TurnIntoPage",
         "signature": "TurnIntoPage(ctx context.Context, notebook, section, page, typeName string, orphanProps []string) ([]string, error)"
+      },
+      {
+        "name": "UndoLastTaskMutation",
+        "signature": "UndoLastTaskMutation() (TaskUndoResult, error)"
       },
       {
         "name": "UninstallPlugin",
@@ -1501,6 +1517,6 @@
       "vault:moved",
       "vault:watch-coverage"
     ],
-    "plugin_method_count": 61
+    "plugin_method_count": 63
   }
 }
