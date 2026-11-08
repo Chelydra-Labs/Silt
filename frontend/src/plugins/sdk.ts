@@ -16,6 +16,26 @@ export type { UiLocationSnapshot, UiLocationTab } from './ui-location'
 export type TaskStatus = 'TODO' | 'DOING' | 'DONE'
 
 /**
+ * Result of `ctx.undoLastTaskMutation()` (#1011). `undone` is false for a
+ * clean no-op (nothing left in this session's journal) and for a skipped
+ * entry whose target blocks vanished; `skippedBlockIds` names those. `changed`
+ * fields are the task attributes the undo restored ("status", "dueDate", …),
+ * and `remaining` is the journal depth after the call.
+ */
+export interface TaskUndoResult {
+  undone: boolean
+  skipped: boolean
+  blockIds: string[]
+  skippedBlockIds: string[]
+  notebook: string
+  section: string
+  page: string
+  removedSpawnedId: string
+  changedFields: string[]
+  remaining: number
+}
+
+/**
  * Today's date in the user's LOCAL timezone as YYYY-MM-DD.
  *
  * Plugins compare against this instead of SQLite's `date('now')`, which is
@@ -244,6 +264,16 @@ export interface PluginContext {
    * individual `setTaskOrder` calls when a drag-reorder shifts multiple tasks.
    */
   setTaskOrders: (items: { id: string; order: number }[]) => Promise<boolean>
+  /**
+   * Undo the newest task mutation recorded in this vault session (#1011).
+   * Restores the affected block(s) from their pre-mutation disk state through
+   * the canonical write chain and, when the undone transition minted a
+   * recurrence sibling, removes that spawned block too. The journal is
+   * in-memory and session-scoped (bounded ring, cleared on vault switch), so
+   * this only ever reverses this session's mutations. Gated by
+   * content-mutate.
+   */
+  undoLastTaskMutation: () => Promise<TaskUndoResult>
   /**
    * Rewrite a task's `[priority:: N]` inline token on disk atomically (#412).
    * 1=Critical, 2=Normal, 3=Low (matches PRIORITY_LABELS). Round-trips through

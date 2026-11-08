@@ -6,6 +6,27 @@
 export const SILT_APP_BINDINGS = '$silt-app'
 
 /**
+ * Default stub for the task-undo binding (#1011). Spread it into a
+ * `createAppIpcMocks({ PluginUndoLastTaskMutation: ... })` override when a test
+ * needs a resolved empty-journal response, or replace it with a `vi.fn` to
+ * assert the call.
+ */
+export function undoLastTaskMutationMock() {
+  return Promise.resolve({
+    undone: false,
+    skipped: false,
+    blockIds: [] as string[],
+    skippedBlockIds: [] as string[],
+    notebook: '',
+    section: '',
+    page: '',
+    removedSpawnedId: '',
+    changedFields: [] as string[],
+    remaining: 0
+  })
+}
+
+/**
  * Build a bindings mock map for `vi.mock('$silt-app', ...)`.
  *
  * **Critical:** `vi.mock` / `vi.hoisted` run before ESM imports initialize.
@@ -31,7 +52,13 @@ export const SILT_APP_BINDINGS = '$silt-app'
 export function createAppIpcMocks<T extends Record<string, unknown>>(
   overrides: T = {} as T
 ): T {
-  return { ...overrides }
+  return {
+    // Task undo (#1011): a resolved empty-journal stub keeps components that
+    // probe the undo surface from crashing in unrelated tests; override it
+    // where the call itself matters.
+    PluginUndoLastTaskMutation: undoLastTaskMutationMock,
+    ...overrides
+  } as unknown as T
 }
 
 declare global {

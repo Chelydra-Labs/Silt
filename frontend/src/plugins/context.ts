@@ -21,6 +21,7 @@ import {
   PluginSetTaskTags,
   PluginSetTaskTitle,
   PluginSetTaskEstimate,
+  PluginUndoLastTaskMutation,
   GetTaskBlockers,
   FetchSubtree,
   GetLocalAuthor,
@@ -311,6 +312,27 @@ export function makePluginContext(
         items.map((i) => i.id),
         items.map((i) => i.order)
       ).then(() => true),
+    // Undo the newest journaled task mutation in this vault session (#1011).
+    // The Go result already uses camelCase JSON tags; normalize missing
+    // collections so a pre-mount/empty response still renders safely.
+    undoLastTaskMutation: async () => {
+      const res = await PluginUndoLastTaskMutation(
+        pluginID,
+        sessionToken ?? ''
+      )
+      return {
+        undone: res?.undone ?? false,
+        skipped: res?.skipped ?? false,
+        blockIds: res?.blockIds ?? [],
+        skippedBlockIds: res?.skippedBlockIds ?? [],
+        notebook: res?.notebook ?? '',
+        section: res?.section ?? '',
+        page: res?.page ?? '',
+        removedSpawnedId: res?.removedSpawnedId ?? '',
+        changedFields: res?.changedFields ?? [],
+        remaining: res?.remaining ?? 0
+      }
+    },
     // Rewrite a task's [priority:: N] token (#412). 1=Critical, 2=Normal, 3=Low.
     setTaskPriority: (id, priority) =>
       PluginSetTaskPriority(pluginID, sessionToken ?? '', id, priority),
