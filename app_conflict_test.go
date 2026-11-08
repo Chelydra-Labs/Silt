@@ -8,6 +8,8 @@ package main
 // disk.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -1014,7 +1016,8 @@ func TestResolveExternalConflict_ReplaysNewestStash(t *testing.T) {
 // directory fsync on NFS/FUSE). When the keep_mine replay lands that way, the
 // original path already holds mine and the sibling holds theirs' only
 // surviving copy — the rollback must NOT run. Instead the landed bytes are
-// adopted (index + re-baseline) and the resolution reports success.
+// adopted (index + the full post-write state) and the resolution reports
+// success.
 func TestResolveExternalConflict_ReplayLandedDespiteErrorKeepsTheirs(t *testing.T) {
 	app := newTestApp(t)
 	notebook, section, page := "LandNB", "", "Landed"
@@ -1031,6 +1034,14 @@ func TestResolveExternalConflict_ReplayLandedDespiteErrorKeepsTheirs(t *testing.
 		t.Fatalf("external write: %v", err)
 	}
 	requireConflict(t, app.SaveFileBlocks(notebook, section, page, mine))
+
+	// Arm both post-write baselines so the adoption is observable: an editor
+	// load (anchored by FetchPageBlocks above) and an in-flight MCP fetch
+	// holding a pre-resolution read_generation.
+	mcpGen := app.captureMCPReadBasis(filePath)
+	if mcpGen == 0 {
+		t.Fatal("captureMCPReadBasis armed no basis")
+	}
 
 	// Fault-inject a post-rename error for the ORIGINAL path only: the write
 	// itself must succeed (rename commits), then report a durability failure
@@ -1069,6 +1080,27 @@ func TestResolveExternalConflict_ReplayLandedDespiteErrorKeepsTheirs(t *testing.
 	sibBytes, _ := os.ReadFile(sibling)
 	if !strings.Contains(string(sibBytes), "external line") {
 		t.Fatalf("sibling must keep theirs after a landed replay, got %q", string(sibBytes))
+	}
+
+	// The adoption must commit the full post-write state, not only the
+	// fingerprint: an MCP client holding a pre-resolution read_generation must
+	// not revert the resolution once a later fetch re-arms the shared slot.
+	key := core.NormalizeFileLockPath(filePath)
+	landedSum := sha256.Sum256(got)
+	if baseline, ok := app.loadPageFingerprint(key); !ok {
+		t.Fatal("post-landing load baseline is missing")
+	} else if baseline.SHA256 != hex.EncodeToString(landedSum[:]) {
+		t.Fatalf("baseline sha = %s, want the landed bytes %x", baseline.SHA256, landedSum)
+	}
+	app.mcpReadBaselinesMu.RLock()
+	basis, basisOK := app.mcpReadBaselines[key]
+	invalidated := app.mcpBasisInvalidatedGen[key]
+	app.mcpReadBaselinesMu.RUnlock()
+	if !basisOK || basis.Size != mcpBasisInvalidatedSize {
+		t.Fatalf("MCP basis = %+v (present=%v), want the invalidated marker", basis, basisOK)
+	}
+	if invalidated != mcpGen {
+		t.Fatalf("invalidated generation = %d, want the pre-resolution fetch generation %d", invalidated, mcpGen)
 	}
 
 	// The landed bytes were adopted (index + re-baseline): the very next

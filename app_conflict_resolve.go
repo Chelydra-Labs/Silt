@@ -356,11 +356,13 @@ func (a *App) settleTheirsOnOriginalLocked(filePath, source, notebook, section, 
 }
 
 // adoptOriginalBytesLocked indexes content as the page's current on-disk
-// version and re-baselines the fingerprint to those exact bytes — the
-// post-write steps a save funnel performs, for outcomes that reached disk
-// without completing them (the keep_theirs settle; a replay whose atomic
-// write landed but reported a durability error). Indexing is best-effort;
-// the baseline refresh is what keeps the next save honest.
+// version and commits the rest of the post-write state — the steps a save
+// funnel performs, for outcomes that reached disk without completing them
+// (the keep_theirs settle; a replay whose atomic write landed but reported a
+// durability error). Both halves matter: the fingerprint re-baseline keeps
+// the next editor save honest, and the MCP basis invalidation refuses a
+// pre-resolution read_generation that would otherwise revert these bytes once
+// any later fetch re-arms the shared basis slot. Indexing is best-effort.
 func (a *App) adoptOriginalBytesLocked(filePath, source, notebook, section, page string, content []byte) {
 	blocks, meta, _, _, perr := parser.ParseFileContent(string(content),
 		notebook, section, page, fileOrDefaultDate(filePath), a.spacesPerTab)
@@ -371,7 +373,7 @@ func (a *App) adoptOriginalBytesLocked(filePath, source, notebook, section, page
 		log.Printf("resolve conflict: index settled version for %s/%s/%s failed (file kept; next scan indexes it): %v",
 			notebook, section, page, idxErr)
 	}
-	a.refreshFingerprintAfterWrite(filePath, content)
+	a.commitPostWriteState(filePath, content)
 }
 
 // replayMineLocked writes my stashed save onto the original path — the
