@@ -14,6 +14,32 @@ const mocks = vi.hoisted(() => ({
   pluginUpdateBlockState: vi.fn(() => Promise.resolve(true)),
   pluginSetTaskOrder: vi.fn(() => Promise.resolve(true)),
   pluginSetTaskStartDate: vi.fn(() => Promise.resolve(true)),
+  pluginUndoLastTaskMutation: vi.fn(() =>
+    Promise.resolve({
+      undone: true,
+      skipped: false,
+      blockIds: ['b1'],
+      skippedBlockIds: [],
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      removedSpawnedId: '',
+      changedFields: ['status'],
+      remaining: 2
+    })
+  ),
+  pluginGetTaskUndoState: vi.fn(() =>
+    Promise.resolve({
+      canUndo: true,
+      remaining: 2,
+      changedFields: ['status'],
+      blockIds: ['b1'],
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      source: 'vault'
+    })
+  ),
   getPluginSettingsForNotebook: vi.fn(() => Promise.resolve({})),
   pluginListPageVersions: vi.fn(
     (): Promise<
@@ -37,6 +63,8 @@ vi.mock('$silt-app', () =>
     PluginUpdateTaskMeta: mocks.pluginUpdateTaskMeta,
     PluginSetTaskOrder: mocks.pluginSetTaskOrder,
     PluginSetTaskStartDate: mocks.pluginSetTaskStartDate,
+    PluginUndoLastTaskMutation: mocks.pluginUndoLastTaskMutation,
+    PluginGetTaskUndoState: mocks.pluginGetTaskUndoState,
     GetPluginSettingsForNotebook: mocks.getPluginSettingsForNotebook,
     PluginListPageVersions: mocks.pluginListPageVersions,
     PluginGetPageVersion: mocks.pluginGetPageVersion,
@@ -407,5 +435,74 @@ describe('makePluginContext — page history wrappers', () => {
     ).rejects.toThrow(/nope/)
     expect(forceExternalReload).toHaveBeenCalled()
     expect(clearExternalReload).toHaveBeenCalled()
+  })
+})
+
+describe('makePluginContext — undoLastTaskMutation', () => {
+  beforeEach(() => {
+    mocks.pluginUndoLastTaskMutation.mockClear()
+  })
+
+  it('threads pluginID + session token and normalizes the Go result', async () => {
+    const ctx = makePluginContext('silt-tasks', 'tok-undo')
+    const res = await ctx.undoLastTaskMutation()
+    expect(mocks.pluginUndoLastTaskMutation).toHaveBeenCalledWith(
+      'silt-tasks',
+      'tok-undo'
+    )
+    expect(res).toEqual({
+      undone: true,
+      skipped: false,
+      blockIds: ['b1'],
+      skippedBlockIds: [],
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      removedSpawnedId: '',
+      changedFields: ['status'],
+      remaining: 2
+    })
+  })
+})
+
+describe('makePluginContext — getTaskUndoState', () => {
+  beforeEach(() => {
+    mocks.pluginGetTaskUndoState.mockClear()
+  })
+
+  it('threads pluginID + session token and returns the journal peek', async () => {
+    const ctx = makePluginContext('silt-tasks', 'tok-undo')
+    const state = await ctx.getTaskUndoState()
+    expect(mocks.pluginGetTaskUndoState).toHaveBeenCalledWith(
+      'silt-tasks',
+      'tok-undo'
+    )
+    expect(state).toEqual({
+      canUndo: true,
+      remaining: 2,
+      changedFields: ['status'],
+      blockIds: ['b1'],
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      source: 'vault'
+    })
+  })
+
+  it('normalizes an undefined response into the empty zero state', async () => {
+    mocks.pluginGetTaskUndoState.mockResolvedValueOnce(
+      undefined as unknown as never
+    )
+    const ctx = makePluginContext('silt-tasks', 'tok-undo')
+    await expect(ctx.getTaskUndoState()).resolves.toEqual({
+      canUndo: false,
+      remaining: 0,
+      changedFields: [],
+      blockIds: [],
+      notebook: '',
+      section: '',
+      page: '',
+      source: ''
+    })
   })
 })

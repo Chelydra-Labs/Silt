@@ -169,6 +169,8 @@ func (a *App) setTaskBlockedBy(blockID string, depIDs []string, reason string) e
 	var writeErr error
 	var emitFileDate string
 	didWrite := false
+	var undoBefore, undoAfter parser.ParsedBlock
+	undoCaptured := false
 	a.coordinator.LockBlockWrite(blockID, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
 			// Focus-lock guard — mirrors mutateTaskBlock/MutateBlock so a
@@ -191,8 +193,11 @@ func (a *App) setTaskBlockedBy(blockID string, depIDs []string, reason string) e
 			found := false
 			for i := range parsedBlocks {
 				if parsedBlocks[i].ID == blockID && parsedBlocks[i].Type == parser.BlockTask {
+					undoBefore = parsedBlocks[i]
 					parsedBlocks[i].BlockedBy = normalized
 					parsedBlocks[i].ModifiedAt = time.Now().Format("2006-01-02T15:04:05")
+					undoAfter = parsedBlocks[i]
+					undoCaptured = true
 					found = true
 					break
 				}
@@ -254,6 +259,15 @@ func (a *App) setTaskBlockedBy(blockID string, depIDs []string, reason string) e
 	}) // LockBlockWrite
 	if writeErr != nil {
 		return writeErr
+	}
+	if didWrite && undoCaptured {
+		a.recordTaskUndo(taskUndoEntry{
+			Source:   loc.Source,
+			Notebook: safeNotebook,
+			Section:  safeSection,
+			Page:     safePage,
+			Blocks:   []taskUndoBlock{{BlockID: blockID, Before: undoBefore, After: undoAfter}},
+		})
 	}
 	if didWrite {
 		a.emitBlockChanged(blockID, safeNotebook, safeSection, safePage, emitFileDate)

@@ -39,9 +39,21 @@ func (a *App) trackedPageWrite(filePath string, content []byte) error {
 	if err := a.writePageStaged(filePath, content); err != nil {
 		return err
 	}
-	a.refreshFingerprintAfterWrite(filePath, content)
-	a.invalidateMCPReadBasis(filePath)
+	a.commitPostWriteState(filePath, content)
 	return nil
+}
+
+// commitPostWriteState is steps 3–4 of the tracked-write contract: re-baseline
+// the editor fingerprint and invalidate prior MCP fetch bases for bytes that
+// have committed to disk. It is a named seam because two writers cannot route
+// through trackedPageWrite itself: the frontmatter-edit writer's
+// fault-injection seam must intercept exactly its own write, and undo's
+// landed-tail branch reaches it after a write that already landed. Hand-copying
+// the pair at those sites let a future step added here miss them, and left the
+// copies unobserved by tests.
+func (a *App) commitPostWriteState(filePath string, written []byte) {
+	a.refreshFingerprintAfterWrite(filePath, written)
+	a.invalidateMCPReadBasis(filePath)
 }
 
 // migrateConflictStateAcrossRename moves a path's pending refused-write stash

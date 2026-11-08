@@ -63,6 +63,9 @@ func (a *App) teardownVaultServices() {
 	// path: a stash into a closed vault can never resolve and would hijack a
 	// same-named page after a reopen (#1005).
 	a.clearConflictState()
+	// The undo journal is session-scoped too: replaying a closed vault's
+	// mutation against the next vault's files would be a cross-vault write.
+	a.taskUndo.clear()
 	// Root storage probes are vault-session state too: the next vault's roots
 	// (and its linked roots) are re-probed at open (#1009).
 	a.clearVerifiedWriteRoots()

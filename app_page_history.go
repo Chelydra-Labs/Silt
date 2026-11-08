@@ -26,6 +26,10 @@ const (
 	historyReasonPlugin  = "plugin"
 	historyReasonRestore = "restore"
 	historyReasonRename  = "rename"
+	// historyReasonUndo tags snapshots captured by the task undo journal's
+	// replay. It is a distinct reason so restore-from-history filtering can
+	// tell a journal undo from an explicit history restore.
+	historyReasonUndo = "undo"
 )
 
 // maybeCapturePageVersion snapshots prev (the bytes being replaced) when

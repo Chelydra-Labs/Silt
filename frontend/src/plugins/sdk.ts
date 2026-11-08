@@ -16,6 +16,83 @@ export type { UiLocationSnapshot, UiLocationTab } from './ui-location'
 export type TaskStatus = 'TODO' | 'DOING' | 'DONE'
 
 /**
+ * Task attributes a journaled mutation can change. Used by the undo result and
+ * the read-only undo-state peek so surfaces render labels from a closed set
+ * rather than free-form strings. `text` is the prose/body of the block,
+ * including non-task blocks (see `undoLastTaskMutation`).
+ */
+export type TaskChangedField =
+  | 'text'
+  | 'status'
+  | 'completed'
+  | 'owner'
+  | 'startDate'
+  | 'dueDate'
+  | 'priority'
+  | 'pinned'
+  | 'progress'
+  | 'recurrence'
+  | 'blockedBy'
+  | 'estimate'
+  | 'order'
+
+/**
+ * Result of `ctx.undoLastTaskMutation()` (#1011). `undone` is false for a
+ * clean no-op (nothing left in this session's journal) and for a skipped
+ * entry — one whose target blocks vanished, whose recorded locator can no
+ * longer resolve (e.g. its linked notebook was unlinked), whose page path can
+ * no longer be read or written (permission denied, a directory at the page
+ * path), or which exhausted its retry budget after three consecutive
+ * failures; a skip is popped from the journal rather than erroring.
+ * `skippedBlockIds` names the affected blocks and `changedFields` is empty (a
+ * skip restores nothing). `changedFields` lists the attributes the undo
+ * restored, and `remaining` is the journal depth after the call.
+ *
+ * A skip means the journal entry is gone, not that the target is gone: only a
+ * rejected promise guarantees the entry survived, so a transient fault that
+ * exhausts the retry budget also reports `skipped` (with nothing restored).
+ */
+export interface TaskUndoResult {
+  undone: boolean
+  skipped: boolean
+  blockIds: string[]
+  skippedBlockIds: string[]
+  notebook: string
+  section: string
+  page: string
+  removedSpawnedId: string
+  changedFields: TaskChangedField[]
+  remaining: number
+}
+
+/**
+ * Read-only snapshot of the session undo journal (#1011). `canUndo` is true
+ * when at least one mutation is journaled; `changedFields` plus the locator
+ * describe the newest entry — the one an undo would reverse. Undo is global
+ * LIFO: it reverses the most recent mutation from ANY Silt surface, not just
+ * the surface that calls it, so surfaces should disclose this entry rather
+ * than assume the undo belongs to their own gesture.
+ *
+ * `remaining` includes the peeked entry (the depth BEFORE an undo), whereas
+ * `TaskUndoResult.remaining` is the depth after the call. `source` is
+ * `'vault'` or `'linked:<id>'`; the locator may be the recorded one when the
+ * target has left the index. `canUndo` describes journal depth, not
+ * replayability: an entry whose page has since been deleted or become
+ * permanently unreadable, or one that has exhausted its retry budget, still
+ * reports `canUndo` and then skips (and pops) when undone.
+ */
+export interface TaskUndoState {
+  canUndo: boolean
+  remaining: number
+  changedFields: TaskChangedField[]
+  blockIds: string[]
+  notebook: string
+  section: string
+  page: string
+  source: string
+}
+
+/**
  * Today's date in the user's LOCAL timezone as YYYY-MM-DD.
  *
  * Plugins compare against this instead of SQLite's `date('now')`, which is
@@ -244,6 +321,37 @@ export interface PluginContext {
    * individual `setTaskOrder` calls when a drag-reorder shifts multiple tasks.
    */
   setTaskOrders: (items: { id: string; order: number }[]) => Promise<boolean>
+  /**
+   * Undo the newest journaled mutation in this vault session (#1011). Undo is
+   * global LIFO: it reverses the most recent mutation recorded from any Silt
+   * surface (board, drawer, plugin/MCP task setters), not only this plugin's
+   * own. It also covers non-task block-body text edits made through the shared
+   * write chain, so `changedFields: ['text']` can refer to a note/embed
+   * rewrite. Whole-page saves are not journaled — the editor's autosave (and
+   * therefore in-editor edits), global replace, and plugin `applyBlocks` batch
+   * writes bypass the journal, and the editor keeps its own in-editor undo.
+   * Restores the task fields the mutation changed to their pre-mutation values
+   * through the canonical write chain; fields the mutation left untouched keep
+   * their current (possibly later-edited) values. When the undone transition
+   * minted a recurrence sibling, removes that spawned block too. The journal is
+   * in-memory and session-scoped (bounded ring, cleared on vault switch), so
+   * this only ever reverses this session's mutations. There is no redo, and a
+   * refused write (e.g. the page is open in the editor) rejects without
+   * consuming the entry, so a retry still reverses it. Any other failure also
+   * rejects without consuming the entry, but one that fails three consecutive
+   * attempts is dropped and reported as `skipped: true` with nothing
+   * restored — so do not read a skip as "the target is gone". Gated by
+   * content-mutate.
+   */
+  undoLastTaskMutation: () => Promise<TaskUndoResult>
+  /**
+   * Peek at the undo journal without mutating it (#1011). Use this to disable
+   * an undo affordance when `canUndo` is false and to disclose what will be
+   * reversed — `changedFields` plus the page/section/notebook/source locator
+   * of the newest entry. Read-only and gated by `read-files`, not
+   * content-mutate: the state discloses vault locators and block IDs.
+   */
+  getTaskUndoState: () => Promise<TaskUndoState>
   /**
    * Rewrite a task's `[priority:: N]` inline token on disk atomically (#412).
    * 1=Critical, 2=Normal, 3=Low (matches PRIORITY_LABELS). Round-trips through

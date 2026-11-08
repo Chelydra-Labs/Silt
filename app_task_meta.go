@@ -90,6 +90,8 @@ func (a *App) mutateTaskBlock(blockID, label, reason string, mutate func(*parser
 	var writeErr error
 	var emitFileDate string
 	didWrite := false
+	var undoBefore, undoAfter parser.ParsedBlock
+	undoCaptured := false
 	a.coordinator.LockBlockWrite(blockID, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
 			// Don't clobber a file the user is actively editing (the editor
@@ -114,10 +116,13 @@ func (a *App) mutateTaskBlock(blockID, label, reason string, mutate func(*parser
 			found := false
 			for i := range parsedBlocks {
 				if parsedBlocks[i].ID == blockID && parsedBlocks[i].Type == parser.BlockTask {
+					undoBefore = parsedBlocks[i]
 					mutate(&parsedBlocks[i])
 					// [modified::] stamp (#440): every single-field task write
 					// touches the task line; stamp local ISO time after mutate.
 					parsedBlocks[i].ModifiedAt = time.Now().Format("2006-01-02T15:04:05")
+					undoAfter = parsedBlocks[i]
+					undoCaptured = true
 					found = true
 					break
 				}
@@ -179,6 +184,15 @@ func (a *App) mutateTaskBlock(blockID, label, reason string, mutate func(*parser
 	}) // LockBlockWrite
 	if writeErr != nil {
 		return writeErr
+	}
+	if didWrite && undoCaptured {
+		a.recordTaskUndo(taskUndoEntry{
+			Source:   loc.Source,
+			Notebook: safeNotebook,
+			Section:  safeSection,
+			Page:     safePage,
+			Blocks:   []taskUndoBlock{{BlockID: blockID, Before: undoBefore, After: undoAfter}},
+		})
 	}
 	if didWrite {
 		a.emitBlockChanged(blockID, safeNotebook, safeSection, safePage, emitFileDate)
@@ -363,6 +377,7 @@ func (a *App) setTaskOrders(ids []string, orders []int, reason string) error {
 
 		var writeErr error
 		var emitBlocks []parser.ParsedBlock
+		var undoBlocks []taskUndoBlock
 		a.coordinator.LockBlockWrite(first.blockID, func() {
 			a.coordinator.LockFileWrite(filePath, func() {
 				// Don't clobber a file the user is actively editing — a DnD
@@ -388,8 +403,10 @@ func (a *App) setTaskOrders(ids []string, orders []int, reason string) error {
 				for i := range parsedBlocks {
 					if parsedBlocks[i].Type == parser.BlockTask {
 						if newOrder, ok := orderByID[parsedBlocks[i].ID]; ok {
+							before := parsedBlocks[i]
 							parsedBlocks[i].ManualOrder = newOrder
 							parsedBlocks[i].ModifiedAt = time.Now().Format("2006-01-02T15:04:05")
+							undoBlocks = append(undoBlocks, taskUndoBlock{BlockID: parsedBlocks[i].ID, Before: before, After: parsedBlocks[i]})
 							found++
 						}
 					}
@@ -463,6 +480,15 @@ func (a *App) setTaskOrders(ids []string, orders []int, reason string) error {
 		if writeErr != nil {
 			return writeErr
 		}
+		// One journal entry per file-write: undoing a batch reorder restores
+		// every block this write renumbered in a single replay.
+		a.recordTaskUndo(taskUndoEntry{
+			Source:   first.loc.Source,
+			Notebook: safeNotebook,
+			Section:  safeSection,
+			Page:     safePage,
+			Blocks:   undoBlocks,
+		})
 		// Emit block:changed for each task that was moved.
 		for _, b := range emitBlocks {
 			a.emitBlockChanged(b.ID, safeNotebook, safeSection, safePage, b.FileDate)

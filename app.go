@@ -247,6 +247,12 @@ type App struct {
 	// hits for Settings → Plugins observability (#518). Session memory only.
 	securityStats *pluginSecurityStats
 
+	// taskUndo is the session-scoped undo journal for task mutations (#1011).
+	// Bounded ring, in-memory only, cleared on vault close/switch so a closed
+	// vault's mutations can never be replayed into the next vault. Guarded by
+	// its own mutex; see app_task_undo.go.
+	taskUndo taskUndoJournal
+
 	// pluginSessions maps session tokens → pluginIDs for binding-identity
 	// verification (#151). The loader calls RegisterPluginSession at load
 	// time; privileged bindings validate the token before proceeding so a

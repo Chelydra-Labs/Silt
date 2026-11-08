@@ -206,6 +206,8 @@ func (a *App) updateBlockStateWithReason(blockID string, newState, reason string
 
 	var writeErr error
 	var spawnedID string // UUID minted by the recurrence spawn inside the lock
+	var undoBefore, undoAfter parser.ParsedBlock
+	undoCaptured := false
 	a.coordinator.LockBlockWrite(blockID, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
 			// Don't clobber a file the user is actively editing (the editor
@@ -245,6 +247,7 @@ func (a *App) updateBlockStateWithReason(blockID string, newState, reason string
 						writeErr = fmt.Errorf("block %s is not a task", blockID)
 						return
 					}
+					undoBefore = parsedBlocks[i]
 					wasDone := parsedBlocks[i].Status == "DONE"
 					parsedBlocks[i].Status = newState
 					// [modified::] stamp (#440): status change is a task-line touch.
@@ -279,6 +282,8 @@ func (a *App) updateBlockStateWithReason(blockID string, newState, reason string
 							spawnedID = nb.ID // surface the minted id to the caller (#812)
 						}
 					}
+					undoAfter = parsedBlocks[i]
+					undoCaptured = true
 					found = true
 					break
 				}
@@ -321,6 +326,16 @@ func (a *App) updateBlockStateWithReason(blockID string, newState, reason string
 		// A write failure means the spawn (if any) never persisted, so do not
 		// surface a spawned id for a non-durable block.
 		return "", writeErr
+	}
+	if undoCaptured {
+		a.recordTaskUndo(taskUndoEntry{
+			Source:    loc.Source,
+			Notebook:  safeNotebook,
+			Section:   safeSection,
+			Page:      safePage,
+			Blocks:    []taskUndoBlock{{BlockID: blockID, Before: undoBefore, After: undoAfter}},
+			SpawnedID: spawnedID,
+		})
 	}
 	a.emitBlockChanged(blockID, safeNotebook, safeSection, safePage, "")
 
@@ -562,6 +577,8 @@ func (a *App) writeBlockText(blockID, reason string, transform func(currentClean
 	}
 
 	var writeErr error
+	var undoBefore, undoAfter parser.ParsedBlock
+	undoCaptured := false
 	a.coordinator.LockBlockWrite(blockID, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
 			// Don't clobber a block the user is actively editing in another view
@@ -605,6 +622,7 @@ func (a *App) writeBlockText(blockID, reason string, transform func(currentClean
 			found := false
 			for i := range parsedBlocks {
 				if parsedBlocks[i].ID == blockID {
+					undoBefore = parsedBlocks[i]
 					newClean, terr := transform(parsedBlocks[i].CleanText)
 					if terr != nil {
 						writeErr = terr
@@ -615,6 +633,8 @@ func (a *App) writeBlockText(blockID, reason string, transform func(currentClean
 					if parsedBlocks[i].Type == parser.BlockTask {
 						parsedBlocks[i].ModifiedAt = time.Now().Format("2006-01-02T15:04:05")
 					}
+					undoAfter = parsedBlocks[i]
+					undoCaptured = true
 					found = true
 					break
 				}
@@ -651,6 +671,15 @@ func (a *App) writeBlockText(blockID, reason string, transform func(currentClean
 	}) // LockBlockWrite
 	if writeErr != nil {
 		return writeErr
+	}
+	if undoCaptured {
+		a.recordTaskUndo(taskUndoEntry{
+			Source:   loc.Source,
+			Notebook: safeNotebook,
+			Section:  safeSection,
+			Page:     safePage,
+			Blocks:   []taskUndoBlock{{BlockID: blockID, Before: undoBefore, After: undoAfter}},
+		})
 	}
 
 	a.emitBlockChanged(blockID, safeNotebook, safeSection, safePage, "")

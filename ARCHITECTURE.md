@@ -756,7 +756,47 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   `SetTaskTags` takes the full new tag set (the backend does the surgical
   `#hashtag` add/remove on the prose); `SetTaskTitle` rewrites only the
   prose, preserving `#tags`, `((uuid))` refs, and inline `[key:: value]`
-  tokens. **Sub-editor**: `FetchSubtree`
+  tokens. **Task undo**: `UndoLastTaskMutation` /
+  `PluginUndoLastTaskMutation` pop the newest entry from the session-scoped,
+  in-memory mutation journal (bounded ring of 100, cleared on vault
+  close/switch) and replay the recorded pre-mutation block state through the
+  canonical write chain. The journal is **global LIFO and not task-only**:
+  undo reverses the most recent mutation from any Silt surface (board, drawer,
+  plugin/MCP task setters) — with no surface filtering — and it also covers
+  non-task block-body text edits made through the shared write chain
+  (`MutateBlock`, `writeBlockText`, plugin block mutations). Whole-page saves
+  are **not** journaled: the editor's autosave (and therefore in-editor
+  checkbox/text edits), global replace, and plugin `applyBlocks` /
+  `SaveFileBlocks` batch writes bypass the journal — the editor keeps its own
+  in-editor undo. Replay restores
+  only the fields the mutation actually changed, so a later editor/external
+  edit to an untouched field survives the undo; a page rename or block move
+  after the mutation is re-resolved through `GetBlockLocation` so the entry is
+  not stranded. Undoing a recurring TODO/DOING→DONE transition also removes
+  the recurrence sibling that transition minted, in the same write.
+  `GetTaskUndoState` / `PluginGetTaskUndoState` peek at the journal without
+  popping — `{canUndo, remaining, changedFields, blockIds, notebook, section,
+  page, source}` describes the entry an undo would reverse, so surfaces can
+  disable the affordance when empty and disclose what will be undone. The
+  locator names the target's current location while it is still indexed (the
+  file undo would write), falling back to the recorded one for a block that
+  left the index. `canUndo` reports that an entry exists, not that it will
+  replay: one whose page has since been deleted or become permanently
+  unreadable still peeks and then skips. The plugin wrapper is gated by
+  `read-files` (it discloses vault locators and block IDs). The
+  undo result names the restored block IDs, the changed task fields
+  (`status`, `dueDate`, …; empty on a skipped entry), any removed spawned ID,
+  and the remaining journal depth; an empty journal is a clean
+  `undone: false` no-op. An entry whose target can no longer resolve (the
+  linked notebook was unlinked or quarantined, the locator is invalid), or
+  whose page path is permanently unreadable/unwritable (permission denied, a
+  directory at the `.md` path, a read-only mount), is popped and reported as
+  `skipped` instead of erroring forever. A transient failure of the
+  linked-root stat check (a dropped network share, a pending credential
+  prompt) or a disk hiccup is retried and keeps the entry, which drains once
+  it has failed three attempts — so one dead entry never blocks the older
+  mutations in the session journal. **Sub-editor**:
+  `FetchSubtree`
   (read-only child sub-tree extraction; also hydrates `block_meta`
   comment attribution for NOTE children) and `SaveSubtreeBlocks` (atomic
   sub-tree splice through the canonical write chain). **Local author**:
@@ -1751,10 +1791,12 @@ See `frontend/src/plugins/sdk.ts` for the full typed contract and
 
 7.4 PluginContext → Go Bindings
 
-PluginContext is a thin frontend wrapper over four Wails bindings on App:
+PluginContext is a thin frontend wrapper over the plugin-facing Wails bindings on App:
 
 - PluginRawQuery(sql, params) — read-only; rejects anything not starting with SELECT/WITH; routed through ExecutionCoordinator.WithDBRead; returns row maps.
 - PluginMutateBlock(id, text) / PluginUpdateBlockState(id, status) — wrap MutateBlock / UpdateBlockState (same atomic-write + re-index + lock path as the core editor). PluginUpdateBlockState returns `{ok, spawned_id}`, carrying the recurrence instance UUID minted by a recurring TODO/DOING→DONE transition (empty otherwise).
+- PluginUndoLastTaskMutation() — wraps UndoLastTaskMutation (content-mutate gated; session-token verified). Reverses the newest journaled mutation for this vault session (global LIFO across surfaces; also covers non-task block-body edits) and returns `{undone, skipped, blockIds, skippedBlockIds, notebook, section, page, removedSpawnedId, changedFields, remaining}`.
+- PluginGetTaskUndoState() — read-only journal peek (session-token verified; gated by `read-files` — it discloses vault locators and block IDs; no content-mutate grant). Returns `{canUndo, remaining, changedFields, blockIds, notebook, section, page, source}` for the newest entry without popping it.
 - GetPluginRegistry() / ListPlugins() / ReadPluginSource(id) — discovery.
 - ValidatePluginArchive / PickPluginArchive / InstallPlugin / UninstallPlugin / EnablePlugin / DisablePlugin — `.silt-plugin` distribution (see backend/plugins package; zip-slip + traversal guarded, atomic extract).
 
