@@ -293,28 +293,84 @@ func (dw *DirectoryWatcher) Close() error {
 	return dw.closeErr
 }
 
+// resolveWatchRoot returns the directory to hand to filepath.WalkDir for root
+// plus a rebase that maps a walked path back under root. WalkDir Lstats its
+// root, so a symlinked root must be walked through its resolved target or the
+// whole tree is an un-followed symlink (zero watches, no error). Mirrors
+// WalkMarkdown's root handling (backend/parser/scanner.go) — the invariant is
+// the same: watches and indexed paths stay spelled under the caller's root so
+// roots/rootInfo, governingRoot, and the files table keep one path identity.
+func resolveWatchRoot(root string) (walkRoot string, rebase func(string) string, err error) {
+	fi, lerr := os.Lstat(root)
+	if lerr != nil {
+		return "", nil, lerr
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		return root, func(p string) string { return p }, nil
+	}
+	resolved, rerr := filepath.EvalSymlinks(root)
+	if rerr != nil {
+		return "", nil, rerr
+	}
+	rebase = func(p string) string {
+		rel, relErr := filepath.Rel(resolved, p)
+		if relErr != nil {
+			return p
+		}
+		return filepath.Join(root, rel)
+	}
+	return resolved, rebase, nil
+}
+
 func (dw *DirectoryWatcher) AddRecursive(path string) error {
-	return filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
+	// Identity keys are filepath.Clean-ed in registerRoot / the constructor,
+	// so normalise the caller's spelling before it becomes a watch string.
+	path = filepath.Clean(path)
+	walkRoot, rebase, err := resolveWatchRoot(path)
+	if err != nil {
+		// An unstattable root stays a hard error (today's WalkDir behaviour);
+		// an alias whose target cannot be resolved is reported as a coverage
+		// gap instead, matching WalkMarkdown's blindness-not-empty semantics.
+		if _, lerr := os.Lstat(path); lerr != nil {
+			return err
+		}
+		dw.failedMu.Lock()
+		dw.failedPaths = append(dw.failedPaths, fmt.Sprintf("%s: %v", path, err))
+		dw.failedMu.Unlock()
+		return nil
+	}
+	return filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
+		// Decide root identity before rebase: rebase returns a cleaned path,
+		// so an unclean caller spelling never equals the root.
+		isRoot := p == walkRoot
 		if d.IsDir() {
 			name := d.Name()
-			// Skip system and hidden directories
-			if strings.HasPrefix(name, ".") && name != "." {
+			// Skip system and hidden directories, but keep the root itself:
+			// when walking a resolved target, d.Name() is the TARGET's
+			// basename, so a root named ".hidden" would otherwise prune the
+			// entire vault (WalkMarkdown pins the same trap).
+			if !isRoot && strings.HasPrefix(name, ".") && name != "." {
 				return filepath.SkipDir
 			}
 			// Skip the attachments/ directory (#101): it holds binary assets,
 			// not markdown pages. Watching it wastes fds and could index stray
-			// .md files dropped there by the user.
-			if strings.EqualFold(name, "attachments") {
+			// .md files dropped there by the user. Root-exempt for the same
+			// resolved-target reason as the dot-prefix skip.
+			if !isRoot && strings.EqualFold(name, "attachments") {
 				return filepath.SkipDir
 			}
-			if err := dw.watcher.Add(p); err != nil {
+			// ALWAYS the rebased, caller-spelled path: fsnotify reports events
+			// prefixed by the string passed to Add, so alias-spelled watches
+			// keep event paths identical to the startup scan's file rows.
+			aliasPath := rebase(p)
+			if err := dw.watcher.Add(aliasPath); err != nil {
 				dw.failedMu.Lock()
-				dw.failedPaths = append(dw.failedPaths, fmt.Sprintf("%s: %v", p, err))
+				dw.failedPaths = append(dw.failedPaths, fmt.Sprintf("%s: %v", aliasPath, err))
 				dw.failedMu.Unlock()
-				return fmt.Errorf("failed to add path to watcher %s: %w", p, err)
+				return fmt.Errorf("failed to add path to watcher %s: %w", aliasPath, err)
 			}
 		} else if d.Type()&fs.ModeSymlink != 0 {
 			// Explicit symlink skip: WalkDir already does not follow them, but
@@ -338,6 +394,9 @@ func (dw *DirectoryWatcher) FailedPaths() []string {
 
 func (dw *DirectoryWatcher) Start() error {
 	// The vault root is registered in the constructor; just watch it.
+	// AddRecursive resolves a symlinked root and rebases its watches, so a
+	// symlinked vault is observed through its target while staying spelled
+	// under the caller's alias.
 	if err := dw.AddRecursive(dw.vaultPath); err != nil {
 		return err
 	}
@@ -411,7 +470,8 @@ func (dw *DirectoryWatcher) registerRoot(rootPath string, info watchRoot) {
 // AddWatchRoot registers an additional (linked) notebook root and begins
 // watching it, sharing the existing fsnotify watcher, tracker, coordinator and
 // lease maps (#100). source is 'linked:<id>'; notebook is the display name (a
-// linked root IS one notebook).
+// linked root IS one notebook). Root resolution (a symlinked linked-root) is
+// inherited from AddRecursive, so watches stay alias-spelled.
 func (dw *DirectoryWatcher) AddWatchRoot(rootPath, source, notebook string) error {
 	root := filepath.Clean(rootPath)
 	dw.registerRoot(root, watchRoot{source: source, notebook: notebook})
@@ -436,10 +496,16 @@ func (dw *DirectoryWatcher) RemoveWatchRoot(rootPath string) {
 	}
 	dw.rootMu.Unlock()
 	// Best-effort unwatch of every dir under the root. fsnotify Remove is a
-	// no-op for paths it isn't watching, so WalkDir is safe.
-	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, _ error) error {
+	// no-op for paths it isn't watching, so WalkDir is safe. Walk the same
+	// resolved tree AddRecursive walked and remove the rebased (caller-spelled)
+	// paths it registered — a symlinked root's watches are alias-spelled.
+	walkRoot, rebase, rerr := resolveWatchRoot(root)
+	if rerr != nil {
+		return
+	}
+	_ = filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, _ error) error {
 		if d != nil && d.IsDir() {
-			_ = dw.watcher.Remove(p)
+			_ = dw.watcher.Remove(rebase(p))
 		}
 		return nil
 	})
