@@ -338,6 +338,14 @@
     return tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA'
   }
 
+  /** True when Enter must run the focused control's native activation
+   *  (toolbar buttons, chips, result rows) instead of jumping to the
+   *  highlighted result; Space activation already bypasses this handler. */
+  function isActivatableControlFocused(): boolean {
+    const active = document.activeElement as HTMLElement | null
+    return !!active?.closest('button, a[href], [role="button"], [role="link"]')
+  }
+
   function handleKeyDown(e: KeyboardEvent) {
     if (e.key === 'Tab' && dialogEl) {
       const els = focusableEls()
@@ -386,6 +394,7 @@
         scrollSelectedIntoView()
       }
     } else if (e.key === 'Enter') {
+      if (isActivatableControlFocused()) return
       e.preventDefault()
       if (results[selectedIdx]) {
         selectResult(results[selectedIdx])

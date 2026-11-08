@@ -221,6 +221,55 @@ describe('SearchModal', () => {
     expect(arrowEvt.defaultPrevented).toBe(false)
   })
 
+  it('lets Enter activate a focused toolbar button instead of jumping to result 0', async () => {
+    const onJump = vi.fn()
+    const onClose = vi.fn()
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: '1',
+          source: 'vault',
+          notebook: 'Work',
+          section: '',
+          page: 'A',
+          file_date: '',
+          clean_content: 'hello'
+        }
+      ],
+      total: 1,
+      offset: 0,
+      limit: 20,
+      has_more: false
+    })
+    render(SearchModal, { props: { onClose, onJump } })
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'hello' } })
+    await vi.waitFor(() => {
+      expect(mocks.SearchBlocksPaged).toHaveBeenCalled()
+    })
+
+    const toggle = screen.getByTestId('search-task-filters-toggle')
+    toggle.focus()
+    expect(document.activeElement).toBe(toggle)
+    const enterEvt = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true
+    })
+    toggle.dispatchEvent(enterEvt)
+    // jsdom does not synthesize the native click, so assert the capture
+    // handler stayed out of the way and no result jump/close happened.
+    expect(enterEvt.defaultPrevented).toBe(false)
+    expect(onJump).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+
+    // The pointer path still opens the disclosure.
+    await fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  })
+
   it('sends empty notebook/tag when filters are cleared (#655)', async () => {
     render(SearchModal, {
       props: { onClose: vi.fn(), onJump: vi.fn() }
