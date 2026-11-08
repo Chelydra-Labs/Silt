@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
-  import { trapFocus } from '../lib/focusTrap'
+  import Button from './ui/Button.svelte'
+  import Dialog from './ui/Dialog.svelte'
+  import Input from './ui/Input.svelte'
 
   /**
    * Named prompt dialog for Save as / Rename (#531). Focuses the text field
    * on open; validates non-empty trim; Esc / backdrop cancel; Ctrl/Cmd+Enter
-   * submits (#662). Tab trap via shared focusTrap.
+   * submits (#662). Tab trap via shared Dialog primitive.
    */
   interface Props {
     title: string
@@ -36,13 +38,20 @@
     dataTestId
   }: Props = $props()
 
-  let dialogRef = $state<HTMLDivElement | null>(null)
   let inputRef = $state<HTMLInputElement | null>(null)
   // Seed once at mount — parent remounts the dialog when opening with a new name.
   // svelte-ignore state_referenced_locally
   let value = $state(initialValue)
   let error = $state<string | null>(null)
-  let previouslyFocused: HTMLElement | null = null
+
+  const fallbackId = $props.id()
+  const inputId = $derived(
+    dataTestId ? `${dataTestId}-input` : `${fallbackId}-input`
+  )
+  const errorId = $derived(
+    dataTestId ? `${dataTestId}-error` : `${fallbackId}-error`
+  )
+  const activeError = $derived(error || errorMessage || null)
 
   function submit() {
     const trimmed = value.trim()
@@ -56,14 +65,6 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      e.stopPropagation()
-      // Busy create/rename: Esc is a no-op (parent also guards), matching
-      // disabled Cancel so the affordance is not silently dead.
-      if (!busy) onCancel()
-      return
-    }
     // Enter or Ctrl/Cmd+Enter submits (#662).
     if (
       e.key === 'Enter' &&
@@ -75,101 +76,70 @@
   }
 
   onMount(() => {
-    previouslyFocused = document.activeElement as HTMLElement | null
-    window.addEventListener('keydown', handleKeydown, true)
-    let disposeTrap = () => {}
     void tick().then(() => {
-      if (dialogRef) disposeTrap = trapFocus(dialogRef)
       inputRef?.focus()
       inputRef?.select()
     })
-    return () => {
-      disposeTrap()
-      window.removeEventListener('keydown', handleKeydown, true)
-      if (previouslyFocused?.isConnected) previouslyFocused.focus?.()
-    }
   })
 </script>
 
-<div
-  class="fixed inset-0 z-[200] flex items-center justify-center bg-black/45 backdrop-blur-[3px]"
-  data-focus-trap
+<Dialog
+  ariaLabel={title}
+  backdropLabel={cancelLabel}
+  {busy}
+  {dataTestId}
+  initialFocus={() => inputRef}
+  onClose={() => {
+    if (!busy) onCancel()
+  }}
+  onKeydown={handleKeydown}
 >
-  <button
-    type="button"
-    tabindex="-1"
-    aria-label={cancelLabel}
-    class="absolute inset-0 cursor-default border-none bg-transparent p-0"
-    onclick={onCancel}
-  ></button>
-  <div
-    bind:this={dialogRef}
-    role="dialog"
-    aria-modal="true"
-    aria-label={title}
-    tabindex="-1"
-    data-testid={dataTestId}
-    class="relative w-full max-w-sm glass-palette glass-palette-strong border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden"
-  >
-    <div class="px-5 py-4 border-b border-surface-modal-border">
-      <h2 class="font-headline-md text-headline-md text-text-primary">
-        {title}
-      </h2>
-      <label
-        class="block mt-3 text-type-sm font-label-sm text-text-muted"
-        for={dataTestId ? `${dataTestId}-input` : undefined}
-      >
-        {label}
-      </label>
-      <input
-        bind:this={inputRef}
-        id={dataTestId ? `${dataTestId}-input` : undefined}
-        type="text"
-        class="mt-1.5 w-full h-9 px-2.5 rounded-md bg-surface-panel border border-surface-panel-border text-text-primary font-body-md text-type-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
-        bind:value
-        {placeholder}
-        disabled={busy}
-        aria-invalid={error || errorMessage ? true : undefined}
-        aria-describedby={(error || errorMessage) && dataTestId
-          ? `${dataTestId}-error`
-          : undefined}
-        data-testid={dataTestId ? `${dataTestId}-input` : undefined}
-        oninput={() => {
-          if (error) error = null
-        }}
-      />
-      {#if error || errorMessage}
-        <p
-          id={dataTestId ? `${dataTestId}-error` : undefined}
-          class="mt-1.5 text-type-2xs font-label-sm text-status-danger"
-          role={errorMessage ? 'alert' : 'status'}
-          aria-live={errorMessage ? 'assertive' : 'polite'}
-        >
-          {error || errorMessage}
-        </p>
-      {/if}
-    </div>
-    <div class="flex items-center justify-end gap-2 px-5 py-3">
-      <button
-        type="button"
-        onclick={() => {
-          if (!busy) onCancel()
-        }}
-        disabled={busy}
-        data-testid={dataTestId ? `${dataTestId}-cancel` : undefined}
-        class="px-4 py-2 rounded-lg text-text-muted hover:text-text-primary font-label-sm-bold transition-colors border-none bg-transparent cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {cancelLabel}
-      </button>
-      <button
-        type="button"
-        onclick={submit}
-        disabled={busy}
-        data-testid={dataTestId ? `${dataTestId}-confirm` : undefined}
-        class="px-4 py-2 rounded-lg font-label-sm-bold transition-all cursor-pointer border bg-accent-primary-start/20 border-accent-primary-start/40 text-text-primary hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {confirmLabel}
-      </button>
-    </div>
+  <div class="px-5 py-4 border-b border-surface-modal-border">
+    <h2 class="font-headline-md text-headline-md text-text-primary">
+      {title}
+    </h2>
+    <label
+      class="block mt-3 text-type-sm font-label-sm text-text-muted"
+      for={inputId}
+    >
+      {label}
+    </label>
+    <Input
+      bind:ref={inputRef}
+      id={inputId}
+      type="text"
+      class="mt-1.5"
+      bind:value
+      {placeholder}
+      disabled={busy}
+      error={activeError}
+      {errorId}
+      errorRole={errorMessage ? 'alert' : 'status'}
+      errorLive={errorMessage ? 'assertive' : 'polite'}
+      dataTestId={dataTestId ? `${dataTestId}-input` : undefined}
+      oninput={() => {
+        if (error) error = null
+      }}
+    />
   </div>
-</div>
+  <div class="flex items-center justify-end gap-2 px-5 py-3">
+    <Button
+      variant="ghost"
+      onclick={() => {
+        if (!busy) onCancel()
+      }}
+      disabled={busy}
+      dataTestId={dataTestId ? `${dataTestId}-cancel` : undefined}
+    >
+      {cancelLabel}
+    </Button>
+    <Button
+      variant="primary"
+      onclick={submit}
+      disabled={busy}
+      dataTestId={dataTestId ? `${dataTestId}-confirm` : undefined}
+    >
+      {confirmLabel}
+    </Button>
+  </div>
+</Dialog>

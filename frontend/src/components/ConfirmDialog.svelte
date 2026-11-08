@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte'
-  import { trapFocus } from '../lib/focusTrap'
+  import Button from './ui/Button.svelte'
+  import Dialog from './ui/Dialog.svelte'
 
   /**
    * Shared confirmation dialog (vault-style a11y). Backdrop blur, Esc +
-   * click-away cancel, Tab focus trap via shared focusTrap. Does not
+   * click-away cancel, Tab focus trap via shared Dialog primitive. Does not
    * autofocus confirm — the dialog container receives focus so destructive
    * actions need a deliberate choice (#531).
    */
@@ -31,95 +31,43 @@
     onCancel,
     dataTestId
   }: Props = $props()
-
-  let dialogRef = $state<HTMLDivElement | null>(null)
-  let previouslyFocused: HTMLElement | null = null
-
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      e.stopPropagation()
-      if (!busy) onCancel()
-    }
-  }
-
-  onMount(() => {
-    previouslyFocused = document.activeElement as HTMLElement | null
-    window.addEventListener('keydown', handleKeydown, true)
-    let disposeTrap = () => {}
-    void tick().then(() => {
-      if (dialogRef) disposeTrap = trapFocus(dialogRef)
-      dialogRef?.focus()
-    })
-    return () => {
-      disposeTrap()
-      window.removeEventListener('keydown', handleKeydown, true)
-      if (previouslyFocused?.isConnected) previouslyFocused.focus?.()
-    }
-  })
 </script>
 
-<div
-  class="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-[2px]"
-  data-focus-trap
+<Dialog
+  ariaLabel={title}
+  backdropLabel={cancelLabel}
+  {busy}
+  {dataTestId}
+  onClose={() => {
+    if (!busy) onCancel()
+  }}
 >
-  <button
-    type="button"
-    tabindex="-1"
-    aria-label={cancelLabel}
-    class="absolute inset-0 cursor-default border-none bg-transparent p-0"
-    onclick={() => {
-      if (!busy) onCancel()
-    }}
-  ></button>
-  <div
-    bind:this={dialogRef}
-    role="dialog"
-    aria-modal="true"
-    aria-label={title}
-    aria-busy={busy || undefined}
-    tabindex="-1"
-    data-testid={dataTestId}
-    class="dialog-surface relative w-full max-w-sm glass-palette glass-palette-strong border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden"
-  >
-    <div class="px-5 py-4 border-b border-surface-modal-border">
-      <h2 class="font-headline-md text-headline-md text-text-primary">
-        {title}
-      </h2>
-      <p class="text-text-muted text-type-sm font-body-md mt-1">{message}</p>
-    </div>
-    <div class="flex items-center justify-end gap-2 px-5 py-3">
-      <button
-        type="button"
-        onclick={() => {
-          if (!busy) onCancel()
-        }}
-        disabled={busy}
-        data-testid={dataTestId ? `${dataTestId}-cancel` : undefined}
-        class="px-4 py-2 rounded-lg text-text-muted hover:text-text-primary font-label-sm-bold transition-colors border-none bg-transparent cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {cancelLabel}
-      </button>
-      <button
-        type="button"
-        onclick={() => {
-          if (!busy) onConfirm()
-        }}
-        disabled={busy}
-        data-testid={dataTestId ? `${dataTestId}-confirm` : undefined}
-        class="px-4 py-2 rounded-lg font-label-sm-bold transition-all cursor-pointer border disabled:cursor-not-allowed disabled:opacity-50 {destructive
-          ? 'bg-status-danger/20 border-status-danger/40 text-status-danger hover:brightness-110'
-          : 'bg-accent-primary-start/20 border-accent-primary-start/40 text-text-primary hover:brightness-110'}"
-      >
-        {confirmLabel}
-      </button>
-    </div>
+  <div class="px-5 py-4 border-b border-surface-modal-border">
+    <h2 class="font-headline-md text-headline-md text-text-primary">
+      {title}
+    </h2>
+    <p class="text-text-muted text-type-sm font-body-md mt-1">{message}</p>
   </div>
-</div>
-
-<style>
-  .dialog-surface:focus-visible {
-    outline: 2px solid var(--color-border-focus);
-    outline-offset: 2px;
-  }
-</style>
+  <div class="flex items-center justify-end gap-2 px-5 py-3">
+    <Button
+      variant="ghost"
+      onclick={() => {
+        if (!busy) onCancel()
+      }}
+      disabled={busy}
+      dataTestId={dataTestId ? `${dataTestId}-cancel` : undefined}
+    >
+      {cancelLabel}
+    </Button>
+    <Button
+      variant={destructive ? 'danger' : 'primary'}
+      onclick={() => {
+        if (!busy) onConfirm()
+      }}
+      disabled={busy}
+      dataTestId={dataTestId ? `${dataTestId}-confirm` : undefined}
+    >
+      {confirmLabel}
+    </Button>
+  </div>
+</Dialog>

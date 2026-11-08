@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte'
-  import { trapFocus } from '../lib/focusTrap'
+  import Button from './ui/Button.svelte'
+  import Dialog from './ui/Dialog.svelte'
 
   /**
    * Multi-action confirmation dialog (#664). Primary + secondary actions plus
-   * cancel. Shared focusTrap, Esc cancel, no autofocus on destructive paths.
+   * cancel. Shared Dialog focusTrap, Esc cancel, no autofocus on destructive paths.
    */
   interface Props {
     title: string
@@ -32,96 +32,43 @@
     onCancel,
     dataTestId
   }: Props = $props()
-
-  let dialogRef = $state<HTMLDivElement | null>(null)
-  let previouslyFocused: HTMLElement | null = null
-
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      e.stopPropagation()
-      onCancel()
-    }
-  }
-
-  onMount(() => {
-    // Prefer caller-supplied target (programmatic open); else capture current
-    // focus before we move it into the dialog.
-    previouslyFocused =
-      returnFocusTo ?? (document.activeElement as HTMLElement | null)
-    window.addEventListener('keydown', handleKeydown, true)
-    let disposeTrap = () => {}
-    void tick().then(() => {
-      if (dialogRef) disposeTrap = trapFocus(dialogRef)
-      dialogRef?.focus()
-    })
-    return () => {
-      disposeTrap()
-      window.removeEventListener('keydown', handleKeydown, true)
-      const target = returnFocusTo ?? previouslyFocused
-      if (target?.isConnected) target.focus?.()
-    }
-  })
 </script>
 
-<div
-  class="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-[2px]"
-  data-focus-trap
+<Dialog
+  ariaLabel={title}
+  backdropLabel={cancelLabel}
+  maxWidth="max-w-md"
+  {returnFocusTo}
+  {dataTestId}
+  onClose={onCancel}
 >
-  <button
-    type="button"
-    tabindex="-1"
-    aria-label={cancelLabel}
-    class="absolute inset-0 cursor-default border-none bg-transparent p-0"
-    onclick={onCancel}
-  ></button>
-  <div
-    bind:this={dialogRef}
-    role="dialog"
-    aria-modal="true"
-    aria-label={title}
-    tabindex="-1"
-    data-testid={dataTestId}
-    class="dialog-surface relative w-full max-w-md glass-palette glass-palette-strong border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden"
-  >
-    <div class="px-5 py-4 border-b border-surface-modal-border">
-      <h2 class="font-headline-md text-headline-md text-text-primary">
-        {title}
-      </h2>
-      <p class="text-text-muted text-type-sm font-body-md mt-1">{message}</p>
-    </div>
-    <div class="flex flex-wrap items-center justify-end gap-2 px-5 py-3">
-      <button
-        type="button"
-        onclick={onCancel}
-        data-testid={dataTestId ? `${dataTestId}-cancel` : undefined}
-        class="px-4 py-2 rounded-lg text-text-muted hover:text-text-primary font-label-sm-bold transition-colors border-none bg-transparent cursor-pointer"
-      >
-        {cancelLabel}
-      </button>
-      <button
-        type="button"
-        onclick={onSecondary}
-        data-testid={dataTestId ? `${dataTestId}-secondary` : undefined}
-        class="px-4 py-2 rounded-lg font-label-sm-bold transition-all cursor-pointer border bg-surface-panel border-surface-panel-border text-text-primary hover:brightness-110"
-      >
-        {secondaryLabel}
-      </button>
-      <button
-        type="button"
-        onclick={onPrimary}
-        data-testid={dataTestId ? `${dataTestId}-primary` : undefined}
-        class="px-4 py-2 rounded-lg font-label-sm-bold transition-all cursor-pointer border bg-accent-primary-start/20 border-accent-primary-start/40 text-text-primary hover:brightness-110"
-      >
-        {primaryLabel}
-      </button>
-    </div>
+  <div class="px-5 py-4 border-b border-surface-modal-border">
+    <h2 class="font-headline-md text-headline-md text-text-primary">
+      {title}
+    </h2>
+    <p class="text-text-muted text-type-sm font-body-md mt-1">{message}</p>
   </div>
-</div>
-
-<style>
-  .dialog-surface:focus-visible {
-    outline: 2px solid var(--color-border-focus);
-    outline-offset: 2px;
-  }
-</style>
+  <div class="flex flex-wrap items-center justify-end gap-2 px-5 py-3">
+    <Button
+      variant="ghost"
+      onclick={onCancel}
+      dataTestId={dataTestId ? `${dataTestId}-cancel` : undefined}
+    >
+      {cancelLabel}
+    </Button>
+    <Button
+      variant="secondary"
+      onclick={onSecondary}
+      dataTestId={dataTestId ? `${dataTestId}-secondary` : undefined}
+    >
+      {secondaryLabel}
+    </Button>
+    <Button
+      variant="primary"
+      onclick={onPrimary}
+      dataTestId={dataTestId ? `${dataTestId}-primary` : undefined}
+    >
+      {primaryLabel}
+    </Button>
+  </div>
+</Dialog>
