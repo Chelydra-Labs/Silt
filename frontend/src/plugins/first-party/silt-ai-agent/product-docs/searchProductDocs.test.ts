@@ -194,6 +194,11 @@ describe('shipped product-docs corpus', () => {
     )
     expect(hubDoc).toMatch(/skipped undo is not the same as an empty history/i)
     expect(hubDoc).toMatch(/Ctrl\+Z/)
+    // The tasks article must carry the same exception the keyboard article
+    // states, so both PR-added docs describe hub undo with equal precision.
+    expect(hubDoc).toMatch(
+      /editable fields and open popovers keep their own\s+undo/i
+    )
 
     // The keyboard article keeps the editor/hub ownership split discoverable.
     const keyboardDoc = sections

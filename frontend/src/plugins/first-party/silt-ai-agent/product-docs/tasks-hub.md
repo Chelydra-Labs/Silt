@@ -66,7 +66,7 @@ to the editor.
   will be reversed (for example, "status change in Work › Journal › Daily")
   and how many entries remain.
 - With focus inside the Tasks hub or its task drawer, **Ctrl+Z** triggers the
-  same action.
+  same action (editable fields and open popovers keep their own undo).
 - The history is **session-scoped**: closing or switching vaults clears it.
 - There is **no redo**. To go further back, undo again.
 - A single gesture can record more than one entry — a cross-file reorder
