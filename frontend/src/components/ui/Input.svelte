@@ -84,9 +84,12 @@
           : `${fallbackUid}-error`)
   )
 
+  const baseDescribedBy = $derived(
+    describedBy ?? (rest['aria-describedby'] as string | undefined)
+  )
   const resolvedDescribedBy = $derived.by(() => {
     const parts: string[] = []
-    if (describedBy) parts.push(describedBy)
+    if (baseDescribedBy) parts.push(baseDescribedBy)
     if (errorText) parts.push(resolvedErrorId)
     return parts.length > 0 ? parts.join(' ') : undefined
   })

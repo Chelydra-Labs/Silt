@@ -78,6 +78,6 @@
 <style>
   .ui-btn:focus-visible {
     outline: 2px solid var(--color-border-focus);
-    outline-offset: 2px;
+    outline-offset: 1px;
   }
 </style>

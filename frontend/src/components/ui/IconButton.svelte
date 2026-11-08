@@ -74,7 +74,10 @@
   {disabled}
   {onclick}
   aria-label={resolvedAriaLabel}
-  aria-pressed={active ? true : undefined}
+  aria-pressed={active
+    ? true
+    : (rest['aria-pressed'] as
+        boolean | 'false' | 'mixed' | 'true' | undefined)}
   title={title ?? resolvedAriaLabel}
   data-testid={dataTestId ??
     ((rest as Record<string, unknown>)['data-testid'] as string | undefined)}
@@ -99,6 +102,6 @@
 <style>
   .ui-icon-btn:focus-visible {
     outline: 2px solid var(--color-border-focus);
-    outline-offset: 2px;
+    outline-offset: 1px;
   }
 </style>

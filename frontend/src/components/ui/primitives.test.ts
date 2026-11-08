@@ -112,6 +112,16 @@ describe('IconButton primitive', () => {
     expect(btn).toHaveAttribute('aria-pressed', 'true')
     expect(btn.className).toContain('bg-active')
     expect(btn.className).toContain('w-8 h-8 rounded-lg')
+
+    rerender({
+      ariaLabel: 'Toggle sidebar',
+      icon: 'dock_to_right',
+      size: 'md',
+      active: false,
+      'aria-pressed': 'false',
+      dataTestId: 'icon-btn'
+    })
+    expect(btn).toHaveAttribute('aria-pressed', 'false')
   })
 })
 
@@ -158,6 +168,22 @@ describe('Input primitive', () => {
     expect(errorEl).toBeTruthy()
     expect(errorEl).toHaveTextContent('Must be between 10 and 32')
     expect(errorEl).toHaveAttribute('role', 'alert')
+
+    cleanup()
+    render(Input, {
+      props: {
+        id: 'kebab-input',
+        value: '99',
+        'aria-describedby': 'kebab-hint',
+        error: 'Must be between 10 and 32',
+        dataTestId: 'kebab-input-el'
+      }
+    })
+    const kebabInput = screen.getByTestId('kebab-input-el')
+    expect(kebabInput).toHaveAttribute(
+      'aria-describedby',
+      'kebab-hint kebab-input-error'
+    )
   })
 })
 
