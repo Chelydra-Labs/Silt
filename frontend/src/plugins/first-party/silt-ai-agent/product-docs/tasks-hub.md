@@ -69,8 +69,10 @@ to the editor.
   same action.
 - The history is **session-scoped**: closing or switching vaults clears it.
 - There is **no redo**. To go further back, undo again.
-- A cross-file reorder records one entry per file, so one undo may not reverse
-  the whole drag. The number beside **Undo** says how many entries remain.
+- A single gesture can record more than one entry — a cross-file reorder
+  records one entry per file, and a Board drop with Manual sorting records the
+  field change and the order separately — so one undo may not reverse the
+  whole gesture. The number beside **Undo** says how many entries remain.
 - Undo is unavailable while a task write is still saving, so the history and
   the view cannot disagree.
 - If the change can no longer be applied (the target page vanished or cannot

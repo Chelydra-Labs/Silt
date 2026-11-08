@@ -184,9 +184,14 @@ describe('shipped product-docs corpus', () => {
     expect(hubDoc).toMatch(/most recent task or block change/i)
     expect(hubDoc).toMatch(/session-scoped/i)
     expect(hubDoc).toMatch(/no redo/i)
-    // Cross-file reorders journal one entry per file; a skip drops the entry
-    // without emptying the history.
+    // A gesture can journal more than once: cross-file reorders record one
+    // entry per file, and a Manual-sort Board drop records the field change and
+    // the order separately. A skip drops the entry without emptying the
+    // history.
     expect(hubDoc).toMatch(/one entry per file/i)
+    expect(hubDoc).toMatch(
+      /Board drop with Manual sorting records the\s+field change and the order\s+separately/i
+    )
     expect(hubDoc).toMatch(/skipped undo is not the same as an empty history/i)
     expect(hubDoc).toMatch(/Ctrl\+Z/)
 
