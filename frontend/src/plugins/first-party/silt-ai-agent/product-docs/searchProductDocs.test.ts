@@ -197,5 +197,10 @@ describe('shipped product-docs corpus', () => {
       .join('\n')
     expect(keyboardDoc).toMatch(/contextual/i)
     expect(keyboardDoc).toMatch(/task drawer/i)
+    // The implementation keeps native text undo in editable fields and leaves
+    // nested popovers alone; the article must not over-promise hub undo there.
+    expect(keyboardDoc).toMatch(
+      /editable fields and open popovers keep their own\s+undo/i
+    )
   })
 })

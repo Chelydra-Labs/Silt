@@ -37,8 +37,9 @@ templates, and more. See product help topics **Slash commands** and
 
 **Ctrl+Z** is contextual. In a note it undoes editor changes; with focus in
 the **Tasks** hub or its task drawer it undoes the most recent task or block
-change made from Silt. The hub's **Undo** button names the change it will
-reverse. See product help topic **Tasks hub**.
+change made from Silt (editable fields and open popovers keep their own
+undo). The hub's **Undo** button names the change it will reverse. See
+product help topic **Tasks hub**.
 
 ## Onboarding
 
