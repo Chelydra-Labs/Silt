@@ -660,6 +660,7 @@ describe('silt-tasks unified state (#419)', () => {
       })
       setFocusDate('2026-06-16')
       setActiveFilter('overdue')
+      setFilterText('postgres')
       setColumns([
         { name: 'TODO' },
         { name: 'DOING' },

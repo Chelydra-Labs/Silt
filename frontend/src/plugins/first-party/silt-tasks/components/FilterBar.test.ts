@@ -417,6 +417,78 @@ describe('FilterBar text narrowing', () => {
   })
 })
 
+describe('FilterBar "Clear all" and the transient search', () => {
+  it('cancels an in-flight debounce so the cleared text cannot reappear', async () => {
+    const onTextChange = vi.fn()
+    const onFiltersChange = vi.fn()
+    render(FilterBar, {
+      props: makeProps({
+        onTextChange,
+        onFiltersChange,
+        filters: { owners: ['Alice'], priorities: [], dueDate: '', tags: [] }
+      })
+    })
+    const input = screen.getByLabelText('Find tasks')
+    await fireEvent.input(input, { target: { value: 'postgres' } })
+    // Facet active → Clear all is visible while the text commit is pending.
+    await fireEvent.click(screen.getByRole('button', { name: /Clear all/ }))
+
+    expect(onTextChange).toHaveBeenCalledWith('')
+    expect(onFiltersChange).toHaveBeenCalledWith(
+      expect.objectContaining({ owners: [] })
+    )
+    expect(screen.getByLabelText('Find tasks')).toHaveValue('')
+
+    // The pending trailing commit was cancelled — the draft never lands.
+    await new Promise((r) => setTimeout(r, 300))
+    expect(onTextChange).not.toHaveBeenCalledWith('postgres')
+    expect(onTextChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears a search-only view through the transient path (no saved-view dirty)', async () => {
+    const onTextChange = vi.fn()
+    const onFiltersChange = vi.fn()
+    render(FilterBar, {
+      props: makeProps({
+        onTextChange,
+        onFiltersChange,
+        filters: emptyTextFilters('pg')
+      })
+    })
+    await fireEvent.click(screen.getByRole('button', { name: /Clear all/ }))
+
+    // facet setters never run — setFilters would mark the active view dirty.
+    expect(onFiltersChange).not.toHaveBeenCalled()
+    expect(onTextChange).toHaveBeenCalledWith('')
+    expect(screen.getByLabelText('Find tasks')).toHaveValue('')
+  })
+
+  it('still clears non-text facets through onFiltersChange', async () => {
+    const onFiltersChange = vi.fn()
+    render(FilterBar, {
+      props: makeProps({
+        onFiltersChange,
+        filters: {
+          owners: ['Alice'],
+          priorities: [1],
+          dueDate: 'overdue',
+          tags: ['x'],
+          stale: true
+        }
+      })
+    })
+    await fireEvent.click(screen.getByRole('button', { name: /Clear all/ }))
+    expect(onFiltersChange).toHaveBeenCalledWith({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      stale: false,
+      text: ''
+    })
+  })
+})
+
 function emptyTextFilters(text: string): TaskFilters {
   return { owners: [], priorities: [], dueDate: '', tags: [], text }
 }

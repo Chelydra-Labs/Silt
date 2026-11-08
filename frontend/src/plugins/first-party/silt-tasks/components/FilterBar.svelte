@@ -213,14 +213,32 @@
     onFiltersChange({ ...filters, stale: !filters.stale })
   }
   function clearAll() {
-    onFiltersChange({
-      owners: [],
-      priorities: [],
-      dueDate: '',
-      tags: [],
-      stale: false,
-      text: ''
-    })
+    const hadText =
+      (filters.text ?? '').trim() !== '' || textDraft.trim() !== ''
+    // Drop the pending draft first: an in-flight trailing commit would
+    // otherwise re-apply the cleared text a tick later.
+    commitText.cancel()
+    textDraft = ''
+    lastCommittedText = ''
+    const hadFacets =
+      filters.owners.length > 0 ||
+      filters.priorities.length > 0 ||
+      !!filters.dueDate ||
+      filters.tags.length > 0 ||
+      !!filters.stale
+    if (hadFacets) {
+      onFiltersChange({
+        owners: [],
+        priorities: [],
+        dueDate: '',
+        tags: [],
+        stale: false,
+        text: ''
+      })
+    }
+    // The search is transient: clearing it must not mark an active saved view
+    // dirty (a facets-only clear legitimately does).
+    if (hadText) onTextChange('')
   }
 
   function handlePopoverKeydown(e: KeyboardEvent) {
