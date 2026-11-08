@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"silt/backend/db"
 	"silt/backend/parser"
 	"silt/backend/plugins"
 )
@@ -239,11 +240,13 @@ func (a *App) PluginGetTaskUndoState(pluginID, sessionToken string) (TaskUndoSta
 // text edits made through the shared write chain (MutateBlock, writeBlockText,
 // plugin mutations), not only task-attribute setters.
 //
-// The replay is block-addressed: it re-parses the recorded page inside the
-// same lock/focus-gate path as every writer, restores only the fields the
-// mutation changed, removes the recurrence sibling when the undone transition
-// minted one, then renders/writes/re-indexes once. Adjacent blocks are copied
-// through the renderer untouched.
+// The replay is block-addressed: it re-resolves the target block's current
+// location (so a page rename or block move after the mutation does not strand
+// the entry), re-parses that page inside the same lock/focus-gate path as
+// every writer, restores only the fields the mutation changed, removes the
+// recurrence sibling when the undone transition minted one, then
+// renders/writes/re-indexes once. Adjacent blocks are copied through the
+// renderer untouched.
 //
 // The undo write itself is deliberately NOT journaled (there is no redo); the
 // journal mutex stays held across the replay so a concurrent mutation cannot
@@ -306,16 +309,35 @@ func (a *App) replayTaskUndoEntry(entry taskUndoEntry) (TaskUndoResult, error) {
 		return result, nil
 	}
 
-	safeNotebook := sanitizePathSegment(entry.Notebook)
-	safeSection, secErr := historySection(entry.Section)
+	primary := entry.Blocks[0].BlockID
+	source, notebook, section, page := entry.Source, entry.Notebook, entry.Section, entry.Page
+	// A page rename or block move after the mutation leaves the recorded
+	// locator pointing at a vanished file, which would silently pop the entry
+	// as skipped. Prefer the block's current indexed location; fall back to
+	// the recorded locator when the block is gone from the index.
+	var curLoc db.BlockLocation
+	locErr := a.coordinator.WithDBReadResult(func() error {
+		var e error
+		curLoc, e = a.db.GetBlockLocation(primary)
+		return e
+	})
+	if locErr == nil {
+		source, notebook, section, page = curLoc.Source, curLoc.Notebook, curLoc.Section, curLoc.Page
+	}
+
+	safeNotebook := sanitizePathSegment(notebook)
+	safeSection, secErr := historySection(section)
 	if secErr != nil {
 		return result, invalidNavigationPath(secErr)
 	}
-	safePage := sanitizePathSegment(entry.Page)
+	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
-		return result, fmt.Errorf("task undo: invalid recorded locator %s/%s/%s", entry.Notebook, entry.Section, entry.Page)
+		return result, fmt.Errorf("task undo: invalid recorded locator %s/%s/%s", notebook, section, page)
 	}
-	notebookDir, err := a.resolveNotebookDir(safeNotebook, entry.Source)
+	result.Notebook = safeNotebook
+	result.Section = safeSection
+	result.Page = safePage
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
 	if err != nil {
 		return result, fmt.Errorf("task undo: resolve notebook dir: %w", err)
 	}
@@ -324,7 +346,6 @@ func (a *App) replayTaskUndoEntry(entry taskUndoEntry) (TaskUndoResult, error) {
 		return result, fmt.Errorf("task undo: resolved file %q escapes notebook root", filePath)
 	}
 
-	primary := entry.Blocks[0].BlockID
 	var writeErr error
 	var restoredIDs, missingIDs []string
 	var removedSpawned string

@@ -766,8 +766,9 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   non-task block-body text edits made through the shared write chain
   (`MutateBlock`, `writeBlockText`, plugin block mutations). Replay restores
   only the fields the mutation actually changed, so a later editor/external
-  edit to an untouched field survives the undo. Undoing a recurring
-  TODO/DOING→DONE transition also removes
+  edit to an untouched field survives the undo; a page rename or block move
+  after the mutation is re-resolved through `GetBlockLocation` so the entry is
+  not stranded. Undoing a recurring TODO/DOING→DONE transition also removes
   the recurrence sibling that transition minted, in the same write.
   `GetTaskUndoState` / `PluginGetTaskUndoState` peek at the journal without
   popping — `{canUndo, remaining, changedFields, blockIds, notebook, section,
