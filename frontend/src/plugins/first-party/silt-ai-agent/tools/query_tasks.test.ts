@@ -91,11 +91,44 @@ describe('query_tasks', () => {
     const { sql, params } = calls[0]
     expect(sql).toContain('JOIN blocks_fts ON blocks_fts.rowid = b.rowid')
     expect(sql).toContain('blocks_fts MATCH ?')
-    // Same normalization as buildFtsQuery: punctuation stripped, quoted
-    // prefix terms with implicit AND.
-    expect(params).toContain('"postgres"* "Bob"*')
-    expect(params).toContain('Bob')
-    expect(params[params.length - 1]).toBe(20)
+    // Exact order pins the WHERE/param alignment: a future push reorder that
+    // binds a value to the wrong predicate must fail this test.
+    expect(params).toEqual(['"postgres"* "Bob"*', 'Bob', 20])
+  })
+
+  it('binds every filter in WHERE order', async () => {
+    const { ctx, calls } = makeCtx()
+    await handleQueryTasks(ctx, {
+      text: 'ship',
+      status: 'doing',
+      owner: 'alice',
+      priority_min: 2,
+      due_before: '2026-12-31',
+      due_after: '2026-01-01',
+      notebook: 'Work',
+      tags: ['work', 'bug'],
+      is_blocked: true,
+      limit: 5
+    })
+    expect(calls[0].params).toEqual([
+      '"ship"*',
+      'DOING',
+      'alice',
+      2,
+      '2026-12-31',
+      '2026-01-01',
+      'Work',
+      'work',
+      'bug',
+      5
+    ])
+  })
+
+  it('searches single multibyte characters (2-byte cutoff, not 2 chars)', async () => {
+    const { ctx, calls } = makeCtx()
+    await handleQueryTasks(ctx, { text: 'é' })
+    expect(calls[0].sql).toContain('blocks_fts MATCH ?')
+    expect(calls[0].params[0]).toBe('"é"*')
   })
 
   it('omits the FTS join when text has no usable terms', async () => {
@@ -105,8 +138,12 @@ describe('query_tasks', () => {
     expect(calls[0].params).toEqual([20])
   })
 
-  it('exposes text in the tool parameters', () => {
-    expect(queryTasksToolDef.parameters.properties).toHaveProperty('text')
+  it('describes the real text-matching scope and cutoff', () => {
+    const text = queryTasksToolDef.parameters.properties.text.description
+    // blocks_fts indexes content + notebook + section, and the 2-char floor is
+    // 2 UTF-8 bytes (so a single CJK/accented char is still searched).
+    expect(text).toMatch(/notebook and section names/i)
+    expect(text).toMatch(/shorter than 2 bytes/i)
   })
 
   it('rejects an invalid status value', async () => {

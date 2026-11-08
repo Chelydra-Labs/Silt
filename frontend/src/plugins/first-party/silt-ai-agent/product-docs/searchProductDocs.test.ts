@@ -155,7 +155,10 @@ describe('shipped product-docs corpus', () => {
       .map((s) => s.body)
       .join('\n')
     expect(searchDoc).toMatch(/priority floor/i)
-    expect(searchDoc).toMatch(/page-title/i)
+    // Only type/tag/task filters suppress page titles; notebook/scope narrow
+    // page rows too (backend applies those predicates inside the title leg).
+    expect(searchDoc).toMatch(/type, tag, or task filter hides/gi)
+    expect(searchDoc).toMatch(/do \*\*not\*\* hide page titles/i)
     expect(searchDoc).toMatch(/notebook\/section names/i)
     expect(searchDoc).toMatch(/need a query/i)
 

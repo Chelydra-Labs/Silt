@@ -16,9 +16,11 @@ along the lines of “Search notebooks, sections, or task content…”.
   **P2+** means Critical or Normal, **P3+** means any recorded priority.
 - Task filters need a query — they narrow a search rather than listing tasks
   on their own. To browse tasks, use the **Tasks** hub.
-- Any active filter hides **page-title** matches, because a page row carries no
-  task attributes. Task filters go further and restrict results to task rows,
-  so notes and headings are hidden too.
+- A type, tag, or task filter hides **page-title** matches, because a page row
+  carries no block-type/tag/task attributes. Task filters go further and
+  restrict results to task rows, so notes and headings are hidden too.
+  Notebook and Vault / + Linked scope do **not** hide page titles — they narrow
+  page rows the same way they narrow block rows.
 - Text matching covers block content **and** the notebook/section names, so a
   term that appears only in a notebook or section name matches every block in
   that notebook or section.

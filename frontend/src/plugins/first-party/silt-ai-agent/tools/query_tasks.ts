@@ -27,9 +27,11 @@ export const queryTasksToolDef = {
       text: {
         type: 'string',
         description:
-          'Full-text terms over task text. Letters/digits only, implicit ' +
-          'AND, each term prefix-matched (same normalization as global ' +
-          'search); terms under 2 characters are ignored.'
+          'Full-text terms matched against task content plus its notebook ' +
+          'and section names (same normalization as global search): ' +
+          'letters/digits only, implicit AND, each term prefix-matched. ' +
+          'Terms shorter than 2 bytes are ignored. Results are due-date ' +
+          'ordered (undated last).'
       },
       status: {
         type: 'string',
