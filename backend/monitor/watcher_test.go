@@ -1323,3 +1323,246 @@ func TestDirectoryWatcher_NormalizationWriteFailureLeavesFilesRowStale(t *testin
 // errNormWriteFailedForTest stands in for a hard verified-write failure at
 // the watcher's injected writer.
 var errNormWriteFailedForTest = errors.New("simulated verified-write failure")
+
+// --- Symlinked vault root (#1070) -------------------------------------------
+
+// createSymlinkOrSkip creates link → target, skipping the test where symlink
+// creation is unavailable (Windows without the privilege).
+func createSymlinkOrSkip(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("cannot create symlink: %v", err)
+	}
+}
+
+// watchListHas reports whether the fsnotify watch list contains want.
+func watchListHas(watches []string, want string) bool {
+	want = filepath.Clean(want)
+	for _, w := range watches {
+		if filepath.Clean(w) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// watchListUnder returns every watch at or below root, cleaned.
+func watchListUnder(watches []string, root string) []string {
+	root = filepath.Clean(root)
+	var out []string
+	for _, w := range watches {
+		cleaned := filepath.Clean(w)
+		if cleaned == root || strings.HasPrefix(cleaned, root+string(filepath.Separator)) {
+			out = append(out, cleaned)
+		}
+	}
+	return out
+}
+
+// waitForBlockCount polls until block id has want rows (50ms ticks, 3s cap).
+func waitForBlockCount(t *testing.T, dm *db.DatabaseManager, id string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		var n int
+		if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM blocks WHERE id = ?", id).Scan(&n); err == nil && n == want {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	var n int
+	_ = dm.SQLDB().QueryRow("SELECT COUNT(*) FROM blocks WHERE id = ?", id).Scan(&n)
+	t.Fatalf("timed out waiting for block %s count=%d (want %d)", id, n, want)
+}
+
+// TestDirectoryWatcher_SymlinkedVaultRootIsWatched pins the #1070 fix end to
+// end: a symlinked vault root is walked through its resolved target, but every
+// watch, delivered event and files row stays spelled under the caller's alias.
+func TestDirectoryWatcher_SymlinkedVaultRootIsWatched(t *testing.T) {
+	realRoot := t.TempDir()
+	realDaily := filepath.Join(realRoot, "Work", "Journal", "Daily")
+	if err := os.MkdirAll(realDaily, 0o755); err != nil {
+		t.Fatalf("mkdir real tree: %v", err)
+	}
+	alias := filepath.Join(t.TempDir(), "vault-alias")
+	createSymlinkOrSkip(t, realRoot, alias)
+
+	dw, dm := newWatcherTestHarnessAt(t, alias)
+	if err := dw.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = dw.Close() })
+
+	if failed := dw.FailedPaths(); len(failed) != 0 {
+		t.Fatalf("FailedPaths = %v, want empty for a resolvable alias", failed)
+	}
+
+	watches := dw.watcher.WatchList()
+	for _, want := range []string{
+		alias,
+		filepath.Join(alias, "Work"),
+		filepath.Join(alias, "Work", "Journal"),
+		filepath.Join(alias, "Work", "Journal", "Daily"),
+	} {
+		if !watchListHas(watches, want) {
+			t.Errorf("watch list missing alias-spelled %q; got %v", want, watches)
+		}
+	}
+	for _, leaked := range watchListUnder(watches, realRoot) {
+		t.Errorf("watch list leaked resolved-target spelling %q; watches must stay under the alias", leaked)
+	}
+
+	// External write through the REAL path: the watch is registered on the
+	// same inode, so the event must arrive alias-spelled and reindex the file.
+	pageID := "11111111-1111-1111-1111-111111111111"
+	if err := os.WriteFile(filepath.Join(realDaily, "ext.md"),
+		[]byte("# Page <!-- id: "+pageID+" -->\n"), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	waitForBlockCount(t, dm, pageID, 1)
+
+	aliasPage := filepath.Join(alias, "Work", "Journal", "Daily", "ext.md")
+	var files int
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM files WHERE path = ?", aliasPage).Scan(&files); err != nil {
+		t.Fatalf("count files: %v", err)
+	}
+	if files != 1 {
+		t.Fatalf("files rows for alias-spelled path = %d, want 1 (event identity must match the startup scan's spelling)", files)
+	}
+}
+
+// TestDirectoryWatcher_SymlinkedRootNamedLikeSkippedDir pins the root
+// exemption: walking a resolved target makes d.Name() the TARGET's basename,
+// so a target named .hidden or attachments must not SkipDir the whole vault.
+func TestDirectoryWatcher_SymlinkedRootNamedLikeSkippedDir(t *testing.T) {
+	for _, name := range []string{".hidden", "attachments"} {
+		t.Run(name, func(t *testing.T) {
+			realRoot := filepath.Join(t.TempDir(), name)
+			if err := os.MkdirAll(filepath.Join(realRoot, "Work"), 0o755); err != nil {
+				t.Fatalf("mkdir real tree: %v", err)
+			}
+			alias := filepath.Join(t.TempDir(), "vault-alias")
+			createSymlinkOrSkip(t, realRoot, alias)
+
+			dw, _ := newWatcherTestHarnessAt(t, alias)
+			if err := dw.Start(); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			t.Cleanup(func() { _ = dw.Close() })
+
+			if failed := dw.FailedPaths(); len(failed) != 0 {
+				t.Fatalf("FailedPaths = %v, want empty", failed)
+			}
+			watches := dw.watcher.WatchList()
+			for _, want := range []string{alias, filepath.Join(alias, "Work")} {
+				if !watchListHas(watches, want) {
+					t.Errorf("watch list missing %q; a target basename %q must not prune the walk; got %v",
+						want, name, watches)
+				}
+			}
+		})
+	}
+}
+
+// TestDirectoryWatcher_DanglingSymlinkRootIsCoverageFailure pins the
+// blindness-reported contract: an unresolvable alias must not fail Start, but
+// it must surface through FailedPaths instead of a silent empty watch set.
+func TestDirectoryWatcher_DanglingSymlinkRootIsCoverageFailure(t *testing.T) {
+	alias := filepath.Join(t.TempDir(), "vault-alias")
+	createSymlinkOrSkip(t, filepath.Join(t.TempDir(), "missing-target"), alias)
+
+	dw, _ := newWatcherTestHarnessAt(t, alias)
+	if err := dw.Start(); err != nil {
+		t.Fatalf("Start must not hard-fail on a dangling alias: %v", err)
+	}
+	t.Cleanup(func() { _ = dw.Close() })
+
+	failed := dw.FailedPaths()
+	if len(failed) == 0 {
+		t.Fatal("FailedPaths is empty for a dangling alias; blindness must be reported")
+	}
+	mentioned := false
+	for _, f := range failed {
+		if strings.Contains(f, alias) {
+			mentioned = true
+			break
+		}
+	}
+	if !mentioned {
+		t.Errorf("FailedPaths = %v, want an entry naming the alias %q", failed, alias)
+	}
+	if under := watchListUnder(dw.watcher.WatchList(), alias); len(under) != 0 {
+		t.Errorf("watch list has entries under the dangling alias: %v", under)
+	}
+}
+
+// TestDirectoryWatcher_RemoveWatchRootThroughSymlink pins that
+// RemoveWatchRoot unwatches the alias-spelled paths AddWatchRoot registered
+// through the resolved target.
+func TestDirectoryWatcher_RemoveWatchRootThroughSymlink(t *testing.T) {
+	realRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(realRoot, "Projects"), 0o755); err != nil {
+		t.Fatalf("mkdir real tree: %v", err)
+	}
+	alias := filepath.Join(t.TempDir(), "ext-alias")
+	createSymlinkOrSkip(t, realRoot, alias)
+
+	dw, _, _ := newWatcherTestHarness(t)
+	t.Cleanup(func() { _ = dw.Close() })
+
+	if err := dw.AddWatchRoot(alias, "linked:ext", "Ext"); err != nil {
+		t.Fatalf("AddWatchRoot: %v", err)
+	}
+	if under := watchListUnder(dw.watcher.WatchList(), alias); len(under) == 0 {
+		t.Fatalf("AddWatchRoot through a symlink added no watches; got %v", dw.watcher.WatchList())
+	}
+
+	dw.RemoveWatchRoot(alias)
+	if under := watchListUnder(dw.watcher.WatchList(), alias); len(under) != 0 {
+		t.Fatalf("RemoveWatchRoot left alias-spelled watches: %v", under)
+	}
+	if _, _, ok := dw.governingRoot(filepath.Join(alias, "Projects", "Page.md")); ok {
+		t.Error("governingRoot still resolves the removed linked root")
+	}
+}
+
+// TestDirectoryWatcher_NestedSymlinkStillSkipped keeps #32 pinned: a nested
+// symlinked directory stays un-followed and its target's files are not indexed.
+func TestDirectoryWatcher_NestedSymlinkStillSkipped(t *testing.T) {
+	vaultPath := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(vaultPath, "Work", "Journal", "Daily"), 0o755); err != nil {
+		t.Fatalf("mkdir vault tree: %v", err)
+	}
+	elsewhere := t.TempDir()
+	link := filepath.Join(vaultPath, "Work", "link")
+	createSymlinkOrSkip(t, elsewhere, link)
+
+	dw, dm := newWatcherTestHarnessAt(t, vaultPath)
+	if err := dw.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = dw.Close() })
+
+	watches := dw.watcher.WatchList()
+	if watchListHas(watches, link) {
+		t.Errorf("nested symlinked dir %q is watched; #32 requires it stay un-followed", link)
+	}
+	for _, leaked := range watchListUnder(watches, elsewhere) {
+		t.Errorf("nested symlink target %q was watched; #32 requires it stay un-followed", leaked)
+	}
+
+	// A write inside the target must not be indexed through the link.
+	pageID := "99999999-9999-9999-9999-999999999999"
+	if err := os.WriteFile(filepath.Join(elsewhere, "Elsewhere.md"),
+		[]byte("# Elsewhere <!-- id: "+pageID+" -->\n"), 0o644); err != nil {
+		t.Fatalf("write target file: %v", err)
+	}
+	deadline := time.Now().Add(600 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		var n int
+		if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM blocks WHERE id = ?", pageID).Scan(&n); err == nil && n != 0 {
+			t.Fatalf("file under a nested symlinked dir was indexed (blocks=%d); #32 requires the skip", n)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
