@@ -316,10 +316,7 @@ export function makePluginContext(
     // The Go result already uses camelCase JSON tags; normalize missing
     // collections so a pre-mount/empty response still renders safely.
     undoLastTaskMutation: async () => {
-      const res = await PluginUndoLastTaskMutation(
-        pluginID,
-        sessionToken ?? ''
-      )
+      const res = await PluginUndoLastTaskMutation(pluginID, sessionToken ?? '')
       return {
         undone: res?.undone ?? false,
         skipped: res?.skipped ?? false,
