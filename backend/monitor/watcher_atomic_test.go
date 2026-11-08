@@ -23,6 +23,15 @@ var sentinelHandlerErr = errors.New("atomic reindex handler forced failure")
 func newWatcherTestHarness(t *testing.T) (*DirectoryWatcher, *db.DatabaseManager, string) {
 	t.Helper()
 	vaultPath := t.TempDir()
+	dw, dm := newWatcherTestHarnessAt(t, vaultPath)
+	return dw, dm, vaultPath
+}
+
+// newWatcherTestHarnessAt is newWatcherTestHarness against an explicit vault
+// root, for tests (symlinked roots) that must pass the alias as the watcher's
+// vault path.
+func newWatcherTestHarnessAt(t *testing.T, vaultPath string) (*DirectoryWatcher, *db.DatabaseManager) {
+	t.Helper()
 	dm, err := db.NewDatabaseManager("")
 	if err != nil {
 		t.Fatalf("NewDatabaseManager: %v", err)
@@ -35,7 +44,7 @@ func newWatcherTestHarness(t *testing.T) (*DirectoryWatcher, *db.DatabaseManager
 	if err != nil {
 		t.Fatalf("NewDirectoryWatcher: %v", err)
 	}
-	return dw, dm, vaultPath
+	return dw, dm
 }
 
 // writeTypedMarkdown stages a typed page on disk with a stable block id so
