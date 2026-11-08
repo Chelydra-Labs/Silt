@@ -2017,6 +2017,44 @@ describe('ListView — server-side filtering via buildQuery (#526)', () => {
     )
   })
 
+  it('done SQL honors the hub text filter in All Tasks and Completed', async () => {
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      text: 'postgres'
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    let doneCall = mocks.sqliteQuery.mock.calls.find((c) =>
+      isDoneSql(String(c[0]))
+    )
+    expect(doneCall).toBeTruthy()
+    expect(String(doneCall![0])).toContain(
+      'JOIN blocks_fts ON blocks_fts.rowid = b.rowid'
+    )
+    expect(String(doneCall![0])).toContain('blocks_fts MATCH ?')
+    expect(doneCall![1] as unknown[]).toContain('"postgres"*')
+
+    // Completed smart list: the open query is skipped, so the done query is
+    // the only place the search can narrow the view.
+    cleanup()
+    mocks.sqliteQuery.mockClear()
+    setActiveFilter('completed')
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(
+      mocks.sqliteQuery.mock.calls.find((c) => isOpenSql(String(c[0])))
+    ).toBeUndefined()
+    doneCall = mocks.sqliteQuery.mock.calls.find((c) => isDoneSql(String(c[0])))
+    expect(doneCall).toBeTruthy()
+    expect(String(doneCall![0])).toContain('blocks_fts MATCH ?')
+    expect(doneCall![1] as unknown[]).toContain('"postgres"*')
+  })
+
   // Server-side filters: zero open matches must not claim "All caught up"
   // when completed rows still exist under the same filters.
   it('shows filter-aware empty open state when filters match no open tasks', async () => {

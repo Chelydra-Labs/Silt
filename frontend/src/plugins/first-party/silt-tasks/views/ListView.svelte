@@ -13,6 +13,7 @@
   import { cubicOut } from 'svelte/easing'
   import type { PluginManifest } from '../../../sdk'
   import { endOfWeekISO } from '../../../../lib/dateGrid'
+  import { buildFtsMatch } from '../../../../lib/ftsQuery'
   import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
   import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
   import QuickAddTask from '../components/QuickAddTask.svelte'
@@ -156,21 +157,17 @@
               return ctx.sqliteQuery(sql, params)
             })()
 
-      // Done path: completed rows with scope + owners/priorities/tags only.
-      // Skip for date smart-lists (Completed section is hidden there).
+      // Done path: completed rows honoring every hub filter except dueDate and
+      // stale (both describe open work, so they would empty the Completed
+      // section). Text must ride along — otherwise "Find task…" visibly
+      // narrows open rows while completed rows ignore it. Skip for date
+      // smart-lists (Completed section is hidden there).
       const donePromise =
         hub.activeFilter === 'all' || hub.activeFilter === 'completed'
           ? (() => {
-              const { owners, priorities, tags } = hub.filters
               const { sql, params } = buildQuery(
                 hub.scope,
-                {
-                  owners,
-                  priorities,
-                  tags,
-                  dueDate: '',
-                  stale: false
-                },
+                { ...hub.filters, dueDate: '', stale: false },
                 ctxLike,
                 {
                   activeFilter: 'completed',
@@ -327,7 +324,8 @@
     if (hub.filters.dueDate) return true
     if (hub.filters.tags.length > 0) return true
     if (hub.filters.stale) return true
-    if ((hub.filters.text ?? '').trim()) return true
+    // Text with no surviving FTS term changes no SQL, so it is not a filter.
+    if (buildFtsMatch(hub.filters.text ?? '')) return true
     return false
   })
 

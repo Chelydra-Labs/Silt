@@ -15,6 +15,7 @@
   } from '../state.svelte'
   import { motionDuration } from '../motion'
   import { trailingDebounce } from '../debounce'
+  import { buildFtsMatch } from '../../../../lib/ftsQuery'
 
   interface Props {
     filters: TaskFilters
@@ -300,14 +301,16 @@
 
   // A chip counts as "active" if it has at least one selection; the Clear-all
   // affordance appears once any chip is active. The free-text search counts
-  // too — it narrows the result set just like a facet.
+  // too — but only when it produces a usable MATCH term, since text that
+  // normalizes away ("a", "((*") changes no SQL and would otherwise show a
+  // filter badge with zero effect.
   let activeCount = $derived(
     (filters.owners.length ? 1 : 0) +
       (filters.priorities.length ? 1 : 0) +
       (filters.dueDate ? 1 : 0) +
       (filters.tags.length ? 1 : 0) +
       (filters.stale ? 1 : 0) +
-      ((filters.text ?? '').trim() ? 1 : 0)
+      (buildFtsMatch(filters.text ?? '') ? 1 : 0)
   )
 
   // aria-live announcer for active-filter changes. The unified sidebar used to

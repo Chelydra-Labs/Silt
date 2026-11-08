@@ -56,6 +56,7 @@ import {
   resetTaskHubState
 } from './state.svelte'
 import { getTaskWeekStart } from '../../../lib/taskWeekStart.svelte'
+import { settings } from '../../../settings/store.svelte'
 
 // jsdom polyfills: ListView pulls in TaskEditDrawer/TaskSubEditorModal, whose
 // transition:fly + TipTap need Element.animate / elementFromPoint / Range rects.
@@ -1251,6 +1252,30 @@ describe('Tasks hub — saved views bookmark (#427)', () => {
     // The view's snapshot now carries the Board displayMode.
     const updated = s.savedViews.find((v) => v.id === savedId)
     expect(updated?.displayMode).toBe('board')
+  })
+
+  it('Find task from the palette lands focus on the hub text filter', async () => {
+    // Pins the tick-order handoff: the palette closes (restoring its prior
+    // focus) before the scheduled focus() runs, so an ordering change cannot
+    // silently no-op the command's visible effect.
+    settings.config = {
+      hotkeys: { tasks_command_palette: 'Ctrl+K' }
+    } as never
+    try {
+      render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+      await flush()
+
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'k', ctrlKey: true })
+      )
+      await flush()
+      await fireEvent.click(screen.getByText('Find task…'))
+      await flush()
+
+      expect(document.activeElement).toBe(screen.getByLabelText('Find tasks'))
+    } finally {
+      settings.config = null
+    }
   })
 
   it('Escape closes the open popover (mirrors FilterBar escape pattern)', async () => {

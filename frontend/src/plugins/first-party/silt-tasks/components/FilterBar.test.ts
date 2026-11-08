@@ -428,6 +428,20 @@ describe('FilterBar text narrowing', () => {
     const region = document.querySelector('[aria-live="polite"]')
     expect(region?.textContent?.trim()).toBe('1 active filter')
   })
+
+  it('does not count text that normalizes to no FTS term', async () => {
+    // "a" and punctuation-only queries produce no MATCH predicate, so
+    // claiming an active filter would promise narrowing that never happens.
+    render(FilterBar, {
+      props: makeProps({ filters: emptyTextFilters('a * ((') })
+    })
+    await tick()
+    const region = document.querySelector('[aria-live="polite"]')
+    expect(region?.textContent?.trim()).toBe('No active filters')
+    expect(
+      screen.queryByRole('button', { name: /Clear all/ })
+    ).not.toBeInTheDocument()
+  })
 })
 
 describe('FilterBar "Clear all" and the transient search', () => {
