@@ -65,6 +65,7 @@
   import { cloneColumns, columnsEqual } from './columns'
   import { viewMatchesState } from './savedViews'
   import { motionDuration } from './motion'
+  import { initTasksUndo } from './undo.svelte'
 
   interface Props {
     ctx: PluginContext
@@ -246,6 +247,7 @@
 
   onMount(() => {
     let mounted = true
+    initTasksUndo(ctx)
     const hydrationSeq = () => ++settingsHydrationSeq
     const reportSettingsFailure = (error: unknown) => {
       const detail = error instanceof Error ? error.message : String(error)

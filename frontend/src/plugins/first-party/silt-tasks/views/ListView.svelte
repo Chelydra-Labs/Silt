@@ -50,6 +50,7 @@
   import { binByDimension, type GroupSection } from '../grouping'
   import { buildQuery } from '../query'
   import { useBlockChangedReload, useBlockedDoneGuard } from '../shared.svelte'
+  import { trackTaskUndoWrite } from '../undo.svelte'
 
   interface Props extends TaskViewProps {
     /** Unused now (title lives in the hub); kept for direct-render compat. */
@@ -486,7 +487,7 @@
     markDownError = ''
     if (markDownTimer) clearTimeout(markDownTimer)
     try {
-      await ctx.updateBlockState(item.id, 'DONE')
+      await trackTaskUndoWrite(ctx.updateBlockState(item.id, 'DONE'))
       openItems = openItems.filter((i) => i.id !== item.id)
     } catch (e) {
       markDownError = friendlyCaughtError(e)
@@ -742,21 +743,21 @@
       changes.find((c) => c.id === srcId)?.order ?? ''
     }.`
 
-    void ctx
-      .setTaskOrders(changes.map((c) => ({ id: c.id, order: c.order })))
-      .catch((err) => {
-        // Revert every optimistic update; the next reload will surface the
-        // file's actual state. One batch write = one revert on failure.
-        openItems = openItems.map((r) => {
-          if (!changes.some((x) => x.id === r.id)) return r
-          return {
-            ...r,
-            manual_order: prevOrders.get(r.id) ?? r.manual_order
-          }
-        })
-        flashOrderError(err)
-        liveMessage = 'Reorder failed — reverted.'
+    void trackTaskUndoWrite(
+      ctx.setTaskOrders(changes.map((c) => ({ id: c.id, order: c.order })))
+    ).catch((err) => {
+      // Revert every optimistic update; the next reload will surface the
+      // file's actual state. One batch write = one revert on failure.
+      openItems = openItems.map((r) => {
+        if (!changes.some((x) => x.id === r.id)) return r
+        return {
+          ...r,
+          manual_order: prevOrders.get(r.id) ?? r.manual_order
+        }
       })
+      flashOrderError(err)
+      liveMessage = 'Reorder failed — reverted.'
+    })
     // Prevent the wasOverId leak when the drop fires before dragleave.
     void wasOverId
   }

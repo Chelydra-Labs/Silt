@@ -1,12 +1,13 @@
 <script lang="ts">
   import { SvelteDate } from 'svelte/reactivity'
   import { fly } from 'svelte/transition'
-  import { tick, untrack } from 'svelte'
+  import { onDestroy, tick, untrack } from 'svelte'
   import type { PluginContext, TaskStatus } from '../../../sdk'
   import { trailingDebounce } from '../debounce'
   import { friendlyCaughtError } from '../errors'
   import { optimisticField } from '../optimisticField.svelte'
   import { useBlockedDoneGuard } from '../shared.svelte'
+  import { beginTaskUndoWrite, refreshTasksUndo } from '../undo.svelte'
   import ErrorBanner from './ErrorBanner.svelte'
 
   import type { TaskDetail } from '../types'
@@ -98,7 +99,12 @@
   let progressState = $state(0)
   let progressPending = $state(false)
 
-  const notifyMeta = () => onMetaChanged?.()
+  const notifyMeta = () => {
+    onMetaChanged?.()
+    // The journal captures alongside the successful write, so this peek makes
+    // undo available without waiting for the block:changed round-trip.
+    void refreshTasksUndo()
+  }
   const setMetaError = (m: string) => {
     metaError = m
   }
@@ -213,6 +219,34 @@
   $effect(() => {
     busy =
       recurrenceOpen || dueDateOpen || startDateOpen || !!blockedGuard.pending
+  })
+
+  // Any optimistic field (or the progress write) in flight disables undo: the
+  // journal entry and the rendered value disagree until the write lands.
+  let releaseUndoWrite: (() => void) | null = null
+  $effect(() => {
+    const pending =
+      pinField.pending ||
+      progressPending ||
+      recurrenceField.pending ||
+      dueDateField.pending ||
+      startDateField.pending ||
+      statusField.pending ||
+      estimateField.pending ||
+      ownerField.pending ||
+      priorityField.pending ||
+      tagsField.pending ||
+      titleField.pending
+    if (pending && !releaseUndoWrite) {
+      releaseUndoWrite = beginTaskUndoWrite()
+    } else if (!pending && releaseUndoWrite) {
+      releaseUndoWrite()
+      releaseUndoWrite = null
+    }
+  })
+  onDestroy(() => {
+    releaseUndoWrite?.()
+    releaseUndoWrite = null
   })
 
   $effect(() => {

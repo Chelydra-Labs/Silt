@@ -23,6 +23,7 @@ import type { useBlockedDoneGuard } from '../../shared.svelte'
 import { groupByDispatch, unionTags } from '../../groupByDispatch'
 import { nextManualOrder } from '../manualOrder'
 import { friendlyCaughtError } from '../../errors'
+import { trackTaskUndoWrite } from '../../undo.svelte'
 
 // A rendered Board lane. `value` is the dimension value a drop/quick-add
 // dispatches with — '' routes to the dimension's "clear" path (Unassigned
@@ -256,7 +257,7 @@ export function createBoardDndController({
 
     liveMessage = announceMove(toCol)
     try {
-      await dispatchDrop(card, toCol)
+      await trackTaskUndoWrite(dispatchDrop(card, toCol))
       // Cross-column manual sort (#426): the moved card joins after the
       // destination's highest existing order. Source columns aren't
       // renumbered on removal (gap-tolerant), so destination orders can be
@@ -266,7 +267,9 @@ export function createBoardDndController({
       if (sort === 'manual') {
         const destItems = prev.find((c) => c.key === toCol.key)?.items ?? []
         try {
-          await ctx.setTaskOrder(card.id, nextManualOrder(destItems))
+          await trackTaskUndoWrite(
+            ctx.setTaskOrder(card.id, nextManualOrder(destItems))
+          )
         } catch (e) {
           if (my !== moveSeq) return
           moveError = errMsg(e)
@@ -292,7 +295,7 @@ export function createBoardDndController({
     const { card, fromColKey, toCol } = pending.context
     const sort = getSort()
     try {
-      await ctx.updateBlockState(card.id, 'DONE')
+      await trackTaskUndoWrite(ctx.updateBlockState(card.id, 'DONE'))
       // Cross-column manual sort (#426): mirror commitDrop. The DONE jump is
       // a cross-column move under manual sort, so the card needs an order
       // token beyond the destination's tail. prev (snapshot at drag-start) is
@@ -301,7 +304,9 @@ export function createBoardDndController({
         const destItems =
           getColumns().find((c) => c.key === toCol.key)?.items ?? []
         try {
-          await ctx.setTaskOrder(card.id, nextManualOrder(destItems))
+          await trackTaskUndoWrite(
+            ctx.setTaskOrder(card.id, nextManualOrder(destItems))
+          )
         } catch (e) {
           moveError = errMsg(e)
           // The status change already persisted; reload picks up on-disk state
@@ -354,7 +359,7 @@ export function createBoardDndController({
     }
     liveMessage = announceMove(toCol)
     try {
-      await dispatchDrop(card, toCol)
+      await trackTaskUndoWrite(dispatchDrop(card, toCol))
       if (sort === 'manual') {
         // Destination already includes the optimistic card; exclude it when
         // computing the prior max order so we don't count the card itself.
@@ -363,7 +368,9 @@ export function createBoardDndController({
             .find((c) => c.key === toCol.key)
             ?.items.filter((i) => i.id !== card.id) ?? []
         try {
-          await ctx.setTaskOrder(card.id, nextManualOrder(destItems))
+          await trackTaskUndoWrite(
+            ctx.setTaskOrder(card.id, nextManualOrder(destItems))
+          )
         } catch (e) {
           moveError = errMsg(e)
           await reload()
@@ -507,8 +514,8 @@ export function createBoardDndController({
     // patched above); this ensures disk agrees.
     if (reorderInFlight) await reorderInFlight.catch(() => {})
     try {
-      const p = ctx.setTaskOrders(
-        changes.map((c) => ({ id: c.id, order: c.order }))
+      const p = trackTaskUndoWrite(
+        ctx.setTaskOrders(changes.map((c) => ({ id: c.id, order: c.order })))
       )
       reorderInFlight = p.then(
         () => {},
