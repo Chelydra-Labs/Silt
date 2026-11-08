@@ -572,6 +572,56 @@ describe('buildQuery — limit lever', () => {
   })
 })
 
+describe('buildQuery — free-text FTS narrowing (#1010)', () => {
+  it('joins blocks_fts and binds a quoted prefix MATCH expression', () => {
+    const filters: TaskFilters = { ...emptyFilters, text: 'postgres' }
+    const { sql, params } = buildQuery('vault', filters, ctx)
+    expect(sql).toContain('JOIN blocks_fts ON blocks_fts.rowid = b.rowid')
+    expect(sql).toContain('blocks_fts MATCH ?')
+    expect(params).toEqual(['"postgres"*'])
+  })
+
+  it('normalizes terms exactly like the Go builder', () => {
+    const filters: TaskFilters = {
+      ...emptyFilters,
+      text: '"inject" OR (*) café'
+    }
+    const { params } = buildQuery('vault', filters, ctx)
+    expect(params).toEqual(['"inject"* "OR"* "café"*'])
+  })
+
+  it('splits on whitespace and implicitly ANDs every surviving term', () => {
+    const filters: TaskFilters = { ...emptyFilters, text: 'ship  postgres' }
+    expect(buildQuery('vault', filters, ctx).params).toEqual([
+      '"ship"* "postgres"*'
+    ])
+  })
+
+  it.each(['', '   ', 'a * b', '(*)'])(
+    'treats %j as no text predicate (no join, no param)',
+    (text) => {
+      const filters: TaskFilters = { ...emptyFilters, text }
+      const { sql, params } = buildQuery('vault', filters, ctx)
+      expect(sql).not.toContain('blocks_fts')
+      expect(params).toEqual([])
+    }
+  )
+
+  it('combines with attribute filters without interpolating user values', () => {
+    const filters: TaskFilters = {
+      ...emptyFilters,
+      text: 'postgres',
+      owners: ['Bob'],
+      priorities: [1]
+    }
+    const { sql, params } = buildQuery('vault', filters, ctx)
+    // FTS predicate leads, then the facet clauses in builder order.
+    expect(params).toEqual(['"postgres"*', 'Bob', 1])
+    expect(sql).toContain('t.owner IN (?)')
+    expect(sql.match(/blocks_fts MATCH \?/g)).toHaveLength(1)
+  })
+})
+
 describe('buildQuery — orderBy override', () => {
   it('replaces the composed ORDER BY body when orderBy is set', () => {
     const { sql } = buildQuery('vault', emptyFilters, ctx, {

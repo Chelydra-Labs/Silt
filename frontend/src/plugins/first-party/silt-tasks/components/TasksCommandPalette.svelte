@@ -84,9 +84,6 @@
   const INPUT_ID = 'tasks-command-palette-input'
 
   let hotkeys = $derived(settings.config?.hotkeys ?? {})
-  let openSearchHint = $derived(
-    resolveHotkeyDisplay('open_search', hotkeys) || ''
-  )
   let newTaskHint = $derived(resolveHotkeyDisplay('new_task', hotkeys) || '')
 
   // Case-insensitive includes OR subsequence match on the label.
@@ -144,7 +141,7 @@
     cmds.push({
       id: 'find-task',
       label: 'Find task…',
-      subtitle: openSearchHint || undefined,
+      subtitle: 'Narrow the hub by text',
       icon: 'search',
       run: () => onFindTask()
     })

@@ -56,6 +56,7 @@ import {
   resetTaskHubState
 } from './state.svelte'
 import { getTaskWeekStart } from '../../../lib/taskWeekStart.svelte'
+import { settings } from '../../../settings/store.svelte'
 
 // jsdom polyfills: ListView pulls in TaskEditDrawer/TaskSubEditorModal, whose
 // transition:fly + TipTap need Element.animate / elementFromPoint / Range rects.
@@ -1141,6 +1142,62 @@ describe('Tasks hub — saved views bookmark (#427)', () => {
     expect(screen.getByTestId('tasks-hub-dirty-dot')).toBeTruthy()
   })
 
+  it('clears a search-only saved view without marking it modified (#1071)', async () => {
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+    await fireEvent.input(screen.getByTestId('tasks-hub-save-view-name'), {
+      target: { value: 'My View' }
+    })
+    await fireEvent.click(screen.getByTestId('tasks-hub-save-view-commit'))
+    await flush()
+
+    const input = screen.getByTestId('tasks-hub-text-filter')
+    await fireEvent.input(input, { target: { value: 'postgres' } })
+    await vi.waitFor(
+      () => expect(getTaskHubState().filters.text).toBe('postgres'),
+      { timeout: 1000 }
+    )
+    // Typing narrows without diverging from the saved view.
+    expect(getTaskHubState().savedViewsDirty).toBe(false)
+
+    await fireEvent.click(screen.getByRole('button', { name: /Clear all/ }))
+    await flush()
+
+    expect(getTaskHubState().filters.text).toBe('')
+    expect(getTaskHubState().savedViewsDirty).toBe(false)
+    expect(screen.queryByText(/\(modified\)/)).toBeNull()
+  })
+
+  it('keeps the transient search out of the saved_views snapshot (#1071)', async () => {
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const input = screen.getByTestId('tasks-hub-text-filter')
+    await fireEvent.input(input, { target: { value: 'postgres' } })
+    await vi.waitFor(
+      () => expect(getTaskHubState().filters.text).toBe('postgres'),
+      { timeout: 1000 }
+    )
+
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+    await fireEvent.input(screen.getByTestId('tasks-hub-save-view-name'), {
+      target: { value: 'Searchless' }
+    })
+    await fireEvent.click(screen.getByTestId('tasks-hub-save-view-commit'))
+    await flush()
+
+    const written = mocks.updatePluginSetting.mock.calls.find(
+      (c) => c[0] === 'saved_views'
+    )?.[1] as Array<{ name?: string; filters?: Record<string, unknown> }>
+    const saved = written.find((v) => v.name === 'Searchless')
+    expect(saved?.filters).toBeDefined()
+    expect(saved?.filters).not.toHaveProperty('text')
+  })
+
   it('offers Update / Save-as-new when the active view is dirty', async () => {
     render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
@@ -1195,6 +1252,30 @@ describe('Tasks hub — saved views bookmark (#427)', () => {
     // The view's snapshot now carries the Board displayMode.
     const updated = s.savedViews.find((v) => v.id === savedId)
     expect(updated?.displayMode).toBe('board')
+  })
+
+  it('Find task from the palette lands focus on the hub text filter', async () => {
+    // Pins the tick-order handoff: the palette closes (restoring its prior
+    // focus) before the scheduled focus() runs, so an ordering change cannot
+    // silently no-op the command's visible effect.
+    settings.config = {
+      hotkeys: { tasks_command_palette: 'Ctrl+K' }
+    } as never
+    try {
+      render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+      await flush()
+
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'k', ctrlKey: true })
+      )
+      await flush()
+      await fireEvent.click(screen.getByText('Find task…'))
+      await flush()
+
+      expect(document.activeElement).toBe(screen.getByLabelText('Find tasks'))
+    } finally {
+      settings.config = null
+    }
   })
 
   it('Escape closes the open popover (mirrors FilterBar escape pattern)', async () => {

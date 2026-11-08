@@ -130,6 +130,11 @@ describe('shipped product-docs corpus', () => {
       { q: 'link external folder linked notebook', docId: 'linked-notebooks' },
       { q: 'attach file image attachments folder', docId: 'attachments' },
       { q: 'search vault vs semantic search AI', docId: 'search-and-find' },
+      {
+        q: 'search task owner status priority due overdue',
+        docId: 'search-and-find'
+      },
+      { q: 'tasks hub find task search field saved view', docId: 'tasks-hub' },
       { q: 'preview tab pin double click page', docId: 'navigation-and-tabs' }
     ]
     for (const { q, docId } of goldens) {
@@ -140,5 +145,29 @@ describe('shipped product-docs corpus', () => {
         `${q} → expect ${docId}, got ${hits.map((h) => h.docId).join(',')}`
       ).toBe(true)
     }
+  })
+
+  it('documents the #1010 task-attribute filters and transient hub search', () => {
+    resetProductDocCorpusCache()
+    const sections = loadProductDocCorpus()
+    const searchDoc = sections
+      .filter((s) => s.docId === 'search-and-find')
+      .map((s) => s.body)
+      .join('\n')
+    expect(searchDoc).toMatch(/priority floor/i)
+    // Only type/tag/task filters suppress page titles; notebook/scope narrow
+    // page rows too (backend applies those predicates inside the title leg).
+    expect(searchDoc).toMatch(/type, tag, or task filter hides/gi)
+    expect(searchDoc).toMatch(/do \*\*not\*\* hide page titles/i)
+    expect(searchDoc).toMatch(/notebook\/section names/i)
+    expect(searchDoc).toMatch(/need a query/i)
+
+    const hubDoc = sections
+      .filter((s) => s.docId === 'tasks-hub')
+      .map((s) => s.body)
+      .join('\n')
+    expect(hubDoc).toMatch(/Find task…/)
+    expect(hubDoc).toMatch(/transient/i)
+    expect(hubDoc).toMatch(/saved-view dimensions/i)
   })
 })

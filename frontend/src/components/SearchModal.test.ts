@@ -4,24 +4,27 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 const mocks = vi.hoisted(() => ({
   SearchBlocksPaged: vi.fn(),
   ListNavigation: vi.fn(),
-  QueryTagHierarchy: vi.fn()
+  QueryTagHierarchy: vi.fn(),
+  DistinctOwners: vi.fn()
 }))
 
 vi.mock('$silt-app', () =>
   createAppIpcMocks({
     SearchBlocksPaged: mocks.SearchBlocksPaged,
     ListNavigation: mocks.ListNavigation,
-    QueryTagHierarchy: mocks.QueryTagHierarchy
+    QueryTagHierarchy: mocks.QueryTagHierarchy,
+    DistinctOwners: mocks.DistinctOwners
   })
 )
 
 import SearchModal from './SearchModal.svelte'
 
-describe('SearchModal keyboard a11y', () => {
+describe('SearchModal', () => {
   beforeEach(() => {
     mocks.SearchBlocksPaged.mockReset()
     mocks.ListNavigation.mockReset()
     mocks.QueryTagHierarchy.mockReset()
+    mocks.DistinctOwners.mockReset()
     mocks.SearchBlocksPaged.mockResolvedValue({
       results: [],
       total: 0,
@@ -38,6 +41,7 @@ describe('SearchModal keyboard a11y', () => {
     mocks.QueryTagHierarchy.mockResolvedValue([
       { name: 'project', path: 'project', count: 2, children: [] }
     ])
+    mocks.DistinctOwners.mockResolvedValue(['Alice', 'Bob'])
   })
   afterEach(() => cleanup())
 
@@ -217,6 +221,55 @@ describe('SearchModal keyboard a11y', () => {
     expect(arrowEvt.defaultPrevented).toBe(false)
   })
 
+  it('lets Enter activate a focused toolbar button instead of jumping to result 0', async () => {
+    const onJump = vi.fn()
+    const onClose = vi.fn()
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: '1',
+          source: 'vault',
+          notebook: 'Work',
+          section: '',
+          page: 'A',
+          file_date: '',
+          clean_content: 'hello'
+        }
+      ],
+      total: 1,
+      offset: 0,
+      limit: 20,
+      has_more: false
+    })
+    render(SearchModal, { props: { onClose, onJump } })
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'hello' } })
+    await vi.waitFor(() => {
+      expect(mocks.SearchBlocksPaged).toHaveBeenCalled()
+    })
+
+    const toggle = screen.getByTestId('search-task-filters-toggle')
+    toggle.focus()
+    expect(document.activeElement).toBe(toggle)
+    const enterEvt = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true
+    })
+    toggle.dispatchEvent(enterEvt)
+    // jsdom does not synthesize the native click, so assert the capture
+    // handler stayed out of the way and no result jump/close happened.
+    expect(enterEvt.defaultPrevented).toBe(false)
+    expect(onJump).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+
+    // The pointer path still opens the disclosure.
+    await fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  })
+
   it('sends empty notebook/tag when filters are cleared (#655)', async () => {
     render(SearchModal, {
       props: { onClose: vi.fn(), onJump: vi.fn() }
@@ -370,5 +423,188 @@ describe('SearchModal keyboard a11y', () => {
     expect(clickJump).toHaveBeenCalledWith(result)
     expect(enterJump).toHaveBeenCalledWith(result)
     expect(enterJump.mock.calls[0][0]).toEqual(clickJump.mock.calls[0][0])
+  })
+
+  it('sends task-attribute filters to SearchBlocksPaged (#1010)', async () => {
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn() }
+    })
+    await fireEvent.click(screen.getByTestId('search-task-filters-toggle'))
+
+    const status = screen.getByLabelText(
+      'Filter by task status'
+    ) as HTMLSelectElement
+    status.value = 'DOING'
+    await fireEvent.change(status)
+
+    const owner = screen.getByLabelText('Filter by owner')
+    await fireEvent.input(owner, { target: { value: 'alice' } })
+
+    await fireEvent.click(screen.getByRole('button', { name: 'P2+' }))
+    await fireEvent.click(screen.getByTestId('search-overdue-toggle'))
+
+    const dueAfter = screen.getByLabelText('Due on or after')
+    await fireEvent.input(dueAfter, { target: { value: '2026-01-01' } })
+    const dueBefore = screen.getByLabelText('Due on or before')
+    await fireEvent.input(dueBefore, { target: { value: '2026-12-31' } })
+
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'postgres' } })
+
+    await vi.waitFor(() => {
+      const match = mocks.SearchBlocksPaged.mock.calls.find(
+        (c) =>
+          c[0] === 'postgres' &&
+          c[3]?.status === 'DOING' &&
+          c[3]?.owner === 'alice' &&
+          c[3]?.priorityMin === 2 &&
+          c[3]?.overdue === true &&
+          c[3]?.dueAfter === '2026-01-01' &&
+          c[3]?.dueBefore === '2026-12-31'
+      )
+      expect(match).toBeTruthy()
+    })
+  })
+
+  it('shows the page-title suppression hint only while a filter hides it', async () => {
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn() }
+    })
+    expect(screen.queryByTestId('search-title-leg-hint')).toBeNull()
+
+    await fireEvent.click(screen.getByTestId('search-task-filters-toggle'))
+    await fireEvent.click(screen.getByRole('button', { name: 'P1+' }))
+    expect(screen.getByTestId('search-title-leg-hint')).toBeInTheDocument()
+
+    // Clearing the priority floor restores the title leg (no hint).
+    await fireEvent.click(screen.getByLabelText('Clear priority filter'))
+    expect(screen.queryByTestId('search-title-leg-hint')).toBeNull()
+  })
+
+  it('groups task-attribute controls behind a Task filters disclosure (#1071)', async () => {
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn() }
+    })
+    const toggle = screen.getByTestId('search-task-filters-toggle')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    // Collapsed: the attribute controls are out of the tab order/density.
+    expect(screen.queryByLabelText('Filter by task status')).toBeNull()
+    // Query-adjacent controls stay visible.
+    expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Relevance' })
+    ).toBeInTheDocument()
+
+    await fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByLabelText('Filter by task status')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('search-task-filters-count')
+    ).not.toBeInTheDocument()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'P2+' }))
+    expect(screen.getByTestId('search-task-filters-count')).toHaveTextContent(
+      '1'
+    )
+
+    // Collapsing keeps the badge (active filters remain in effect).
+    await fireEvent.click(toggle)
+    expect(screen.queryByLabelText('Filter by task status')).toBeNull()
+    expect(screen.getByTestId('search-task-filters-count')).toHaveTextContent(
+      '1'
+    )
+  })
+
+  it('seeds the owner datalist from DistinctOwners and explains task-row semantics (#1071)', async () => {
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn() }
+    })
+    await fireEvent.click(screen.getByTestId('search-task-filters-toggle'))
+
+    await vi.waitFor(() => {
+      expect(mocks.DistinctOwners).toHaveBeenCalledWith('')
+      const datalist = document.getElementById(
+        'search-owner-options'
+      ) as HTMLDataListElement
+      expect(Array.from(datalist.options).map((o) => o.value)).toEqual([
+        'Alice',
+        'Bob'
+      ])
+    })
+
+    await fireEvent.click(screen.getByRole('button', { name: 'P1+' }))
+    expect(screen.getByTestId('search-title-leg-hint')).toHaveTextContent(
+      /notes and headings are hidden/i
+    )
+  })
+
+  it('renders page-level rows and opens them with the empty block id', async () => {
+    const pageRow = {
+      id: '',
+      source: 'vault',
+      notebook: 'Work',
+      section: 'Plans',
+      page: 'Roadmap 2027',
+      file_date: '',
+      clean_content: 'Roadmap 2027',
+      snippet: '<mark>Roadmap</mark> 2027'
+    }
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [pageRow],
+      total: 1,
+      offset: 0,
+      limit: 20,
+      has_more: false
+    })
+    const onJump = vi.fn()
+    render(SearchModal, { props: { onClose: vi.fn(), onJump } })
+
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'roadmap' } })
+    const row = await screen.findByRole('button', { name: /Roadmap 2027/i })
+    expect(screen.getByText('Page')).toBeInTheDocument()
+    await fireEvent.click(row)
+    expect(onJump).toHaveBeenCalledWith(pageRow)
+  })
+
+  it('displays task attributes projected on result rows', async () => {
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: 't1',
+          source: 'vault',
+          notebook: 'Work',
+          section: 'Sprint',
+          page: 'Sprint 41',
+          file_date: '2026-07-20',
+          clean_content: 'Ship search filters',
+          status: 'DOING',
+          owner: 'alice',
+          due_date: '2026-08-01',
+          priority: 1,
+          snippet: 'Ship <mark>search</mark> filters'
+        }
+      ],
+      total: 1,
+      offset: 0,
+      limit: 20,
+      has_more: false
+    })
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn() }
+    })
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'search' } })
+    const meta = await screen.findByTestId('search-result-task-meta')
+    expect(meta).toHaveTextContent('DOING')
+    expect(meta).toHaveTextContent('alice')
+    expect(meta).toHaveTextContent('2026-08-01')
+    expect(meta).toHaveTextContent('P1')
   })
 })

@@ -8,6 +8,9 @@
     file_date: string
     clean_content: string
     status?: string
+    owner?: string
+    due_date?: string
+    priority?: number
     snippet?: string
   }
 </script>
@@ -17,7 +20,8 @@
   import {
     SearchBlocksPaged,
     ListNavigation,
-    QueryTagHierarchy
+    QueryTagHierarchy,
+    DistinctOwners
   } from '../../bindings/silt/app.js'
   import { STANDALONE_TASKS_NOTEBOOK } from '../lib/standaloneTasksNav'
 
@@ -59,12 +63,45 @@
   let tagFilter = $state('')
   let notebookOptions = $state<string[]>([])
   let tagOptions = $state<string[]>([])
+  let ownerOptions = $state<string[]>([])
+
+  // Task-attribute filters (#1010). These ride SearchFilters' structured
+  // predicates; setting any of them restricts results to matching TASK blocks
+  // and suppresses page-title hits (a page row carries no task attributes).
+  let ownerFilter = $state('')
+  let statusFilter = $state('')
+  let dueAfterFilter = $state('')
+  let dueBeforeFilter = $state('')
+  let priorityFloor = $state(0)
+  let overdueOnly = $state(false)
+  // Density: the seven attribute controls stay behind a disclosure so the
+  // toolbar keeps single-row height at the dialog's 31.25rem cap.
+  let taskFiltersOpen = $state(false)
+
+  function taskFilterCount(): number {
+    let n = 0
+    if (statusFilter) n++
+    if (ownerFilter.trim()) n++
+    if (priorityFloor > 0) n++
+    if (overdueOnly) n++
+    if (dueAfterFilter || dueBeforeFilter) n++
+    return n
+  }
 
   const TYPE_CHIPS: { id: string; label: string }[] = [
     { id: '', label: 'All' },
     { id: 'TASK', label: 'Tasks' },
     { id: 'NOTE', label: 'Notes' },
     { id: 'HEADER', label: 'Headings' }
+  ]
+
+  // priorityMin is an urgency floor: N selects priority N and everything MORE
+  // urgent (lower number). 0 = no floor.
+  const PRIORITY_FLOORS: { value: number; label: string; title: string }[] = [
+    { value: 0, label: 'Any', title: 'Any priority' },
+    { value: 1, label: 'P1+', title: 'Critical only (priority 1)' },
+    { value: 2, label: 'P2+', title: 'Critical or normal (priority 1–2)' },
+    { value: 3, label: 'P3+', title: 'Any recorded priority (1–3)' }
   ]
 
   const FOCUSABLE =
@@ -75,13 +112,30 @@
     return Array.from(dialogEl.querySelectorAll<HTMLElement>(FOCUSABLE))
   }
 
+  function hasTaskAttributeFilters(): boolean {
+    return (
+      ownerFilter.trim() !== '' ||
+      statusFilter !== '' ||
+      dueAfterFilter !== '' ||
+      dueBeforeFilter !== '' ||
+      priorityFloor > 0 ||
+      overdueOnly
+    )
+  }
+
+  /** True when a page row could never satisfy the active filters. */
+  function hidesPageTitles(): boolean {
+    return typeFilter !== '' || tagFilter !== '' || hasTaskAttributeFilters()
+  }
+
   function hasActiveFilters(): boolean {
     return (
       scopeVaultOnly ||
       typeFilter !== '' ||
       sortMode !== 'relevance' ||
       notebookFilter !== '' ||
-      tagFilter !== ''
+      tagFilter !== '' ||
+      hasTaskAttributeFilters()
     )
   }
 
@@ -91,17 +145,37 @@
     sortMode = 'relevance'
     notebookFilter = ''
     tagFilter = ''
+    ownerFilter = ''
+    statusFilter = ''
+    dueAfterFilter = ''
+    dueBeforeFilter = ''
+    priorityFloor = 0
+    overdueOnly = false
   }
 
-  function filterSig(
-    q: string,
-    type: string,
-    sort: string,
-    vaultOnly: boolean,
-    notebook: string,
-    tag: string
-  ): string {
-    return `${q}|${type}|${sort}|${vaultOnly}|${notebook}|${tag}`
+  function priorityFloorLabel(): string {
+    return (
+      PRIORITY_FLOORS.find((p) => p.value === priorityFloor)?.label ?? 'Any'
+    )
+  }
+
+  // One signature over every input the request carries: a response whose
+  // signature no longer matches current state is stale and must be dropped.
+  function filterSig(q: string): string {
+    return [
+      q,
+      typeFilter,
+      sortMode,
+      scopeVaultOnly,
+      notebookFilter,
+      tagFilter,
+      ownerFilter,
+      statusFilter,
+      dueAfterFilter,
+      dueBeforeFilter,
+      priorityFloor,
+      overdueOnly
+    ].join('|')
   }
 
   // Re-run search whenever the query OR a filter changes (debounced). Resets to
@@ -115,6 +189,12 @@
     void scopeVaultOnly
     void notebookFilter
     void tagFilter
+    void ownerFilter
+    void statusFilter
+    void dueAfterFilter
+    void dueBeforeFilter
+    void priorityFloor
+    void overdueOnly
     if (!trimmed) {
       results = []
       selectedIdx = 0
@@ -135,15 +215,8 @@
 
   async function performSearch(q: string, off: number, replace: boolean) {
     // Capture the full filter state at call time so a stale response (from a
-    // different query OR a toggled chip/scope/sort) is detected on resolution.
-    const sig = filterSig(
-      q,
-      typeFilter,
-      sortMode,
-      scopeVaultOnly,
-      notebookFilter,
-      tagFilter
-    )
+    // different query OR a toggled chip/filter) is detected on resolution.
+    const sig = filterSig(q)
     loading = true
     try {
       const res: SearchResult = await SearchBlocksPaged(q, off, pageSize, {
@@ -153,27 +226,16 @@
         type: typeFilter,
         sort: sortMode,
         vaultOnly: scopeVaultOnly,
-        owner: '',
-        status: '',
-        dueBefore: '',
-        dueAfter: '',
-        priorityMin: 0,
-        overdue: false,
+        owner: ownerFilter.trim(),
+        status: statusFilter,
+        dueBefore: dueBeforeFilter,
+        dueAfter: dueAfterFilter,
+        priorityMin: priorityFloor,
+        overdue: overdueOnly,
         excludePageTitles: false
       })
       // Guard against a stale response landing after a newer query/filter.
-      if (
-        sig !==
-        filterSig(
-          query.trim(),
-          typeFilter,
-          sortMode,
-          scopeVaultOnly,
-          notebookFilter,
-          tagFilter
-        )
-      )
-        return
+      if (sig !== filterSig(query.trim())) return
       if (replace) {
         results = res.results || []
         selectedIdx = 0
@@ -224,6 +286,15 @@
       console.error('SearchModal: QueryTagHierarchy failed:', e)
       tagOptions = []
     }
+    try {
+      const owners = (await DistinctOwners('')) || []
+      ownerOptions = owners
+        .filter((o: string) => o.trim() !== '')
+        .sort((a: string, b: string) => a.localeCompare(b))
+    } catch (e) {
+      console.error('SearchModal: DistinctOwners failed:', e)
+      ownerOptions = []
+    }
   }
 
   function loadMore() {
@@ -265,6 +336,14 @@
     if (!active || active === inputEl) return false
     const tag = active.tagName
     return tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA'
+  }
+
+  /** True when Enter must run the focused control's native activation
+   *  (toolbar buttons, chips, result rows) instead of jumping to the
+   *  highlighted result; Space activation already bypasses this handler. */
+  function isActivatableControlFocused(): boolean {
+    const active = document.activeElement as HTMLElement | null
+    return !!active?.closest('button, a[href], [role="button"], [role="link"]')
   }
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -315,6 +394,7 @@
         scrollSelectedIntoView()
       }
     } else if (e.key === 'Enter') {
+      if (isActivatableControlFocused()) return
       e.preventDefault()
       if (results[selectedIdx]) {
         selectResult(results[selectedIdx])
@@ -338,6 +418,11 @@
 
   function sourceLabel(source: string): 'Linked' | 'Vault' {
     return source.startsWith('linked:') ? 'Linked' : 'Vault'
+  }
+
+  /** Page-level results use the empty block id discriminator (see ARCHITECTURE). */
+  function isPageResult(res: SearchModalResult): boolean {
+    return res.id === ''
   }
 
   // sanitizeSnippet HTML-escapes the FTS5 snippet, then restores ONLY the
@@ -521,6 +606,48 @@
         </datalist>
       </label>
 
+      <span
+        class="hidden h-4 w-px bg-surface-modal-border sm:block"
+        aria-hidden="true"
+      ></span>
+
+      <!-- Task-attribute filters (#1010): these map to SearchFilters'
+           structured predicates. Any active here restricts results to task
+           blocks and hides page-title hits (see the hint below). Grouped
+           behind a disclosure so the toolbar keeps one row at the dialog's
+           fixed height; query + type chips + sort stay visible. -->
+      <button
+        type="button"
+        data-testid="search-task-filters-toggle"
+        aria-expanded={taskFiltersOpen}
+        aria-controls="search-task-filters"
+        onclick={() => (taskFiltersOpen = !taskFiltersOpen)}
+        class="flex items-center gap-1 rounded-md border px-2 py-1 text-type-xs font-label-sm-bold transition-colors cursor-pointer"
+        class:border-accent-primary-start={taskFiltersOpen ||
+          taskFilterCount() > 0}
+        class:bg-accent-primary-start={taskFiltersOpen}
+        class:text-text-on-accent={taskFiltersOpen}
+        class:border-surface-modal-border={!taskFiltersOpen &&
+          taskFilterCount() === 0}
+        class:text-text-muted={!taskFiltersOpen}
+      >
+        <span class="material-symbols-outlined text-type-xs" aria-hidden="true"
+          >filter_alt</span
+        >
+        <span>Task filters</span>
+        {#if taskFilterCount() > 0}
+          <span
+            data-testid="search-task-filters-count"
+            class="rounded-full px-1 text-type-3xs {taskFiltersOpen
+              ? 'bg-text-on-accent/20'
+              : 'bg-accent-primary-start/20'}">{taskFilterCount()}</span
+          >
+        {/if}
+        <span class="material-symbols-outlined text-type-xs" aria-hidden="true"
+          >{taskFiltersOpen ? 'expand_less' : 'expand_more'}</span
+        >
+      </button>
+
       <!-- Sort: Relevance vs Recent (segmented). -->
       <div
         class="ml-auto flex rounded-lg overflow-hidden border border-surface-modal-border"
@@ -546,10 +673,125 @@
       </div>
     </div>
 
-    <!-- Active notebook/tag filter chips (individually clearable) (#655). -->
-    {#if notebookFilter || tagFilter}
+    {#if taskFiltersOpen}
+      <div
+        id="search-task-filters"
+        class="flex items-center gap-2 px-4 py-2 border-b border-surface-modal-border bg-surface-modal/10 flex-wrap"
+        role="group"
+        aria-label="Task filters"
+      >
+        <label class="flex items-center gap-1 text-type-xs text-text-muted">
+          <span class="sr-only">Task status</span>
+          <select
+            aria-label="Filter by task status"
+            bind:value={statusFilter}
+            class="max-w-[7.5rem] rounded-md border border-surface-modal-border bg-surface-modal px-1.5 py-1 text-type-xs text-text-primary cursor-pointer"
+          >
+            <option value="">Any status</option>
+            <option value="TODO">To do</option>
+            <option value="DOING">Doing</option>
+            <option value="DONE">Done</option>
+          </select>
+        </label>
+
+        <label class="flex items-center gap-1 text-type-xs text-text-muted">
+          <span class="sr-only">Owner</span>
+          <input
+            type="text"
+            list="search-owner-options"
+            aria-label="Filter by owner"
+            placeholder="Owner…"
+            bind:value={ownerFilter}
+            class="w-24 rounded-md border border-surface-modal-border bg-surface-modal px-1.5 py-1 text-type-xs text-text-primary placeholder:text-text-muted"
+          />
+          <datalist id="search-owner-options">
+            {#each ownerOptions as owner (owner)}
+              <option value={owner}></option>
+            {/each}
+          </datalist>
+        </label>
+
+        <div
+          class="flex items-center gap-1"
+          role="group"
+          aria-label="Filter by priority urgency"
+        >
+          {#each PRIORITY_FLOORS as p (p.value)}
+            <button
+              type="button"
+              title={p.title}
+              aria-pressed={priorityFloor === p.value}
+              onclick={() => (priorityFloor = p.value)}
+              class="px-2 py-1 rounded-md text-type-xs font-label-sm-bold transition-colors border cursor-pointer"
+              class:bg-accent-primary-start={priorityFloor === p.value}
+              class:text-text-on-accent={priorityFloor === p.value}
+              class:bg-transparent={priorityFloor !== p.value}
+              class:text-text-muted={priorityFloor !== p.value}
+              class:border-surface-modal-border={priorityFloor !== p.value}
+            >
+              {p.label}
+            </button>
+          {/each}
+        </div>
+
+        <button
+          type="button"
+          data-testid="search-overdue-toggle"
+          aria-pressed={overdueOnly}
+          title="Tasks whose due date is before today and are not done"
+          onclick={() => (overdueOnly = !overdueOnly)}
+          class="px-2 py-1 rounded-md text-type-xs font-label-sm-bold transition-colors border cursor-pointer"
+          class:bg-accent-primary-start={overdueOnly}
+          class:text-text-on-accent={overdueOnly}
+          class:bg-transparent={!overdueOnly}
+          class:text-text-muted={!overdueOnly}
+          class:border-surface-modal-border={!overdueOnly}
+        >
+          Overdue
+        </button>
+
+        <label class="flex items-center gap-1 text-type-xs text-text-muted">
+          <span class="sr-only">Due on or after</span>
+          <input
+            type="date"
+            aria-label="Due on or after"
+            bind:value={dueAfterFilter}
+            class="w-[8.5rem] rounded-md border border-surface-modal-border bg-surface-modal px-1.5 py-1 text-type-xs text-text-primary"
+          />
+        </label>
+        <label class="flex items-center gap-1 text-type-xs text-text-muted">
+          <span class="sr-only">Due on or before</span>
+          <input
+            type="date"
+            aria-label="Due on or before"
+            bind:value={dueBeforeFilter}
+            class="w-[8.5rem] rounded-md border border-surface-modal-border bg-surface-modal px-1.5 py-1 text-type-xs text-text-primary"
+          />
+        </label>
+      </div>
+    {/if}
+
+    {#if hidesPageTitles()}
+      <!-- Honest surfacing of the backend contract: the page-title leg is only
+           merged when no type/tag/task-attribute filter is active, and task
+           filters additionally join the task projection (dropping notes and
+           headings). -->
+      <p
+        role="status"
+        data-testid="search-title-leg-hint"
+        class="px-4 py-1 text-type-2xs text-text-muted border-b border-surface-modal-border bg-surface-modal/10"
+      >
+        Page-title matches are hidden while a type, tag, or task filter is
+        active. Task filters also restrict results to matching task rows — notes
+        and headings are hidden.
+      </p>
+    {/if}
+
+    <!-- Active notebook/tag/task filter chips (individually clearable). -->
+    {#if notebookFilter || tagFilter || hasTaskAttributeFilters()}
       <div
         class="flex items-center gap-2 px-4 py-1.5 border-b border-surface-modal-border flex-wrap"
+        role="group"
         aria-label="Active filters"
       >
         {#if notebookFilter}
@@ -582,6 +824,99 @@
               aria-hidden="true">sell</span
             >
             {tagFilter}
+            <span
+              class="material-symbols-outlined text-icon-xs"
+              aria-hidden="true">close</span
+            >
+          </button>
+        {/if}
+        {#if ownerFilter.trim()}
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 rounded-full border border-accent-primary-start/40 bg-accent-primary-start/10 px-2 py-0.5 text-type-xs text-accent-primary-start cursor-pointer"
+            aria-label="Clear owner filter"
+            onclick={() => (ownerFilter = '')}
+          >
+            <span
+              class="material-symbols-outlined text-icon-xs"
+              aria-hidden="true">person</span
+            >
+            Owner: {ownerFilter.trim()}
+            <span
+              class="material-symbols-outlined text-icon-xs"
+              aria-hidden="true">close</span
+            >
+          </button>
+        {/if}
+        {#if statusFilter}
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 rounded-full border border-accent-primary-start/40 bg-accent-primary-start/10 px-2 py-0.5 text-type-xs text-accent-primary-start cursor-pointer"
+            aria-label="Clear status filter"
+            onclick={() => (statusFilter = '')}
+          >
+            <span
+              class="material-symbols-outlined text-icon-xs"
+              aria-hidden="true">check_circle</span
+            >
+            Status: {statusFilter}
+            <span
+              class="material-symbols-outlined text-icon-xs"
+              aria-hidden="true">close</span
+            >
+          </button>
+        {/if}
+        {#if priorityFloor > 0}
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 rounded-full border border-accent-primary-start/40 bg-accent-primary-start/10 px-2 py-0.5 text-type-xs text-accent-primary-start cursor-pointer"
+            aria-label="Clear priority filter"
+            onclick={() => (priorityFloor = 0)}
+          >
+            <span
+              class="material-symbols-outlined text-icon-xs"
+              aria-hidden="true">flag</span
+            >
+            Priority: {priorityFloorLabel()}
+            <span
+              class="material-symbols-outlined text-icon-xs"
+              aria-hidden="true">close</span
+            >
+          </button>
+        {/if}
+        {#if overdueOnly}
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 rounded-full border border-accent-primary-start/40 bg-accent-primary-start/10 px-2 py-0.5 text-type-xs text-accent-primary-start cursor-pointer"
+            aria-label="Clear overdue filter"
+            onclick={() => (overdueOnly = false)}
+          >
+            <span
+              class="material-symbols-outlined text-icon-xs"
+              aria-hidden="true">schedule</span
+            >
+            Overdue
+            <span
+              class="material-symbols-outlined text-icon-xs"
+              aria-hidden="true">close</span
+            >
+          </button>
+        {/if}
+        {#if dueAfterFilter || dueBeforeFilter}
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 rounded-full border border-accent-primary-start/40 bg-accent-primary-start/10 px-2 py-0.5 text-type-xs text-accent-primary-start cursor-pointer"
+            aria-label="Clear due date range filter"
+            onclick={() => {
+              dueAfterFilter = ''
+              dueBeforeFilter = ''
+            }}
+          >
+            <span
+              class="material-symbols-outlined text-icon-xs"
+              aria-hidden="true">event</span
+            >
+            Due: {dueAfterFilter || '…'} → {dueBeforeFilter || '…'}
             <span
               class="material-symbols-outlined text-icon-xs"
               aria-hidden="true">close</span
@@ -659,29 +994,34 @@
                   >chevron_right</span
                 >
                 <span>{res.section}</span>
-                <span class="material-symbols-outlined text-type-2xs"
-                  >chevron_right</span
-                >
-                <span>{res.page}</span>
-                <span class="material-symbols-outlined text-type-2xs"
-                  >chevron_right</span
-                >
+                {#if !isPageResult(res)}
+                  <span class="material-symbols-outlined text-type-2xs"
+                    >chevron_right</span
+                  >
+                  <span>{res.page}</span>
+                  <span class="material-symbols-outlined text-type-2xs"
+                    >chevron_right</span
+                  >
+                {/if}
               {/if}
               <span class="text-accent-primary-start">{res.file_date}</span>
             </div>
 
-            <!-- Content preview with FTS5 highlight snippet -->
+            <!-- Content preview with FTS5 highlight snippet. Page rows carry the
+                 page name in clean_content and a <mark> title in snippet; the
+                 sanitizer allows only the highlight tags through. -->
             <div
               class="font-body-md text-sm text-text-primary flex items-center gap-2"
             >
-              {#if res.status}
+              {#if isPageResult(res)}
                 <span
                   class="material-symbols-outlined text-icon-md text-accent-primary-start select-none"
+                  aria-hidden="true">description</span
                 >
-                  {res.status === 'DONE'
-                    ? 'check_circle'
-                    : 'radio_button_unchecked'}
-                </span>
+                <span
+                  class="text-type-2xs uppercase tracking-widest text-text-muted font-label-sm-bold"
+                  >Page</span
+                >
               {/if}
               {#if res.snippet}
                 <!-- Sanitized in-script: only <mark> tags from FTS5 survive. -->
@@ -691,6 +1031,60 @@
                 <span>{res.clean_content}</span>
               {/if}
             </div>
+
+            {#if !isPageResult(res) && (res.status || res.owner || res.due_date || res.priority)}
+              <!-- Task attributes projected by the backend for TASK rows. -->
+              <div
+                class="flex flex-wrap items-center gap-x-2 gap-y-1 text-type-2xs text-text-muted"
+                data-testid="search-result-task-meta"
+              >
+                {#if res.status}
+                  <span
+                    class="inline-flex items-center gap-1 rounded border border-surface-modal-border bg-surface-modal px-1 py-0.5"
+                  >
+                    <span
+                      class="material-symbols-outlined text-icon-xs select-none"
+                      aria-hidden="true"
+                    >
+                      {res.status === 'DONE'
+                        ? 'check_circle'
+                        : 'radio_button_unchecked'}
+                    </span>
+                    {res.status}
+                  </span>
+                {/if}
+                {#if res.owner}
+                  <span class="inline-flex items-center gap-1">
+                    <span
+                      class="material-symbols-outlined text-icon-xs select-none"
+                      aria-hidden="true">person</span
+                    >
+                    {res.owner}
+                  </span>
+                {/if}
+                {#if res.due_date}
+                  <span class="inline-flex items-center gap-1">
+                    <span
+                      class="material-symbols-outlined text-icon-xs select-none"
+                      aria-hidden="true">schedule</span
+                    >
+                    {res.due_date}
+                  </span>
+                {/if}
+                {#if res.priority}
+                  <span
+                    class="inline-flex items-center gap-1"
+                    title={`Priority ${res.priority}`}
+                  >
+                    <span
+                      class="material-symbols-outlined text-icon-xs select-none"
+                      aria-hidden="true">flag</span
+                    >
+                    P{res.priority}
+                  </span>
+                {/if}
+              </div>
+            {/if}
           </button>
         {/each}
 

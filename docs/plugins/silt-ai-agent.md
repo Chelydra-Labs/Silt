@@ -103,7 +103,7 @@ Most are read-only and run inline. Write safety is controlled by
 | | `search_product_docs` | read-only | `query` (req), `top_k?` (1–10, default 5) — shipped Silt help (not vault notes; not RAG-gated) |
 | | `read_blocks` | read-only | `block_ids` (req, max 20), `include_context?` (default true — parent + siblings) |
 | | `get_backlinks` | read-only | `target` (req, UUID or page path), `include_embeds?` (default true), `max_results?` (1–100, default 20) |
-| | `query_tasks` | read-only | `status?`, `owner?`, `priority_min?` (1–3), `due_before?`, `due_after?`, `tags?`, `notebook?`, `is_blocked?`, `limit?` (1–50, default 20) |
+| | `query_tasks` | read-only | `text?` (full-text over content + notebook/section names; implicit AND, prefix per term), `status?`, `owner?`, `priority_min?` (1–3), `due_before?`, `due_after?`, `tags?`, `notebook?`, `is_blocked?`, `limit?` (1–50, default 20) |
 | | `create_note` | mutate (confirm/auto) | `page` (req), `content` (req), `notebook?` (default = active), `section?`, `tags?` |
 | | `create_task` | mutate (confirm/auto) | `text` (req), `due?`, `owner?`, `priority?` (1–3), `tags?`, `notebook?`/`section?`/`page?`/`after?` (omit for a standalone task in `.silt/tasks.md`) |
 | **P1** | `get_related_notes` | read-only | `block_id` (req), `top_k?` (1–50, default 10), `min_score?` (0–1, default 0.5) |

@@ -27,12 +27,19 @@ and only appear in the **Tasks** hub — not as a normal notebook page.
 
 ## Organize the view
 
+- **Find task…:** the search field above the views narrows the current view by
+  text. It matches task content plus notebook/section names. The search is
+  **transient** — it narrows whatever a saved view shows, is never stored in a
+  saved view, and clearing it does not mark the view as modified.
+- **Facet filters:** Owner, Priority, Due date, Tags, and Stale narrow the view
+  and *are* saved-view dimensions.
 - **Group by:** None, Status, Owner, Priority, Due date, Tag, Notebook,
   Section, Page.
 - **Sort within group:** Manual, Due, Priority, Title, Created, Owner,
   Recently Modified, Estimate.
 - **Hub command palette:** default **Ctrl+K** when Tasks is focused (and the
   editor is not) — switch mode/group/sort, jump to saved views, find/add task.
+  The palette’s **Find task…** action focuses the hub search field.
 
 While Tasks is open, the sidebar can show **Smart lists** (Today, Upcoming,
 Overdue, Completed, All Tasks), **Saved views**, and a mini-calendar.

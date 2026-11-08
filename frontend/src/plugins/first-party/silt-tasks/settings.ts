@@ -513,7 +513,12 @@ export function persistSavedViews(views: SavedView[]): Promise<boolean> {
       // deletion on next load.
       const { system: _system, ...rest } = v
       void _system
-      return rest
+      // The free-text search is transient; a snapshot path that spreads live
+      // filters must not write it into per-vault config.yaml.
+      if (!rest.filters) return rest
+      const { text: _text, ...filters } = rest.filters
+      void _text
+      return { ...rest, filters }
     })
   return saveFn ? saveFn('saved_views', userViews) : Promise.resolve(false)
 }
