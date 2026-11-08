@@ -184,6 +184,28 @@ func TestUndoLastTaskMutation_RecurrenceRemovesSpawnedSibling(t *testing.T) {
 	}
 }
 
+func TestUndoLastTaskMutation_RestoresBlockBodyText(t *testing.T) {
+	app := newTestApp(t)
+	const id = "a11d000e-1111-1111-1111-111111111111"
+	content := "- original note <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "UndoBody", "2026-07-01", content)
+
+	if err := app.MutateBlock(id, "rewritten note"); err != nil {
+		t.Fatalf("MutateBlock: %v", err)
+	}
+	result, err := app.UndoLastTaskMutation()
+	if err != nil {
+		t.Fatalf("UndoLastTaskMutation: %v", err)
+	}
+	if !result.Undone || !taskUndoContains(result.ChangedFields, "text") {
+		t.Fatalf("undo result = %+v, want body text restored", result)
+	}
+	restored, _ := os.ReadFile(filePath)
+	if line := taskLineForID(string(restored), id); !strings.Contains(line, "original note") {
+		t.Errorf("block body not restored: %q", line)
+	}
+}
+
 func TestUndoLastTaskMutation_BatchOrderRestoresAll(t *testing.T) {
 	app := newTestApp(t)
 	const (
