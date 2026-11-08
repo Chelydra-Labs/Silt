@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { PluginContext, TaskUndoResult } from '../../sdk'
+import type { PluginContext, TaskUndoResult, TaskUndoState } from '../../sdk'
 import {
   beginTaskUndoWrite,
   clearTasksUndoError,
@@ -35,7 +35,7 @@ function undoResult(overrides: Partial<TaskUndoResult> = {}): TaskUndoResult {
   }
 }
 
-function undoState(overrides: Record<string, unknown> = {}) {
+function undoState(overrides: Partial<TaskUndoState> = {}): TaskUndoState {
   return {
     canUndo: true,
     remaining: 2,
@@ -225,7 +225,7 @@ describe('undo store (#1011)', () => {
     expect(getTasksUndoView().error).toBe('')
   })
 
-  it('stays disabled with an empty journal and ignores stale peeks', async () => {
+  it('stays disabled with an empty journal', async () => {
     const { ctx, getTaskUndoState } = makeCtx()
     getTaskUndoState.mockResolvedValue(
       undoState({ canUndo: false, remaining: 0, changedFields: [] })
@@ -237,6 +237,30 @@ describe('undo store (#1011)', () => {
     expect(
       undoButtonLabel({ ...getTasksUndoView(), writePending: false })
     ).toBe('Nothing to undo')
+  })
+
+  it('drops a stale peek that resolves after a newer one', async () => {
+    const { ctx, getTaskUndoState } = makeCtx()
+    let resolveSlow: (state: TaskUndoState) => void = () => {}
+    // initTasksUndo fires peek A; hold it open so peek B can land first.
+    getTaskUndoState
+      .mockImplementationOnce(
+        () => new Promise<TaskUndoState>((resolve) => (resolveSlow = resolve))
+      )
+      .mockResolvedValueOnce(undoState({ remaining: 1, changedFields: [] }))
+
+    initTasksUndo(ctx)
+    await flush()
+    await refreshTasksUndo()
+    await flush()
+    expect(getTasksUndoView().remaining).toBe(1)
+
+    // The journal moved on after B; A's late answer is history now.
+    resolveSlow(undoState({ remaining: 5, changedFields: ['status'] }))
+    await flush()
+
+    expect(getTasksUndoView().remaining).toBe(1)
+    expect(getTasksUndoView().changedFields).toEqual([])
   })
 
   it('reset drops the bound context and the mirror', async () => {

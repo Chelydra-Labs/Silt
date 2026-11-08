@@ -1592,6 +1592,86 @@ describe('Tasks hub undo (#1011)', () => {
     )
   })
 
+  it('opts Ctrl+Z back in inside the task drawer but not its popovers', async () => {
+    const rows = [
+      boardRow({
+        id: 't1',
+        line_number: 1,
+        clean_content: 'Drawer undo',
+        due_date: ''
+      })
+    ]
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT DISTINCT owner'))
+        return { rows: [], truncated: false }
+      if (sql.includes('SELECT DISTINCT level_0'))
+        return { rows: [], truncated: false }
+      if (/(?:WHERE|AND) t\.status != 'DONE'/.test(sql))
+        return { rows, truncated: false }
+      return { rows: [], truncated: false }
+    })
+
+    render(TasksHub, { ctx: undoCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(
+      document.querySelector(
+        '[data-block-id="t1"] button[aria-label^="Edit metadata for"]'
+      )!
+    )
+    await flush()
+
+    // The overlay drawer is role=dialog, so its opt-in attribute is the only
+    // thing re-admitting hub undo inside it.
+    const drawer = screen.getByTestId('task-edit-drawer')
+    expect(drawer).toHaveAttribute('role', 'dialog')
+    expect(drawer).toHaveAttribute('data-tasks-undo-scope')
+
+    // Popovers portal out of the hub subtree, so Ctrl+Z inside one stays the
+    // popover's own — never the hub journal.
+    await fireEvent.click(document.getElementById('task-due-date-trigger')!)
+    await flush()
+    const popoverUndo = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    screen.getByRole('button', { name: /^Tomorrow/ }).dispatchEvent(popoverUndo)
+    expect(popoverUndo.defaultPrevented).toBe(false)
+    expect(mocks.undoLastTaskMutation).not.toHaveBeenCalled()
+
+    // A non-editable control on the opted-in drawer still reaches the journal.
+    const drawerUndo = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    screen.getByTestId('tasks-undo-drawer').dispatchEvent(drawerUndo)
+    await flush()
+    expect(drawerUndo.defaultPrevented).toBe(true)
+    expect(mocks.undoLastTaskMutation).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders the undo failure banner and dismisses it', async () => {
+    mocks.undoLastTaskMutation.mockRejectedValue(new Error('focus lock held'))
+
+    render(TasksHub, { ctx: undoCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('tasks-undo'))
+    await flush()
+
+    const banner = screen.getByTestId('tasks-undo-error')
+    expect(banner).toHaveAttribute('role', 'alert')
+    expect(banner).toHaveTextContent("Couldn't undo: focus lock held")
+
+    await fireEvent.click(screen.getByTestId('tasks-undo-error-dismiss'))
+    await flush()
+    expect(screen.queryByTestId('tasks-undo-error')).toBeNull()
+  })
+
   it('undoes a board status change and restores the card column', async () => {
     mocks.tasksSettings = {
       default_display_mode: 'board',
