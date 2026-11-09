@@ -1112,7 +1112,8 @@ describe('TaskSubEditorModal — cross-surface sidebar parity (D7)', () => {
       modified_at: '',
       estimate_minutes: null,
       subtask_total: 0,
-      subtask_done: 0
+      subtask_done: 0,
+      shortlist_rank: null
     }
   }
 
