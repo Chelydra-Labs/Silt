@@ -2058,4 +2058,44 @@ describe('BoardView — shortlist rank order (#1092)', () => {
     // Rank leads the pin key while the shortlist filter is the active lens.
     expect(laneCardIds('To Do')).toEqual(['u0', 'u1', 'p3'])
   })
+
+  it('sort=manual + lens on: within-lane drag writes no rank-derived order', async () => {
+    await renderBoardWithSort('status', 'manual', [
+      row({ id: 'u0', status: 'TODO', shortlist_rank: 0, clean_content: 'U0' }),
+      row({
+        id: 'p3',
+        status: 'TODO',
+        pinned: 1,
+        shortlist_rank: 3,
+        manual_order: 1,
+        clean_content: 'P3'
+      })
+    ])
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    await flush()
+    // Rank leads the pin key while the filter is the active lens.
+    expect(laneCardIds('To Do')).toEqual(['u0', 'p3'])
+
+    // Drag the rank-0 card onto its rank-3 sibling: a manual move cannot be
+    // expressed while rank leads, so nothing may be written and the lane
+    // keeps its rank order (the drop falls through to the lane handler's
+    // same-column no-op, like any non-manual sort).
+    const cards = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelectorAll<HTMLElement>('[data-card]')
+    await fireEvent.dragStart(cards[0])
+    await fireEvent.drop(cards[1])
+    await flush()
+
+    expect(mocks.setTaskOrders).not.toHaveBeenCalled()
+    expect(mocks.setTaskOrder).not.toHaveBeenCalled()
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    expect(laneCardIds('To Do')).toEqual(['u0', 'p3'])
+  })
 })

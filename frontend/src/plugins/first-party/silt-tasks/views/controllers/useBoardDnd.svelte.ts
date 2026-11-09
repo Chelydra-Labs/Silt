@@ -60,10 +60,14 @@ export interface BoardDndDeps {
   // the same reactive cell so optimistic patches re-render immediately.
   getColumns: () => Lane[]
   setColumns: (next: Lane[]) => void
-  // Hub-derived dimension/sort/today/DnD-enabled reads.
+  // Hub-derived dimension/sort/today/DnD-enabled/shortlist-lens reads.
   getGroupBy: () => GroupBy
   getSort: () => SortMode
   getToday: () => string
+  // True while the Shortlist filter leads every rendered order with the
+  // rank key (BoardView's deriveColumns). Within-column manual reorder is
+  // disabled then — see the onCardDragOver gate.
+  getShortlistFirst: () => boolean
   isDndEnabled: () => boolean
   // Column-config helpers owned by useStatusColumns.
   snapshotColumns: () => Lane[]
@@ -88,6 +92,7 @@ export function createBoardDndController({
   getGroupBy,
   getSort,
   getToday,
+  getShortlistFirst,
   isDndEnabled,
   snapshotColumns,
   revertTo,
@@ -451,15 +456,20 @@ export function createBoardDndController({
   // specific sibling. The card-level handler runs first (event bubbles
   // upward); for same-column manual drops it owns the persist + optimistic
   // update and stops propagation so the lane handler doesn't double-fire.
+  // Gated off while the shortlist lens leads — rank dominates manual_order,
+  // so a drag would rewrite manual tokens from the rank-sorted lane. The
+  // ungated drop bubbles to the lane handler (same-column no-op).
   function onCardDragOver(e: DragEvent, card: TaskDetail, col: Lane) {
-    if (getSort() !== 'manual' || !isDndEnabled() || !dragCard) return
+    if (getSort() !== 'manual' || getShortlistFirst()) return
+    if (!isDndEnabled() || !dragCard) return
     if (col.key !== dragFromColKey) return
     e.preventDefault()
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
     dragOverCardId = card.id
   }
   function onCardDrop(e: DragEvent, target: TaskDetail, col: Lane) {
-    if (getSort() !== 'manual' || !isDndEnabled() || !dragCard) return
+    if (getSort() !== 'manual' || getShortlistFirst()) return
+    if (!isDndEnabled() || !dragCard) return
     if (col.key !== dragFromColKey) return
     e.preventDefault()
     e.stopPropagation()
@@ -547,7 +557,9 @@ export function createBoardDndController({
       const order = orderByID[item.id]
       return order === undefined ? item : { ...item, manual_order: order }
     })
-    const display = sortTasks(getSort(), patched)
+    const display = sortTasks(getSort(), patched, {
+      shortlistFirst: getShortlistFirst()
+    })
     setColumns(
       getColumns().map((c) =>
         c.key === col.key ? { ...c, items: display } : c

@@ -315,6 +315,7 @@
     getGroupBy: () => groupBy,
     getSort: () => sort,
     getToday: () => today,
+    getShortlistFirst: () => shortlistFirst,
     isDndEnabled: () => dndEnabled,
     snapshotColumns: () => cols.snapshotColumns(),
     revertTo: (p) => cols.revertTo(p),
