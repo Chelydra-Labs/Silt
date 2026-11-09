@@ -416,7 +416,7 @@ Metadata Tokens (Dataview `[key:: value]` format):
 | `due` | — | `[due:: YYYY-MM-DD]` | `[due:: 2026-08-03]` |
 | `start` | — | `[start:: YYYY-MM-DD]` | `[start:: 2026-06-13]` |
 | `owner` | `[o:: name]` | `[owner:: name]` | `[owner:: Bob]` |
-| `priority` | `[p:: N]` | `[priority:: N]` (1=critical, 2=normal, 3=low) | `[priority:: 1]` |
+| `priority` | `[p:: N]` | `[priority:: N]` (1=high, 2=normal, 3=low) | `[priority:: 1]` |
 | `pin` | `[pinned:: true]` | `[pin:: true]` (boolean) | `[pin:: true]` |
 | `progress` | `[prog:: N]` | `[progress:: N]` (0-100) | `[progress:: 50]` |
 | `recur` | `[recurrence:: RULE]` | `[recur:: RULE]` (natural language) | `[recur:: every week]` |

@@ -82,7 +82,7 @@ export function formatEstimateSum(mins: number): string {
 }
 
 export const PRIORITY_LABELS: Record<number, string> = {
-  1: 'Critical',
+  1: 'High',
   2: 'Normal',
   3: 'Low'
 }

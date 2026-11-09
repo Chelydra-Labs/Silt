@@ -101,8 +101,8 @@
   // urgent (lower number). 0 = no floor.
   const PRIORITY_FLOORS: { value: number; label: string; title: string }[] = [
     { value: 0, label: 'Any', title: 'Any priority' },
-    { value: 1, label: 'P1+', title: 'Critical only (priority 1)' },
-    { value: 2, label: 'P2+', title: 'Critical or normal (priority 1–2)' },
+    { value: 1, label: 'P1+', title: 'High only (priority 1)' },
+    { value: 2, label: 'P2+', title: 'High or normal (priority 1–2)' },
     { value: 3, label: 'P3+', title: 'Any recorded priority (1–3)' }
   ]
 

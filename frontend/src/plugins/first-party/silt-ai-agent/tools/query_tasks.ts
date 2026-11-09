@@ -41,7 +41,7 @@ export const queryTasksToolDef = {
       priority_min: {
         type: 'integer',
         description:
-          'Only tasks at this priority or higher (1=Critical, 2=Normal, 3=Low).',
+          'Only tasks at this priority or higher (1=High, 2=Normal, 3=Low).',
         minimum: 1,
         maximum: 3
       },

@@ -19,7 +19,7 @@
 import { endOfWeekISO } from '../../../lib/dateGrid'
 import type { WeekStart } from '../../../lib/dateGrid'
 import type { TaskDetail } from './types'
-import { laneLabel } from './types'
+import { laneLabel, PRIORITY_LABELS } from './types'
 import type { GroupBy } from './state.svelte'
 import {
   binByKey,
@@ -144,14 +144,8 @@ function rowValue(row: TaskDetail, dim: GroupBy): string {
 
 function valueLabel(value: string, dim: GroupBy): string {
   if (dim === 'priority') {
-    // PRIORITY_LABELS maps 1→Critical, 2→Normal, 3→Low; fall back to the
-    // raw numeric for any custom value.
-    const labels: Record<string, string> = {
-      '1': 'Critical',
-      '2': 'Normal',
-      '3': 'Low'
-    }
-    return labels[value] ?? `Priority ${value}`
+    // Shared label source (types.ts); custom values fall back to the raw number.
+    return PRIORITY_LABELS[Number(value)] ?? `Priority ${value}`
   }
   return value
 }

@@ -12,8 +12,8 @@ along the lines of “Search notebooks, sections, or task content…”.
   notebook, tag, or block type (tasks, notes, headings).
 - **Task filters** narrow to task attributes: status, owner (exact name),
   priority floor, an inclusive due-date range, and overdue-only. The priority
-  floor follows the app’s 1 = Critical scale: **P1+** means Critical only,
-  **P2+** means Critical or Normal, **P3+** means any recorded priority.
+  floor follows the app’s 1 = High scale: **P1+** means High only,
+  **P2+** means High or Normal, **P3+** means any recorded priority.
 - Task filters need a query — they narrow a search rather than listing tasks
   on their own. To browse tasks, use the **Tasks** hub.
 - A type, tag, or task filter hides **page-title** matches, because a page row

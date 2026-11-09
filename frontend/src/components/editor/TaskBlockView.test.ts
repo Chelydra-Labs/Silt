@@ -149,3 +149,52 @@ describe('TaskBlockView conflict hold (#1005)', () => {
     cleanup()
   })
 })
+
+// #1093: the inline marker marks only the top level — priority 1 renders
+// '! HIGH'; priority 2 and 3 render no marker (previously 1='! CRITICAL'
+// and 2='! HIGH'). Pins the reconciliation so the drawer and the inline
+// editor cannot drift apart again.
+describe('TaskBlockView priority marker (#1093)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it("marks only priority 1: '! HIGH' for 1, no marker for 2 and 3", async () => {
+    const blocks = [
+      mkBlock('TASK', {
+        id: 'task-p1',
+        clean_text: 'Top task',
+        status: 'TODO',
+        priority: 1
+      }),
+      mkBlock('TASK', {
+        id: 'task-p2',
+        clean_text: 'Mid task',
+        status: 'TODO',
+        priority: 2
+      }),
+      mkBlock('TASK', {
+        id: 'task-p3',
+        clean_text: 'Low task',
+        status: 'TODO',
+        priority: 3
+      })
+    ]
+    const { container, cleanup } = await mountNodeViewEditor(blocks)
+
+    const node = (id: string) =>
+      container.querySelector(`[data-id="${id}"]`) as HTMLElement | null
+    expect(node('task-p1')?.textContent).toContain('! HIGH')
+    // Non-top levels render no marker at all (not '! HIGH', not any other).
+    expect(node('task-p2')?.textContent).toContain('Mid task')
+    expect(node('task-p2')?.textContent).not.toMatch(/! (HIGH|CRITICAL|NORMAL)/)
+    expect(node('task-p3')?.textContent).toContain('Low task')
+    expect(node('task-p3')?.textContent).not.toMatch(/! (HIGH|CRITICAL|NORMAL)/)
+    // Exactly one marker across the whole editor.
+    const markers =
+      container.textContent?.match(/! (HIGH|CRITICAL|NORMAL)/g) ?? []
+    expect(markers).toEqual(['! HIGH'])
+
+    cleanup()
+  })
+})

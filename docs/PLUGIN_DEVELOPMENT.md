@@ -94,7 +94,7 @@ const { rows, truncated } = await ctx.sqliteQuery(
 Beyond `updateTaskMeta` (pin/progress), the SDK exposes dedicated setters that each rewrite one inline token (or, for tags/title, the prose) atomically through the canonical write chain — same lock + atomic rewrite + re-index + `block:changed` shape as `setTaskDueDate` / `setTaskRecurrence` / `setTaskBlockedBy`. All are gated by `content-mutate`.
 
 - **`setTaskOwner(id, owner)`** — rewrites `[owner:: NAME]`. Pass `''` to clear.
-- **`setTaskPriority(id, priority)`** — rewrites `[priority:: N]` (1=Critical, 2=Normal, 3=Low).
+- **`setTaskPriority(id, priority)`** — rewrites `[priority:: N]` (1=High, 2=Normal, 3=Low). Pass `0` to clear.
 - **`setTaskTags(id, tags)`** — rewrites the task's `#hashtag` set. Pass the **full new tag set** (an empty array clears all); the backend performs the surgical add/remove on the prose, preserving `((uuid))` refs and inline `[key:: value]` tokens.
 - **`setTaskTitle(id, title)`** — rewrites the prose portion of the task line. The backend preserves `#tags`, `((uuid))` references, and every inline `[key:: value]` token during the rewrite — callers edit only the prose.
 - **`setTaskEstimate(id, estimate)`** — rewrites `[estimate:: DURATION]` (`30m` / `2h` / `1d`; 1d = 8h). Pass `''` to clear. Invalid durations are rejected.

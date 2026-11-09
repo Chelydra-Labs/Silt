@@ -167,7 +167,7 @@ describe('binByDimension — priority', () => {
     ]
     const sections = binByDimension(rows, 'priority', GROUP_CTX)
     expect(sections.map((s) => s.label)).toEqual([
-      'Critical',
+      'High',
       'Normal',
       'Low',
       'No Priority'

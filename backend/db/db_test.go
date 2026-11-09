@@ -1453,7 +1453,7 @@ func TestIndexer_KanbanQueryPath(t *testing.T) {
 		t.Fatalf("expected 4 rows for Work/Sprint, got %d", len(results))
 	}
 
-	// Ordering: priority ASC (1=Critical first, 3=Low last) then due_date ASC.
+	// Ordering: priority ASC (1=High first, 3=Low last) then due_date ASC.
 	// Priority 1 tasks: done task (due 2026-06-01) before high-todo (due 2026-07-01).
 	// Then priority 2: doing task (no due date → '9999-12-31' sorts last within p2).
 	// Then priority 3: low-prio todo.

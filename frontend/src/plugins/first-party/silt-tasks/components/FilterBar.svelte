@@ -147,7 +147,7 @@
   }
 
   const PRIORITIES = [
-    { value: 1, label: 'Critical' },
+    { value: 1, label: 'High' },
     { value: 2, label: 'Normal' },
     { value: 3, label: 'Low' }
   ]
