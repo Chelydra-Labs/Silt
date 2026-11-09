@@ -359,14 +359,24 @@ export function makePluginContext(
     setTaskPriority: (id, priority) =>
       PluginSetTaskPriority(pluginID, sessionToken ?? '', id, priority),
     // Rewrite a task's [shortlist:: N] token (#1092). null maps to the -1
-    // clear sentinel; 0 is a real (top) rank, never a clear.
-    setTaskShortlistRank: (id, rank) =>
-      PluginSetTaskShortlistRank(
+    // clear sentinel; 0 is a real (top) rank, never a clear. Non-integer
+    // ranks are rejected here because JSON.stringify turns NaN/Infinity
+    // into null, which Wails deserializes into int 0 — the top rank.
+    setTaskShortlistRank: (id, rank) => {
+      if (rank != null && !Number.isInteger(rank)) {
+        return Promise.reject(
+          new TypeError(
+            `setTaskShortlistRank: rank must be null or an integer 0-3, got ${rank}`
+          )
+        )
+      }
+      return PluginSetTaskShortlistRank(
         pluginID,
         sessionToken ?? '',
         id,
         rank == null ? -1 : rank
-      ),
+      )
+    },
     // Rewrite a task's [tags:: a|b|c] token (#412). Empty array clears all tags.
     setTaskTags: (id, tags) =>
       PluginSetTaskTags(pluginID, sessionToken ?? '', id, tags),

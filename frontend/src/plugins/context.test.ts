@@ -247,6 +247,22 @@ describe('makePluginContext — setTaskShortlistRank wiring (#1092)', () => {
       3
     )
   })
+
+  it('rejects non-integer ranks without touching the binding', async () => {
+    const ctx = makePluginContext('silt-tasks')
+    // JSON.stringify turns NaN/Infinity into null, which Wails would
+    // deserialize into int 0 — silently assigning the top rank.
+    await expect(
+      ctx.setTaskShortlistRank('block-1', NaN)
+    ).rejects.toBeInstanceOf(TypeError)
+    await expect(
+      ctx.setTaskShortlistRank('block-1', Infinity)
+    ).rejects.toBeInstanceOf(TypeError)
+    await expect(
+      ctx.setTaskShortlistRank('block-1', 1.5)
+    ).rejects.toBeInstanceOf(TypeError)
+    expect(mocks.pluginSetTaskShortlistRank).not.toHaveBeenCalled()
+  })
 })
 
 describe('makePluginContext — setTaskStartDate wiring', () => {
