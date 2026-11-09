@@ -55,6 +55,11 @@ export interface TaskFilters {
   /** When true, only open tasks with modified_at NULL or older than 30 days. */
   stale?: boolean
   /**
+   * When true, only tasks with a shortlist rank (#1092) — ranked-only,
+   * ordered rank-first (0 = top). Cleared like every other facet.
+   */
+  shortlist?: boolean
+  /**
    * Free-text narrowing over the indexed task text (FTS body). Normalized the
    * same way the backend search does: letters/digits only, terms under 2
    * bytes dropped, implicit AND, prefix match per term.
@@ -242,7 +247,8 @@ const DEFAULT_FILTERS: TaskFilters = {
   owners: [],
   priorities: [],
   dueDate: '',
-  tags: []
+  tags: [],
+  shortlist: false
 }
 
 function freshDefaults(): TaskHubState {
@@ -319,6 +325,7 @@ export function enterTaskPageRoute(
             dueDate: defaults.filters.dueDate,
             tags: [...defaults.filters.tags],
             stale: defaults.filters.stale,
+            shortlist: defaults.filters.shortlist,
             text: defaults.filters.text
           }
         : undefined
@@ -592,6 +599,7 @@ export function applySavedView(view: SavedView): void {
       dueDate: view.filters.dueDate,
       tags: [...view.filters.tags],
       stale: view.filters.stale,
+      shortlist: view.filters.shortlist,
       // The free-text search is transient and orthogonal to views; keep it
       // so clicking a saved view narrows instead of discarding the search.
       text: _state.filters.text

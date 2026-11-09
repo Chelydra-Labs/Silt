@@ -168,16 +168,24 @@ const PIN_FIRST = 'CASE WHEN t.pinned = 1 THEN 0 ELSE 1 END'
  * values; notebook/section/page are dimensions of the row's location, not
  * columns the query needs to surface as a sort key). The row set is the
  * same either way; only the binning differs.
+ *
+ * When the shortlist filter is active (#1092) the rank leads INSIDE each
+ * clause — after the grouping column (groups stay contiguous) but ahead of
+ * the pin-first key (the curated 0..3 order is the filter's whole point).
  */
-function orderByFor(groupBy: GroupBy | undefined): string {
+function orderByFor(
+  groupBy: GroupBy | undefined,
+  shortlistFirst: boolean
+): string {
+  const rankLead = shortlistFirst ? 't.shortlist_rank ASC, ' : ''
   const tiebreaker = "COALESCE(t.due_date, '9999-12-31') ASC, t.priority ASC"
   switch (groupBy) {
     case 'status':
-      return ` ORDER BY t.status ASC, ${PIN_FIRST}, ${tiebreaker}`
+      return ` ORDER BY t.status ASC, ${rankLead}${PIN_FIRST}, ${tiebreaker}`
     case 'owner':
-      return ` ORDER BY t.owner ASC, ${PIN_FIRST}, ${tiebreaker}`
+      return ` ORDER BY t.owner ASC, ${rankLead}${PIN_FIRST}, ${tiebreaker}`
     case 'dueDate':
-      return ` ORDER BY ${PIN_FIRST}, ${tiebreaker}`
+      return ` ORDER BY ${rankLead}${PIN_FIRST}, ${tiebreaker}`
     case 'priority':
     case 'none':
     case 'tag':
@@ -186,7 +194,7 @@ function orderByFor(groupBy: GroupBy | undefined): string {
     case 'page':
     default:
       // Legacy Kanban order: priority first, due date as tiebreaker.
-      return ` ORDER BY ${PIN_FIRST}, t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC`
+      return ` ORDER BY ${rankLead}${PIN_FIRST}, t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC`
   }
 }
 
@@ -200,29 +208,34 @@ function orderByFor(groupBy: GroupBy | undefined): string {
  * emulates it for manual_order, and COALESCE/NULLIF push empty-string
  * sentinels ('', the SQL row mapper's NULL coercion) to the bottom for
  * owner / created_at.
+ *
+ * When the shortlist filter is active (#1092) the rank column leads ahead
+ * of the pin-first key — the curated 0..3 order outranks the pin-first
+ * default while the shortlist filter is the active lens.
  */
-function sortClauseFor(sort: SortMode): string {
+function sortClauseFor(sort: SortMode, shortlistFirst: boolean): string {
+  const rankLead = shortlistFirst ? 't.shortlist_rank ASC, ' : ''
   const tiebreaker = "COALESCE(t.due_date, '9999-12-31') ASC, t.priority ASC"
   switch (sort) {
     case 'manual':
-      return ` ORDER BY ${PIN_FIRST}, CASE WHEN t.manual_order IS NULL THEN 1 ELSE 0 END, t.manual_order ASC, ${tiebreaker}`
+      return ` ORDER BY ${rankLead}${PIN_FIRST}, CASE WHEN t.manual_order IS NULL THEN 1 ELSE 0 END, t.manual_order ASC, ${tiebreaker}`
     case 'priority':
-      return ` ORDER BY ${PIN_FIRST}, t.priority ASC, ${tiebreaker}`
+      return ` ORDER BY ${rankLead}${PIN_FIRST}, t.priority ASC, ${tiebreaker}`
     case 'title':
-      return ` ORDER BY ${PIN_FIRST}, b.clean_content ASC, ${tiebreaker}`
+      return ` ORDER BY ${rankLead}${PIN_FIRST}, b.clean_content ASC, ${tiebreaker}`
     case 'created':
-      return ` ORDER BY ${PIN_FIRST}, CASE WHEN t.created_at IS NULL OR t.created_at = '' THEN '9999' ELSE t.created_at END ASC, ${tiebreaker}`
+      return ` ORDER BY ${rankLead}${PIN_FIRST}, CASE WHEN t.created_at IS NULL OR t.created_at = '' THEN '9999' ELSE t.created_at END ASC, ${tiebreaker}`
     case 'owner':
-      return ` ORDER BY ${PIN_FIRST}, COALESCE(NULLIF(t.owner, ''), '~') ASC, ${tiebreaker}`
+      return ` ORDER BY ${rankLead}${PIN_FIRST}, COALESCE(NULLIF(t.owner, ''), '~') ASC, ${tiebreaker}`
     case 'modified':
       // Recently modified first; null/empty modified_at sorts as oldest.
-      return ` ORDER BY ${PIN_FIRST}, CASE WHEN t.modified_at IS NULL OR t.modified_at = '' THEN '0000' ELSE t.modified_at END DESC, ${tiebreaker}`
+      return ` ORDER BY ${rankLead}${PIN_FIRST}, CASE WHEN t.modified_at IS NULL OR t.modified_at = '' THEN '0000' ELSE t.modified_at END DESC, ${tiebreaker}`
     case 'estimate':
       // Null estimates last; then ascending minutes.
-      return ` ORDER BY ${PIN_FIRST}, CASE WHEN t.estimate_minutes IS NULL THEN 1 ELSE 0 END, t.estimate_minutes ASC, ${tiebreaker}`
+      return ` ORDER BY ${rankLead}${PIN_FIRST}, CASE WHEN t.estimate_minutes IS NULL THEN 1 ELSE 0 END, t.estimate_minutes ASC, ${tiebreaker}`
     case 'dueDate':
     default:
-      return ` ORDER BY ${PIN_FIRST}, ${tiebreaker}`
+      return ` ORDER BY ${rankLead}${PIN_FIRST}, ${tiebreaker}`
   }
 }
 
@@ -234,9 +247,10 @@ function sortClauseFor(sort: SortMode): string {
  *     active navigation triple.
  *  2. Filter WHERE — owners (IN), priorities (IN), due-date quick-pick
  *     (overdue / today / week / none), tags (subquery on the `tags`
- *     table), free-text FTS (`blocks_fts MATCH`, joined back on rowid),
- *     and the optional Calendar-style date window. All bound via
- *     `?` params — never string-interpolated.
+ *     table), stale (open + untouched 30d), shortlist (ranked-only,
+ *     rank-first order, #1092), free-text FTS (`blocks_fts MATCH`, joined
+ *     back on rowid), and the optional Calendar-style date window. All
+ *     bound via `?` params — never string-interpolated.
  *
  * Due dates compare against the LOCAL day (ctxLike.today), not SQLite's
  * date('now') which is UTC and produced off-by-one results near local
@@ -341,6 +355,12 @@ export function buildQuery(
     )
     params.push(cutoff)
   }
+  // Shortlist filter (#1092): ranked tasks only. Ordering composes
+  // rank-first (0 = top) ahead of the pin key and due/priority
+  // tiebreakers — see orderByFor / sortClauseFor.
+  if (f.shortlist) {
+    where.push('t.shortlist_rank IS NOT NULL')
+  }
   if (options?.window) {
     where.push('t.due_date >= ?', 't.due_date <= ?')
     params.push(options.window.start, options.window.end)
@@ -372,7 +392,7 @@ export function buildQuery(
   }
   const orderBy = options?.orderBy
     ? ` ORDER BY ${options.orderBy}`
-    : composeOrderBy(options?.groupBy, options?.sort)
+    : composeOrderBy(options?.groupBy, options?.sort, !!f.shortlist)
   let limitClause = ''
   if (
     typeof options?.limit === 'number' &&
@@ -399,10 +419,13 @@ export function buildQuery(
  */
 function composeOrderBy(
   groupBy: GroupBy | undefined,
-  sort: SortMode | undefined
+  sort: SortMode | undefined,
+  shortlistFirst: boolean
 ): string {
-  if (!sort) return orderByFor(groupBy)
-  const within = sortClauseFor(sort).replace('ORDER BY ', '').trim()
+  if (!sort) return orderByFor(groupBy, shortlistFirst)
+  const within = sortClauseFor(sort, shortlistFirst)
+    .replace('ORDER BY ', '')
+    .trim()
   if (groupBy === 'status') {
     return ` ORDER BY t.status ASC, ${within}`
   }
@@ -415,5 +438,5 @@ function composeOrderBy(
   }
   // 'none', 'priority', 'dueDate', 'tag', 'notebook', 'section', 'page',
   // and undefined: the sort clause is the whole ORDER BY.
-  return sortClauseFor(sort)
+  return sortClauseFor(sort, shortlistFirst)
 }

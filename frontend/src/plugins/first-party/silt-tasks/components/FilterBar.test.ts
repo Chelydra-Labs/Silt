@@ -511,6 +511,7 @@ describe('FilterBar "Clear all" and the transient search', () => {
       dueDate: '',
       tags: [],
       stale: false,
+      shortlist: false,
       text: ''
     })
   })

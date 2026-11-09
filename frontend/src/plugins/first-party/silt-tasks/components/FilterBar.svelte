@@ -217,6 +217,9 @@
   function toggleStale() {
     onFiltersChange({ ...filters, stale: !filters.stale })
   }
+  function toggleShortlist() {
+    onFiltersChange({ ...filters, shortlist: !filters.shortlist })
+  }
   function clearAll() {
     const hadText =
       (filters.text ?? '').trim() !== '' || textDraft.trim() !== ''
@@ -230,7 +233,8 @@
       filters.priorities.length > 0 ||
       !!filters.dueDate ||
       filters.tags.length > 0 ||
-      !!filters.stale
+      !!filters.stale ||
+      !!filters.shortlist
     if (hadFacets) {
       onFiltersChange({
         owners: [],
@@ -238,6 +242,7 @@
         dueDate: '',
         tags: [],
         stale: false,
+        shortlist: false,
         text: ''
       })
     }
@@ -310,6 +315,7 @@
       (filters.dueDate ? 1 : 0) +
       (filters.tags.length ? 1 : 0) +
       (filters.stale ? 1 : 0) +
+      (filters.shortlist ? 1 : 0) +
       (buildFtsMatch(filters.text ?? '') ? 1 : 0)
   )
 
@@ -784,6 +790,22 @@
         </div>
       {/if}
     </div>
+
+    <!-- Shortlist chip (#1092): only ranked tasks, ordered 0..3 -->
+    <button
+      type="button"
+      data-testid="filter-shortlist-toggle"
+      onclick={toggleShortlist}
+      aria-pressed={!!filters.shortlist}
+      title="Only tasks with a shortlist rank (0–3), ordered by rank. 0 is the top rank."
+      data-active={filters.shortlist ? 'true' : undefined}
+      class="task-filter-chip task-filter-chip-facet"
+    >
+      <span class="material-symbols-outlined text-icon-sm"
+        >format_list_numbered</span
+      >
+      <span>Shortlist</span>
+    </button>
 
     <!-- Stale chip (#440): open tasks untouched for 30+ days -->
     <button

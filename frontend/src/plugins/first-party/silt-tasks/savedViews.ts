@@ -89,6 +89,7 @@ function filtersEqual(viewFilters: unknown, stateFilters: unknown): boolean {
   if (v.dueDate !== undefined && v.dueDate !== s.dueDate) return false
   if (v.tags !== undefined && !arrayEqual(v.tags, s.tags)) return false
   if (!!v.stale !== !!s.stale) return false
+  if (!!v.shortlist !== !!s.shortlist) return false
   return true
 }
 

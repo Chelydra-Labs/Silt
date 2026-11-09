@@ -58,7 +58,8 @@ describe('silt-tasks unified state (#419)', () => {
         owners: [],
         priorities: [],
         dueDate: '',
-        tags: []
+        tags: [],
+        shortlist: false
       })
       expect(s.focusDate).toBe('')
       expect(s.activeFilter).toBe('all')
@@ -301,7 +302,8 @@ describe('silt-tasks unified state (#419)', () => {
         owners: [],
         priorities: [],
         dueDate: '',
-        tags: []
+        tags: [],
+        shortlist: false
       })
     })
 
@@ -687,7 +689,8 @@ describe('silt-tasks unified state (#419)', () => {
         owners: [],
         priorities: [],
         dueDate: '',
-        tags: []
+        tags: [],
+        shortlist: false
       })
       expect(s.focusDate).toBe('')
       expect(s.activeFilter).toBe('all')

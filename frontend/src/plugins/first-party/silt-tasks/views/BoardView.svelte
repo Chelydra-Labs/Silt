@@ -413,6 +413,7 @@
     void filters.dueDate
     void filters.tags
     void filters.stale
+    void filters.shortlist
     void filters.text
     void reload()
   })

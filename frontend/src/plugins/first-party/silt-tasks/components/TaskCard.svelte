@@ -99,14 +99,29 @@
       >
         {laneLabel(card.status)}
       </span>
-      {#if card.priority && card.priority <= 3}
-        <span
-          class="ml-auto px-1.5 py-0.5 border rounded-sm font-label-sm text-type-3xs uppercase tracking-wide {priorityClass(
-            card.priority
-          )}"
-        >
-          {PRIORITY_LABELS[card.priority] ?? 'Normal'}
-        </span>
+      {#if card.shortlist_rank != null || (card.priority && card.priority <= 3)}
+        <div class="ml-auto flex items-center gap-1.5">
+          {#if card.shortlist_rank != null}
+            <!-- Neutral mono badge — deliberately outside the priority
+                 palette so it can't read as a fourth priority level. -->
+            <span
+              class="rounded-sm border border-surface-panel-border bg-surface-panel px-1.5 py-0.5 font-mono text-type-3xs text-text-primary"
+              data-testid={`board-shortlist-badge-${card.id}`}
+              title="Shortlist rank {card.shortlist_rank} (0 is the top rank)"
+            >
+              Shortlist {card.shortlist_rank}
+            </span>
+          {/if}
+          {#if card.priority && card.priority <= 3}
+            <span
+              class="px-1.5 py-0.5 border rounded-sm font-label-sm text-type-3xs uppercase tracking-wide {priorityClass(
+                card.priority
+              )}"
+            >
+              {PRIORITY_LABELS[card.priority] ?? 'Normal'}
+            </span>
+          {/if}
+        </div>
       {/if}
       {#if card.status === 'DONE'}
         <span

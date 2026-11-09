@@ -170,17 +170,23 @@
               return ctx.sqliteQuery(sql, params)
             })()
 
-      // Done path: completed rows honoring every hub filter except dueDate and
-      // stale (both describe open work, so they would empty the Completed
-      // section). Text must ride along — otherwise "Find task…" visibly
-      // narrows open rows while completed rows ignore it. Skip for date
-      // smart-lists (Completed section is hidden there).
+      // Done path: completed rows honoring every hub filter except dueDate,
+      // stale, and shortlist (all three describe the current open-work focus,
+      // so they would empty or reorder the Completed history section). Text
+      // must ride along — otherwise "Find task…" visibly narrows open rows
+      // while completed rows ignore it. Skip for date smart-lists (Completed
+      // section is hidden there).
       const donePromise =
         hub.activeFilter === 'all' || hub.activeFilter === 'completed'
           ? (() => {
               const { sql, params } = buildQuery(
                 hub.scope,
-                { ...hub.filters, dueDate: '', stale: false },
+                {
+                  ...hub.filters,
+                  dueDate: '',
+                  stale: false,
+                  shortlist: false
+                },
                 ctxLike,
                 {
                   activeFilter: 'completed',
@@ -310,6 +316,7 @@
     void hub.filters.dueDate
     void hub.filters.tags
     void hub.filters.stale
+    void hub.filters.shortlist
     void hub.filters.text
     void reload()
   })
@@ -337,6 +344,7 @@
     if (hub.filters.dueDate) return true
     if (hub.filters.tags.length > 0) return true
     if (hub.filters.stale) return true
+    if (hub.filters.shortlist) return true
     // Text with no surviving FTS term changes no SQL, so it is not a filter.
     if (buildFtsMatch(hub.filters.text ?? '')) return true
     return false
@@ -942,6 +950,15 @@
         aria-label={`${item.subtask_done} of ${item.subtask_total} subtasks done`}
         >[{item.subtask_done}/{item.subtask_total}]</span
       >
+    {/if}
+    {#if item.shortlist_rank != null}
+      <span
+        class="hidden rounded-full border border-surface-panel-border bg-surface-panel px-1.5 py-0.5 font-mono text-type-3xs text-text-primary md:inline-flex"
+        data-testid={`tasks-row-shortlist-${item.id}`}
+        title="Shortlist rank {item.shortlist_rank} (0 is the top rank)"
+      >
+        Shortlist {item.shortlist_rank}
+      </span>
     {/if}
     {#if item.priority && item.priority <= 3}
       <span

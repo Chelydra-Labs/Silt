@@ -52,12 +52,13 @@ function blockDoc(type: 'taskBlock' | 'noteBlock', text: string): DocJSON {
 }
 
 describe('TaskMetaSuggest — catalog & filtering', () => {
-  it('exposes the eight metadata keys', () => {
+  it('exposes the nine metadata keys', () => {
     expect(META_KEYS.map((m) => m.key)).toEqual([
       'due',
       'start',
       'owner',
       'priority',
+      'shortlist',
       'pin',
       'progress',
       'recur',
@@ -71,6 +72,7 @@ describe('TaskMetaSuggest — catalog & filtering', () => {
       'start',
       'owner',
       'priority',
+      'shortlist',
       'pin',
       'progress',
       'recur',
