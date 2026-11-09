@@ -89,6 +89,7 @@ const mocks = vi.hoisted(() => ({
   setTaskOrder: vi.fn(),
   setTaskOrders: vi.fn(),
   createTask: vi.fn().mockResolvedValue('new-task-id'),
+  updateTaskMeta: vi.fn().mockResolvedValue(true),
   getTaskBlockers: vi.fn().mockResolvedValue([]),
   updatePluginSetting: vi.fn().mockResolvedValue(true),
   notify: vi.fn().mockResolvedValue(true),
@@ -152,7 +153,6 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     sqliteQuery: mocks.sqliteQuery,
     mutateBlock: vi.fn(),
     updateBlockState: mocks.updateBlockState,
-    updateTaskMeta: vi.fn(),
     setTaskOwner: mocks.setTaskOwner,
     setTaskPriority: mocks.setTaskPriority,
     setTaskDueDate: mocks.setTaskDueDate,
@@ -160,6 +160,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     setTaskOrder: mocks.setTaskOrder,
     setTaskOrders: mocks.setTaskOrders,
     createTask: mocks.createTask,
+    updateTaskMeta: mocks.updateTaskMeta,
     getTaskBlockers: mocks.getTaskBlockers,
     getPluginSettings: vi.fn(() => Promise.resolve(mocks.tasksSettings)),
     updatePluginSetting: mocks.updatePluginSetting,
@@ -231,6 +232,15 @@ function cardByText(text: string): HTMLElement {
   )!
 }
 
+/** Rendered card ids inside a lane, in DOM (display) order. */
+function laneCardIds(label: string): string[] {
+  return Array.from(
+    screen
+      .getByRole('group', { name: label })
+      .querySelectorAll<HTMLElement>('[data-card]')
+  ).map((c) => c.dataset.card ?? '')
+}
+
 async function renderBoard(
   g: ReturnType<typeof setGroupBy> extends never
     ? never
@@ -280,6 +290,7 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     mocks.setTaskOrder.mockReset().mockResolvedValue(true)
     mocks.setTaskOrders.mockReset().mockResolvedValue(true)
     mocks.createTask.mockReset().mockResolvedValue('new-task-id')
+    mocks.updateTaskMeta.mockReset().mockResolvedValue(true)
     mocks.getTaskBlockers.mockReset().mockResolvedValue([])
     mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
     mocks.notify.mockReset().mockResolvedValue(true)
@@ -1528,6 +1539,130 @@ describe('BoardView — dimension-aware Board (#421)', () => {
       expect.objectContaining({ title: 'New over limit', status: 'TODO' })
     )
   })
+
+  // --- Pin toggle --------------------------------------------------------
+
+  it('toggling an open card pin writes pinned:true and does not open the drawer', async () => {
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', clean_content: 'A' })
+    ])
+
+    await fireEvent.click(screen.getByTestId('tasks-pin-t1'))
+    await flush()
+
+    expect(mocks.updateTaskMeta).toHaveBeenCalledWith('t1', { pinned: true })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(
+      document.querySelector('[data-card="t1"]')?.getAttribute('aria-current')
+    ).toBeNull()
+  })
+
+  it('renders pinned cards before unpinned cards within their column', async () => {
+    await renderBoard('status', [
+      row({ id: 'u1', status: 'TODO', clean_content: 'Unpinned' }),
+      row({ id: 'p1', status: 'TODO', pinned: 1, clean_content: 'Pinned' })
+    ])
+
+    expect(laneCardIds('To Do')).toEqual(['p1', 'u1'])
+  })
+
+  it('keeps the pinned card first after a groupBy-only rebin', async () => {
+    await renderBoard('status', [
+      row({ id: 'u1', status: 'TODO', priority: 2, clean_content: 'Unpinned' }),
+      row({
+        id: 'p1',
+        status: 'TODO',
+        priority: 2,
+        pinned: 1,
+        clean_content: 'Pinned'
+      })
+    ])
+
+    setGroupBy('priority')
+    await flush()
+    expect(laneCardIds('Normal')).toEqual(['p1', 'u1'])
+
+    setGroupBy('none')
+    await flush()
+    expect(laneCardIds('All Tasks')).toEqual(['p1', 'u1'])
+  })
+
+  it('unpin restores the sorted position after the reload lands', async () => {
+    resetTaskHubState()
+    setGroupBy('status')
+    setSort('title')
+    mocks.sqliteQuery.mockReset()
+    const pinnedRows = [
+      row({ id: 'z1', status: 'TODO', pinned: 1, clean_content: 'Zebra' }),
+      row({ id: 'a1', status: 'TODO', clean_content: 'Apple' })
+    ]
+    mocks.sqliteQuery.mockResolvedValue({ rows: pinnedRows, truncated: false })
+    render(BoardView, { ctx: makeCtx(), onCountChange: vi.fn() })
+    await flush()
+    expect(laneCardIds('To Do')).toEqual(['z1', 'a1'])
+
+    await fireEvent.click(screen.getByTestId('tasks-pin-z1'))
+    await flush()
+    expect(mocks.updateTaskMeta).toHaveBeenCalledWith('z1', { pinned: false })
+
+    // The mocked write fires no block:changed; hand the view the persisted
+    // row set the real SDK would push after the file write.
+    mocks.sqliteQuery.mockResolvedValue({
+      rows: [
+        row({ id: 'z1', status: 'TODO', clean_content: 'Zebra' }),
+        row(pinnedRows[1])
+      ],
+      truncated: false
+    })
+    mocks.blockChangedCallbacks.forEach((cb) => cb())
+    await new Promise((r) => setTimeout(r, 120))
+    await flush()
+
+    expect(laneCardIds('To Do')).toEqual(['a1', 'z1'])
+  })
+
+  it('DONE cards render no pin toggle', async () => {
+    await renderBoard('status', [
+      row({ id: 'd1', status: 'DONE', clean_content: 'Done task' })
+    ])
+
+    expect(screen.queryByTestId('tasks-pin-d1')).toBeNull()
+  })
+
+  it('Enter/Space on the pin toggle does not select the card or open the drawer', async () => {
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', clean_content: 'A' })
+    ])
+    const pin = screen.getByTestId('tasks-pin-t1')
+    pin.focus()
+
+    for (const key of ['Enter', ' ']) {
+      await fireEvent.keyDown(pin, { key })
+    }
+    await flush()
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(
+      document.querySelector('[data-card="t1"]')?.getAttribute('aria-current')
+    ).toBeNull()
+    expect(document.activeElement).toBe(pin)
+  })
+
+  it('a failed pin write surfaces the banner and reverts the icon', async () => {
+    mocks.updateTaskMeta.mockRejectedValueOnce(new Error('lock held'))
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', clean_content: 'A' })
+    ])
+    const pin = screen.getByTestId('tasks-pin-t1')
+
+    await fireEvent.click(pin)
+    await flush()
+
+    expect(screen.getByTestId('tasks-pin-error')).toHaveTextContent(
+      "Couldn't update pin: lock held"
+    )
+    expect(pin).toHaveAttribute('aria-pressed', 'false')
+  })
 })
 
 // The block:changed debounce was extracted into useBlockChangedReload during
@@ -1547,6 +1682,7 @@ describe('BoardView — block:changed debounced reload', () => {
     mocks.setTaskOrder.mockReset().mockResolvedValue(true)
     mocks.setTaskOrders.mockReset().mockResolvedValue(true)
     mocks.createTask.mockReset().mockResolvedValue('new-task-id')
+    mocks.updateTaskMeta.mockReset().mockResolvedValue(true)
     mocks.getTaskBlockers.mockReset().mockResolvedValue([])
     mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
     mocks.notify.mockReset().mockResolvedValue(true)
