@@ -158,6 +158,12 @@
     onChanged: notifyMeta,
     onError: setMetaError
   })
+  const shortlistField = optimisticField<number | null>({
+    initial: null,
+    write: (r) => trackTaskUndoWrite(ctx.setTaskShortlistRank(task!.id, r)),
+    onChanged: notifyMeta,
+    onError: setMetaError
+  })
   const tagsField = optimisticField<string[]>({
     initial: [],
     write: (tags) => trackTaskUndoWrite(ctx.setTaskTags(task!.id, tags)),
@@ -171,9 +177,11 @@
     onError: setMetaError
   })
 
-  // Anchor for revert: the last status/priority successfully persisted.
+  // Anchor for revert: the last status/priority/shortlist successfully
+  // persisted.
   let statusCommitted = $state<TaskStatus>('TODO')
   let priorityCommitted = $state(2)
+  let shortlistCommitted = $state<number | null>(null)
 
   let recurrenceOpen = $state(false)
   let dueDateOpen = $state(false)
@@ -212,6 +220,10 @@
 
   const STATUSES: TaskStatus[] = ['TODO', 'DOING', 'DONE']
   const PRIORITIES: number[] = [1, 2, 3]
+  // Shortlist ranks (#1092): 0 is a REAL rank (the top one), null is the
+  // unranked state. Always compare with == null / != null — never truthiness,
+  // because rank 0 is falsy.
+  const SHORTLIST_OPTIONS: (number | null)[] = [null, 0, 1, 2, 3]
 
   // One label style for every section heading and field label so the drawer and
   // the 320px modal aside read as the same surface (D5).
@@ -236,6 +248,7 @@
     void task?.status
     void task?.owner
     void task?.priority
+    void task?.shortlist_rank
     void task?.tags
     void task?.clean_content
     void task?.estimate_minutes
@@ -261,6 +274,12 @@
     if (untrack(() => !priorityField.pending)) {
       priorityField.reset(task?.priority ?? 2)
       priorityCommitted = task?.priority ?? 2
+    }
+    if (untrack(() => !shortlistField.pending)) {
+      // ?? (not ||): rank 0 must survive the reset — only null/undefined map
+      // to the unranked state.
+      shortlistField.reset(task?.shortlist_rank ?? null)
+      shortlistCommitted = task?.shortlist_rank ?? null
     }
     if (untrack(() => !tagsField.pending)) {
       tagsField.reset(task?.tags ? task.tags.split('|').filter(Boolean) : [])
@@ -530,10 +549,81 @@
   }
   const priorityDebouncer = trailingDebounce(flushPriorityCommit, 200)
 
+  function shortlistLabel(r: number | null): string {
+    return r == null ? 'None' : String(r)
+  }
+  function shortlistAttr(r: number | null): string {
+    return r == null ? 'none' : String(r)
+  }
+
+  let shortlistCheckedIdx = $derived(
+    SHORTLIST_OPTIONS.indexOf(shortlistField.value)
+  )
+
+  // Current holder of a shortlist rank, if any (#1092). Ranks are
+  // single-holder by design, so assigning R has to free it first.
+  async function findShortlistHolder(rank: number): Promise<string | null> {
+    const res = await ctx.sqliteQuery(
+      'SELECT block_id FROM tasks WHERE shortlist_rank = ? AND block_id != ?',
+      [rank, task!.id]
+    )
+    const row = (res.rows?.[0] ?? null) as { block_id?: string } | null
+    return row?.block_id ?? null
+  }
+
+  async function commitShortlist(r: number | null) {
+    if (!task || shortlistField.pending || r === shortlistCommitted) return
+    // Occupied-rank demotion (#1092): assigning a real rank R first clears
+    // the task currently holding R. Two separate, individually-undoable
+    // writes — never a hidden cross-file swap.
+    if (r != null) {
+      const holder = await findShortlistHolder(r)
+      if (holder) {
+        try {
+          await trackTaskUndoWrite(ctx.setTaskShortlistRank(holder, null))
+        } catch (e) {
+          // Demotion failed: R is still occupied, so assigning it would
+          // duplicate the rank. Abort without implying a clean swap.
+          shortlistField.value = shortlistCommitted
+          setMetaError(friendlyCaughtError(e))
+          return
+        }
+      }
+    }
+    const ok = await shortlistField.commit(r)
+    if (ok) {
+      shortlistCommitted = r
+    } else {
+      shortlistField.value = shortlistCommitted
+    }
+    if (shortlistField.value !== shortlistCommitted)
+      shortlistDebouncer.trigger()
+  }
+
+  function onShortlistKeydown(e: KeyboardEvent) {
+    const curIdx = shortlistCheckedIdx >= 0 ? shortlistCheckedIdx : 0
+    const idx = nextRadiogroupIndex(e.key, curIdx, SHORTLIST_OPTIONS.length)
+    if (idx === null) return
+    e.preventDefault()
+    shortlistField.value = SHORTLIST_OPTIONS[idx]
+    shortlistDebouncer.trigger()
+    ;(e.currentTarget as HTMLElement)
+      .querySelector<HTMLElement>(
+        `[data-shortlist="${shortlistAttr(SHORTLIST_OPTIONS[idx])}"]`
+      )
+      ?.focus()
+  }
+
+  function flushShortlistCommit() {
+    void commitShortlist(shortlistField.value)
+  }
+  const shortlistDebouncer = trailingDebounce(flushShortlistCommit, 200)
+
   $effect(() => {
     return () => {
       statusDebouncer.cancel()
       priorityDebouncer.cancel()
+      shortlistDebouncer.cancel()
     }
   })
 
@@ -905,6 +995,48 @@
           </button>
         {/each}
       </div>
+    </section>
+
+    <section aria-labelledby="task-shortlist-label">
+      <h3 id="task-shortlist-label" class="mb-1 {FIELD_LABEL}">Shortlist</h3>
+      <div
+        class="flex items-center gap-0.5 rounded-lg border border-surface-panel-border bg-surface-panel p-0.5"
+        role="radiogroup"
+        aria-label="Shortlist rank"
+        aria-describedby="task-shortlist-hint"
+        tabindex="-1"
+        onkeydown={onShortlistKeydown}
+      >
+        {#each SHORTLIST_OPTIONS as r, i (shortlistAttr(r))}
+          <button
+            data-shortlist={shortlistAttr(r)}
+            type="button"
+            onclick={() => void commitShortlist(r)}
+            role="radio"
+            aria-checked={shortlistField.value === r}
+            tabindex={shortlistCheckedIdx >= 0
+              ? shortlistCheckedIdx === i
+                ? 0
+                : -1
+              : i === 0
+                ? 0
+                : -1}
+            disabled={shortlistField.pending}
+            class="flex-1 cursor-pointer rounded border-none px-2.5 py-1 font-label-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            class:bg-hover={shortlistField.value === r}
+            class:text-accent-primary-start={shortlistField.value === r}
+            class:text-text-muted={shortlistField.value !== r}
+          >
+            {shortlistLabel(r)}
+          </button>
+        {/each}
+      </div>
+      <p
+        id="task-shortlist-hint"
+        class="mt-1 font-label-sm text-type-2xs text-text-muted"
+      >
+        0 is the top rank
+      </p>
     </section>
 
     {#if metaError}
