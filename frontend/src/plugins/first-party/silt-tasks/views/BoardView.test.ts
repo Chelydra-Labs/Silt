@@ -2103,6 +2103,47 @@ describe('BoardView — shortlist rank order (#1092)', () => {
     ).toBeTruthy()
   })
 
+  it('sort=manual + lens on: lane-background drop also announces the locked reorder', async () => {
+    await renderBoardWithSort('status', 'manual', [
+      row({ id: 'u0', status: 'TODO', shortlist_rank: 0, clean_content: 'U0' }),
+      row({
+        id: 'p3',
+        status: 'TODO',
+        pinned: 1,
+        shortlist_rank: 3,
+        manual_order: 1,
+        clean_content: 'P3'
+      })
+    ])
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    await flush()
+    // Rank leads the pin key while the filter is the active lens.
+    expect(laneCardIds('To Do')).toEqual(['u0', 'p3'])
+
+    // Drop on the lane itself (the background between cards): the
+    // card-level lens announcement never runs on this path, and before the
+    // commitDrop guard the same-column early return swallowed the drop
+    // silently.
+    const lane = screen.getByRole('group', { name: 'To Do' })
+    await fireEvent.dragStart(cardByText('U0'))
+    await fireEvent.drop(lane)
+    await flush()
+
+    expect(mocks.setTaskOrders).not.toHaveBeenCalled()
+    expect(mocks.setTaskOrder).not.toHaveBeenCalled()
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    expect(laneCardIds('To Do')).toEqual(['u0', 'p3'])
+    expect(
+      screen.getByText('Manual order is locked while the Shortlist lens is on.')
+    ).toBeTruthy()
+  })
+
   it('sort=manual + lens on: tag same-column drop writes nothing (no silent re-tail)', async () => {
     await renderBoardWithSort('tag', 'manual', [
       row({

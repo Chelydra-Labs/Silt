@@ -205,8 +205,19 @@ export function createBoardDndController({
     // re-sets the idempotent tag and re-tails the manual token) — except
     // under the shortlist lens, where rank leads the lane and that re-tail
     // would be invisible until the lens lifts (see the card-level gate).
-    if ((groupBy !== 'tag' || getShortlistFirst()) && toCol.key === fromColKey)
+    if (
+      (groupBy !== 'tag' || getShortlistFirst()) &&
+      toCol.key === fromColKey
+    ) {
+      // A drop that lands on the lane background (between cards) never
+      // touches the card-level handler's announcement — under the lens it
+      // is the same locked manual reorder, so announce here too and both
+      // drop surfaces speak. Keyboard moves can't reach this branch (they
+      // only ever move cross-column).
+      if (sort === 'manual' && getShortlistFirst())
+        liveMessage = 'Manual order is locked while the Shortlist lens is on.'
       return
+    }
     if (groupBy === 'tag' && !toCol.value) {
       liveMessage =
         "No Tag column doesn't remove tags — drop on a tag column to add."
