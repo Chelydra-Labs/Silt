@@ -1,6 +1,7 @@
 <script lang="ts">
   import { QueryBlocksByTag } from '../../bindings/silt/app.js'
   import ViewHeader from './ui/ViewHeader.svelte'
+  import ViewState from './ui/ViewState.svelte'
 
   interface Props {
     selectedTag?: string
@@ -20,14 +21,18 @@
   }
   let results = $state<TagHit[]>([])
   let loadingResults = $state(false)
+  let loadError = $state<string | null>(null)
 
   async function selectTag(path: string) {
     activeTag = path
     loadingResults = true
+    loadError = null
     try {
       results = await QueryBlocksByTag(path)
     } catch (e) {
       console.error('QueryBlocksByTag failed:', e)
+      loadError =
+        e instanceof Error ? e.message : 'Failed to load tagged blocks'
       results = []
     } finally {
       loadingResults = false
@@ -77,51 +82,52 @@
   </ViewHeader>
   <div class="flex-1 overflow-y-auto custom-scrollbar">
     {#if !activeTag}
-      <div class="text-text-muted text-center py-16 font-body-md">
-        Select a tag in the sidebar to see its blocks.
-      </div>
+      <ViewState
+        kind="empty"
+        icon="label"
+        title="No tag selected"
+        description="Select a tag in the sidebar to see its blocks."
+      />
+    {:else if loadingResults}
+      <ViewState kind="loading" title="Loading tagged blocks…" />
+    {:else if loadError}
+      <ViewState
+        kind="error"
+        title="Failed to load tagged blocks"
+        description={loadError}
+        onRetry={() => selectTag(activeTag)}
+      />
+    {:else if results.length === 0}
+      <ViewState
+        kind="empty"
+        icon="label_off"
+        title="No blocks tagged"
+        description="No blocks have #{activeTag}."
+      />
     {:else}
-      {#if loadingResults}
-        <div class="skeleton-container px-6 py-4">
-          {#each Array(3) as _, i (i)}
-            <div class="skeleton-row">
-              <div class="skeleton-circle"></div>
-              <div class="skeleton-text title"></div>
-              <div class="skeleton-badge"></div>
-            </div>
-          {/each}
-        </div>
-      {:else}
-        {#if results.length === 0}
-          <div class="text-text-muted text-center py-10 font-body-md">
-            No blocks tagged.
-          </div>
-        {:else}
-          {#each results as res (res.id)}
-            <button
-              onclick={() => openBlock(res)}
-              class="w-full text-left px-6 py-3 border-b border-surface-panel-border/50 hover:bg-hover transition-colors border-none bg-transparent cursor-pointer flex flex-col gap-1"
+      {#each results as res (res.id)}
+        <button
+          onclick={() => openBlock(res)}
+          class="w-full text-left px-6 py-3 border-b border-surface-panel-border/50 hover:bg-hover transition-colors border-none bg-transparent cursor-pointer flex flex-col gap-1"
+        >
+          <div
+            class="flex items-center gap-1.5 text-type-2xs text-text-muted uppercase tracking-widest font-label-sm-bold"
+          >
+            <span>{res.notebook}</span>
+            <span class="material-symbols-outlined text-type-2xs"
+              >chevron_right</span
             >
-              <div
-                class="flex items-center gap-1.5 text-type-2xs text-text-muted uppercase tracking-widest font-label-sm-bold"
-              >
-                <span>{res.notebook}</span>
-                <span class="material-symbols-outlined text-type-2xs"
-                  >chevron_right</span
-                >
-                <span>{res.section}</span>
-                <span class="material-symbols-outlined text-type-2xs"
-                  >chevron_right</span
-                >
-                <span>{res.page}</span>
-              </div>
-              <div class="font-body-md text-sm text-text-primary">
-                {res.clean_content}
-              </div>
-            </button>
-          {/each}
-        {/if}
-      {/if}
+            <span>{res.section}</span>
+            <span class="material-symbols-outlined text-type-2xs"
+              >chevron_right</span
+            >
+            <span>{res.page}</span>
+          </div>
+          <div class="font-body-md text-sm text-text-primary">
+            {res.clean_content}
+          </div>
+        </button>
+      {/each}
     {/if}
   </div>
 </div>

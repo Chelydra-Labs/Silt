@@ -876,7 +876,7 @@
     <ErrorBanner message={errorMsg} />
   {/if}
   <div
-    class="flex flex-1 flex-col overflow-auto custom-scrollbar px-3 py-3 sm:px-5 sm:py-4 lg:px-6"
+    class="flex flex-1 flex-col overflow-x-auto overflow-y-auto min-w-0 w-full custom-scrollbar px-3 py-3 sm:px-5 sm:py-4 lg:px-6"
   >
     {#if loading}
       <!-- Skeleton: 6×7 day-cell grid mirroring the month layout, so the
