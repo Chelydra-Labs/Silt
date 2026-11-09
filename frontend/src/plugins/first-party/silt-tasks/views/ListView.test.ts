@@ -2007,6 +2007,67 @@ describe('ListView — shortlist badge + filter (#1092)', () => {
     ).map((el) => el.getAttribute('data-block-id'))
     expect(sectionIds).toEqual(['p-r0', 'p-r1'])
   })
+
+  it('sort=manual + lens on: row drag writes no rank-derived order', async () => {
+    // Two ranked rows in a single 'none' group. Under the lens the section
+    // renders rank-led, so a manual drop would renumber rows from the
+    // rank-sorted DOM — the exact defect class the Board gate (1d830527)
+    // closed. The drop must be a no-op: no writes, no reorder.
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [
+            task('r0', 'rank zero', {
+              shortlist_rank: 0,
+              manual_order: 1,
+              due_date: ''
+            }),
+            task('r3', 'rank three', {
+              shortlist_rank: 3,
+              manual_order: 2,
+              due_date: ''
+            })
+          ]
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    setGroupBy('none')
+    setSort('manual')
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const ids = () =>
+      Array.from(
+        document.querySelectorAll('[data-group="all"] [data-block-id]')
+      ).map((el) => el.getAttribute('data-block-id'))
+    // Rank leads manual_order while the filter is the active lens.
+    expect(ids()).toEqual(['r0', 'r3'])
+
+    const handleR0 = document.querySelector(
+      '[data-testid="tasks-row-drag-handle-r0"]'
+    ) as HTMLElement
+    const rowR3 = document.querySelector('[data-block-id="r3"]') as HTMLElement
+    expect(handleR0).toBeTruthy()
+    expect(rowR3).toBeTruthy()
+
+    await fireEvent.dragStart(handleR0)
+    await fireEvent.drop(rowR3)
+    await flush()
+
+    expect(mocks.setTaskOrders).not.toHaveBeenCalled()
+    expect(mocks.setTaskOrder).not.toHaveBeenCalled()
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    expect(ids()).toEqual(['r0', 'r3'])
+  })
 })
 
 describe('ListView — server-side filtering via buildQuery (#526)', () => {

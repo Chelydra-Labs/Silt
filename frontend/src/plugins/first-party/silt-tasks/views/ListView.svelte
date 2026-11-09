@@ -761,8 +761,11 @@
     dragOverId = null
   }
 
+  // Same lens gate as Board's card-level handlers (1d830527): while the
+  // shortlist lens leads, rank dominates manual_order, so a drop would
+  // renumber the section from the rank-sorted DOM — the drop is a no-op.
   function onRowDragOver(e: DragEvent, item: TaskDetail, groupKey: string) {
-    if (hubSort !== 'manual' || !dragItem) return
+    if (hubSort !== 'manual' || shortlistFirst || !dragItem) return
     // Only within-group reorder; cross-group is a no-op (see Block above).
     if (groupKey !== dragGroupKey) return
     e.preventDefault()
@@ -771,7 +774,7 @@
   }
 
   function onRowDrop(e: DragEvent, target: TaskDetail, groupKey: string) {
-    if (hubSort !== 'manual' || !dragItem) return
+    if (hubSort !== 'manual' || shortlistFirst || !dragItem) return
     e.preventDefault()
     e.stopPropagation()
     const src = dragItem
