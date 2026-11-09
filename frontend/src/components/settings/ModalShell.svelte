@@ -30,7 +30,7 @@
   onClose={onEscape}
   closeOnBackdrop={false}
   zIndex="z-[10000]"
-  maxWidth="max-w-[460px]"
+  maxWidth="max-w-md"
   surfaceClass="p-7 sm:p-8 rounded-xl"
 >
   <div class="modal-shell-content">
