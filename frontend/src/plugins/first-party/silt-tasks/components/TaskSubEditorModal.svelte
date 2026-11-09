@@ -17,7 +17,8 @@
     SiltHardBreak,
     SiltBlockKeymaps,
     blocksToDoc,
-    docToBlocks
+    docToBlocks,
+    isDetailsFoldToggle
   } from '../../../../lib/editor'
   import type { ParsedBlock } from '../../../../lib/editor'
   import { siltPasteProps } from '../../../../lib/editor/schema'
@@ -150,8 +151,10 @@
       content: blocksToDoc([]),
       // Same paste semantics as the page editor (shared helper).
       editorProps: siltPasteProps,
-      onUpdate: () => {
-        if (suppressUpdate) return
+      onUpdate: ({ transaction }) => {
+        // Fold toggles are view state, not content — collapsing a details
+        // section must not arm the unsaved-changes prompt.
+        if (suppressUpdate || isDetailsFoldToggle(transaction)) return
         unsavedChanges = true
         saveError = ''
         scheduleSave()

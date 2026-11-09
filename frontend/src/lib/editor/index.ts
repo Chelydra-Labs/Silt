@@ -15,7 +15,8 @@ export {
   SiltInlineMarkExtensions,
   SiltColorMarkExtensions,
   SiltDetailsExtensions,
-  SiltTableExtensions
+  SiltTableExtensions,
+  isDetailsFoldToggle
 } from './schema'
 export type { CalloutVariant } from './schema'
 export {
