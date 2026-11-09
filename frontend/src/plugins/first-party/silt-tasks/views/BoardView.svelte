@@ -421,6 +421,7 @@
   // re-query lands so the header strip flips dimension immediately.
   $effect(() => {
     void groupBy
+    void sort
     void weekStart
     void cols.statusColumns
     rebin()
@@ -473,6 +474,10 @@
   // Pin is display ordering only — no status/group/manual_order write, so a
   // drop that crosses the pinned boundary can snap back after reload (D9).
   async function togglePin(card: TaskDetail, next: boolean) {
+    // Drop the previous announcement up front: a failed write reverts the icon
+    // and raises the alert banner, so the polite region must not keep claiming
+    // the opposite state.
+    pinLiveMessage = ''
     try {
       await trackTaskUndoWrite(ctx.updateTaskMeta(card.id, { pinned: next }))
     } finally {
