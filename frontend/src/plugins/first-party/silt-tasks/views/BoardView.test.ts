@@ -1014,6 +1014,66 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     expect(mocks.setTaskOrder).not.toHaveBeenCalled()
   })
 
+  it('sort=manual: dropping a pinned card into the unpinned block announces the pin boundary', async () => {
+    await renderBoardWithSort('status', 'manual', [
+      row({
+        id: 'p1',
+        status: 'TODO',
+        pinned: 1,
+        manual_order: 1,
+        clean_content: 'Pinned'
+      }),
+      row({
+        id: 'u1',
+        status: 'TODO',
+        manual_order: 1,
+        clean_content: 'Unpinned'
+      })
+    ])
+
+    expect(laneCardIds('To Do')).toEqual(['p1', 'u1'])
+    await fireEvent.dragStart(cardByText('Pinned'))
+    await fireEvent.drop(cardByText('Unpinned'))
+    await flush()
+
+    // The pin boundary swallows the drop: no order write, card snaps back.
+    expect(mocks.setTaskOrders).not.toHaveBeenCalled()
+    expect(laneCardIds('To Do')).toEqual(['p1', 'u1'])
+    // ...but the no-op is explained to assistive tech.
+    expect(
+      screen.getByText('Pinned tasks stay at the top of To Do.')
+    ).toBeInTheDocument()
+  })
+
+  it('sort=manual: dropping an unpinned card into the pinned block announces the pin boundary', async () => {
+    await renderBoardWithSort('status', 'manual', [
+      row({
+        id: 'p1',
+        status: 'TODO',
+        pinned: 1,
+        manual_order: 1,
+        clean_content: 'Pinned'
+      }),
+      row({
+        id: 'u1',
+        status: 'TODO',
+        manual_order: 1,
+        clean_content: 'Unpinned'
+      })
+    ])
+
+    expect(laneCardIds('To Do')).toEqual(['p1', 'u1'])
+    await fireEvent.dragStart(cardByText('Unpinned'))
+    await fireEvent.drop(cardByText('Pinned'))
+    await flush()
+
+    expect(mocks.setTaskOrders).not.toHaveBeenCalled()
+    expect(laneCardIds('To Do')).toEqual(['p1', 'u1'])
+    expect(
+      screen.getByText('Unpinned tasks stay below pinned tasks in To Do.')
+    ).toBeInTheDocument()
+  })
+
   it('sort=manual: reordering unpinned cards leaves a pinned sibling’s order token untouched', async () => {
     await renderBoardWithSort('status', 'manual', [
       row({

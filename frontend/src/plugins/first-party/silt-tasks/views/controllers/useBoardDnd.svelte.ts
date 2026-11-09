@@ -521,7 +521,19 @@ export function createBoardDndController({
         changes.push({ id: c.id, order: newOrder })
       }
     })
-    if (changes.length === 0) return
+    if (changes.length === 0) {
+      // A cross-partition drop that leaves the moved card's own partition
+      // order unchanged does nothing: the pin boundary swallows it and the
+      // card snaps back. Announce why so the polite region isn't silent for
+      // screen-reader users. Same-partition no-ops (drop on the adjacent
+      // sibling) stay silent — the user's intent already holds.
+      if (src.pinned !== target.pinned) {
+        liveMessage = src.pinned
+          ? `Pinned tasks stay at the top of ${col.label}.`
+          : `Unpinned tasks stay below pinned tasks in ${col.label}.`
+      }
+      return
+    }
 
     // Optimistic: patch the partition's fresh manual_order values, then
     // re-sort into display order so the card snaps to its slot before the IPC
