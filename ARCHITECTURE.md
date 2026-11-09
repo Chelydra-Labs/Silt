@@ -58,7 +58,8 @@ correctness regression, not a style choice.
 
 1. **Markdown is the source of truth for content.** Every per-block
    metadata field (status, owner, priority, dates, pin, progress,
-   shortlist rank) MUST round-trip through the markdown inline task
+   estimate, recurrence, blocked-by, manual order, shortlist rank) MUST
+   round-trip through the markdown inline task
    syntax. The block
    identity comment is the only identifier stored in the file; the file
    position and the inline syntax are the source for everything else.
@@ -80,11 +81,15 @@ correctness regression, not a style choice.
    MUST be reproducible from the markdown + YAML above. The recovery path for
    any core-index corruption is *delete the index file and relaunch* — the
    documented, supported operation. The core index holds the block↔location projection, FTS5, file
-   mtime/size caches, and re-derived per-task caches (comments/links counts,
-   pin, progress, lifecycle timestamps/sort position, estimate,
-   shortlist rank — re-derived from markdown `[pin:: true]` /
-   `[progress:: N]` / `[created::]` / `[completed::]` / `[modified::]` /
-   `[order:: N]` / `[estimate::]` / `[shortlist:: N]` tokens on every
+   mtime/size caches, and re-derived per-task caches (status, owner,
+   dates, priority, pin, progress, recurrence, blocked-by edges, tags,
+   comments/links/subtask counts, lifecycle timestamps/sort position,
+   estimate, shortlist rank — re-derived from the task checkbox and
+   hashtags plus the `[due::]` / `[start::]` / `[owner::]` /
+   `[priority::]` / `[pin:: true]` / `[progress:: N]` / `[recur::]` /
+   `[blocked_by:: ((uuid))]` / `[created::]` / `[completed::]` /
+   `[modified::]` / `[order:: N]` / `[estimate::]` / `[shortlist:: N]`
+   tokens on every
    re-index; plus NOTE-block comment
    attribution `[author::]` / `[ts::]` into the sparse `block_meta`
    projection). It is **forbidden** to hold user intent *as the source of
