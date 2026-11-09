@@ -667,7 +667,9 @@ describe('TaskSubEditorModal — metadata sidebar (#780 / #826)', () => {
     await flush()
 
     await fireEvent.click(
-      document.getElementById('task-start-date-trigger') as HTMLElement
+      document.getElementById(
+        'sub-editor-task-start-date-trigger'
+      ) as HTMLElement
     )
     await fireEvent.click(screen.getByText('Today'))
     await flush()
@@ -1005,18 +1007,63 @@ describe('TaskSubEditorModal — cross-surface sidebar parity (D7)', () => {
       ),
       essentials: labels(
         root.querySelector(
-          'section[aria-labelledby="task-essentials-heading"]'
+          'section[aria-labelledby$="task-essentials-heading"]'
         ),
         'dt'
       ),
       planning: labels(
         root.querySelector('[data-testid="task-planning-section"]'),
-        'h3, label[for="task-estimate-input"]'
+        'h3, label[for$="task-estimate-input"]'
       ),
       activity: labels(
         root.querySelector('[data-testid="task-activity-section"]'),
         'h3'
       )
+    }
+  }
+
+  // The modal opens over the still-mounted drawer, so both sidebars sit in the
+  // document at once. Each id must belong to a single instance, and every
+  // label/ARIA reference must resolve inside the sidebar that owns it.
+  function expectScopedIds(...roots: Element[]) {
+    const idsOf = (root: Element) =>
+      Array.from(root.querySelectorAll('[id]'), (el) => el.id)
+    const idSets = roots.map(idsOf)
+    for (const ids of idSets) {
+      expect(new Set(ids).size, 'ids must be unique within a sidebar').toBe(
+        ids.length
+      )
+    }
+    for (const ids of idSets.slice(1)) {
+      expect(ids.filter((id) => idSets[0].includes(id))).toEqual([])
+    }
+
+    // aria-controls names a popover body that only renders while open, so it
+    // is required to resolve only when the target is already in the document.
+    const required = ['for', 'aria-labelledby', 'aria-describedby']
+    const optional = ['aria-controls']
+    const attrs = [...required, ...optional]
+    for (const root of roots) {
+      const selector = attrs.map((a) => `[${a}]`).join(',')
+      for (const el of Array.from(root.querySelectorAll(selector))) {
+        for (const attr of attrs) {
+          const value = el.getAttribute(attr)
+          if (!value) continue
+          for (const id of value.split(/\s+/).filter(Boolean)) {
+            const target = document.getElementById(id)
+            if (!target) {
+              expect(optional.includes(attr), `${attr}="${id}" resolves`).toBe(
+                true
+              )
+              continue
+            }
+            expect(
+              root.contains(target),
+              `${attr}="${id}" must resolve inside its own sidebar`
+            ).toBe(true)
+          }
+        }
+      }
     }
   }
 
@@ -1087,5 +1134,9 @@ describe('TaskSubEditorModal — cross-surface sidebar parity (D7)', () => {
     expect(readSidebarLayout(modalSidebar!)).toEqual(
       readSidebarLayout(drawerSidebar!)
     )
+
+    // "Open sub-editor" leaves the drawer mounted, so coexistence is the flow
+    // where shared-sidebar ids can cross-wire; pin that they do not.
+    expectScopedIds(modalSidebar!, drawerSidebar!)
   })
 })
