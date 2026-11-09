@@ -793,14 +793,18 @@
     data-testid="tasks-hub-header"
   >
     <div
-      class="flex flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2.5 sm:flex-nowrap sm:px-5 lg:px-6"
+      class="flex flex-wrap items-center gap-x-4 gap-y-2 px-6 py-3.5 sm:flex-nowrap border-b border-surface-panel-border/50"
       data-testid="tasks-hub-toolbar-primary"
     >
-      <div class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-1">
+      <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2.5">
+        <span
+          class="material-symbols-outlined text-icon-lg select-none leading-none flex-shrink-0 text-accent-primary-start"
+          aria-hidden="true">check_circle</span
+        >
         <h1
           bind:this={hubHeading}
           tabindex="-1"
-          class="font-headline-lg text-headline-lg truncate text-text-primary"
+          class="text-type-lg font-semibold text-text-primary tracking-tight truncate m-0 font-headline"
         >
           {manifest?.name ?? 'Tasks'}
         </h1>

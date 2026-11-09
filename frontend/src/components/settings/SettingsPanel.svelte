@@ -21,6 +21,7 @@
   import DevTab from './DevTab.svelte'
   import PluginSettingsPanel from './PluginSettingsPanel.svelte'
   import SettingsSearch from './SettingsSearch.svelte'
+  import ViewHeader from '../ui/ViewHeader.svelte'
   import { loadConfig, settings } from '../../settings/store.svelte'
   import { loadPlugins } from '../../plugins/loader'
   import { getSettingsSections } from './settingsSections.svelte'
@@ -112,23 +113,17 @@
   <!-- Shared section header — hidden during immersive theme editor so the
        editor owns the full content chrome (no Settings title + search bar). -->
   {#if !themeEditorSession.open}
-    <div
-      class="flex items-center justify-between gap-4 px-6 py-4 border-b border-surface-panel-border flex-shrink-0"
+    <ViewHeader
+      title={activeSectionMeta?.label ?? section}
+      headingLevel="h2"
+      titleClass="capitalize"
+      subtitle={activeSectionMeta?.description}
+      dataTestId="settings-header"
     >
-      <div class="min-w-0">
-        <h2
-          class="font-headline-md text-headline-md text-text-primary capitalize truncate"
-        >
-          {activeSectionMeta?.label ?? section}
-        </h2>
-        {#if activeSectionMeta?.description}
-          <p class="text-text-muted text-type-sm font-body-md mt-0.5 truncate">
-            {activeSectionMeta.description}
-          </p>
-        {/if}
-      </div>
-      <SettingsSearch onJump={handleJump} />
-    </div>
+      {#snippet actions()}
+        <SettingsSearch onJump={handleJump} />
+      {/snippet}
+    </ViewHeader>
   {/if}
 
   <!-- aria-labelledby resolves to the active tab in SettingsNav (sidebar)
