@@ -558,4 +558,174 @@ describe('TaskMetadataSidebar', () => {
     expect(screen.getByText('0 comments · 0 links · timestamps')).toBeTruthy()
     expect(screen.getByText('Comments')).toBeTruthy()
   })
+
+  describe('Shortlist control (#1092)', () => {
+    // findShortlistHolder runs before every real-rank commit; give it a
+    // resolvable empty result by default.
+    const emptyQuery = () =>
+      vi.fn().mockResolvedValue({ rows: [], truncated: false })
+
+    it('renders None/0/1/2/3 radios in a "Shortlist rank" radiogroup with the helper note', () => {
+      render(TaskMetadataSidebar, {
+        props: { task: makeTask(), ctx: makeCtx() }
+      })
+      const group = screen.getByRole('radiogroup', {
+        name: 'Shortlist rank'
+      })
+      for (const name of ['None', '0', '1', '2', '3']) {
+        expect(within(group).getByRole('radio', { name })).toBeTruthy()
+      }
+      expect(
+        within(group).getByRole('radio', { name: 'None' })
+      ).toHaveAttribute('aria-checked', 'true')
+      expect(screen.getByText('0 is the top rank')).toBeTruthy()
+    })
+
+    it('renders rank 0 as checked — 0 is a real rank, never "unranked"', () => {
+      render(TaskMetadataSidebar, {
+        props: { task: makeTask({ shortlist_rank: 0 }), ctx: makeCtx() }
+      })
+      const group = screen.getByRole('radiogroup', {
+        name: 'Shortlist rank'
+      })
+      expect(within(group).getByRole('radio', { name: '0' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+      expect(
+        within(group).getByRole('radio', { name: 'None' })
+      ).toHaveAttribute('aria-checked', 'false')
+    })
+
+    it('clicking 2 commits setTaskShortlistRank(id, 2)', async () => {
+      const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
+      render(TaskMetadataSidebar, {
+        props: {
+          task: makeTask(),
+          ctx: makeCtx({
+            setTaskShortlistRank,
+            sqliteQuery: emptyQuery()
+          })
+        }
+      })
+      const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
+      await fireEvent.click(within(group).getByRole('radio', { name: '2' }))
+      await flush()
+      expect(setTaskShortlistRank).toHaveBeenCalledWith('task-1', 2)
+    })
+
+    it('clicking 0 commits a real 0, not a clear', async () => {
+      const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
+      render(TaskMetadataSidebar, {
+        props: {
+          task: makeTask(),
+          ctx: makeCtx({
+            setTaskShortlistRank,
+            sqliteQuery: emptyQuery()
+          })
+        }
+      })
+      const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
+      await fireEvent.click(within(group).getByRole('radio', { name: '0' }))
+      await flush()
+      expect(setTaskShortlistRank).toHaveBeenCalledWith('task-1', 0)
+    })
+
+    it('clicking None clears via setTaskShortlistRank(id, null)', async () => {
+      const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
+      render(TaskMetadataSidebar, {
+        props: {
+          task: makeTask({ shortlist_rank: 0 }),
+          ctx: makeCtx({
+            setTaskShortlistRank,
+            sqliteQuery: emptyQuery()
+          })
+        }
+      })
+      const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
+      await fireEvent.click(within(group).getByRole('radio', { name: 'None' }))
+      await flush()
+      expect(setTaskShortlistRank).toHaveBeenCalledWith('task-1', null)
+    })
+
+    it('demotes the current rank holder before assigning an occupied rank', async () => {
+      const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
+      const sqliteQuery = vi.fn().mockResolvedValue({
+        rows: [{ block_id: 'holder-1' }],
+        truncated: false
+      })
+      render(TaskMetadataSidebar, {
+        props: {
+          task: makeTask(),
+          ctx: makeCtx({ setTaskShortlistRank, sqliteQuery })
+        }
+      })
+      const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
+      await fireEvent.click(within(group).getByRole('radio', { name: '2' }))
+      await flush()
+
+      expect(setTaskShortlistRank).toHaveBeenCalledTimes(2)
+      expect(setTaskShortlistRank).toHaveBeenNthCalledWith(1, 'holder-1', null)
+      expect(setTaskShortlistRank).toHaveBeenNthCalledWith(2, 'task-1', 2)
+      expect(
+        setTaskShortlistRank.mock.invocationCallOrder[0] <
+          setTaskShortlistRank.mock.invocationCallOrder[1]
+      ).toBe(true)
+    })
+
+    it('aborts the assign and surfaces an error when the demotion write fails', async () => {
+      const setTaskShortlistRank = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('holder write failed'))
+        .mockResolvedValue(true)
+      const sqliteQuery = vi.fn().mockResolvedValue({
+        rows: [{ block_id: 'holder-1' }],
+        truncated: false
+      })
+      render(TaskMetadataSidebar, {
+        props: {
+          task: makeTask(),
+          ctx: makeCtx({ setTaskShortlistRank, sqliteQuery })
+        }
+      })
+      const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
+      await fireEvent.click(within(group).getByRole('radio', { name: '2' }))
+      await flush()
+
+      // Only the failed holder-clear ran; the assign never fired.
+      expect(setTaskShortlistRank).toHaveBeenCalledTimes(1)
+      expect(setTaskShortlistRank).toHaveBeenCalledWith('holder-1', null)
+      expect(setTaskShortlistRank).not.toHaveBeenCalledWith('task-1', 2)
+      expect(screen.getByTestId('task-meta-error')).toHaveTextContent(
+        "Couldn't save: holder write failed"
+      )
+      // Selection reverts to the committed (unranked) state.
+      expect(
+        within(group).getByRole('radio', { name: 'None' })
+      ).toHaveAttribute('aria-checked', 'true')
+    })
+
+    it('ArrowRight/Home/End rove focus and select inside the radiogroup', async () => {
+      render(TaskMetadataSidebar, {
+        props: { task: makeTask(), ctx: makeCtx({ sqliteQuery: emptyQuery() }) }
+      })
+      const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
+      const radio = (name: string) =>
+        within(group).getByRole('radio', { name }) as HTMLButtonElement
+
+      radio('None').focus()
+      await fireEvent.keyDown(group, { key: 'ArrowRight' })
+      expect(document.activeElement).toBe(radio('0'))
+      expect(radio('0')).toHaveAttribute('aria-checked', 'true')
+      expect(radio('None')).toHaveAttribute('aria-checked', 'false')
+
+      await fireEvent.keyDown(group, { key: 'End' })
+      expect(document.activeElement).toBe(radio('3'))
+      expect(radio('3')).toHaveAttribute('aria-checked', 'true')
+
+      await fireEvent.keyDown(group, { key: 'Home' })
+      expect(document.activeElement).toBe(radio('None'))
+      expect(radio('None')).toHaveAttribute('aria-checked', 'true')
+    })
+  })
 })

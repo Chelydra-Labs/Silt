@@ -170,6 +170,7 @@ interface TaskRow {
   priority: number
   pinned?: boolean
   manual_order?: number
+  shortlist_rank?: number | null
 }
 
 function task(
@@ -1860,6 +1861,74 @@ describe('ListView — subtask badge (#434)', () => {
     expect(screen.getByTestId('tasks-subtask-badge-p1').textContent).toContain(
       '[1/3]'
     )
+  })
+})
+
+describe('ListView — shortlist badge + filter (#1092)', () => {
+  beforeEach(() => {
+    resetTaskHubState()
+    mocks.sqliteQuery.mockReset()
+    mocks.blockChangedCallbacks.length = 0
+  })
+  afterEach(cleanup)
+
+  it('renders a Shortlist badge for ranks 0 and 3, none when unranked', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [
+            task('s0', 'Top focus', { shortlist_rank: 0 }),
+            task('s3', 'Fourth focus', { shortlist_rank: 3 }),
+            task('su', 'Unranked focus')
+          ],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    // Rank 0 is a real rank — its badge must render exactly like any other.
+    expect(screen.getByTestId('tasks-row-shortlist-s0').textContent).toContain(
+      'Shortlist 0'
+    )
+    expect(screen.getByTestId('tasks-row-shortlist-s3').textContent).toContain(
+      'Shortlist 3'
+    )
+    expect(screen.queryByTestId('tasks-row-shortlist-su')).toBeNull()
+  })
+
+  it('shortlist filter wires the rank predicate + rank-ASC order into open SQL and spares the done SQL', async () => {
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const openCall = mocks.sqliteQuery.mock.calls.find((c) =>
+      isOpenSql(String(c[0]))
+    )
+    expect(openCall).toBeTruthy()
+    const openSql = String(openCall![0])
+    expect(openSql).toContain('t.shortlist_rank IS NOT NULL')
+    // Rank leads the default composed order (ahead of the pin-first key).
+    expect(openSql).toMatch(
+      /ORDER BY t\.shortlist_rank ASC, CASE WHEN t\.pinned = 1/
+    )
+
+    // The Completed section is history, not the open-work focus set — the
+    // done query drops the shortlist narrowing like it drops stale/dueDate.
+    const doneCall = mocks.sqliteQuery.mock.calls.find((c) =>
+      isDoneSql(String(c[0]))
+    )
+    expect(doneCall).toBeTruthy()
+    expect(String(doneCall![0])).not.toContain('t.shortlist_rank IS NOT NULL')
   })
 })
 
