@@ -213,6 +213,11 @@
   const STATUSES: TaskStatus[] = ['TODO', 'DOING', 'DONE']
   const PRIORITIES: number[] = [1, 2, 3]
 
+  // One label style for every field label so the drawer and the 320px modal
+  // aside read as the same surface.
+  const FIELD_LABEL =
+    'font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted'
+
   // Mirror the busy state up to the host so its window Esc handler can avoid
   // closing while a popover or the BlockedDoneDialog is open.
   $effect(() => {
@@ -608,6 +613,7 @@
         readonly={titleField.pending}
         aria-busy={titleField.pending}
         aria-label="Task title"
+        title={task.clean_content}
         onblur={commitTitle}
         onkeydown={(e) => {
           if (e.key === 'Enter') {
@@ -645,12 +651,7 @@
     </div>
 
     <section aria-labelledby="task-status-label">
-      <h3
-        id="task-status-label"
-        class="mb-1 font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
-      >
-        Status
-      </h3>
+      <h3 id="task-status-label" class="mb-1 {FIELD_LABEL}">Status</h3>
       <div
         class="flex items-center gap-0.5 rounded-lg border border-surface-panel-border bg-surface-panel p-0.5"
         role="radiogroup"
@@ -680,12 +681,7 @@
 
     <div class="field-pair grid grid-cols-2 gap-2">
       <section class="min-w-0">
-        <h3
-          id="task-due-date-label"
-          class="mb-1 font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
-        >
-          Due date
-        </h3>
+        <h3 id="task-due-date-label" class="mb-1 {FIELD_LABEL}">Due date</h3>
         <button
           id="task-due-date-trigger"
           bind:this={dueDateTrigger}
@@ -780,12 +776,7 @@
       </section>
 
       <section class="min-w-0">
-        <h3
-          id="task-start-date-label"
-          class="mb-1 font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
-        >
-          Start day
-        </h3>
+        <h3 id="task-start-date-label" class="mb-1 {FIELD_LABEL}">Start day</h3>
         <button
           id="task-start-date-trigger"
           bind:this={startDateTrigger}
@@ -879,6 +870,41 @@
       </section>
     </div>
 
+    <section>
+      <h3 id="task-priority-label" class="mb-1 {FIELD_LABEL}">Priority</h3>
+      <div
+        class="flex items-center gap-0.5 rounded-lg border border-surface-panel-border bg-surface-panel p-0.5"
+        role="radiogroup"
+        aria-labelledby="task-priority-label"
+        tabindex="-1"
+        onkeydown={onPriorityKeydown}
+      >
+        {#each PRIORITIES as p, i (p)}
+          <button
+            data-priority={p}
+            type="button"
+            onclick={() => void commitPriority(p)}
+            role="radio"
+            aria-checked={priorityField.value === p}
+            tabindex={priorityCheckedIdx >= 0
+              ? priorityCheckedIdx === i
+                ? 0
+                : -1
+              : i === 0
+                ? 0
+                : -1}
+            disabled={priorityField.pending}
+            class="flex-1 cursor-pointer rounded border-none px-2.5 py-1 font-label-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            class:bg-hover={priorityField.value === p}
+            class:text-accent-primary-start={priorityField.value === p}
+            class:text-text-muted={priorityField.value !== p}
+          >
+            {PRIORITY_LABELS[p]}
+          </button>
+        {/each}
+      </div>
+    </section>
+
     {#if metaError}
       <ErrorBanner
         message={`Couldn't save: ${metaError}`}
@@ -927,44 +953,6 @@
               }
             }}
           />
-        </dd>
-      </div>
-      <div class="flex items-center justify-between gap-3">
-        <dt id="task-priority-label" class="shrink-0 text-text-muted">
-          Priority
-        </dt>
-        <dd class="min-w-0 flex-1">
-          <div
-            class="flex items-center gap-0.5 rounded-lg border border-surface-panel-border bg-surface-panel p-0.5"
-            role="radiogroup"
-            aria-labelledby="task-priority-label"
-            tabindex="-1"
-            onkeydown={onPriorityKeydown}
-          >
-            {#each PRIORITIES as p, i (p)}
-              <button
-                data-priority={p}
-                type="button"
-                onclick={() => void commitPriority(p)}
-                role="radio"
-                aria-checked={priorityField.value === p}
-                tabindex={priorityCheckedIdx >= 0
-                  ? priorityCheckedIdx === i
-                    ? 0
-                    : -1
-                  : i === 0
-                    ? 0
-                    : -1}
-                disabled={priorityField.pending}
-                class="flex-1 cursor-pointer rounded border-none px-2 py-0.5 font-label-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                class:bg-hover={priorityField.value === p}
-                class:text-accent-primary-start={priorityField.value === p}
-                class:text-text-muted={priorityField.value !== p}
-              >
-                {PRIORITY_LABELS[p]}
-              </button>
-            {/each}
-          </div>
         </dd>
       </div>
       <div class="col-span-full flex items-start justify-between gap-3">
