@@ -9,9 +9,18 @@
     onError?: (message: string) => void
     disabled?: boolean
     testId?: string
+    /** Host layout classes (e.g. positioning in a card header). */
+    class?: string
   }
 
-  let { pinned, onToggle, onError, disabled = false, testId }: Props = $props()
+  let {
+    pinned,
+    onToggle,
+    onError,
+    disabled = false,
+    testId,
+    class: className = ''
+  }: Props = $props()
 
   const pinField = optimisticField<boolean>({
     initial: untrack(() => pinned),
@@ -19,9 +28,9 @@
     onError: (message) => onError?.(message)
   })
 
-  // A reload may replace the row's data mid-write; only accept the fresh
-  // prop once the optimistic commit settles so a late response can't flip
-  // the icon back to the pre-click value.
+  // While a write is pending, the optimistic value wins: a reload landing
+  // mid-write must not flip the icon back to the pre-click prop. Only an
+  // idle prop change re-syncs (no settle-time pass — see pending untrack).
   $effect(() => {
     const next = pinned
     if (untrack(() => !pinField.pending)) pinField.reset(next)
@@ -50,9 +59,29 @@
   data-testid={testId}
   class="pin-button shrink-0 rounded p-1 transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start disabled:cursor-not-allowed disabled:opacity-50 {pinField.value
     ? 'text-accent-primary-start'
-    : 'text-text-muted'}"
+    : 'text-text-muted'} {className}"
 >
-  <span class="material-symbols-outlined text-icon-sm" aria-hidden="true"
-    >push_pin</span
+  <span
+    class="pin-icon material-symbols-outlined text-icon-sm"
+    aria-hidden="true">push_pin</span
   >
 </button>
+
+<style>
+  /* Filled-vs-outlined push_pin: the glyph fill tracks aria-pressed so the
+     "pinned" cue is shape, not color alone. */
+  .pin-icon {
+    font-variation-settings:
+      'FILL' 0,
+      'wght' 400,
+      'GRAD' 0,
+      'opsz' 20;
+  }
+  .pin-button[aria-pressed='true'] .pin-icon {
+    font-variation-settings:
+      'FILL' 1,
+      'wght' 400,
+      'GRAD' 0,
+      'opsz' 20;
+  }
+</style>
