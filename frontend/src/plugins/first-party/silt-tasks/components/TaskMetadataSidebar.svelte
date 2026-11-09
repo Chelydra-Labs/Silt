@@ -213,6 +213,13 @@
   const STATUSES: TaskStatus[] = ['TODO', 'DOING', 'DONE']
   const PRIORITIES: number[] = [1, 2, 3]
 
+  // One label style for every section heading and field label so the drawer and
+  // the 320px modal aside read as the same surface (D5).
+  const SECTION_LABEL =
+    'font-label-sm-bold text-type-xs uppercase tracking-widest text-text-primary'
+  const FIELD_LABEL =
+    'font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted'
+
   // Mirror the busy state up to the host so its window Esc handler can avoid
   // closing while a popover or the BlockedDoneDialog is open.
   $effect(() => {
@@ -608,6 +615,7 @@
         readonly={titleField.pending}
         aria-busy={titleField.pending}
         aria-label="Task title"
+        title={task.clean_content}
         onblur={commitTitle}
         onkeydown={(e) => {
           if (e.key === 'Enter') {
@@ -645,12 +653,7 @@
     </div>
 
     <section aria-labelledby="task-status-label">
-      <h3
-        id="task-status-label"
-        class="mb-1 font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
-      >
-        Status
-      </h3>
+      <h3 id="task-status-label" class="mb-1 {FIELD_LABEL}">Status</h3>
       <div
         class="flex items-center gap-0.5 rounded-lg border border-surface-panel-border bg-surface-panel p-0.5"
         role="radiogroup"
@@ -680,12 +683,7 @@
 
     <div class="field-pair grid grid-cols-2 gap-2">
       <section class="min-w-0">
-        <h3
-          id="task-due-date-label"
-          class="mb-1 font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
-        >
-          Due date
-        </h3>
+        <h3 id="task-due-date-label" class="mb-1 {FIELD_LABEL}">Due date</h3>
         <button
           id="task-due-date-trigger"
           bind:this={dueDateTrigger}
@@ -780,12 +778,7 @@
       </section>
 
       <section class="min-w-0">
-        <h3
-          id="task-start-date-label"
-          class="mb-1 font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
-        >
-          Start day
-        </h3>
+        <h3 id="task-start-date-label" class="mb-1 {FIELD_LABEL}">Start day</h3>
         <button
           id="task-start-date-trigger"
           bind:this={startDateTrigger}
@@ -879,6 +872,41 @@
       </section>
     </div>
 
+    <section aria-labelledby="task-priority-label">
+      <h3 id="task-priority-label" class="mb-1 {FIELD_LABEL}">Priority</h3>
+      <div
+        class="flex items-center gap-0.5 rounded-lg border border-surface-panel-border bg-surface-panel p-0.5"
+        role="radiogroup"
+        aria-labelledby="task-priority-label"
+        tabindex="-1"
+        onkeydown={onPriorityKeydown}
+      >
+        {#each PRIORITIES as p, i (p)}
+          <button
+            data-priority={p}
+            type="button"
+            onclick={() => void commitPriority(p)}
+            role="radio"
+            aria-checked={priorityField.value === p}
+            tabindex={priorityCheckedIdx >= 0
+              ? priorityCheckedIdx === i
+                ? 0
+                : -1
+              : i === 0
+                ? 0
+                : -1}
+            disabled={priorityField.pending}
+            class="flex-1 cursor-pointer rounded border-none px-2.5 py-1 font-label-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            class:bg-hover={priorityField.value === p}
+            class:text-accent-primary-start={priorityField.value === p}
+            class:text-text-muted={priorityField.value !== p}
+          >
+            {PRIORITY_LABELS[p]}
+          </button>
+        {/each}
+      </div>
+    </section>
+
     {#if metaError}
       <ErrorBanner
         message={`Couldn't save: ${metaError}`}
@@ -889,30 +917,25 @@
 
   <section
     aria-labelledby="task-essentials-heading"
-    class="space-y-4 px-5 py-5"
+    class="space-y-3 px-5 py-4"
   >
     <div class="flex items-center gap-2">
       <span
-        class="material-symbols-outlined text-icon-md text-accent-secondary-start"
+        class="material-symbols-outlined text-icon-md text-text-muted"
         aria-hidden="true">person_edit</span
       >
-      <h3
-        id="task-essentials-heading"
-        class="font-label-sm-bold text-type-xs uppercase tracking-widest text-text-primary"
-      >
-        Essentials
-      </h3>
+      <h3 id="task-essentials-heading" class={SECTION_LABEL}>Essentials</h3>
     </div>
-    <dl class="field-pair grid grid-cols-2 gap-3 font-label-sm text-type-sm">
-      <div class="flex items-center justify-between gap-3">
-        <dt class="shrink-0 text-text-muted">
-          <label for="task-owner-input">Owner</label>
+    <dl class="space-y-2 font-label-sm text-type-sm">
+      <div class="flex items-center gap-3">
+        <dt class="w-20 shrink-0 text-text-muted">
+          <label class={FIELD_LABEL} for="task-owner-input">Owner</label>
         </dt>
         <dd class="min-w-0 flex-1">
           <input
             id="task-owner-input"
             type="text"
-            class="w-full rounded-sm border border-surface-card-border bg-surface-card px-2 py-1 text-right text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {ownerField.pending
+            class="w-full rounded-sm border border-surface-card-border bg-surface-card px-2 py-1 text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {ownerField.pending
               ? 'opacity-50'
               : ''}"
             placeholder="Unassigned"
@@ -929,49 +952,13 @@
           />
         </dd>
       </div>
-      <div class="flex items-center justify-between gap-3">
-        <dt id="task-priority-label" class="shrink-0 text-text-muted">
-          Priority
+      <div class="flex items-start gap-3">
+        <dt class="w-20 shrink-0 pt-1 text-text-muted">
+          <span class={FIELD_LABEL}>Tags</span>
         </dt>
         <dd class="min-w-0 flex-1">
-          <div
-            class="flex items-center gap-0.5 rounded-lg border border-surface-panel-border bg-surface-panel p-0.5"
-            role="radiogroup"
-            aria-labelledby="task-priority-label"
-            tabindex="-1"
-            onkeydown={onPriorityKeydown}
-          >
-            {#each PRIORITIES as p, i (p)}
-              <button
-                data-priority={p}
-                type="button"
-                onclick={() => void commitPriority(p)}
-                role="radio"
-                aria-checked={priorityField.value === p}
-                tabindex={priorityCheckedIdx >= 0
-                  ? priorityCheckedIdx === i
-                    ? 0
-                    : -1
-                  : i === 0
-                    ? 0
-                    : -1}
-                disabled={priorityField.pending}
-                class="flex-1 cursor-pointer rounded border-none px-2 py-0.5 font-label-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                class:bg-hover={priorityField.value === p}
-                class:text-accent-primary-start={priorityField.value === p}
-                class:text-text-muted={priorityField.value !== p}
-              >
-                {PRIORITY_LABELS[p]}
-              </button>
-            {/each}
-          </div>
-        </dd>
-      </div>
-      <div class="col-span-full flex items-start justify-between gap-3">
-        <dt class="shrink-0 pt-1 text-text-muted">Tags</dt>
-        <dd class="min-w-0 flex-1">
           <span class="sr-only" aria-live="polite">{tagsAnnouncement}</span>
-          <ul class="flex flex-wrap items-center justify-end gap-1">
+          <ul class="flex flex-wrap items-center gap-1">
             {#each tagsField.value as tg (tg)}
               <li
                 class="flex items-center gap-0.5 rounded-sm border border-accent-secondary-start/30 bg-accent-secondary-glow px-1.5 py-0.5 text-type-sm text-accent-secondary-start"
@@ -993,7 +980,7 @@
               <input
                 id="task-tag-add"
                 type="text"
-                class="w-full rounded border border-surface-card-border bg-transparent px-1.5 py-0.5 text-right text-type-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 disabled:opacity-50"
+                class="w-full rounded border border-surface-card-border bg-transparent px-1.5 py-0.5 text-type-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 disabled:opacity-50"
                 placeholder="Add tag…"
                 bind:value={tagDraft}
                 disabled={tagsField.pending}
@@ -1013,29 +1000,22 @@
 
   <section
     aria-labelledby="task-planning-heading"
-    class="space-y-4 border-t border-surface-card-border px-5 py-5"
+    class="space-y-3 border-t border-surface-card-border px-5 py-4"
     data-testid="task-planning-section"
   >
     <div class="flex items-center gap-2">
       <span
-        class="material-symbols-outlined text-icon-md text-accent-secondary-start"
+        class="material-symbols-outlined text-icon-md text-text-muted"
         aria-hidden="true">tune</span
       >
-      <h3
-        id="task-planning-heading"
-        class="font-label-sm-bold text-type-xs uppercase tracking-widest text-text-primary"
-      >
+      <h3 id="task-planning-heading" class={SECTION_LABEL}>
         Planning & tracking
       </h3>
     </div>
-    <div class="space-y-6">
-      <section>
-        <div class="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2">
-          <h3
-            class="font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
-          >
-            Progress
-          </h3>
+    <div class="space-y-4">
+      <section aria-labelledby="task-progress-label">
+        <div class="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h3 id="task-progress-label" class={FIELD_LABEL}>Progress</h3>
           <span class="font-label-sm text-type-xs text-text-primary">
             {progressState}%{#if task.subtask_total > 0}
               <span
@@ -1046,44 +1026,6 @@
               >
             {/if}
           </span>
-          <div class="ml-auto flex flex-col items-end gap-0.5">
-            <div class="flex items-center gap-1.5">
-              <label
-                for="task-estimate-input"
-                class="font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
-              >
-                Estimate
-              </label>
-              <input
-                id="task-estimate-input"
-                type="text"
-                data-testid="task-estimate-input"
-                class="w-28 rounded-sm border border-surface-card-border bg-surface-card px-2 py-0.5 text-right text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {estimateField.pending
-                  ? 'opacity-50'
-                  : ''}"
-                placeholder="—"
-                value={estimateField.value}
-                oninput={(e) => (estimateField.value = e.currentTarget.value)}
-                readonly={estimateField.pending}
-                aria-busy={estimateField.pending}
-                aria-invalid={estimateInvalid}
-                aria-describedby="task-estimate-hint"
-                onblur={() => void commitEstimate()}
-                onkeydown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    void commitEstimate()
-                  }
-                }}
-              />
-            </div>
-            <p
-              id="task-estimate-hint"
-              class="font-label-sm text-type-2xs text-text-muted"
-            >
-              Try 30m, 2h, 1d, or 2.5d
-            </p>
-          </div>
         </div>
         <input
           type="range"
@@ -1099,22 +1041,49 @@
           aria-valuetext={`${progressState}% complete`}
           class="w-full accent-accent-secondary-start disabled:opacity-50"
         />
-        <div
-          class="mt-2 h-1 overflow-hidden rounded border border-surface-card-border bg-surface-card"
+      </section>
+
+      <section class="flex items-start gap-3">
+        <label
+          for="task-estimate-input"
+          class="w-20 shrink-0 pt-1 {FIELD_LABEL}">Estimate</label
         >
-          <div
-            class="h-full bg-accent-secondary-start transition-all"
-            style="width: {progressState}%"
-          ></div>
+        <div class="min-w-0 flex-1">
+          <div class="flex flex-wrap items-center gap-2">
+            <input
+              id="task-estimate-input"
+              type="text"
+              data-testid="task-estimate-input"
+              class="w-28 rounded-sm border border-surface-card-border bg-surface-card px-2 py-0.5 text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {estimateField.pending
+                ? 'opacity-50'
+                : ''}"
+              placeholder="—"
+              value={estimateField.value}
+              oninput={(e) => (estimateField.value = e.currentTarget.value)}
+              readonly={estimateField.pending}
+              aria-busy={estimateField.pending}
+              aria-invalid={estimateInvalid}
+              aria-describedby="task-estimate-hint"
+              onblur={() => void commitEstimate()}
+              onkeydown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  void commitEstimate()
+                }
+              }}
+            />
+            <p
+              id="task-estimate-hint"
+              class="font-label-sm text-type-2xs text-text-muted"
+            >
+              Try 30m, 2h, 1d, or 2.5d
+            </p>
+          </div>
         </div>
       </section>
 
       <section>
-        <h3
-          class="mb-2 font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
-        >
-          Recurrence
-        </h3>
+        <h3 class="mb-2 {FIELD_LABEL}">Recurrence</h3>
         {#if dueDateField.value}
           <button
             bind:this={recurrenceTrigger}
@@ -1253,25 +1222,20 @@
 
   <section
     aria-labelledby="task-activity-heading"
-    class="space-y-4 border-y border-surface-card-border px-5 py-5"
+    class="space-y-3 border-t border-surface-card-border px-5 py-4"
     data-testid="task-activity-section"
   >
     <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
       <span
-        class="material-symbols-outlined text-icon-md text-accent-secondary-start"
+        class="material-symbols-outlined text-icon-md text-text-muted"
         aria-hidden="true">forum</span
       >
-      <h3
-        id="task-activity-heading"
-        class="font-label-sm-bold text-type-xs uppercase tracking-widest text-text-primary"
-      >
-        Activity
-      </h3>
+      <h3 id="task-activity-heading" class={SECTION_LABEL}>Activity</h3>
       <span class="font-label-sm text-type-xs text-text-muted">
         {task.comments_count} comments · {task.links_count} links · timestamps
       </span>
     </div>
-    <div class="space-y-5">
+    <div class="space-y-4">
       {#if task.created_at || task.completed_at}
         <dl class="flex flex-col gap-2 font-label-sm text-type-xs">
           {#if task.created_at}
