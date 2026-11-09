@@ -23,6 +23,7 @@ import {
   PluginSetTaskOrder,
   PluginSetTaskOrders,
   PluginSetTaskPriority,
+  PluginSetTaskShortlistRank,
   PluginSetTaskTags,
   PluginSetTaskTitle,
   PluginSetTaskEstimate,
@@ -357,6 +358,15 @@ export function makePluginContext(
     // Rewrite a task's [priority:: N] token (#412). 1=High, 2=Normal, 3=Low.
     setTaskPriority: (id, priority) =>
       PluginSetTaskPriority(pluginID, sessionToken ?? '', id, priority),
+    // Rewrite a task's [shortlist:: N] token (#1092). null maps to the -1
+    // clear sentinel; 0 is a real (top) rank, never a clear.
+    setTaskShortlistRank: (id, rank) =>
+      PluginSetTaskShortlistRank(
+        pluginID,
+        sessionToken ?? '',
+        id,
+        rank == null ? -1 : rank
+      ),
     // Rewrite a task's [tags:: a|b|c] token (#412). Empty array clears all tags.
     setTaskTags: (id, tags) =>
       PluginSetTaskTags(pluginID, sessionToken ?? '', id, tags),
