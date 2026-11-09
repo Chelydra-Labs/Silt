@@ -13,6 +13,7 @@
     SortMode,
     Scope
   } from '../state.svelte'
+  import { defaultFilters } from '../state.svelte'
   import { motionDuration } from '../motion'
   import { trailingDebounce } from '../debounce'
   import { buildFtsMatch } from '../../../../lib/ftsQuery'
@@ -228,23 +229,18 @@
     commitText.cancel()
     textDraft = ''
     lastCommittedText = ''
-    const hadFacets =
-      filters.owners.length > 0 ||
-      filters.priorities.length > 0 ||
-      !!filters.dueDate ||
-      filters.tags.length > 0 ||
-      !!filters.stale ||
-      !!filters.shortlist
+    // Facet-agnostic: any non-text facet with an active value keeps the
+    // Clear-all affordance visible — a hand-enumerated list here would
+    // hide the button for a future facet it forgot.
+    const hadFacets = Object.entries(filters).some(([key, value]) => {
+      if (key === 'text') return false
+      return Array.isArray(value) ? value.length > 0 : !!value
+    })
     if (hadFacets) {
-      onFiltersChange({
-        owners: [],
-        priorities: [],
-        dueDate: '',
-        tags: [],
-        stale: false,
-        shortlist: false,
-        text: ''
-      })
+      // Route the reset through the state-level default clone shape so a
+      // future facet is cleared with the rest instead of surviving via a
+      // stale hand-enumerated literal here.
+      onFiltersChange({ ...defaultFilters(), text: '' })
     }
     // The search is transient: clearing it must not mark an active saved view
     // dirty (a facets-only clear legitimately does).

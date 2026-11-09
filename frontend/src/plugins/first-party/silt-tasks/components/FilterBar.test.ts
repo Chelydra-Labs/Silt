@@ -547,12 +547,24 @@ describe('FilterBar "Clear all" and the transient search', () => {
       })
     })
     await fireEvent.click(screen.getByRole('button', { name: /Clear all/ }))
-    expect(onFiltersChange).toHaveBeenCalledWith({
+    expect(onFiltersChange).toHaveBeenCalledTimes(1)
+    const cleared = onFiltersChange.mock.calls[0][0] as TaskFilters
+    // Exact-key canary (mirrors the TasksHub snapshot-shape guard): the
+    // emitted reset must be the canonical default shape, so the next
+    // filter field cannot survive "Clear all" or fall off the reset.
+    expect(Object.keys(cleared).sort()).toEqual([
+      'dueDate',
+      'owners',
+      'priorities',
+      'shortlist',
+      'tags',
+      'text'
+    ])
+    expect(cleared).toEqual({
       owners: [],
       priorities: [],
       dueDate: '',
       tags: [],
-      stale: false,
       shortlist: false,
       text: ''
     })

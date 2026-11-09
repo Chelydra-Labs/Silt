@@ -267,6 +267,16 @@ export function cloneFilters(filters: TaskFilters): TaskFilters {
   }
 }
 
+/**
+ * The canonical "no filters active" shape as a fresh clone. Clear-all and
+ * resets emit this instead of hand-enumerating facets, so a future facet's
+ * default lands here (its reset value) rather than surviving a clear via a
+ * stale literal at a call site.
+ */
+export function defaultFilters(): TaskFilters {
+  return cloneFilters(DEFAULT_FILTERS)
+}
+
 // Snapshot filters for a SavedView: every facet except the free-text
 // search, which is transient by design (views must not persist or restore
 // the search bar's narrowing).
@@ -502,7 +512,7 @@ export function setColumns(cols: BoardColumn[]): void {
 /** Clear all active filters. */
 export function clearFilters(): void {
   clearTaskPageRoute()
-  _state.filters = cloneFilters(DEFAULT_FILTERS)
+  _state.filters = defaultFilters()
   markDirtyIfViewActive()
 }
 
