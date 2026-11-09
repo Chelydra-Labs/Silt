@@ -1072,8 +1072,10 @@ describe('TaskSubEditorModal — cross-surface sidebar parity (D7)', () => {
     }
   }
 
-  // The typeahead debounces its search; drive it past the timer so the
-  // dependency popover is open for the coexistence scan.
+  // The typeahead debounces its search; wait on the observable wiring (an
+  // active option mounted in the portaled listbox) rather than on a constant
+  // copied from the component's debounce, so a retune can't leave this
+  // passing/failing for a timing reason unrelated to id scoping.
   async function openDependencyPopover(
     root: Element
   ): Promise<HTMLInputElement> {
@@ -1082,7 +1084,14 @@ describe('TaskSubEditorModal — cross-surface sidebar parity (D7)', () => {
     )
     expect(input, 'dependency combobox must render').not.toBeNull()
     await fireEvent.input(input!, { target: { value: 'found' } })
-    await new Promise((r) => setTimeout(r, 220))
+    await vi.waitFor(() => {
+      const optionId = input!.getAttribute('aria-activedescendant')
+      expect(optionId, 'dependency popover must open').toBeTruthy()
+      expect(
+        document.getElementById(optionId!),
+        'active option must be mounted'
+      ).not.toBeNull()
+    })
     await flush()
     return input!
   }

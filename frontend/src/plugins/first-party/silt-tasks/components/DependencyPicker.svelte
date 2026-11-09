@@ -23,7 +23,9 @@
 
   let { cardId, blockedBy, ctx, onMetaChanged, idPrefix = '' }: Props = $props()
 
-  const id = (name: string) => `${idPrefix}${name}`
+  // Named `domId`, not `id`: `id` is the domain word for a dependency uuid in
+  // this component (blockedBy.map((id) => …), addDep(id), removeDep(id)).
+  const domId = (name: string) => `${idPrefix}${name}`
 
   // Each dep chip needs a display label; we resolve the current set once on
   // mount / when the card changes. The chip's uuid is the source of truth;
@@ -246,10 +248,10 @@
       aria-label="Search tasks to add as dependencies"
       role="combobox"
       aria-expanded={results.length > 0}
-      aria-controls={id('dep-search-results')}
+      aria-controls={domId('dep-search-results')}
       aria-autocomplete="list"
       aria-activedescendant={results.length > 0
-        ? id(`dep-result-${selectedIdx}`)
+        ? domId(`dep-result-${selectedIdx}`)
         : undefined}
       class="w-full px-2 py-1.5 rounded border border-surface-popover-border bg-surface-popover text-type-sm font-body-md text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-primary-start"
     />
@@ -265,14 +267,14 @@
   >
     {#snippet content()}
       <ul
-        id={id('dep-search-results')}
+        id={domId('dep-search-results')}
         role="listbox"
         aria-label="Matching tasks"
         class="max-h-48 overflow-y-auto"
       >
         {#each results as res, idx (res.id)}
           <li
-            id={id(`dep-result-${idx}`)}
+            id={domId(`dep-result-${idx}`)}
             role="option"
             aria-selected={idx === selectedIdx}
           >
