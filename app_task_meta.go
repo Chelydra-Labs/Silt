@@ -546,6 +546,49 @@ func validateTaskBlockPriorities(blocks []parser.ParsedBlock) error {
 	return nil
 }
 
+// SetTaskShortlistRank rewrites the [shortlist:: N] inline token on a task
+// block (#1092). 0-3 assigns the rank where 0 is the TOP rank — a real
+// value, not a clear; pass -1 to clear the token and leave the task
+// unranked. Follows the canonical write chain (same as SetTaskPriority).
+func (a *App) SetTaskShortlistRank(blockID string, rank int) error {
+	return a.setTaskShortlistRank(blockID, rank, historyReasonEditor)
+}
+
+// PluginSetTaskShortlistRank is the plugin-SDK wrapper for
+// SetTaskShortlistRank, gated by the standard capability + session checks.
+// Mirrors PluginSetTaskPriority.
+func (a *App) PluginSetTaskShortlistRank(pluginID, sessionToken, blockID string, rank int) (bool, error) {
+	return a.wrapPluginMutate(pluginID, sessionToken, func() error {
+		return a.setTaskShortlistRank(blockID, rank, historyReasonPlugin)
+	})
+}
+
+// setTaskShortlistRank is the shared core for the app-level and plugin-level
+// entry points. Validates BEFORE entering the write chain so a rejection
+// leaves the file untouched and emits nothing (setTaskOrder precedent).
+func (a *App) setTaskShortlistRank(blockID string, rank int, reason string) error {
+	if err := validateTaskShortlistRank(rank); err != nil {
+		return err
+	}
+	return a.mutateTaskBlock(blockID, "SetTaskShortlistRank", reason, func(b *parser.ParsedBlock) {
+		if rank == -1 {
+			b.ShortlistRank = nil
+		} else {
+			b.ShortlistRank = &rank
+		}
+	})
+}
+
+// validateTaskShortlistRank accepts the clear sentinel and the four real
+// ranks. 0 is a rank, not a clear — nil (never 0) means unranked, so unlike
+// validateTaskPriority there is no legacy omitted-token value to preserve.
+func validateTaskShortlistRank(rank int) error {
+	if rank >= -1 && rank <= 3 {
+		return nil
+	}
+	return fmt.Errorf("task shortlist rank must be -1 (clear) or 0-3 (0 is the top rank; got %d)", rank)
+}
+
 // SetTaskTags rewrites the hashtag set on a task's CleanText (the prose),
 // the tag field surfaced by the unified TaskEditDrawer (#412). Tags are
 // #namespace/path hashtags living in the prose, NOT [key::] tokens — the
