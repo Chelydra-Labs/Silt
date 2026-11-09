@@ -75,6 +75,7 @@
       {/if}
 
       <button
+        type="button"
         class="onboarding-btn font-label-sm-bold"
         onclick={onSelectFolder}
         disabled={initializing}
