@@ -758,6 +758,46 @@ describe('TaskMetadataSidebar', () => {
       expect(setTaskShortlistRank).toHaveBeenLastCalledWith('task-1', 1)
     })
 
+    it('keeps the newest keyboard intent when a key lands during the holder lookup', async () => {
+      const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
+      let releaseLookup: (v: {
+        rows: unknown[]
+        truncated: boolean
+      }) => void = () => {}
+      const sqliteQuery = vi
+        .fn()
+        .mockImplementationOnce(() => new Promise((r) => (releaseLookup = r)))
+        .mockResolvedValue({ rows: [], truncated: false })
+      render(TaskMetadataSidebar, {
+        props: {
+          task: makeTask(),
+          ctx: makeCtx({ setTaskShortlistRank, sqliteQuery })
+        }
+      })
+      const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
+
+      // Rove None -> 0 optimistically; the debounced flush enters the lookup.
+      await fireEvent.keyDown(group, { key: 'ArrowRight' })
+      await new Promise((r) => setTimeout(r, 230))
+
+      // A second keystroke during the pending lookup selects 1 and re-arms
+      // the debouncer — the radios are still enabled pre-commit.
+      await fireEvent.keyDown(group, { key: 'ArrowRight' })
+      releaseLookup({ rows: [], truncated: false })
+      await flush()
+      await new Promise((r) => setTimeout(r, 230))
+      await flush()
+
+      // Rank 0 landed first, then the newer intent re-committed as 1 —
+      // commit(0) resetting the value must not strand the user's last input.
+      expect(setTaskShortlistRank).toHaveBeenNthCalledWith(1, 'task-1', 0)
+      expect(setTaskShortlistRank).toHaveBeenLastCalledWith('task-1', 1)
+      expect(within(group).getByRole('radio', { name: '1' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    })
+
     it('banners and reverts when the holder lookup rejects, then still accepts input', async () => {
       const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
       const sqliteQuery = vi

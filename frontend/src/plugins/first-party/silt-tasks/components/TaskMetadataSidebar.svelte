@@ -596,6 +596,12 @@
       r === shortlistCommitted
     )
       return
+    // Value at entry. The keyboard flush passes value as r, so a change by
+    // the time commit() runs is a keystroke that landed during the pre-commit
+    // awaits (holder lookup / demotion run while the radios are still
+    // enabled); pointer clicks pass r directly and never touch value, so
+    // entry/latest stay equal and nothing is restored for them.
+    const entryValue = shortlistField.value
     shortlistCommitInFlight = true
     try {
       // Occupied-rank demotion (#1092): assigning a real rank R first clears
@@ -624,9 +630,18 @@
           }
         }
       }
+      // Newest intent wins: commit() resets value to its own argument, which
+      // would clobber a keystroke from the lookup window (the armed flush
+      // would then re-read the clobbered value and guard-swallows). Put the
+      // user's last word back so the display stays truthful AND the trailing
+      // re-check re-arms, mirroring commitPriority. On failure the
+      // revert-to-anchor stands: the error banner speaks and a failed write
+      // never auto-retries.
+      const latest = shortlistField.value
       const ok = await shortlistField.commit(r)
       if (ok) {
         shortlistCommitted = r
+        if (latest !== entryValue) shortlistField.value = latest
       } else {
         shortlistField.value = shortlistCommitted
       }
@@ -1041,12 +1056,15 @@
     </section>
 
     <section aria-labelledby={id('task-shortlist-label')}>
-      <h3 id={id('task-shortlist-label')} class="mb-1 {FIELD_LABEL}">Shortlist</h3>
+      <h3 id={id('task-shortlist-label')} class="mb-1 {FIELD_LABEL}">
+        Shortlist
+      </h3>
       <div
         class="flex items-center gap-0.5 rounded-lg border border-surface-panel-border bg-surface-panel p-0.5"
         role="radiogroup"
         aria-label="Shortlist rank"
         aria-describedby={id('task-shortlist-hint')}
+        aria-busy={shortlistCommitInFlight}
         tabindex="-1"
         onkeydown={onShortlistKeydown}
       >
