@@ -847,6 +847,50 @@ describe('TaskMetadataSidebar', () => {
       )
     })
 
+    it('keeps the shortlist radios operable while a rank commit is in flight', async () => {
+      // Disabling the radios on field.pending drops keyboard focus to
+      // <body> mid-chain and nothing restores it — keyboard/AT users lose
+      // their place on every committed rank change. Activations inside the
+      // window queue behind the flush (the commitShortlist guard), so the
+      // control can stay enabled; the radiogroup's aria-busy carries the
+      // in-flight state.
+      let releaseAssign: (v: boolean) => void = () => {}
+      const setTaskShortlistRank = vi
+        .fn()
+        .mockImplementationOnce(
+          () => new Promise<boolean>((r) => (releaseAssign = r))
+        )
+        .mockResolvedValue(true)
+      const sqliteQuery = vi
+        .fn()
+        .mockResolvedValue({ rows: [], truncated: false })
+      render(TaskMetadataSidebar, {
+        props: {
+          task: makeTask(),
+          ctx: makeCtx({ setTaskShortlistRank, sqliteQuery })
+        }
+      })
+      const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
+      ;(
+        within(group).getByRole('radio', { name: '2' }) as HTMLButtonElement
+      ).click()
+      // Empty lookup resolves → assign held pending: the chain sits inside
+      // the field.commit await with field.pending true — the exact window
+      // that used to disable (and un-focus) the radios.
+      await flush()
+      await flush()
+      expect(within(group).getByRole('radio', { name: '2' })).toBeEnabled()
+      expect(within(group).getByRole('radio', { name: 'None' })).toBeEnabled()
+      expect(group).toHaveAttribute('aria-busy', 'true')
+
+      releaseAssign(true)
+      await flush()
+      await new Promise((r) => setTimeout(r, 10))
+      await flush()
+      expect(setTaskShortlistRank).toHaveBeenCalledWith('task-1', 2)
+      expect(group).toHaveAttribute('aria-busy', 'false')
+    })
+
     it('queues a pointer click that lands during the pre-commit lookup window', async () => {
       const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
       // First lookup stays pending until released, so the second click hits

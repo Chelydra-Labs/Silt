@@ -1152,8 +1152,7 @@
               : i === 0
                 ? 0
                 : -1}
-            disabled={shortlistField.pending}
-            class="flex-1 cursor-pointer rounded border-none px-2.5 py-1 font-label-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            class="flex-1 cursor-pointer rounded border-none px-2.5 py-1 font-label-sm transition-colors"
             class:bg-hover={shortlistField.value === r}
             class:text-accent-primary-start={shortlistField.value === r}
             class:text-text-muted={shortlistField.value !== r}
