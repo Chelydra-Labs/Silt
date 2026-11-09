@@ -2698,4 +2698,115 @@ describe('Sidebar', () => {
     ).toBeInTheDocument()
     expect(screen.queryByRole('tree', { name: 'Work pages' })).toBeNull()
   })
+
+  it('notebook selector dropdown closes on Escape and restores focus to trigger button (#1075)', async () => {
+    mocks.listNavigation.mockResolvedValue(NAV_TREE)
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => true,
+        onSelectSection: () => {},
+        onSelectPage: () => true,
+        onPinPage: () => true,
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    const trigger = screen.getByRole('button', {
+      name: 'Active notebook: Work'
+    })
+    trigger.focus()
+    expect(document.activeElement).toBe(trigger)
+
+    await fireEvent.click(trigger)
+    await flush()
+    expect(screen.getByRole('menu', { name: 'Notebooks' })).toBeInTheDocument()
+
+    // Press Escape
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+    )
+    await flush()
+
+    expect(screen.queryByRole('menu', { name: 'Notebooks' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('keyboard-opened tree item context menu restores focus on Escape (#1075)', async () => {
+    mocks.listNavigation.mockResolvedValue(NAV_TREE)
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => true,
+        onSelectSection: () => {},
+        onSelectPage: () => true,
+        onPinPage: () => true,
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    // Expand Journal section if needed and focus page button
+    const pageButton = screen.getByRole('treeitem', { name: /Daily/i })
+    pageButton.focus()
+    expect(document.activeElement).toBe(pageButton)
+
+    // Trigger context menu via Shift+F10
+    await fireEvent.keyDown(pageButton, { key: 'F10', shiftKey: true })
+    await flush()
+
+    // ContextMenu should be open
+    expect(screen.getByRole('menu', { name: 'Actions' })).toBeInTheDocument()
+
+    // Press Escape to dismiss ContextMenu
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+    )
+    await flush()
+
+    expect(screen.queryByRole('menu', { name: 'Actions' })).toBeNull()
+    expect(document.activeElement).toBe(pageButton)
+  })
+
+  it('renders in isDrawer overlay mode and calls onCloseDrawer on Escape (#1075)', async () => {
+    mocks.listNavigation.mockResolvedValue(NAV_TREE)
+    const onCloseDrawer = vi.fn()
+    const { container } = render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        isDrawer: true,
+        onCloseDrawer,
+        onSelectNotebook: () => true,
+        onSelectSection: () => {},
+        onSelectPage: () => true,
+        onPinPage: () => true,
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    const aside = container.querySelector('aside[data-sidebar]')
+    expect(aside).toHaveAttribute('data-drawer', 'true')
+    expect(aside).toHaveClass('absolute', 'z-50')
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+    )
+    await flush()
+
+    expect(onCloseDrawer).toHaveBeenCalledTimes(1)
+  })
 })

@@ -39,6 +39,8 @@
     collapsed: boolean
     sidebarWidth?: number
     sidebarDragging?: boolean
+    isDrawer?: boolean
+    onCloseDrawer?: () => void
     // Returns whether the switch landed (#1005 refused-open contract):
     // false = a resolution is in flight; the caller must not move the nav
     // triple (displayedTabs filters by notebook — switching unmounts the
@@ -78,6 +80,8 @@
     collapsed = $bindable(),
     sidebarWidth = 256,
     sidebarDragging = false,
+    isDrawer = false,
+    onCloseDrawer,
     onSelectNotebook,
     onSelectSection,
     onSelectPage,
@@ -378,12 +382,33 @@
       if (dndErrorTimer) clearTimeout(dndErrorTimer)
     }
   })
+
+  $effect(() => {
+    if (!isDrawer || collapsed) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (showNotebookDropdown) return
+        e.preventDefault()
+        e.stopPropagation()
+        onCloseDrawer?.()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+    }
+  })
 </script>
 
 <aside
   data-sidebar
-  class="bg-surface-sidebar border-r border-surface-sidebar-border flex flex-col py-1 h-full flex-shrink-0 select-none z-40"
-  style:width={collapsed ? '0px' : sidebarWidth + 'px'}
+  data-drawer={isDrawer || undefined}
+  class="bg-surface-sidebar border-r border-surface-sidebar-border flex flex-col py-1 h-full flex-shrink-0 select-none z-40 {isDrawer
+    ? 'absolute left-12 top-0 bottom-0 z-50 shadow-2xl max-w-[calc(100vw-3rem)]'
+    : ''}"
+  style:width={collapsed
+    ? '0px'
+    : (isDrawer ? Math.min(sidebarWidth, 320) : sidebarWidth) + 'px'}
   style:transition={sidebarDragging ? 'none' : 'all 200ms ease-out'}
   style:overflow={collapsed ? 'hidden' : 'visible'}
   style:border-right={collapsed

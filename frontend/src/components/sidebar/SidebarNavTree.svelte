@@ -124,6 +124,29 @@
   let recentState = $derived(loader.recentState)
 
   let creating = $derived(crud.creating)
+  let notebookTriggerBtn = $state<HTMLButtonElement | null>(null)
+
+  function closeNotebookDropdown(restoreFocus = true) {
+    showNotebookDropdown = false
+    if (restoreFocus) {
+      void tick().then(() => notebookTriggerBtn?.focus())
+    }
+  }
+
+  $effect(() => {
+    if (!showNotebookDropdown) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        closeNotebookDropdown(true)
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+    }
+  })
 
   const loadNavigation = loader.loadNavigation
   const loadNavigationPreferences = loader.loadNavigationPreferences
@@ -270,14 +293,32 @@
       event.key === 'ContextMenu' ||
       (event.shiftKey && event.key === 'F10')
     ) {
+      event.preventDefault()
       const bounds = target?.getBoundingClientRect()
-      target?.dispatchEvent(
-        new MouseEvent('contextmenu', {
-          bubbles: true,
-          clientX: bounds?.left ?? 0,
-          clientY: bounds?.bottom ?? 0
-        })
-      )
+      const syntheticEvent = new MouseEvent('contextmenu', {
+        bubbles: true,
+        clientX: bounds?.left ?? 0,
+        clientY: bounds?.bottom ?? 0
+      })
+      if (node.kind === 'section') {
+        openContextMenu(
+          syntheticEvent,
+          'section',
+          activeNotebook,
+          node.section,
+          '',
+          target
+        )
+      } else {
+        openContextMenu(
+          syntheticEvent,
+          'page',
+          activeNotebook,
+          node.section,
+          node.page,
+          target
+        )
+      }
     } else if (
       event.key.length === 1 &&
       !event.shiftKey &&
@@ -363,6 +404,7 @@
 <!-- Notebook selector -->
 <div class="px-1 mb-3 relative">
   <button
+    bind:this={notebookTriggerBtn}
     type="button"
     aria-label={activeNotebook
       ? `Active notebook: ${activeNotebook}`
@@ -395,7 +437,7 @@
     <button
       tabindex="-1"
       aria-label="Close notebook menu"
-      onclick={() => (showNotebookDropdown = false)}
+      onclick={() => closeNotebookDropdown(false)}
       class="fixed inset-0 z-[60] cursor-default border-none bg-transparent p-0"
     ></button>
     <div

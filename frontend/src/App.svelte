@@ -208,6 +208,28 @@
   // its width transition (avoids laggy animated resize).
   let sidebarDragging = $state(false)
   let manuallyCollapsed = $state(false)
+  let isNarrowWindow = $state(
+    typeof window !== 'undefined' ? window.innerWidth <= 700 : false
+  )
+
+  $effect(() => {
+    if (typeof window === 'undefined') return
+    const handleResize = () => {
+      const narrow = window.innerWidth <= 700
+      if (narrow && !isNarrowWindow) {
+        // Auto-collapse sidebar when crossing into narrow mode (<= 700px)
+        sidebarCollapsed = true
+      }
+      isNarrowWindow = narrow
+    }
+    if (window.innerWidth <= 700 && !sidebarCollapsed) {
+      sidebarCollapsed = true
+    }
+    window.addEventListener('resize', handleResize)
+    return () => {
+      window.removeEventListener('resize', handleResize)
+    }
+  })
 
   // Dev Mode–only Inspect on empty content chrome (#683) — no other menu there.
   let emptyChromeMenu = $state<{
@@ -1255,6 +1277,14 @@
       <!-- Immersive theme editor: hide Settings sidebar so we don't stack
            activity bar → settings sections → editor groups. -->
       {#if !(activeView === 'settings' && themeEditorSession.open)}
+        {#if isNarrowWindow && !sidebarCollapsed}
+          <div
+            role="presentation"
+            tabindex="-1"
+            class="absolute inset-0 left-12 z-40 bg-black/45 backdrop-blur-[1px] transition-opacity duration-200"
+            onclick={() => (sidebarCollapsed = true)}
+          ></div>
+        {/if}
         <Sidebar
           bind:activeNotebook
           bind:activeSection
@@ -1265,6 +1295,8 @@
           bind:collapsed={sidebarCollapsed}
           {sidebarWidth}
           {sidebarDragging}
+          isDrawer={isNarrowWindow}
+          onCloseDrawer={() => (sidebarCollapsed = true)}
           onSelectNotebook={(nb) => {
             // Switching notebooks unmounts the previous notebook's tab
             // surfaces (displayedTabs filters by notebook) — gated while any
@@ -1313,7 +1345,7 @@
           }}
         />
 
-        {#if !sidebarCollapsed}
+        {#if !sidebarCollapsed && !isNarrowWindow}
           <SidebarResizeHandle
             width={sidebarWidth}
             onWidthChange={handleSidebarWidthChange}
