@@ -1174,8 +1174,10 @@ describe('Tasks view', () => {
     )
     expect(openCall).toBeTruthy()
     const sql = String(openCall![0])
-    // buildQuery dueDate sort: nulls last via COALESCE, then priority.
-    expect(sql).toMatch(/ORDER BY COALESCE\(t\.due_date/)
+    // buildQuery dueDate sort: pin-first, then nulls last via COALESCE.
+    expect(sql).toMatch(
+      /ORDER BY CASE WHEN t\.pinned = 1 THEN 0 ELSE 1 END, COALESCE\(t\.due_date/
+    )
     expect(sql).toMatch(/t\.status != 'DONE'/)
     expect(sql).toMatch(/LIMIT 500/)
   })
