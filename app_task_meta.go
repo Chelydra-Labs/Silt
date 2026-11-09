@@ -576,7 +576,25 @@ func (a *App) setTaskShortlistRank(blockID string, rank int, reason string) erro
 		} else {
 			b.ShortlistRank = &rank
 		}
+		b.ExtraTokens = dropShortlistExtraTokens(b.ExtraTokens)
 	})
+}
+
+// dropShortlistExtraTokens removes [shortlist:: ...] entries the parser
+// parked in ExtraTokens because their value was out of range or not an
+// integer (invalid values round-trip verbatim). The setter owns the only
+// canonical token for the `shortlist` key, so leaving an extra-token copy
+// would render a second, permanently stale shortlist token next to the
+// freshly written one.
+func dropShortlistExtraTokens(extra []string) []string {
+	kept := make([]string, 0, len(extra))
+	for _, tok := range extra {
+		if m := parser.TaskTokenRegex.FindStringSubmatch(tok); m != nil && strings.ToLower(m[1]) == "shortlist" {
+			continue
+		}
+		kept = append(kept, tok)
+	}
+	return kept
 }
 
 // validateTaskShortlistRank accepts the clear sentinel and the four real

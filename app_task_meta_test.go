@@ -293,6 +293,41 @@ func TestSetTaskShortlistRank_SetAndClear(t *testing.T) {
 	}
 }
 
+// A hand-edited out-of-range [shortlist:: N] survives parsing in
+// ExtraTokens; writing a rank must replace it, not render both tokens.
+func TestSetTaskShortlistRank_DropsStaleOutOfRangeToken(t *testing.T) {
+	app := newTestApp(t)
+	const id = "cccc8181-1111-1111-1111-111111111111"
+	content := "- [ ] ship [shortlist:: 9] [mood:: bright] <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "ShortlistStale", "2026-07-01", content)
+
+	if err := app.SetTaskShortlistRank(id, 2); err != nil {
+		t.Fatalf("SetTaskShortlistRank 2: %v", err)
+	}
+	updated, _ := os.ReadFile(filePath)
+	line := taskLineForID(string(updated), id)
+	if !strings.Contains(line, "[shortlist:: 2]") || strings.Contains(line, "[shortlist:: 9]") {
+		t.Errorf("assign: expected exactly [shortlist:: 2] in line: %s", line)
+	}
+	if !strings.Contains(line, "[mood:: bright]") {
+		t.Errorf("assign: unrelated extra token must survive: %s", line)
+	}
+
+	// Clear must drop a stale token too (key match is case-insensitive, as
+	// in the parser): the file must not claim a rank the UI just removed.
+	const id2 = "cccc8282-1111-1111-1111-111111111111"
+	content2 := "- [ ] ship [Shortlist:: 9] <!-- id: " + id2 + " -->\n"
+	filePath2 := indexTestFile(t, app, "W", "S", "ShortlistStaleClear", "2026-07-01", content2)
+	if err := app.SetTaskShortlistRank(id2, -1); err != nil {
+		t.Fatalf("SetTaskShortlistRank clear: %v", err)
+	}
+	updated2, _ := os.ReadFile(filePath2)
+	line2 := taskLineForID(string(updated2), id2)
+	if strings.Contains(strings.ToLower(line2), "[shortlist::") {
+		t.Errorf("clear: stale shortlist token must be dropped: %s", line2)
+	}
+}
+
 func TestSetTaskShortlistRank_RejectsOutOfRangeWithoutWriting(t *testing.T) {
 	app := newTestApp(t)
 	const id = "cccc9090-1111-1111-1111-111111111111"
