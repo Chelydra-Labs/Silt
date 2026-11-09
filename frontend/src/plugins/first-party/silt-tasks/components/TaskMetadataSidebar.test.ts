@@ -705,6 +705,94 @@ describe('TaskMetadataSidebar', () => {
       ).toHaveAttribute('aria-checked', 'true')
     })
 
+    it('commits exactly once when a second activation lands while the holder lookup is pending', async () => {
+      const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
+      // First lookup stays pending until released, so the second click hits
+      // the pre-commit reentrancy window; later lookups resolve empty.
+      let releaseLookup: (v: {
+        rows: unknown[]
+        truncated: boolean
+      }) => void = () => {}
+      const sqliteQuery = vi
+        .fn()
+        .mockImplementationOnce(() => new Promise((r) => (releaseLookup = r)))
+        .mockResolvedValue({ rows: [], truncated: false })
+      render(TaskMetadataSidebar, {
+        props: {
+          task: makeTask(),
+          ctx: makeCtx({ setTaskShortlistRank, sqliteQuery })
+        }
+      })
+      const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
+      const rank2 = within(group).getByRole('radio', {
+        name: '2'
+      }) as HTMLButtonElement
+      rank2.click()
+      rank2.click()
+      releaseLookup({ rows: [], truncated: false })
+      await flush()
+      await flush()
+
+      // One journal-visible write sequence: the first activation's assign.
+      expect(sqliteQuery).toHaveBeenCalledTimes(1)
+      expect(setTaskShortlistRank).toHaveBeenCalledTimes(1)
+      expect(setTaskShortlistRank).toHaveBeenCalledWith('task-1', 2)
+      expect(within(group).getByRole('radio', { name: '2' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+
+      // Past the commit debounce the rank must survive — the clobbered
+      // optimistic value used to re-arm a trailing revert-to-None flush.
+      await new Promise((r) => setTimeout(r, 230))
+      expect(setTaskShortlistRank).toHaveBeenCalledTimes(1)
+      expect(setTaskShortlistRank).not.toHaveBeenCalledWith('task-1', null)
+      expect(within(group).getByRole('radio', { name: '2' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+
+      // The guard released in finally: a fresh activation still commits.
+      await fireEvent.click(within(group).getByRole('radio', { name: '1' }))
+      await flush()
+      expect(setTaskShortlistRank).toHaveBeenLastCalledWith('task-1', 1)
+    })
+
+    it('banners and reverts when the holder lookup rejects, then still accepts input', async () => {
+      const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
+      const sqliteQuery = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('holder lookup failed'))
+        .mockResolvedValue({ rows: [], truncated: false })
+      render(TaskMetadataSidebar, {
+        props: {
+          task: makeTask(),
+          ctx: makeCtx({ setTaskShortlistRank, sqliteQuery })
+        }
+      })
+      const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
+
+      // Keyboard path: the rove sets the value optimistically and the
+      // debounced flush commits it — the path that used to strand the
+      // selection when the lookup rejection escaped unhandled. (Any uncaught
+      // rejection fails the vitest run itself; passing proves it's caught.)
+      await fireEvent.keyDown(group, { key: 'ArrowRight' })
+      await new Promise((r) => setTimeout(r, 230))
+
+      expect(setTaskShortlistRank).not.toHaveBeenCalled()
+      expect(screen.getByTestId('task-meta-error')).toHaveTextContent(
+        "Couldn't save: holder lookup failed"
+      )
+      expect(
+        within(group).getByRole('radio', { name: 'None' })
+      ).toHaveAttribute('aria-checked', 'true')
+
+      // Guard released in finally — a retry commits normally, no deadlock.
+      await fireEvent.click(within(group).getByRole('radio', { name: '0' }))
+      await flush()
+      expect(setTaskShortlistRank).toHaveBeenCalledWith('task-1', 0)
+    })
+
     it('ArrowRight/Home/End rove focus and select inside the radiogroup', async () => {
       render(TaskMetadataSidebar, {
         props: { task: makeTask(), ctx: makeCtx({ sqliteQuery: emptyQuery() }) }

@@ -571,33 +571,59 @@
     return row?.block_id ?? null
   }
 
+  // Sibling radiogroups are atomic for free — field.pending flips on before
+  // their first await. The shortlist lookup+demote+commit chain spans two
+  // awaits before pending turns on, so this flag closes that reentrancy
+  // window; a second activation inside it is a no-op, never a revert.
+  let shortlistCommitInFlight = $state(false)
+
   async function commitShortlist(r: number | null) {
-    if (!task || shortlistField.pending || r === shortlistCommitted) return
-    // Occupied-rank demotion (#1092): assigning a real rank R first clears
-    // the task currently holding R. Two separate, individually-undoable
-    // writes — never a hidden cross-file swap.
-    if (r != null) {
-      const holder = await findShortlistHolder(r)
-      if (holder) {
+    if (
+      !task ||
+      shortlistCommitInFlight ||
+      shortlistField.pending ||
+      r === shortlistCommitted
+    )
+      return
+    shortlistCommitInFlight = true
+    try {
+      // Occupied-rank demotion (#1092): assigning a real rank R first clears
+      // the task currently holding R. Two separate, individually-undoable
+      // writes — never a hidden cross-file swap.
+      if (r != null) {
+        let holder: string | null
         try {
-          await trackTaskUndoWrite(ctx.setTaskShortlistRank(holder, null))
+          holder = await findShortlistHolder(r)
         } catch (e) {
-          // Demotion failed: R is still occupied, so assigning it would
-          // duplicate the rank. Abort without implying a clean swap.
+          // Lookup failed: whether R is occupied is unknown, so assigning it
+          // could duplicate the rank. Abort like a failed demotion.
           shortlistField.value = shortlistCommitted
           setMetaError(friendlyCaughtError(e))
           return
         }
+        if (holder) {
+          try {
+            await trackTaskUndoWrite(ctx.setTaskShortlistRank(holder, null))
+          } catch (e) {
+            // Demotion failed: R is still occupied, so assigning it would
+            // duplicate the rank. Abort without implying a clean swap.
+            shortlistField.value = shortlistCommitted
+            setMetaError(friendlyCaughtError(e))
+            return
+          }
+        }
       }
+      const ok = await shortlistField.commit(r)
+      if (ok) {
+        shortlistCommitted = r
+      } else {
+        shortlistField.value = shortlistCommitted
+      }
+      if (shortlistField.value !== shortlistCommitted)
+        shortlistDebouncer.trigger()
+    } finally {
+      shortlistCommitInFlight = false
     }
-    const ok = await shortlistField.commit(r)
-    if (ok) {
-      shortlistCommitted = r
-    } else {
-      shortlistField.value = shortlistCommitted
-    }
-    if (shortlistField.value !== shortlistCommitted)
-      shortlistDebouncer.trigger()
   }
 
   function onShortlistKeydown(e: KeyboardEvent) {
