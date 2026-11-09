@@ -253,13 +253,26 @@ const DEFAULT_FILTERS: TaskFilters = {
 
 // DEFAULT_FILTERS's array facets must never leak by reference into state —
 // one in-place push would corrupt every subsequent reset/clear.
-function cloneFilters(filters: TaskFilters): TaskFilters {
+//
+// THE facet enumeration point: every clone of a TaskFilters object funnels
+// through here, so a future facet rides the spread instead of being dropped
+// by a hand-enumerated copy at a call site (the shortlist-drop bug class).
+// Array facets must be added to the explicit re-copy below or they alias.
+export function cloneFilters(filters: TaskFilters): TaskFilters {
   return {
     ...filters,
     owners: [...filters.owners],
     priorities: [...filters.priorities],
     tags: [...filters.tags]
   }
+}
+
+// Snapshot filters for a SavedView: every facet except the free-text
+// search, which is transient by design (views must not persist or restore
+// the search bar's narrowing).
+export function clonePersistableFilters(filters: TaskFilters): TaskFilters {
+  const { text: _transient, ...persistable } = filters
+  return cloneFilters(persistable)
 }
 
 function freshDefaults(): TaskHubState {
@@ -329,17 +342,7 @@ export function enterTaskPageRoute(
     target: { ...target },
     defaults: {
       ...defaults,
-      filters: defaults.filters
-        ? {
-            owners: [...defaults.filters.owners],
-            priorities: [...defaults.filters.priorities],
-            dueDate: defaults.filters.dueDate,
-            tags: [...defaults.filters.tags],
-            stale: defaults.filters.stale,
-            shortlist: defaults.filters.shortlist,
-            text: defaults.filters.text
-          }
-        : undefined
+      filters: defaults.filters ? cloneFilters(defaults.filters) : undefined
     }
   }
 }
@@ -600,17 +603,12 @@ export function applySavedView(view: SavedView): void {
     _state.scopeUserOverride = true
   }
   if (view.filters !== undefined) {
-    // Deep-clone the array fields: a shallow spread shares the owners/
-    // priorities/tags array references, so a later in-place edit on this
-    // state would mutate the SavedView's stored filters (and a saved-view
-    // reload would surface the mutation).
+    // Deep-clone through the shared facet enumeration: a shallow spread
+    // shares the owners/priorities/tags array references, so a later
+    // in-place edit on this state would mutate the SavedView's stored
+    // filters (and a saved-view reload would surface the mutation).
     _state.filters = {
-      owners: [...view.filters.owners],
-      priorities: [...view.filters.priorities],
-      dueDate: view.filters.dueDate,
-      tags: [...view.filters.tags],
-      stale: view.filters.stale,
-      shortlist: view.filters.shortlist,
+      ...cloneFilters(view.filters),
       // The free-text search is transient and orthogonal to views; keep it
       // so clicking a saved view narrows instead of discarding the search.
       text: _state.filters.text

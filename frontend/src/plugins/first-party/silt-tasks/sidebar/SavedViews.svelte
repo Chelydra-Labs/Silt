@@ -10,6 +10,7 @@
   import {
     getTaskHubState,
     applySavedView,
+    clonePersistableFilters,
     deleteSavedView,
     saveView,
     reorderSavedViews,
@@ -143,14 +144,7 @@
       groupBy: s.groupBy,
       sort: s.sort,
       scope: s.scope,
-      filters: {
-        owners: [...s.filters.owners],
-        priorities: [...s.filters.priorities],
-        dueDate: s.filters.dueDate,
-        tags: [...s.filters.tags],
-        stale: s.filters.stale,
-        shortlist: s.filters.shortlist
-      },
+      filters: clonePersistableFilters(s.filters),
       calendarSubMode: s.calendarSubMode,
       columns: s.columns.map((c) => ({ ...c })),
       system: false

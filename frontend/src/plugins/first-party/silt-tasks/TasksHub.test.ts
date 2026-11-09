@@ -1126,6 +1126,7 @@ describe('Tasks hub — saved views bookmark (#427)', () => {
       priorities: [],
       dueDate: '',
       tags: [],
+      stale: true,
       shortlist: true
     })
     render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
