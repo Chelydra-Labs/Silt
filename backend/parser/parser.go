@@ -49,6 +49,7 @@ var TaskCheckboxRegex = regexp.MustCompile(`^([\s]*)-\s\[([ x/])\]\s+(.*)$`)
 //	[progress:: N]     — progress (0-100)
 //	[prog:: N]         — progress shorthand
 //	[recur:: RULE]     — recurrence rule (e.g. `every week`, `every 2 months`)
+//	[shortlist:: N]    — shortlist focus rank (0-3; 0 = top)
 //
 // The scanner is the single source of truth for token → ParsedBlock
 // field mapping; adding a new metadata type is a one-line addition to
@@ -1454,8 +1455,8 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		// Each metadata field that is set gets its own [key:: value] token
 		// appended after the description. The order is fixed: priority,
 		// shortlist, start, due, recur, owner, pin, progress, blocked_by,
-		// created, completed, order — matching the canonical field order so a
-		// parse → render round trip is byte-stable.
+		// created, completed, modified, order, estimate — matching the
+		// canonical field order so a parse → render round trip is byte-stable.
 		var tokens []string
 		if block.Priority > 0 && block.Priority != 3 {
 			tokens = append(tokens, fmt.Sprintf("[priority:: %d]", block.Priority))

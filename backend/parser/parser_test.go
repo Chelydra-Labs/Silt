@@ -403,7 +403,9 @@ func TestParseLine_Shortlist(t *testing.T) {
 		}
 	})
 	t.Run("out-of-range and non-integer values round-trip verbatim via ExtraTokens", func(t *testing.T) {
-		for _, token := range []string{"[shortlist:: 7]", "[shortlist:: abc]"} {
+		// 7/4 exercise the upper-bound arm, -1 the n >= 0 arm (distinct
+		// from the Atoi error arm hit by abc and the empty value).
+		for _, token := range []string{"[shortlist:: 7]", "[shortlist:: 4]", "[shortlist:: -1]", "[shortlist:: abc]", "[shortlist::]"} {
 			line := "- [ ] Legacy line " + token + " <!-- id: 33333333-3333-3333-3333-333333333333 -->"
 			block, _, _ := ParseLine(line, 1, 4)
 			if block.ShortlistRank != nil {
@@ -422,6 +424,26 @@ func TestParseLine_Shortlist(t *testing.T) {
 			if rendered != rendered2 {
 				t.Errorf("%s: render not byte-stable:\n  %q\n  %q", token, rendered, rendered2)
 			}
+		}
+	})
+	t.Run("keys are case-insensitive", func(t *testing.T) {
+		line := "- [ ] Focus item [Shortlist:: 2] <!-- id: 66666666-6666-6666-6666-666666666666 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.ShortlistRank == nil || *block.ShortlistRank != 2 {
+			t.Errorf("expected rank 2 from [Shortlist:: 2], got %v", block.ShortlistRank)
+		}
+		if len(block.ExtraTokens) != 0 {
+			t.Errorf("expected no ExtraTokens for valid token, got %v", block.ExtraTokens)
+		}
+	})
+	t.Run("duplicate tokens — last one wins", func(t *testing.T) {
+		line := "- [ ] Focus item [shortlist:: 1] [shortlist:: 3] <!-- id: 77777777-7777-7777-7777-777777777777 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.ShortlistRank == nil || *block.ShortlistRank != 3 {
+			t.Errorf("expected last-wins rank 3, got %v", block.ShortlistRank)
+		}
+		if len(block.ExtraTokens) != 0 {
+			t.Errorf("valid duplicates must not leak into ExtraTokens, got %v", block.ExtraTokens)
 		}
 	})
 	t.Run("render emits [shortlist:: 0] for rank 0, omits for nil", func(t *testing.T) {
@@ -468,6 +490,18 @@ func TestParseLine_Shortlist(t *testing.T) {
 		}
 		if parsed2.Priority != parsed.Priority {
 			t.Errorf("round-trip Priority drift: %d → %d", parsed.Priority, parsed2.Priority)
+		}
+	})
+	t.Run("rank 0 double-render is byte-stable", func(t *testing.T) {
+		line := "- [ ] Top focus [shortlist:: 0] <!-- id: 88888888-8888-8888-8888-888888888888 -->"
+		parsed, _, _ := ParseLine(line, 1, 4)
+		rendered := renderBlock(parsed, 4)
+		parsed2, _, _ := ParseLine(rendered, 1, 4)
+		if parsed2.ShortlistRank == nil || *parsed2.ShortlistRank != 0 {
+			t.Fatalf("rank 0 lost in round trip: got %v", parsed2.ShortlistRank)
+		}
+		if rendered2 := renderBlock(parsed2, 4); rendered != rendered2 {
+			t.Errorf("rank 0 render not byte-stable:\n  %q\n  %q", rendered, rendered2)
 		}
 	})
 }

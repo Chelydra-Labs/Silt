@@ -742,6 +742,57 @@ func TestQueryTasksWithFilters_HydratesShortlistRank(t *testing.T) {
 	}
 }
 
+// TestSearchBlocksPaged_HydratesShortlistRank verifies the FTS5 search read
+// path hydrates the nullable cache back into TaskResult.ShortlistRank *int
+// with the same NULL→nil / 0→&0 contract as the tasks query paths (#1092).
+func TestSearchBlocksPaged_HydratesShortlistRank(t *testing.T) {
+	dm := newTestDB(t)
+
+	intPtr := func(n int) *int { return &n }
+	mk := func(id string, rank *int) parser.ParsedBlock {
+		b := sampleTaskBlock(id, 1)
+		b.ShortlistRank = rank
+		return b
+	}
+	blocks := []parser.ParsedBlock{
+		mk("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", intPtr(0)), // &0 (top)
+		mk("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", intPtr(3)), // &3
+		mk("cccccccc-cccc-cccc-cccc-cccccccccccc", nil),       // nil
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+
+	res, err := dm.SearchBlocksPaged("sample", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+
+	want := map[string]*int{
+		"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa": intPtr(0),
+		"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb": intPtr(3),
+		"cccccccc-cccc-cccc-cccc-cccccccccccc": nil,
+	}
+	got := make(map[string]*int, len(res.Results))
+	for _, r := range res.Results {
+		got[r.ID] = r.ShortlistRank
+	}
+	for id, wantRank := range want {
+		gotRank, ok := got[id]
+		if !ok {
+			t.Errorf("task %s missing from search results", id)
+			continue
+		}
+		if (gotRank == nil) != (wantRank == nil) {
+			t.Errorf("task %s: expected shortlist nil=%v, got nil=%v", id, wantRank == nil, gotRank == nil)
+			continue
+		}
+		if gotRank != nil && *gotRank != *wantRank {
+			t.Errorf("task %s: expected *shortlist_rank=%d, got %d", id, *wantRank, *gotRank)
+		}
+	}
+}
+
 // TestPluginRawQuery_PinnedFilterRegression confirms the Kanban-style raw SQL
 // path (`WHERE t.pinned = 1`) still returns exactly the explicitly-pinned
 // task now that the cache column is tri-state (NULL/0/1). NULL (no token) and

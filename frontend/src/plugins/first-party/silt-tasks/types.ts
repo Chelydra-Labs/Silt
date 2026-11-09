@@ -139,8 +139,7 @@ export function coerceTaskRow(raw: unknown): TaskDetail {
     modified_at: (r.modified_at as string) ?? '',
     estimate_minutes:
       r.estimate_minutes == null ? null : Number(r.estimate_minutes),
-    shortlist_rank:
-      r.shortlist_rank == null ? null : Number(r.shortlist_rank),
+    shortlist_rank: r.shortlist_rank == null ? null : Number(r.shortlist_rank),
     subtask_total: (r.subtask_total as number) ?? 0,
     subtask_done: (r.subtask_done as number) ?? 0
   } as unknown as TaskDetail
