@@ -30,6 +30,7 @@ export const v2CtxStubs: Pick<
   | 'setTaskOrder'
   | 'setTaskOrders'
   | 'setTaskPriority'
+  | 'setTaskShortlistRank'
   | 'setTaskTags'
   | 'setTaskTitle'
   | 'setTaskEstimate'
@@ -104,6 +105,7 @@ export const v2CtxStubs: Pick<
   setTaskOrder: () => Promise.resolve(true),
   setTaskOrders: () => Promise.resolve(true),
   setTaskPriority: () => Promise.resolve(true),
+  setTaskShortlistRank: () => Promise.resolve(true),
   setTaskTags: () => Promise.resolve(true),
   setTaskTitle: () => Promise.resolve(true),
   setTaskEstimate: () => Promise.resolve(true),

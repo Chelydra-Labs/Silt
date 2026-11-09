@@ -29,6 +29,7 @@ export type TaskChangedField =
   | 'startDate'
   | 'dueDate'
   | 'priority'
+  | 'shortlist'
   | 'pinned'
   | 'progress'
   | 'recurrence'
@@ -359,6 +360,15 @@ export interface PluginContext {
    * block:changed. Gated by content-mutate.
    */
   setTaskPriority: (id: string, priority: number) => Promise<boolean>
+  /**
+   * Rewrite a task's `[shortlist:: N]` inline token on disk atomically
+   * (#1092). `0` is the top focus rank … `3` the lowest; pass `null` to
+   * clear the rank (token removed, task unranked) — `0` is a real rank,
+   * never a clear. Ranked tasks render a badge and drive the Tasks hub
+   * shortlist filter. Round-trips through the markdown file, re-indexes,
+   * and emits block:changed. Gated by content-mutate.
+   */
+  setTaskShortlistRank: (id: string, rank: number | null) => Promise<boolean>
   /**
    * Rewrite a task's `#tag` hashtags in its prose atomically (#412). Tags are
    * stored inline as `#namespace/path` hashtags in the task body — there is no

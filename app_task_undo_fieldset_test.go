@@ -31,6 +31,7 @@ var undoRestorableFields = []undoRestorableField{
 	{"StartDate", "startDate"},
 	{"DueDate", "dueDate"},
 	{"Priority", "priority"},
+	{"ShortlistRank", "shortlist"},
 	{"Pinned", "pinned"},
 	{"Progress", "progress"},
 	{"Recurrence", "recurrence"},
@@ -54,12 +55,8 @@ var undoNeverRestoredFields = map[string]string{
 	"CreatedAt":   "creation provenance, not a task setter",
 	"Author":      "NOTE-only comment attribution, not task state",
 	"Timestamp":   "NOTE-only comment attribution, not task state",
-	"ExtraTokens": "unknown Dataview tokens round-trip verbatim",
+	"ExtraTokens": "unknown tokens round-trip verbatim through parse/render; shortlist-keyed extras dropped by SetTaskShortlistRank stay dropped (undo restores task state, not bytes)",
 	"Language":    "code-fence info string, not task state",
-	// Interim #1092: no app write path sets the rank yet, so undo never
-	// sees a ShortlistRank diff. The write chain (PLAN PR-2) wires the
-	// pointer-aware restore and moves this to undoRestorableFields.
-	"ShortlistRank": "rank setter + undo restore ship with the #1092 write chain",
 }
 
 func TestTaskUndoFieldSetsStayInLockstep(t *testing.T) {

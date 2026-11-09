@@ -141,6 +141,9 @@ func changedTaskFields(blocks []taskUndoBlock) []string {
 		if before.Priority != after.Priority {
 			add("priority")
 		}
+		if !equalIntPtr(before.ShortlistRank, after.ShortlistRank) {
+			add("shortlist")
+		}
 		if !equalBoolPtr(before.Pinned, after.Pinned) {
 			add("pinned")
 		}
@@ -164,6 +167,13 @@ func changedTaskFields(blocks []taskUndoBlock) []string {
 }
 
 func equalBoolPtr(a, b *bool) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+func equalIntPtr(a, b *int) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
@@ -665,6 +675,9 @@ func applyTaskUndoSnapshot(dst *parser.ParsedBlock, before, after parser.ParsedB
 	if before.Priority != after.Priority {
 		dst.Priority = before.Priority
 	}
+	if !equalIntPtr(before.ShortlistRank, after.ShortlistRank) {
+		dst.ShortlistRank = cloneIntPtr(before.ShortlistRank)
+	}
 	if !equalBoolPtr(before.Pinned, after.Pinned) {
 		dst.Pinned = cloneBoolPtr(before.Pinned)
 	}
@@ -686,6 +699,14 @@ func applyTaskUndoSnapshot(dst *parser.ParsedBlock, before, after parser.ParsedB
 }
 
 func cloneBoolPtr(p *bool) *bool {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+func cloneIntPtr(p *int) *int {
 	if p == nil {
 		return nil
 	}

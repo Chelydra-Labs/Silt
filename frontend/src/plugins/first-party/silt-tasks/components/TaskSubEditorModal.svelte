@@ -400,7 +400,9 @@
   bind:dialogRef
   onKeydown={handleKeydown}
 >
-  <!-- Header: breadcrumbs + parent task title + status -->
+  <!-- Header: breadcrumbs + chrome only. The visible title lives in the
+       sidebar's editable input — a second header copy duplicated it and
+       truncated against it (D6). -->
   <header
     class="flex items-center gap-3 px-5 py-3 border-b border-surface-modal-border flex-shrink-0"
   >
@@ -422,12 +424,9 @@
           >{page}
         </div>
       {/if}
-      <h2
-        id="sub-editor-title"
-        class="text-text-primary font-label-md text-base truncate"
-      >
-        {headerTitle}
-      </h2>
+      <!-- Always rendered so labelledBy="sub-editor-title" never dangles,
+           including while the sidebar (and its own title input) is shut. -->
+      <h2 id="sub-editor-title" class="sr-only">{headerTitle}</h2>
     </div>
     {#if task && !isNarrow}
       <button
@@ -554,6 +553,7 @@
           {ctx}
           {onMetaChanged}
           stickyPrimary
+          idPrefix="sub-editor-"
           bind:busy={sidebarBusy}
         />
       </aside>
@@ -567,6 +567,7 @@
           {ctx}
           {onMetaChanged}
           stickyPrimary
+          idPrefix="sub-editor-"
           bind:busy={sidebarBusy}
         />
       </aside>
