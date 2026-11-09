@@ -50,6 +50,7 @@
     type GroupBy
   } from '../state.svelte'
   import { binByDimension } from '../grouping'
+  import { sortTasks } from '../taskOrder'
   import { buildQuery } from '../query'
   import { useBlockChangedReload, useBlockedDoneGuard } from '../shared.svelte'
   import {
@@ -151,7 +152,32 @@
   // (legacy priority-0 rows join P3 but keep their value). Every other
   // dimension: data-driven via the shared grouping engine. Owner reorders
   // so the Unassigned bucket sits far-left per the issue spec.
+  //
+  // Lane order/labels are the grouping concern; item order is the sort
+  // concern. Every lane reuses the shared comparator so pinned cards lead
+  // the column and each pinned/unpinned subset keeps the active SortMode —
+  // including a groupBy-only rebin, which changes the lanes but not the sort.
   function deriveColumns(
+    loaded: TaskDetail[],
+    g: GroupBy,
+    configuredStatuses: string[],
+    iso: string,
+    configuredWeekStart: typeof weekStart
+  ): Lane[] {
+    const lanes = deriveLaneItems(
+      loaded,
+      g,
+      configuredStatuses,
+      iso,
+      configuredWeekStart
+    )
+    return lanes.map((lane) => ({
+      ...lane,
+      items: sortTasks(sort, lane.items)
+    }))
+  }
+
+  function deriveLaneItems(
     loaded: TaskDetail[],
     g: GroupBy,
     configuredStatuses: string[],
