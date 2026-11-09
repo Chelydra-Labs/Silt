@@ -603,6 +603,9 @@
     // entry/latest stay equal and nothing is restored for them.
     const entryValue = shortlistField.value
     shortlistCommitInFlight = true
+    // Holder freed by a successful demote, if one ran — needed to compensate
+    // when the assign itself fails.
+    let demotedHolder: string | null = null
     try {
       // Occupied-rank demotion (#1092): assigning a real rank R first clears
       // the task currently holding R. Two separate, individually-undoable
@@ -621,6 +624,7 @@
         if (holder) {
           try {
             await trackTaskUndoWrite(ctx.setTaskShortlistRank(holder, null))
+            demotedHolder = holder
           } catch (e) {
             // Demotion failed: R is still occupied, so assigning it would
             // duplicate the rank. Abort without implying a clean swap.
@@ -644,6 +648,19 @@
         if (latest !== entryValue) shortlistField.value = latest
       } else {
         shortlistField.value = shortlistCommitted
+        // The demote above already freed rank r on its previous holder, so
+        // a failed assign would leave both tasks unranked. Best-effort,
+        // journaled restore — no retry loop; if it also fails, extend the
+        // banner so the loss is visible (the journal keeps Ctrl+Z viable).
+        if (demotedHolder != null) {
+          try {
+            await trackTaskUndoWrite(ctx.setTaskShortlistRank(demotedHolder, r))
+          } catch {
+            setMetaError(
+              `${metaError} — the previous holder of rank ${r} could not be restored`
+            )
+          }
+        }
       }
       if (shortlistField.value !== shortlistCommitted)
         shortlistDebouncer.trigger()

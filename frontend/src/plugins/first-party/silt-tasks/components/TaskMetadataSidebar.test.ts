@@ -705,6 +705,74 @@ describe('TaskMetadataSidebar', () => {
       ).toHaveAttribute('aria-checked', 'true')
     })
 
+    it('restores the demoted holder when the assign fails after a successful demotion', async () => {
+      const setTaskShortlistRank = vi
+        .fn()
+        // Demote (holder → null) succeeds; assign (task-1 → 2) fails.
+        .mockResolvedValueOnce(true)
+        .mockRejectedValueOnce(new Error('assign failed'))
+        .mockResolvedValue(true)
+      const sqliteQuery = vi.fn().mockResolvedValue({
+        rows: [{ block_id: 'holder-1' }],
+        truncated: false
+      })
+      render(TaskMetadataSidebar, {
+        props: {
+          task: makeTask(),
+          ctx: makeCtx({ setTaskShortlistRank, sqliteQuery })
+        }
+      })
+      const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
+      await fireEvent.click(within(group).getByRole('radio', { name: '2' }))
+      await flush()
+      await flush()
+
+      // Demote ran, the assign was attempted, then the holder's rank was
+      // restored — a failed assign must not leave the previous holder
+      // unranked as silent collateral of the failure.
+      expect(setTaskShortlistRank).toHaveBeenNthCalledWith(1, 'holder-1', null)
+      expect(setTaskShortlistRank).toHaveBeenNthCalledWith(2, 'task-1', 2)
+      expect(setTaskShortlistRank).toHaveBeenNthCalledWith(3, 'holder-1', 2)
+      expect(screen.getByTestId('task-meta-error')).toHaveTextContent(
+        "Couldn't save: assign failed"
+      )
+      // Selection reverts to the committed (unranked) state.
+      expect(
+        within(group).getByRole('radio', { name: 'None' })
+      ).toHaveAttribute('aria-checked', 'true')
+    })
+
+    it('extends the banner when the compensating restore also fails', async () => {
+      const setTaskShortlistRank = vi
+        .fn()
+        .mockResolvedValueOnce(true) // demote
+        .mockRejectedValueOnce(new Error('assign failed')) // assign
+        .mockRejectedValueOnce(new Error('restore failed')) // compensation
+        .mockResolvedValue(true)
+      const sqliteQuery = vi.fn().mockResolvedValue({
+        rows: [{ block_id: 'holder-1' }],
+        truncated: false
+      })
+      render(TaskMetadataSidebar, {
+        props: {
+          task: makeTask(),
+          ctx: makeCtx({ setTaskShortlistRank, sqliteQuery })
+        }
+      })
+      const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
+      await fireEvent.click(within(group).getByRole('radio', { name: '2' }))
+      await flush()
+      await flush()
+
+      expect(setTaskShortlistRank).toHaveBeenCalledTimes(3)
+      expect(screen.getByTestId('task-meta-error')).toHaveTextContent(
+        "Couldn't save: assign failed — the previous holder of rank 2 could not be restored"
+      )
+      expect(
+        within(group).getByRole('radio', { name: 'None' })
+      ).toHaveAttribute('aria-checked', 'true')
+    })
+
     it('commits exactly once when a second activation lands while the holder lookup is pending', async () => {
       const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
       // First lookup stays pending until released, so the second click hits
