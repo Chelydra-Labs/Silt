@@ -775,6 +775,49 @@ body {
   pointer-events: none;
 }
 
+/* Synthetic caret: the engine paints no native caret at an insertion point
+   inside a flex-laid-out empty block. Keys on engine classes (focus +
+   emptiness) so it dies on the first keystroke or blur. */
+.ProseMirror-focused > div[data-type='note'].is-editor-empty:first-child::after,
+.ProseMirror-focused > div[data-type='task'].is-editor-empty:first-child::after,
+.ProseMirror-focused
+  > div[data-type='header'].is-editor-empty:first-child::after,
+.ProseMirror-focused > div[data-type='note'].is-empty:first-child::after,
+.ProseMirror-focused > div[data-type='task'].is-empty:first-child::after,
+.ProseMirror-focused > div[data-type='header'].is-empty:first-child::after {
+  content: '';
+  position: absolute;
+  left: 28px;
+  /* +0.3em drop = half the leading: centers the 1em bar on the
+     placeholder's line box, i.e. where a native caret would sit. */
+  top: calc(4px + 0.3em);
+  width: 2px;
+  height: 1em;
+  background: var(--color-editor-caret);
+  pointer-events: none;
+  animation: blink 900ms steps(1) infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ProseMirror-focused
+    > div[data-type='note'].is-editor-empty:first-child::after,
+  .ProseMirror-focused
+    > div[data-type='task'].is-editor-empty:first-child::after,
+  .ProseMirror-focused
+    > div[data-type='header'].is-editor-empty:first-child::after,
+  .ProseMirror-focused > div[data-type='note'].is-empty:first-child::after,
+  .ProseMirror-focused > div[data-type='task'].is-empty:first-child::after,
+  .ProseMirror-focused > div[data-type='header'].is-empty:first-child::after {
+    animation: none;
+  }
+}
+
 /* Task blocks: DONE tasks get strikethrough + muted text. */
 .ProseMirror > div[data-type='task'][data-status='DONE'] {
   color: var(--color-text-muted);
