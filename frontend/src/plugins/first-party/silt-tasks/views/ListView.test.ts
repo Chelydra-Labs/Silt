@@ -2013,18 +2013,22 @@ describe('ListView — shortlist badge + filter (#1092)', () => {
     // renders rank-led, so a manual drop would renumber rows from the
     // rank-sorted DOM — the exact defect class the Board gate (1d830527)
     // closed. The drop must be a no-op: no writes, no reorder.
+    // manual_order is deliberately INVERTED vs the rank order: if the gate
+    // is ever removed, the ungated renumber (r0→1, r3→2) produces real
+    // diffs and setTaskOrders fires — with matching orders the renumber
+    // would be a zero-diff no-op and the test would pass with the defect.
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
       if (isOpenSql(sql)) {
         return {
           rows: [
             task('r0', 'rank zero', {
               shortlist_rank: 0,
-              manual_order: 1,
+              manual_order: 2,
               due_date: ''
             }),
             task('r3', 'rank three', {
               shortlist_rank: 3,
-              manual_order: 2,
+              manual_order: 1,
               due_date: ''
             })
           ]
@@ -2066,6 +2070,9 @@ describe('ListView — shortlist badge + filter (#1092)', () => {
     expect(mocks.setTaskOrders).not.toHaveBeenCalled()
     expect(mocks.setTaskOrder).not.toHaveBeenCalled()
     expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    // The announce only fires alongside a real write, so it must stay
+    // silent under the gate too.
+    expect(screen.getByTestId('tasks-live-message').textContent).toBe('')
     expect(ids()).toEqual(['r0', 'r3'])
   })
 
