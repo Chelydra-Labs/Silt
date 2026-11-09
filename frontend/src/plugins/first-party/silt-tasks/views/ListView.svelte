@@ -89,6 +89,14 @@
   let markDownTimer: ReturnType<typeof setTimeout> | null = null
   let pinError = $state('')
   let pinErrorTimer: ReturnType<typeof setTimeout> | null = null
+  // Pin writes re-bin the row into a different {#each} block, which destroys
+  // the focused button; this holds the id to chase after the reload.
+  let pendingPinFocus = $state<{
+    id: string
+    /** Target section; null means the write failed (focus once, no chase). */
+    pinned: boolean | null
+  } | null>(null)
+  let pinFocusTimer: ReturnType<typeof setTimeout> | null = null
   let openTruncated = $state(false)
   let doneTruncated = $state(false)
   let showCompleted = $state(false)
@@ -473,6 +481,58 @@
     }, 8_000)
   }
 
+  // Track the pin write so the hub's Undo button stays disabled while it
+  // lands (same contract as done/reorder); focus follows the re-binned row.
+  function schedulePinFocus(id: string, pinned: boolean | null) {
+    pendingPinFocus = { id, pinned }
+    if (pinFocusTimer) clearTimeout(pinFocusTimer)
+    pinFocusTimer = setTimeout(() => {
+      pinFocusTimer = null
+      pendingPinFocus = null
+    }, 1_500)
+  }
+
+  async function togglePin(item: TaskDetail, next: boolean) {
+    let ok = false
+    try {
+      await trackTaskUndoWrite(ctx.updateTaskMeta(item.id, { pinned: next }))
+      ok = true
+    } finally {
+      // The pending-disable blurs the button to <body>; restore focus even
+      // on failure so the hub's Ctrl+Z scope survives.
+      schedulePinFocus(item.id, ok ? next : null)
+    }
+    liveMessage = next ? 'Task pinned' : 'Task unpinned'
+  }
+
+  // Focus the old node once the button re-enables, then re-focus the re-binned
+  // one after the debounced reload swapped {#each} blocks. Gives up when the
+  // element reaches its target section (or the expiry timer fires).
+  $effect(() => {
+    void openItems
+    const pending = pendingPinFocus
+    if (!pending) return
+    void tick().then(() => {
+      if (pendingPinFocus !== pending) return
+      const el = document.querySelector<HTMLButtonElement>(
+        `[data-testid="tasks-pin-${pending.id}"]`
+      )
+      if (!el) return
+      el.focus()
+      if (pending.pinned === null) {
+        // Failed write: the row never re-bins, so one refocus is enough once
+        // the button re-enables.
+        if (el.disabled) return
+      } else {
+        const group = el.closest('[data-group]')?.getAttribute('data-group')
+        if (pending.pinned ? group !== 'pinned' : group === 'pinned') return
+      }
+      if (pinFocusTimer) clearTimeout(pinFocusTimer)
+      pinFocusTimer = null
+      pendingPinFocus = null
+    })
+  })
+
   async function commitMarkDown(item: TaskDetail) {
     markDownError = ''
     if (markDownTimer) clearTimeout(markDownTimer)
@@ -785,6 +845,7 @@
     if (nowInterval) clearInterval(nowInterval)
     if (markDownTimer) clearTimeout(markDownTimer)
     if (pinErrorTimer) clearTimeout(pinErrorTimer)
+    if (pinFocusTimer) clearTimeout(pinFocusTimer)
     if (highlightTimer) clearTimeout(highlightTimer)
     if (orderErrorTimer) clearTimeout(orderErrorTimer)
   })
@@ -857,7 +918,7 @@
     </button>
     <PinToggle
       pinned={item.pinned}
-      onToggle={(next) => ctx.updateTaskMeta(item.id, { pinned: next })}
+      onToggle={(next) => togglePin(item, next)}
       onError={setPinError}
       testId={`tasks-pin-${item.id}`}
     />
@@ -965,8 +1026,12 @@
     />
   {/if}
 
-  <!-- aria-live region for manual-order drag announcements (#426) -->
-  <div class="sr-only" aria-live="polite">{liveMessage}</div>
+  <!-- aria-live region for manual-order reorder + pin announcements -->
+  <div
+    class="sr-only"
+    aria-live="polite"
+    data-testid="tasks-live-message">{liveMessage}</div
+  >
 
   <div class="flex flex-1 min-h-0 overflow-hidden">
     <div
