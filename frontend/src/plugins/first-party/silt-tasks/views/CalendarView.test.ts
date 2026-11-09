@@ -125,6 +125,7 @@ import {
   clearTaskPageRoute,
   setGroupBy,
   setCalendarSubMode,
+  setFilters,
   setWeekStart
 } from '../state.svelte'
 import { initTasksSettings } from '../settings'
@@ -296,6 +297,37 @@ describe('CalendarView — Calendar display mode (#425)', () => {
         'Meetings',
         'Sprint Review'
       ])
+    }
+  })
+
+  it('re-queries through the shortlist lens when the hub filter turns on (#1092)', async () => {
+    resetTaskHubState()
+    setCalendarSubMode('month')
+    await mockQueries([])
+    render(CalendarView, { ctx: makeCtx(), onCountChange: vi.fn() })
+    await flush()
+
+    const baselineCalls = mocks.sqliteQuery.mock.calls.length
+    expect(baselineCalls).toBeGreaterThan(0)
+    for (const [sql] of mocks.sqliteQuery.mock.calls) {
+      expect(sql).not.toContain('shortlist_rank IS NOT NULL')
+    }
+
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    await flush()
+
+    // The reload dependency block must track filters.shortlist: turning the
+    // lens on re-runs buildQuery, whose fresh queries carry the predicate.
+    const fresh = mocks.sqliteQuery.mock.calls.slice(baselineCalls)
+    expect(fresh.length).toBeGreaterThan(0)
+    for (const [sql] of fresh) {
+      expect(sql).toContain('t.shortlist_rank IS NOT NULL')
     }
   })
 
