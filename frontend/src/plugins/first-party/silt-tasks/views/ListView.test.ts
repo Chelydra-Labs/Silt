@@ -2466,6 +2466,101 @@ describe('Tasks view — pinned block (#1091)', () => {
     ).toBe('true')
   })
 
+  it('keeps pinned rows out of a generalized grouping and renders them once', async () => {
+    setGroupBy('status')
+    mockOpenRows([
+      task('p1', 'pinned todo', {
+        pinned: true,
+        status: 'TODO',
+        due_date: ''
+      }),
+      task('t1', 'plain todo', { status: 'TODO', due_date: '' }),
+      task('d1', 'doing', { status: 'DOING', due_date: '' })
+    ])
+
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(
+      document.querySelector('[data-group="pinned"] [data-block-id="p1"]')
+    ).toBeInTheDocument()
+    expect(
+      document.querySelector('[data-group="TODO"] [data-block-id="p1"]')
+    ).toBeNull()
+    expect(
+      document.querySelector('[data-group="TODO"] [data-block-id="t1"]')
+    ).toBeInTheDocument()
+    expect(
+      document.querySelector('[data-group="DOING"] [data-block-id="d1"]')
+    ).toBeInTheDocument()
+    expect(document.querySelectorAll('[data-block-id="p1"]')).toHaveLength(1)
+  })
+
+  it("keeps pinned rows in the Pinned block for groupBy='none'", async () => {
+    setGroupBy('none')
+    setSort('title')
+    mockOpenRows([
+      task('b', 'Bravo', { pinned: true, due_date: '' }),
+      task('a', 'Alpha', { due_date: '' }),
+      task('c', 'Charlie', { due_date: '' })
+    ])
+
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const pinnedIds = Array.from(
+      document.querySelectorAll('[data-group="pinned"] [data-block-id]')
+    ).map((el) => el.getAttribute('data-block-id'))
+    expect(pinnedIds).toEqual(['b'])
+
+    const flatIds = Array.from(
+      document.querySelectorAll('[data-group="all"] [data-block-id]')
+    ).map((el) => el.getAttribute('data-block-id'))
+    expect(flatIds).toEqual(['a', 'c'])
+    expect(document.querySelectorAll('[data-block-id="b"]')).toHaveLength(1)
+    expect(
+      document.querySelectorAll('[data-group] [data-block-id]')
+    ).toHaveLength(3)
+  })
+
+  it('re-bins a row into Pinned on pin, restoring focus and announcing the move', async () => {
+    setGroupBy('status')
+    const rows: TaskRow[] = [
+      task('u1', 'plain todo', { status: 'TODO', due_date: '' }),
+      task('d1', 'doing', { status: 'DOING', due_date: '' })
+    ]
+    mockOpenRows(rows)
+    mocks.updateTaskMeta.mockImplementation(
+      async (id: string, meta: { pinned?: boolean | null }) => {
+        const row = rows.find((r) => r.id === id)
+        if (row && typeof meta.pinned === 'boolean') row.pinned = meta.pinned
+        return true
+      }
+    )
+
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    screen.getByTestId('tasks-pin-u1').focus()
+    await fireEvent.click(screen.getByTestId('tasks-pin-u1'))
+    await flush()
+    mocks.blockChangedCallbacks.forEach((cb) => cb())
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    await flush()
+
+    expect(
+      document.querySelector('[data-group="pinned"] [data-block-id="u1"]')
+    ).toBeInTheDocument()
+    expect(
+      document.querySelector('[data-group="TODO"] [data-block-id="u1"]')
+    ).toBeNull()
+    expect(document.querySelectorAll('[data-block-id="u1"]')).toHaveLength(1)
+    expect(screen.getByTestId('tasks-live-message')).toHaveTextContent(
+      'Task pinned'
+    )
+    expect(document.activeElement).toBe(screen.getByTestId('tasks-pin-u1'))
+  })
+
   it('returns an unpinned row to its normal group after the reload', async () => {
     const rows: TaskRow[] = [
       task('p1', 'pinned one', { pinned: true }),
@@ -2499,5 +2594,9 @@ describe('Tasks view — pinned block (#1091)', () => {
     ).toBeInTheDocument()
     expect(document.querySelector('[data-group="pinned"]')).toBeNull()
     expect(screen.queryByTestId('tasks-pinned-divider')).toBeNull()
+    expect(screen.getByTestId('tasks-live-message')).toHaveTextContent(
+      'Task unpinned'
+    )
+    expect(document.activeElement).toBe(screen.getByTestId('tasks-pin-p1'))
   })
 })
