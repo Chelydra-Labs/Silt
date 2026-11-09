@@ -133,6 +133,44 @@ describe('silt-tasks unified state (#419)', () => {
       setFilters({ owners: ['Alice'], priorities: [], dueDate: '', tags: [] })
       expect(getTaskPageRoute()).toBeNull()
     })
+
+    it('clones every filter dimension into route defaults', () => {
+      // Shape guard: enterTaskPageRoute hand-enumerates the clone (the class
+      // of site that silently dropped shortlist before #1092), so a future
+      // TaskFilters facet must fail here rather than vanish from route
+      // defaults silently.
+      enterTaskPageRoute(target, {
+        filters: {
+          owners: ['Alice'],
+          priorities: [2],
+          dueDate: 'today',
+          tags: ['urgent'],
+          stale: true,
+          shortlist: true,
+          text: 'koa'
+        }
+      })
+      expect(
+        Object.keys(getTaskPageRoute()?.defaults.filters ?? {}).sort()
+      ).toEqual([
+        'dueDate',
+        'owners',
+        'priorities',
+        'shortlist',
+        'stale',
+        'tags',
+        'text'
+      ])
+      // Array dimensions are cloned, not aliased: mutating the source literal
+      // after entering the route must not reach into the stored defaults.
+      const source: string[] = ['Alice']
+      enterTaskPageRoute(target, {
+        filters: { owners: source, priorities: [], dueDate: '', tags: [] }
+      })
+      source.push('Bob')
+      expect(getTaskPageRoute()?.defaults.filters?.owners).toEqual(['Alice'])
+      clearTaskPageRoute()
+    })
   })
 
   // ── displayMode / groupBy (new unified surfaces) ──────────────────────
