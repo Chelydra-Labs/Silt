@@ -469,9 +469,9 @@
     padding: 0.375rem 0.5rem;
     background: var(--color-surface-popover);
     border: 1px solid var(--color-surface-popover-border);
-    border-radius: 8px;
+    border-radius: var(--radius-md, 8px);
     box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.35));
-    font-size: 13px;
+    font-size: var(--text-type-xs);
   }
   .row {
     display: flex;
@@ -488,20 +488,22 @@
     background: var(--color-surface-popover);
     color: var(--color-text-primary);
     border: 1px solid var(--color-surface-popover-border);
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     font: inherit;
   }
   .find-input.no-results {
     border-color: var(--color-status-danger);
   }
-  .find-input:focus {
-    outline: none;
-    border-color: var(--color-accent-primary-start);
+  .find-input:focus,
+  .find-input:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
+    border-color: var(--color-border-focus);
   }
   .find-status {
     min-width: 70px;
     color: var(--color-text-muted);
-    font-size: 12px;
+    font-size: var(--text-type-xs);
     text-align: center;
   }
   .find-toggles,
@@ -519,7 +521,7 @@
     background: transparent;
     color: var(--color-text-muted);
     border: 1px solid transparent;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     cursor: pointer;
     font: inherit;
     line-height: 1;
@@ -549,7 +551,7 @@
   .replace-toggle:focus-visible,
   .close-btn:focus-visible,
   .action-btn:focus-visible {
-    outline: 2px solid var(--color-accent-primary-start);
+    outline: 2px solid var(--color-border-focus);
     outline-offset: 1px;
   }
   .action-btn {
@@ -557,7 +559,7 @@
     background: transparent;
     color: var(--color-text-primary);
     border: 1px solid var(--color-surface-popover-border);
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     cursor: pointer;
     font: inherit;
     line-height: 1;
@@ -571,6 +573,6 @@
   }
   .replace-message {
     color: var(--color-text-muted);
-    font-size: 12px;
+    font-size: var(--text-type-xs);
   }
 </style>

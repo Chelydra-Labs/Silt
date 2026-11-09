@@ -320,7 +320,7 @@
       var(--color-surface-card)
     );
     color: var(--color-text-primary);
-    font-size: 12px;
+    font-size: var(--text-type-xs);
     cursor: pointer;
     transition:
       background 0.1s,
@@ -336,11 +336,11 @@
   }
 
   .banner-collapse-toggle .material-symbols-outlined {
-    font-size: 16px;
+    font-size: var(--text-icon-md);
   }
 
   .banner-icon {
-    font-size: 18px;
+    font-size: var(--text-icon-lg);
     color: var(--color-accent-primary-glow);
     flex-shrink: 0;
     align-self: flex-start;
@@ -384,6 +384,6 @@
   }
 
   .banner-dismiss .material-symbols-outlined {
-    font-size: 18px;
+    font-size: var(--text-icon-lg);
   }
 </style>

@@ -882,7 +882,7 @@
   }
 
   .trigger-label {
-    font-size: 0.72rem;
+    font-size: var(--text-type-2xs);
     font-weight: 500;
     line-height: 1;
   }
@@ -923,7 +923,7 @@
   }
 
   .toolbar-btn .material-symbols-outlined {
-    font-size: 18px;
+    font-size: var(--text-icon-lg);
     font-variation-settings: 'wght' 400;
   }
 
@@ -935,7 +935,7 @@
     min-width: 168px;
     max-width: min(240px, calc(100vw - 16px));
     padding: 4px;
-    border-radius: 8px;
+    border-radius: var(--radius-md, 8px);
     background: var(--color-surface-popover);
     border: 1px solid var(--color-surface-popover-border);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
@@ -951,10 +951,10 @@
     min-height: 32px;
     padding: 4px 10px;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     background: transparent;
     color: var(--color-text-primary);
-    font-size: 0.78rem;
+    font-size: var(--text-type-xs);
     text-align: left;
     cursor: pointer;
   }
@@ -979,7 +979,7 @@
   }
 
   .menu-item .material-symbols-outlined {
-    font-size: 16px;
+    font-size: var(--text-icon-md);
     color: var(--color-text-muted);
   }
 

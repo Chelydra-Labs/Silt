@@ -56,11 +56,11 @@
     border: 1px solid
       color-mix(in srgb, var(--color-accent-primary-glow) 30%, transparent);
     color: var(--color-text-primary);
-    font-size: 0.8rem;
+    font-size: var(--text-type-sm);
   }
 
   .tip-icon {
-    font-size: 18px;
+    font-size: var(--text-icon-lg);
     color: var(--color-accent-primary-glow);
     flex-shrink: 0;
   }
@@ -73,22 +73,22 @@
   .tip-text kbd {
     display: inline-block;
     padding: 1px 5px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     background: var(--color-surface-card);
     border: 1px solid var(--color-surface-card-border);
     color: var(--color-text-primary);
     font-family: var(--font-mono, monospace);
-    font-size: 0.7rem;
+    font-size: var(--text-type-2xs);
   }
 
   .tip-dismiss {
     flex-shrink: 0;
     padding: 3px 10px;
     border: 1px solid var(--color-surface-card-border);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     background: transparent;
     color: var(--color-text-muted);
-    font-size: 0.75rem;
+    font-size: var(--text-type-xs);
     cursor: pointer;
     transition:
       background 0.1s,

@@ -202,19 +202,19 @@
   .meta-suggest .suggest-popup-label {
     min-width: 64px;
     font-family: var(--font-mono, monospace);
-    font-size: 0.85rem;
+    font-size: var(--text-type-sm);
     font-weight: 600;
   }
 
   .suggest-popup-hint {
-    font-size: 0.8rem;
+    font-size: var(--text-type-sm);
     opacity: 0.8;
   }
 
   .suggest-popup-empty {
     padding: 8px;
     color: var(--color-text-muted);
-    font-size: 0.8rem;
+    font-size: var(--text-type-sm);
     text-align: center;
   }
 
@@ -224,7 +224,7 @@
     padding: 7px 8px;
     border-top: 1px solid var(--color-surface-popover-border);
     color: var(--color-text-muted);
-    font-size: 0.78rem;
+    font-size: var(--text-type-xs);
   }
 
   .suggest-popup-announcement {
