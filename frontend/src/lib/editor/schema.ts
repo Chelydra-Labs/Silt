@@ -1058,6 +1058,11 @@ export const CodeBlock = Node.create({
 //
 // `open: false` default keeps sections collapsed on load (the outliner's "the
 // file is the truth" model — collapse is a view concern, not persisted).
+// `persist: true` declares the `open` attr in the doc model so insertion-time
+// `open: true` (insertDetails, /meeting) survives and the extension's NodeView
+// auto-expands the section. Silt's serializer never writes `open` to disk
+// (blocks.ts emits a bare `<details>`; the parser hardcodes `open: false`), so
+// the on-disk format and the collapsed-on-reload model are unchanged.
 // The extensions are wrapped with `.extend()` to add `id` and `file_date`
 // attributes — without these, ProseMirror silently drops the attrs on
 // node creation, causing identity instability across save cycles (#310).
@@ -1080,7 +1085,10 @@ export const SiltDetailsExtensions = [
         }
       }
     }
-  }).configure({ HTMLAttributes: { 'data-type': 'details' } }),
+  }).configure({
+    persist: true,
+    HTMLAttributes: { 'data-type': 'details' }
+  }),
   DetailsSummary,
   DetailsContent
 ]

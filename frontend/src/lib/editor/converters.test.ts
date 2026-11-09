@@ -2346,12 +2346,11 @@ describe('/meeting section round-trip (#1105)', () => {
     // The production insert path — same call the /meeting command makes.
     expect(insertMeetingSection(editor)).toBe(true)
 
-    // First block is the section; existing blocks are untouched. Note: the
-    // `open: true` build attr mirrors insertDetails, but TipTap 3.32's
-    // Details (persist: false) does not declare `open`, so the doc model
-    // drops it — expansion is owned by the extension's NodeView, exactly
-    // like the built-in /details command.
+    // First block is the section; existing blocks are untouched. The schema
+    // declares `open` (persist: true), so the `open: true` build attr
+    // survives into the doc model and the NodeView auto-expands on insert.
     const doc = editor.state.doc
+    expect(doc.child(0).attrs.open).toBe(true)
     expect(doc.child(0).type.name).toBe('details')
     expect(doc.childCount).toBe(3)
     expect(doc.child(1).attrs.id).toBe(bodyId)
@@ -2374,6 +2373,8 @@ describe('/meeting section round-trip (#1105)', () => {
     for (const label of FIELD_LABELS) {
       expect(saved[0].clean_text).toContain(label)
     }
+    // No-disk-change invariant: the serializer never writes the `open` attr.
+    expect(saved[0].clean_text).not.toContain('open=')
     expect(saved[1]).toMatchObject({
       type: 'NOTE',
       id: bodyId,
@@ -2385,9 +2386,11 @@ describe('/meeting section round-trip (#1105)', () => {
       clean_text: 'follow-up'
     })
 
-    // Reopen: reparse keeps the section first with the summary intact.
+    // Reopen: reparse keeps the section first with the summary intact, and
+    // collapses it — the parser hardcodes `open: false` (file-is-truth).
     const reopened = blocksToDoc(saved)
     expect(reopened.content?.[0]?.type).toBe('details')
+    expect(reopened.content?.[0]?.attrs?.open).toBe(false)
     const summary = reopened.content?.[0]?.content?.find(
       (c) => c.type === 'detailsSummary'
     )
@@ -2406,6 +2409,8 @@ describe('/meeting section round-trip (#1105)', () => {
     expect(insertMeetingSection(editor)).toBe(true)
     const doc = editor.state.doc
     expect(doc.child(0).type.name).toBe('details')
+    // Same expanded-at-insert contract on the replace path.
+    expect(doc.child(0).attrs.open).toBe(true)
     // TrailingNode seeds an empty noteBlock after a cursor-trapping details
     // last child (notAfter covers prose types) — expected editor behavior:
     // the section is the only authored block, with a click-below target.

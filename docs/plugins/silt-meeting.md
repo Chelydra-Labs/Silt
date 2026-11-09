@@ -26,12 +26,16 @@ there is no de-duplication.
 
 ## Expanded / collapsed behavior
 
-Insertion mirrors the built-in `/details` command: the section is created
-with the open flag set. Collapse state is **ephemeral** — the on-disk file
-never records it (no `<details open>` is ever written; the file is the
-truth), and a section re-renders collapsed after reopening the note, like
-every other details section. Expand/collapse in-session via the section's
-toggle.
+The section is inserted **expanded** (its `open` flag is set in the document
+model, and the section's view auto-expands), with the caret on the
+**Subject:** line. Collapse and expand in-session via the section's toggle —
+each toggle flips the in-document `open` flag, so the change follows the
+normal edit/save cycle (the saved bytes are identical either way).
+
+Collapse state is **ephemeral**: the on-disk file never records it (no
+`<details open>` is ever written; the file is the truth), and a section
+re-renders **collapsed** after reopening the note, like every other details
+section.
 
 Headless plugin — no view component, no settings page, on by default. The
 slash command is its entire surface. First-party plugins are implicitly

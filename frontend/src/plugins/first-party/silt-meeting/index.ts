@@ -50,9 +50,10 @@ export function buildMeetingSection(
       [schema.text(label)]
     )
   )
-  // `open: true` below mirrors keymaps' insertDetails. TipTap's Details
-  // extension only declares that attr with persist:true (off here), so the
-  // schema drops it — expansion at insert is the NodeView's concern.
+  // `open: true` below mirrors keymaps' insertDetails; the schema declares
+  // the attr (persist: true), so the section lands expanded and the NodeView
+  // auto-expands it. The serializer never writes `open` to disk — a reloaded
+  // section is collapsed.
   return details.create({ id: null, open: true, file_date: today }, [
     detailsSummary.create({ id: null }, schema.text('Meeting information')),
     detailsContent.create({ id: null }, fields)
