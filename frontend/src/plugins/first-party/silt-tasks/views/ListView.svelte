@@ -1027,11 +1027,9 @@
   {/if}
 
   <!-- aria-live region for manual-order reorder + pin announcements -->
-  <div
-    class="sr-only"
-    aria-live="polite"
-    data-testid="tasks-live-message">{liveMessage}</div
-  >
+  <div class="sr-only" aria-live="polite" data-testid="tasks-live-message">
+    {liveMessage}
+  </div>
 
   <div class="flex flex-1 min-h-0 overflow-hidden">
     <div
