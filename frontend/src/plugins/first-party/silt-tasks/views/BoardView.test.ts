@@ -1014,6 +1014,86 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     expect(mocks.setTaskOrder).not.toHaveBeenCalled()
   })
 
+  it('sort=manual: reordering unpinned cards leaves a pinned sibling’s order token untouched', async () => {
+    await renderBoardWithSort('status', 'manual', [
+      row({
+        id: 'p1',
+        status: 'TODO',
+        pinned: 1,
+        manual_order: 5,
+        clean_content: 'Pinned'
+      }),
+      row({
+        id: 'a1',
+        status: 'TODO',
+        manual_order: 1,
+        clean_content: 'Apple'
+      }),
+      row({
+        id: 'b1',
+        status: 'TODO',
+        manual_order: 2,
+        clean_content: 'Banana'
+      })
+    ])
+
+    // Pin-first display: [p1(5), a1(1), b1(2)]. Drag Banana before Apple.
+    expect(laneCardIds('To Do')).toEqual(['p1', 'a1', 'b1'])
+    await fireEvent.dragStart(cardByText('Banana'))
+    await fireEvent.drop(cardByText('Apple'))
+    await flush()
+
+    // Renumber stays inside the unpinned partition: b1=1, a1=2. The pinned
+    // card keeps its token (5), so an unrelated drag can't lose its saved
+    // manual position for a later unpin.
+    expect(mocks.setTaskOrders).toHaveBeenCalledTimes(1)
+    const batch = mocks.setTaskOrders.mock.calls[0]![0] as {
+      id: string
+      order: number
+    }[]
+    expect(batch).toEqual(
+      expect.arrayContaining([
+        { id: 'b1', order: 1 },
+        { id: 'a1', order: 2 }
+      ])
+    )
+    expect(batch.some((x) => x.id === 'p1')).toBe(false)
+    expect(laneCardIds('To Do')).toEqual(['p1', 'b1', 'a1'])
+
+    // Unpin p1: the reload reports its untouched order 5, which lands after
+    // the renumbered unpinned pair rather than at the front.
+    await fireEvent.click(screen.getByTestId('tasks-pin-p1'))
+    await flush()
+    expect(mocks.updateTaskMeta).toHaveBeenCalledWith('p1', { pinned: false })
+    mocks.sqliteQuery.mockResolvedValue({
+      rows: [
+        row({
+          id: 'p1',
+          status: 'TODO',
+          manual_order: 5,
+          clean_content: 'Pinned'
+        }),
+        row({
+          id: 'a1',
+          status: 'TODO',
+          manual_order: 2,
+          clean_content: 'Apple'
+        }),
+        row({
+          id: 'b1',
+          status: 'TODO',
+          manual_order: 1,
+          clean_content: 'Banana'
+        })
+      ],
+      truncated: false
+    })
+    mocks.blockChangedCallbacks.forEach((cb) => cb())
+    await new Promise((r) => setTimeout(r, 120))
+    await flush()
+    expect(laneCardIds('To Do')).toEqual(['b1', 'a1', 'p1'])
+  })
+
   it('sort=manual: cross-column drop assigns the destination tail order (N+1)', async () => {
     await renderBoardWithSort('status', 'manual', [
       row({ id: 't1', status: 'TODO', clean_content: 'A', manual_order: 1 }),

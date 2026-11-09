@@ -23,6 +23,7 @@ import type { TaskDetail } from '../../types'
 import type { useBlockedDoneGuard } from '../../shared.svelte'
 import { groupByDispatch, unionTags } from '../../groupByDispatch'
 import { nextManualOrder } from '../manualOrder'
+import { sortTasks } from '../../taskOrder'
 import { friendlyCaughtError } from '../../errors'
 import { trackTaskUndoWrite } from '../../undo.svelte'
 
@@ -474,7 +475,13 @@ export function createBoardDndController({
   // `target`. Persists the diffs via a single batch setTaskOrders call (one
   // atomic write per file) with optimistic update + revert. Source group/
   // column is not renumbered on cross-column moves (gap-tolerant) — only the
-  // destination column's 1-based sequence changes.
+  // destination column's sequence changes.
+  //
+  // Pin partitions are independent sequences: the comparator orders by pinned
+  // before manual_order, so display order interleaves both partitions but
+  // their tokens are not comparable. Renumber ONLY the moved card's partition;
+  // rewriting the other partition would mutate cards the user never dragged
+  // and lose their saved position across a later unpin.
   //
   // VERBATIM concurrency logic (moveSeq + reorderInFlight serialization):
   // only the single `columns` read/write was rewired to the shared accessor.
@@ -499,37 +506,43 @@ export function createBoardDndController({
     const insertAt = fromIdx < toIdx ? toIdx - 1 : toIdx
     reordered.splice(insertAt, 0, src)
 
+    // Assign 1..N within the moved card's pin partition. A target in the
+    // other partition (the drop visually crosses the pin boundary) clamps to
+    // that partition's nearest edge, matching the comparator's pin-first
+    // snap-back.
+    const srcPinned = src.pinned
+    const partition = reordered.filter((c) => c.pinned === srcPinned)
     const changes: { id: string; order: number }[] = []
-    reordered.forEach((c, i) => {
+    const orderByID: Record<string, number> = {}
+    partition.forEach((c, i) => {
       const newOrder = i + 1
+      orderByID[c.id] = newOrder
       if ((c.manual_order ?? 0) !== newOrder) {
         changes.push({ id: c.id, order: newOrder })
       }
     })
     if (changes.length === 0) return
 
-    // Optimistic: patch the column's items so the card snaps to its slot
-    // before the IPC round-trip; revert on failure (mirror commitDrop). The
-    // reordered cards MUST carry their fresh manual_order values — a second
-    // reorder before this IPC completes would otherwise read stale values,
-    // skip a card whose stale value happens to equal its new position, and
-    // write a colliding [order::] token to disk.
+    // Optimistic: patch the partition's fresh manual_order values, then
+    // re-sort into display order so the card snaps to its slot before the IPC
+    // round-trip (revert on failure, mirror commitDrop). The other
+    // partition's items keep their existing tokens and positions. The
+    // reordered cards MUST carry their fresh values — a second reorder before
+    // this IPC completes would otherwise read stale values, skip a card whose
+    // stale value happens to equal its new position, and write a colliding
+    // [order::] token to disk.
+    const patched = cards.map((item) => {
+      const order = orderByID[item.id]
+      return order === undefined ? item : { ...item, manual_order: order }
+    })
+    const display = sortTasks(getSort(), patched)
     setColumns(
       getColumns().map((c) =>
-        c.key === col.key
-          ? {
-              ...c,
-              items: reordered.map((item, i) => ({
-                ...item,
-                manual_order: i + 1
-              }))
-            }
-          : c
+        c.key === col.key ? { ...c, items: display } : c
       )
     )
-    liveMessage = `Task moved to position ${
-      changes.find((c) => c.id === src.id)?.order ?? ''
-    } in ${col.label}.`
+    const displayPos = display.findIndex((c) => c.id === src.id) + 1
+    liveMessage = `Task moved to position ${displayPos} in ${col.label}.`
     // Serialize reorder IPCs so a newer reorder's write always lands after
     // an older one's on disk (the Go file-lock serializes, but IPC arrival
     // order across near-simultaneous calls is not guaranteed FIFO). The
