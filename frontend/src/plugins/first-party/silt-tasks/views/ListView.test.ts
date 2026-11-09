@@ -2068,6 +2068,35 @@ describe('ListView — shortlist badge + filter (#1092)', () => {
     expect(mocks.updateBlockState).not.toHaveBeenCalled()
     expect(ids()).toEqual(['r0', 'r3'])
   })
+
+  it('row edit-button label announces the shortlist rank (Board parity)', async () => {
+    // The Board card's accessible name carries `, shortlist rank {n}`
+    // (rank 0 included, silent when unranked) — the List row button must
+    // match so SR/keyboard users hear the rank on both surfaces.
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [
+            task('s0', 'Top focus', { shortlist_rank: 0 }),
+            task('su', 'Unranked focus')
+          ],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const label = (id: string) =>
+      document
+        .querySelector(
+          `[data-block-id="${id}"] button[aria-label^="Edit metadata for"]`
+        )!
+        .getAttribute('aria-label')
+    expect(label('s0')).toContain(', shortlist rank 0')
+    expect(label('su')).not.toContain('shortlist rank')
+  })
 })
 
 describe('ListView — server-side filtering via buildQuery (#526)', () => {
