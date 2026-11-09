@@ -97,7 +97,8 @@ export function useSidebarContextMenu(deps: UseSidebarContextMenuDeps) {
     level: 'notebook' | 'section' | 'page',
     notebook: string,
     section: string = '',
-    page: string = ''
+    page: string = '',
+    anchorEl?: HTMLElement | null
   ) {
     e.preventDefault()
     contextMenu = {
@@ -107,7 +108,11 @@ export function useSidebarContextMenu(deps: UseSidebarContextMenuDeps) {
       notebook,
       section,
       page,
-      anchorEl: e.currentTarget as HTMLElement
+      anchorEl:
+        anchorEl ??
+        (e.currentTarget as HTMLElement | null) ??
+        (e.target as HTMLElement | null) ??
+        null
     }
   }
 

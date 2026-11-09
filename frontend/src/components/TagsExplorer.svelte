@@ -1,5 +1,6 @@
 <script lang="ts">
   import { QueryBlocksByTag } from '../../bindings/silt/app.js'
+  import ViewHeader from './ui/ViewHeader.svelte'
 
   interface Props {
     selectedTag?: string
@@ -57,26 +58,23 @@
 </script>
 
 <div class="flex-1 flex flex-col min-h-0 bg-surface-panel">
-  <header
-    class="px-6 py-4 border-b border-surface-panel-border flex items-center gap-3"
+  <ViewHeader
+    title="Tags"
+    headingLevel="h1"
+    icon="label"
+    dataTestId="tags-explorer-header"
   >
-    <span class="material-symbols-outlined text-accent-primary-start"
-      >label</span
-    >
-    <h1
-      class="font-headline-lg text-headline-lg text-text-primary flex items-baseline gap-2"
-    >
-      Tags
+    {#snippet meta()}
       {#if activeTag}
         <span
-          class="text-text-muted text-type-sm font-body-md normal-case font-normal ml-2"
+          class="text-text-muted text-type-sm font-body-md normal-case font-normal"
           data-testid="tags-count"
         >
           #{activeTag} · {results.length} block{results.length === 1 ? '' : 's'}
         </span>
       {/if}
-    </h1>
-  </header>
+    {/snippet}
+  </ViewHeader>
   <div class="flex-1 overflow-y-auto custom-scrollbar">
     {#if !activeTag}
       <div class="text-text-muted text-center py-16 font-body-md">

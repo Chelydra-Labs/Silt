@@ -27,6 +27,7 @@
   import TypeDashboardFilters from './TypeDashboardFilters.svelte'
   import TypeDashboardTable from './TypeDashboardTable.svelte'
   import TypeDashboardBoard from './TypeDashboardBoard.svelte'
+  import ViewHeader from '../components/ui/ViewHeader.svelte'
   import { createReprojectionStatus } from './reprojectionStatus.svelte'
   import {
     PAGE_COLUMN_KEY,
@@ -533,8 +534,15 @@
 </script>
 
 <section class="dashboard" aria-labelledby="dashboard-title">
-  <header class="header">
-    <div class="title-row">
+  <ViewHeader
+    title={currentType?.name ?? 'Type dashboard'}
+    titleId="dashboard-title"
+    headingLevel="h1"
+    icon={currentType?.icon}
+    subtitle={currentType?.description}
+    dataTestId="type-dashboard-header"
+  >
+    {#snippet leading()}
       <button
         type="button"
         class="back"
@@ -545,47 +553,34 @@
           >arrow_back</span
         >
       </button>
-      <h1 id="dashboard-title" class="title">
-        {#if currentType?.icon}
-          <span
-            class="material-symbols-outlined text-icon-lg"
-            aria-hidden="true">{currentType.icon}</span
-          >
-        {/if}
-        {currentType?.name ?? 'Type dashboard'}
-      </h1>
-      <div class="title-actions">
-        <button
-          type="button"
-          class="action-btn refresh-btn"
-          onclick={() => void refreshTypes()}
-          disabled={refreshing || reprojection.active}
-          aria-label="Refresh types"
+    {/snippet}
+    {#snippet actions()}
+      <button
+        type="button"
+        class="action-btn refresh-btn"
+        onclick={() => void refreshTypes()}
+        disabled={refreshing || reprojection.active}
+        aria-label="Refresh types"
+      >
+        <span
+          class="material-symbols-outlined text-icon-sm"
+          class:spinning={reprojection.active}
+          aria-hidden="true">sync</span
         >
-          <span
-            class="material-symbols-outlined text-icon-sm"
-            class:spinning={reprojection.active}
-            aria-hidden="true">sync</span
-          >
-          {reprojection.active ? 'Updating…' : 'Refresh'}
-        </button>
-        <button
-          type="button"
-          class="new-type-btn"
-          onclick={() => onCreateType?.()}
+        {reprojection.active ? 'Updating…' : 'Refresh'}
+      </button>
+      <button
+        type="button"
+        class="new-type-btn"
+        onclick={() => onCreateType?.()}
+      >
+        <span class="material-symbols-outlined text-icon-sm" aria-hidden="true"
+          >add</span
         >
-          <span
-            class="material-symbols-outlined text-icon-sm"
-            aria-hidden="true">add</span
-          >
-          New type
-        </button>
-      </div>
-    </div>
-    {#if currentType?.description}
-      <p class="desc">{currentType.description}</p>
-    {/if}
-  </header>
+        New type
+      </button>
+    {/snippet}
+  </ViewHeader>
 
   <div class="notices">
     <ReservedPropRenameNotice
@@ -886,11 +881,6 @@
     min-height: 0;
     overflow: hidden;
   }
-  .header {
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--color-surface-panel-border);
-    flex: 0 0 auto;
-  }
   .notices {
     display: flex;
     flex-direction: column;
@@ -936,17 +926,6 @@
     color: var(--color-error-fg);
     font-size: var(--text-type-sm);
     font-family: var(--font-body, sans-serif);
-  }
-  .title-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  .title-actions {
-    margin-left: auto;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
   }
   .refresh-btn {
     display: inline-flex;
@@ -1029,21 +1008,6 @@
   .back:focus-visible {
     outline: 2px solid var(--color-border-focus);
     outline-offset: 1px;
-  }
-  .title {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    font-family: var(--font-headline, sans-serif);
-    font-size: var(--text-type-xl);
-    font-weight: 600;
-    color: var(--color-text-primary);
-    margin: 0;
-  }
-  .desc {
-    color: var(--color-text-muted);
-    font-size: var(--text-type-sm);
-    margin: 0.35rem 0 0;
   }
   .state {
     padding: 2rem;
