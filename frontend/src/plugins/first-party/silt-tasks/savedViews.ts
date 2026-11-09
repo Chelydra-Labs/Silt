@@ -73,10 +73,10 @@ const MATCH_DIMS = [
 
 /**
  * Partial comparison of the `filters` bag: each sub-field the VIEW defines
- * is compared; undefined-by-view sub-fields are skipped. `stale` is the
- * exception — it's compared unconditionally (mirrors the original contract:
- * a view with no stale opinion still shouldn't match a state surfacing
- * stale-only tasks).
+ * is compared; undefined-by-view sub-fields are skipped. `stale` and
+ * `shortlist` are the exception — both are compared unconditionally
+ * (mirrors the original contract: a view with no stale opinion still
+ * shouldn't match a state surfacing stale-only tasks).
  */
 function filtersEqual(viewFilters: unknown, stateFilters: unknown): boolean {
   if (!viewFilters || typeof viewFilters !== 'object') return false

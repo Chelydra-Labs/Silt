@@ -24,7 +24,7 @@ state/query module per mode.
 | `views/BoardView.svelte` | Board renderer — fluid status/dimension lanes aligned with workspace padding, HTML5 drag-and-drop with FLIP animation, manual `[order::]` reordering, ArrowLeft/Right keyboard parity. |
 | `views/CalendarView.svelte` | Calendar renderer — compact single-row navigation bar + full-height month/week grids over a windowed due-date query. |
 | `Sidebar.svelte` | The unified sidebar — smart lists, saved views, mini-calendar, and filter controls. Reads + writes the same hub state as the shell. |
-| `components/FilterBar.svelte` | Subordinate toolbar control row grouped into two flex-wrapping clusters: Organize (`Scope: <Crumb>` + `Follow`, `Group`, `Sort`) and Facets (`Owner`, `Priority`, `Due date`, `Stale (30d)`, `Tags`, `Clear all`). |
+| `components/FilterBar.svelte` | Subordinate toolbar control row grouped into two flex-wrapping clusters: Organize (`Scope: <Crumb>` + `Follow`, `Group`, `Sort`) and Facets (`Owner`, `Priority`, `Due date`, `Shortlist`, `Stale (30d)`, `Tags`, `Clear all`). |
 | `components/TaskEditDrawer.svelte` | Shared non-blocking inspector drawer (pin, progress, recurrence, due date, status, owner, priority, tags). |
 | `components/CommentThread.svelte` | Comment thread over a task's NOTE-block children (`FetchSubtree` + `block_meta` attribution); one-level replies. |
 | `components/TasksCommandPalette.svelte` | Hub-scoped Ctrl+K command palette (mode / group / sort / views / find / add). |
@@ -58,22 +58,22 @@ bidirectionally in sync because they read the same `$state` singleton.
 ## Workspace layout hierarchy
 
 ```
-┌───────────────────────────────────────────────────────────────────────────┐
-│ header[data-testid="tasks-hub-header"] (unified workspace chrome)         │
-│  ├─ Primary row: <h1> Tasks · open/done count · active saved-view badge   │
-│  │               [List | Board | Calendar] · [Bookmark | Preferences]     │
-│  ├─ Optional compact page-context strip (when routed from a page)         │
-│  └─ FilterBar (subordinate row, wraps by functional cluster):             │
-│       ├─ Organize cluster: [Scope: <Crumb> (+ Follow)] [Group] [Sort]     │
-│       └─ Facets cluster:   [Owner] [Priority] [Due] [Stale] [Tags]        │
-├───────────────────────────────────────────────────────────────────────────┤
-│ div[data-testid="tasks-hub-content-shell"]                                │
-│  ├─ List mode: full-width aligned list + bottom quick-add composer;       │
-│  │             proportional master–detail split (60:40 default, min 420px │
-│  │             list, resizable handle, <864px overlay fallback)           │
-│  ├─ Board mode: fluid workspace-aligned lanes + overlay inspector         │
-│  └─ Calendar mode: compact single-row nav bar + full-height month/week    │
-└───────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────┐
+│ header[data-testid="tasks-hub-header"] (unified workspace chrome)              │
+│  ├─ Primary row: <h1> Tasks · open/done count · active saved-view badge        │
+│  │               [List | Board | Calendar] · [Bookmark | Preferences]          │
+│  ├─ Optional compact page-context strip (when routed from a page)              │
+│  └─ FilterBar (subordinate row, wraps by functional cluster):                  │
+│       ├─ Organize cluster: [Scope: <Crumb> (+ Follow)] [Group] [Sort]          │
+│       └─ Facets cluster:   [Owner] [Priority] [Due] [Shortlist] [Stale] [Tags] │
+├────────────────────────────────────────────────────────────────────────────────┤
+│ div[data-testid="tasks-hub-content-shell"]                                     │
+│  ├─ List mode: full-width aligned list + bottom quick-add composer;            │
+│  │             proportional master–detail split (60:40 default, min 420px      │
+│  │             list, resizable handle, <864px overlay fallback)                │
+│  ├─ Board mode: fluid workspace-aligned lanes + overlay inspector              │
+│  └─ Calendar mode: compact single-row nav bar + full-height month/week         │
+└────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Configuration
