@@ -25,7 +25,7 @@
   // location dimensions, not mutable metadata — DnD is disabled for them.
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
-  import { onMount, onDestroy } from 'svelte'
+  import { onMount, onDestroy, tick } from 'svelte'
   import type { TaskStatus } from '../../../sdk'
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
@@ -52,6 +52,7 @@
   import { binByDimension } from '../grouping'
   import { sortTasks } from '../taskOrder'
   import { buildQuery } from '../query'
+  import { trackTaskUndoWrite } from '../undo.svelte'
   import { useBlockChangedReload, useBlockedDoneGuard } from '../shared.svelte'
   import {
     createBoardDndController,
@@ -87,6 +88,14 @@
   let loading = $state(true)
   let errorMsg = $state('')
   let resultsTruncated = $state(false)
+  // Pin failures auto-dismiss like the List view's banner; a new commit
+  // clears the previous message (optimisticField calls onError('') up front).
+  let pinError = $state('')
+  let pinErrorTimer: ReturnType<typeof setTimeout> | null = null
+  // The pending-disable blurs the toggle to <body>; refocus the card's pin
+  // control once the write settles. Cleared on destroy.
+  let pinFocusId = $state<string | null>(null)
+  let pinFocusTimer: ReturnType<typeof setTimeout> | null = null
 
   let selectedCard = $state<TaskDetail | null>(null)
   let selectedFilteredOut = $state(false)
@@ -442,6 +451,47 @@
     onCountChange?.(open, done)
   })
 
+  // --- Pin toggle (open cards only) --------------------------------------
+  function setPinError(message: string) {
+    pinError = message
+    if (pinErrorTimer) clearTimeout(pinErrorTimer)
+    pinErrorTimer = null
+    if (!message) return
+    pinErrorTimer = setTimeout(() => {
+      pinError = ''
+      pinErrorTimer = null
+    }, 8_000)
+  }
+
+  // Pin is display ordering only — no status/group/manual_order write, so a
+  // drop that crosses the pinned boundary can snap back after reload (D9).
+  async function togglePin(card: TaskDetail, next: boolean) {
+    try {
+      await trackTaskUndoWrite(ctx.updateTaskMeta(card.id, { pinned: next }))
+    } finally {
+      // The pending-disable blurs the button to <body>; refocus after settle.
+      pinFocusId = card.id
+      if (pinFocusTimer) clearTimeout(pinFocusTimer)
+      pinFocusTimer = setTimeout(() => {
+        pinFocusId = null
+        pinFocusTimer = null
+      }, 1_500)
+    }
+  }
+
+  $effect(() => {
+    const id = pinFocusId
+    if (!id) return
+    void tick().then(() => {
+      if (pinFocusId !== id) return
+      document
+        .querySelector<HTMLButtonElement>(
+          `[data-testid="tasks-pin-${CSS.escape(id)}"]`
+        )
+        ?.focus()
+    })
+  })
+
   // --- Keyboard parity (a11y) --------------------------------------------
   // ArrowLeft/Right move the focused card between adjacent columns for DnD-
   // enabled dimensions (routes through the DnD controller's commitDrop);
@@ -449,6 +499,9 @@
   // Location dimensions (DnD disabled) get no arrow move — the card stays
   // put. Kept in BoardView because it straddles DnD-move + drawer-open.
   function onCardKeydown(e: KeyboardEvent, card: TaskDetail, col: Lane) {
+    // A nested control (the pin toggle) handles its own Enter/Space; only
+    // the card itself may move/select.
+    if (e.target !== e.currentTarget) return
     if (dndEnabled && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
       e.preventDefault()
       const idx = columns.findIndex((c) => c.key === col.key)
@@ -541,6 +594,8 @@
   onDestroy(() => {
     // No persistent timers to clear here; block:changed cleanup runs in the
     // effect's teardown. Hook kept for symmetry with Kanban/ListView.
+    if (pinErrorTimer) clearTimeout(pinErrorTimer)
+    if (pinFocusTimer) clearTimeout(pinFocusTimer)
   })
 
   /** True when any status column is over its soft WIP limit (#437). */
@@ -559,6 +614,14 @@
 >
   {#if dnd.moveError}
     <ErrorBanner message={`Couldn't move task: ${dnd.moveError}`} />
+  {/if}
+
+  {#if pinError}
+    <ErrorBanner
+      message={`Couldn't update pin: ${pinError}`}
+      dataTestId="tasks-pin-error"
+      onDismiss={() => setPinError('')}
+    />
   {/if}
 
   {#if cols.configError}
@@ -733,6 +796,8 @@
                     }}
                     onKeydown={(e) => onCardKeydown(e, card, col)}
                     onSelect={() => selectCard(card)}
+                    onPinToggle={(next) => togglePin(card, next)}
+                    onPinError={setPinError}
                     selected={selectedCard?.id === card.id}
                   />
                 </div>
