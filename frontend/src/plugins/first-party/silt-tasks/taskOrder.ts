@@ -6,14 +6,38 @@
 import type { SortMode } from './state.svelte'
 import type { TaskDetail } from './types'
 
+export interface TaskOrderOptions {
+  // While the shortlist filter is the active lens (#1092) the rank column
+  // leads ahead of the pin-first key, mirroring query.ts's rankLead
+  // composition. Unranked rows sort last (the SQL predicate guarantees
+  // every row is ranked when the filter is on; nulls-last is the defensive
+  // order for off-filter strays).
+  shortlistFirst?: boolean
+}
+
+function compareRankFirst(a: TaskDetail, b: TaskDetail): number {
+  const ar = a.shortlist_rank
+  const br = b.shortlist_rank
+  if ((ar == null) !== (br == null)) return ar == null ? 1 : -1
+  if (ar !== br && ar != null && br != null) return ar - br
+  return 0
+}
+
 export function compareTasks(
   sort: SortMode,
   a: TaskDetail,
-  b: TaskDetail
+  b: TaskDetail,
+  options?: TaskOrderOptions
 ): number {
-  // Pin leads unconditionally: Board lanes include completed rows and their
-  // pin token still sorts first (they show no control/glyph); List's
-  // completed path bypasses this comparator via file_date ordering.
+  // Rank leads the pin key while the shortlist filter is active — the
+  // curated 0..3 order is the filter's whole point (#1092).
+  if (options?.shortlistFirst) {
+    const byRank = compareRankFirst(a, b)
+    if (byRank !== 0) return byRank
+  }
+  // Pin leads unconditionally otherwise: Board lanes include completed rows
+  // and their pin token still sorts first (they show no control/glyph);
+  // List's completed path bypasses this comparator via file_date ordering.
   if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
   switch (sort) {
     case 'manual': {
@@ -69,6 +93,10 @@ export function compareTasks(
   return (a.due_date || '9999-12-31').localeCompare(b.due_date || '9999-12-31')
 }
 
-export function sortTasks(sort: SortMode, rows: TaskDetail[]): TaskDetail[] {
-  return [...rows].sort((a, b) => compareTasks(sort, a, b))
+export function sortTasks(
+  sort: SortMode,
+  rows: TaskDetail[],
+  options?: TaskOrderOptions
+): TaskDetail[] {
+  return [...rows].sort((a, b) => compareTasks(sort, a, b, options))
 }

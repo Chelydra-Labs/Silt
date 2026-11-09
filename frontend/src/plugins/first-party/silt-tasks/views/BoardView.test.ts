@@ -142,6 +142,7 @@ import {
   resetTaskHubState,
   enterTaskPageRoute,
   clearTaskPageRoute,
+  setFilters,
   setGroupBy,
   setSort,
   setActiveFilter,
@@ -1904,7 +1905,11 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     // The reactive rebin re-sorted the loaded lanes even though the re-query
     // has not landed; the reload returns the same rows, so it cannot be the
     // source of the new order.
-    expect(sortTasks).toHaveBeenCalledWith('priority', expect.anything())
+    expect(sortTasks).toHaveBeenCalledWith(
+      'priority',
+      expect.anything(),
+      expect.anything()
+    )
 
     pending.resolve({ rows: initialRows, truncated: false })
     await flush()
@@ -2003,5 +2008,54 @@ describe('BoardView — block:changed debounced reload', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('BoardView — shortlist rank order (#1092)', () => {
+  beforeEach(async () => {
+    mocks.tasksSettings = {}
+    mocks.updateBlockState
+      .mockReset()
+      .mockResolvedValue({ ok: true, spawnedId: '' })
+    mocks.setTaskOwner.mockReset().mockResolvedValue(true)
+    mocks.setTaskPriority.mockReset().mockResolvedValue(true)
+    mocks.setTaskDueDate.mockReset().mockResolvedValue(true)
+    mocks.setTaskTags.mockReset().mockResolvedValue(true)
+    mocks.setTaskOrder.mockReset().mockResolvedValue(true)
+    mocks.setTaskOrders.mockReset().mockResolvedValue(true)
+    mocks.createTask.mockReset().mockResolvedValue('new-task-id')
+    mocks.updateTaskMeta.mockReset().mockResolvedValue(true)
+    mocks.getTaskBlockers.mockReset().mockResolvedValue([])
+    mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
+    mocks.notify.mockReset().mockResolvedValue(true)
+    mocks.blockChangedCallbacks.length = 0
+    await initTasksSettings(makeCtx())
+  })
+
+  afterEach(() => {
+    cleanup()
+    clearTaskPageRoute()
+  })
+
+  it('orders a lane rank-first — ahead of the pin key — while the filter is on', async () => {
+    await renderBoard('status', [
+      row({ id: 'p3', pinned: 1, shortlist_rank: 3, clean_content: 'P3' }),
+      row({ id: 'u0', shortlist_rank: 0, clean_content: 'U0' }),
+      row({ id: 'u1', shortlist_rank: 1, clean_content: 'U1' })
+    ])
+    // Pin-first default: the pinned rank-3 card leads the lane.
+    expect(laneCardIds('To Do')).toEqual(['p3', 'u0', 'u1'])
+
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    await flush()
+
+    // Rank leads the pin key while the shortlist filter is the active lens.
+    expect(laneCardIds('To Do')).toEqual(['u0', 'u1', 'p3'])
   })
 })

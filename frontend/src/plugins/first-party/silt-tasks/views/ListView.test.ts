@@ -1930,6 +1930,83 @@ describe('ListView — shortlist badge + filter (#1092)', () => {
     expect(doneCall).toBeTruthy()
     expect(String(doneCall![0])).not.toContain('t.shortlist_rank IS NOT NULL')
   })
+
+  it('renders the Upcoming bucket rank-first despite later due dates', async () => {
+    // Rank 3 is due sooner than rank 0 — the bucket's due-date re-sort must
+    // not destroy the curated order the SQL promised (#1092 AC6).
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [
+            task('r3', 'Sooner but rank 3', {
+              shortlist_rank: 3,
+              due_date: dateOffsetStr(2)
+            }),
+            task('r0', 'Later but rank 0', {
+              shortlist_rank: 0,
+              due_date: dateOffsetStr(4)
+            })
+          ],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const upcomingIds = Array.from(
+      document.querySelectorAll(
+        'section[data-group="upcoming"] [data-block-id]'
+      )
+    ).map((el) => el.getAttribute('data-block-id'))
+    expect(upcomingIds).toEqual(['r0', 'r3'])
+  })
+
+  it('renders a non-dueDate grouping rank-first within each section', async () => {
+    setGroupBy('priority')
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [
+            task('p-r1', 'Rank 1 in P3', {
+              priority: 3,
+              shortlist_rank: 1,
+              due_date: dateOffsetStr(1)
+            }),
+            task('p-r0', 'Rank 0 in P3', {
+              priority: 3,
+              shortlist_rank: 0,
+              due_date: dateOffsetStr(3)
+            })
+          ],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const sectionIds = Array.from(
+      document.querySelectorAll('section[data-group] [data-block-id]')
+    ).map((el) => el.getAttribute('data-block-id'))
+    expect(sectionIds).toEqual(['p-r0', 'p-r1'])
+  })
 })
 
 describe('ListView — server-side filtering via buildQuery (#526)', () => {

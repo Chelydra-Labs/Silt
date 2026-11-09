@@ -51,7 +51,7 @@
   import { binByDimension, type GroupSection } from '../grouping'
   import { buildQuery } from '../query'
   import { useBlockChangedReload, useBlockedDoneGuard } from '../shared.svelte'
-  import { sortTasks } from '../taskOrder'
+  import { compareTasks, sortTasks } from '../taskOrder'
   import { trackTaskUndoWrite } from '../undo.svelte'
 
   interface Props extends TaskViewProps {
@@ -365,6 +365,12 @@
   // selector change re-bins the rows without a re-query.
   let hubGroupBy = $derived(getTaskHubViewState().groupBy)
   let hubSort = $derived(getTaskHubViewState().sort)
+  // Rank leads every client-side re-sort while the shortlist filter is the
+  // active lens (#1092), mirroring query.ts's rankLead composition — the
+  // SQL already orders rows rank-first, but buckets/sections re-sort below.
+  let shortlistFirst = $derived(
+    getTaskHubViewState().filters.shortlist ?? false
+  )
 
   // Pinned open tasks render in their own block above every grouping branch,
   // so the group derivations below read `unpinnedOpen` and never duplicate a
@@ -372,7 +378,8 @@
   let pinnedOpen = $derived(
     sortTasks(
       hubSort,
-      filteredOpen.filter((i) => i.pinned)
+      filteredOpen.filter((i) => i.pinned),
+      { shortlistFirst }
     )
   )
   let unpinnedOpen = $derived(filteredOpen.filter((i) => !i.pinned))
@@ -388,12 +395,12 @@
       .filter(
         (i) => !!i.due_date && i.due_date > today && i.due_date <= weekEnd
       )
-      .sort((a, b) => a.due_date.localeCompare(b.due_date))
+      .sort((a, b) => compareTasks('dueDate', a, b, { shortlistFirst }))
   )
   let later = $derived(
     unpinnedOpen
       .filter((i) => !!i.due_date && i.due_date > weekEnd)
-      .sort((a, b) => a.due_date.localeCompare(b.due_date))
+      .sort((a, b) => compareTasks('dueDate', a, b, { shortlistFirst }))
   )
   let undated = $derived(unpinnedOpen.filter((i) => !i.due_date))
 
@@ -424,7 +431,10 @@
     // buckets so the list stays compact when the data is sparse.
     return sections
       .filter((s) => s.items.length > 0)
-      .map((s) => ({ ...s, items: sortTasks(hubSort, s.items) }))
+      .map((s) => ({
+        ...s,
+        items: sortTasks(hubSort, s.items, { shortlistFirst })
+      }))
   })
 
   // Collapsed state for the generalized sections. Tail-collapse heuristic:
@@ -606,7 +616,10 @@
       ]
     }
     if (hubGroupBy === 'none') {
-      return [...pinnedOpen, ...sortTasks(hubSort, unpinnedOpen)]
+      return [
+        ...pinnedOpen,
+        ...sortTasks(hubSort, unpinnedOpen, { shortlistFirst })
+      ]
     }
     const out: TaskDetail[] = []
     for (const g of groupedSections) {
@@ -1223,7 +1236,7 @@
                 data-group="all"
                 aria-label="All Tasks"
               >
-                {#each sortTasks(hubSort, unpinnedOpen) as item (item.id)}
+                {#each sortTasks( hubSort, unpinnedOpen, { shortlistFirst } ) as item (item.id)}
                   <div animate:flip={{ duration: 200, easing: cubicOut }}>
                     {@render taskRow(item, 'all')}
                   </div>
