@@ -515,7 +515,7 @@
     void tick().then(() => {
       if (pendingPinFocus !== pending) return
       const el = document.querySelector<HTMLButtonElement>(
-        `[data-testid="tasks-pin-${pending.id}"]`
+        `[data-testid="tasks-pin-${CSS.escape(pending.id)}"]`
       )
       if (!el) return
       el.focus()
