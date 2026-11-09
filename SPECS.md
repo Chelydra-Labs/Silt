@@ -496,8 +496,9 @@ format:
 2. **Task edit drawer**: `TaskEditDrawer.svelte` is the primary
    structured editor for task metadata across every task view (Board,
    List, Calendar) — opened by a single click on a task card or chip. It
-   exposes status, due date, priority, shortlist, owner, estimate, tags,
-   recurrence, pin, and dependencies through purpose-built controls
+   exposes status, due date, start date, priority, shortlist, owner,
+   estimate, tags, recurrence, pin, dependencies, and progress through
+   purpose-built controls
    (radiogroups, date picker, chip input, dependency picker), all
    committing through the canonical atomic write chain.
 3. **Direct typing**: Power users type `[key:: value]` directly — what
