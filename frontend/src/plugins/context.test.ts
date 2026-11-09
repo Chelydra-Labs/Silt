@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   pluginMutateBlock: vi.fn(() => Promise.resolve(true)),
   pluginUpdateBlockState: vi.fn(() => Promise.resolve(true)),
   pluginSetTaskOrder: vi.fn(() => Promise.resolve(true)),
+  pluginSetTaskShortlistRank: vi.fn(() => Promise.resolve(true)),
   pluginSetTaskStartDate: vi.fn(() => Promise.resolve(true)),
   pluginUndoLastTaskMutation: vi.fn(() =>
     Promise.resolve({
@@ -62,6 +63,7 @@ vi.mock('$silt-app', () =>
     PluginUpdateBlockState: mocks.pluginUpdateBlockState,
     PluginUpdateTaskMeta: mocks.pluginUpdateTaskMeta,
     PluginSetTaskOrder: mocks.pluginSetTaskOrder,
+    PluginSetTaskShortlistRank: mocks.pluginSetTaskShortlistRank,
     PluginSetTaskStartDate: mocks.pluginSetTaskStartDate,
     PluginUndoLastTaskMutation: mocks.pluginUndoLastTaskMutation,
     PluginGetTaskUndoState: mocks.pluginGetTaskUndoState,
@@ -203,6 +205,46 @@ describe('makePluginContext — setTaskOrder wiring (#426)', () => {
       '',
       'block-1',
       0
+    )
+  })
+})
+
+// setTaskShortlistRank wiring (#1092): the ergonomic null must map onto the
+// Go -1 clear sentinel, while every real rank (including the top rank 0)
+// passes through verbatim — 0 is a rank, never a clear.
+describe('makePluginContext — setTaskShortlistRank wiring (#1092)', () => {
+  beforeEach(() => {
+    mocks.pluginSetTaskShortlistRank.mockClear()
+  })
+
+  it('maps null → -1 (clear) and threads identity', async () => {
+    const ctx = makePluginContext('silt-tasks', 'tok-short')
+    await ctx.setTaskShortlistRank('block-1', null)
+    expect(mocks.pluginSetTaskShortlistRank).toHaveBeenCalledWith(
+      'silt-tasks',
+      'tok-short',
+      'block-1',
+      -1
+    )
+  })
+
+  it('passes ranks 0-3 through verbatim (0 is the top rank, not a clear)', async () => {
+    const ctx = makePluginContext('silt-tasks')
+    await ctx.setTaskShortlistRank('block-1', 0)
+    await ctx.setTaskShortlistRank('block-1', 3)
+    expect(mocks.pluginSetTaskShortlistRank).toHaveBeenNthCalledWith(
+      1,
+      'silt-tasks',
+      '',
+      'block-1',
+      0
+    )
+    expect(mocks.pluginSetTaskShortlistRank).toHaveBeenNthCalledWith(
+      2,
+      'silt-tasks',
+      '',
+      'block-1',
+      3
     )
   })
 })

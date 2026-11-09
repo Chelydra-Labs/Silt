@@ -231,6 +231,131 @@ func TestSetTaskPriority_RejectsNonTask(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// SetTaskShortlistRank
+// ---------------------------------------------------------------------------
+
+func TestSetTaskShortlistRank_SetAndClear(t *testing.T) {
+	app := newTestApp(t)
+	const id = "cccc7878-1111-1111-1111-111111111111"
+	content := "- [ ] ship <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "ShortlistSet", "2026-07-01", content)
+
+	// Rank 0 is a real (top) rank: the token must be written, not omitted.
+	if err := app.SetTaskShortlistRank(id, 0); err != nil {
+		t.Fatalf("SetTaskShortlistRank 0: %v", err)
+	}
+	updated, _ := os.ReadFile(filePath)
+	line := taskLineForID(string(updated), id)
+	if !strings.Contains(line, "[shortlist:: 0]") {
+		t.Errorf("rank 0: expected [shortlist:: 0] token in line: %s", line)
+	}
+	blocks, _, _, _, perr := parser.ParseFileContent(string(updated), "W", "S", "ShortlistSet", "2026-07-01", app.spacesPerTab)
+	if perr != nil {
+		t.Fatalf("re-parse: %v", perr)
+	}
+	var rank *int
+	for _, b := range blocks {
+		if b.ID == id {
+			rank = b.ShortlistRank
+		}
+	}
+	if rank == nil || *rank != 0 {
+		t.Errorf("round-trip rank 0: expected &0 (nil means unranked), got %v", rank)
+	}
+
+	// Rank 3 replaces rank 0 (single-select, one token per block).
+	if err := app.SetTaskShortlistRank(id, 3); err != nil {
+		t.Fatalf("SetTaskShortlistRank 3: %v", err)
+	}
+	updated, _ = os.ReadFile(filePath)
+	line = taskLineForID(string(updated), id)
+	if !strings.Contains(line, "[shortlist:: 3]") || strings.Contains(line, "[shortlist:: 0]") {
+		t.Errorf("rank 3: expected exactly [shortlist:: 3] in line: %s", line)
+	}
+
+	// Clear (-1) removes the token and leaves the task unranked.
+	if err := app.SetTaskShortlistRank(id, -1); err != nil {
+		t.Fatalf("SetTaskShortlistRank clear: %v", err)
+	}
+	updated, _ = os.ReadFile(filePath)
+	line = taskLineForID(string(updated), id)
+	if strings.Contains(line, "[shortlist::") {
+		t.Errorf("clear: [shortlist::] token should be omitted in line: %s", line)
+	}
+	blocks, _, _, _, perr = parser.ParseFileContent(string(updated), "W", "S", "ShortlistSet", "2026-07-01", app.spacesPerTab)
+	if perr != nil {
+		t.Fatalf("re-parse after clear: %v", perr)
+	}
+	for _, b := range blocks {
+		if b.ID == id && b.ShortlistRank != nil {
+			t.Errorf("round-trip clear: expected nil rank, got &%d", *b.ShortlistRank)
+		}
+	}
+}
+
+func TestSetTaskShortlistRank_RejectsOutOfRangeWithoutWriting(t *testing.T) {
+	app := newTestApp(t)
+	const id = "cccc9090-1111-1111-1111-111111111111"
+	content := "- [ ] ship [shortlist:: 2] <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "ShortlistRange", "2026-07-01", content)
+	tok := registerTestSession(t, app, "silt-tasks")
+	before, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read before: %v", err)
+	}
+	emitted := 0
+	app.eventEmit = func(name string, data ...any) {
+		if name == string(EventBlockChanged) {
+			emitted++
+		}
+	}
+
+	for _, rank := range []int{-2, 4, 99} {
+		if err := app.SetTaskShortlistRank(id, rank); err == nil {
+			t.Errorf("SetTaskShortlistRank(%d) should reject out-of-range value", rank)
+		}
+	}
+	if ok, err := app.PluginSetTaskShortlistRank("silt-tasks", tok, id, 4); ok || err == nil {
+		t.Fatalf("PluginSetTaskShortlistRank(4) = ok=%v err=%v, want rejection", ok, err)
+	}
+
+	after, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read after: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("invalid shortlist rank changed the source file:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	if emitted != 0 {
+		t.Fatalf("rejected write emitted %d block:changed events, want 0", emitted)
+	}
+}
+
+func TestSetTaskShortlistRank_IndexReflectsChange(t *testing.T) {
+	app := newTestApp(t)
+	const id = "3434dddd-1111-1111-1111-111111111111"
+	content := "- [ ] task <!-- id: " + id + " -->\n"
+	indexTestFile(t, app, "W", "S", "ShortlistIdx", "2026-07-01", content)
+
+	if err := app.SetTaskShortlistRank(id, 2); err != nil {
+		t.Fatalf("SetTaskShortlistRank: %v", err)
+	}
+	tasks, err := app.db.QueryTasksWithFilters(parser.TaskQueryFilter{})
+	if err != nil {
+		t.Fatalf("QueryTasks: %v", err)
+	}
+	for _, tk := range tasks {
+		if tk.ID == id {
+			if tk.ShortlistRank == nil || *tk.ShortlistRank != 2 {
+				t.Errorf("expected shortlist rank 2 in index, got %v", tk.ShortlistRank)
+			}
+			return
+		}
+	}
+	t.Errorf("subject %s not returned by QueryTasks", id)
+}
+
+// ---------------------------------------------------------------------------
 // SetTaskTags
 // ---------------------------------------------------------------------------
 

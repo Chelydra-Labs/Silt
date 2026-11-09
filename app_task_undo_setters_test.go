@@ -142,3 +142,129 @@ func TestUndoLastTaskMutation_RestoresDependencyRemove(t *testing.T) {
 		}
 	})
 }
+
+func TestUndoLastTaskMutation_RestoresShortlistSet(t *testing.T) {
+	app := newTestApp(t)
+	const id = "a11d0016-1111-1111-1111-111111111111"
+	content := "- [ ] ship [priority:: 1] <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "UndoShortSet", "2026-07-01", content)
+
+	// nil → &0: 0 is a real rank, not a clear, so this must journal a change
+	// (nil and &0 are different journal values).
+	if err := app.SetTaskShortlistRank(id, 0); err != nil {
+		t.Fatalf("SetTaskShortlistRank: %v", err)
+	}
+	if got := taskUndoLen(app); got != 1 {
+		t.Fatalf("shortlist write journaled %d entries, want 1", got)
+	}
+	if line := requireTaskLine(t, readTaskPage(t, filePath), id); !strings.Contains(line, "[shortlist:: 0]") {
+		t.Fatalf("mutation did not land on disk: %q", line)
+	}
+	result, err := app.UndoLastTaskMutation()
+	if err != nil {
+		t.Fatalf("UndoLastTaskMutation: %v", err)
+	}
+	if !result.Undone || !taskUndoContains(result.ChangedFields, "shortlist") {
+		t.Fatalf("undo result = %+v, want shortlist restored", result)
+	}
+	line := requireTaskLine(t, readTaskPage(t, filePath), id)
+	if strings.Contains(line, "[shortlist::") {
+		t.Errorf("undo left the shortlist token on disk: %q", line)
+	}
+	if !strings.Contains(line, "[priority:: 1]") {
+		t.Errorf("undo disturbed an untouched field: %q", line)
+	}
+	requireTaskProjection(t, app, id, func(t *testing.T, task parser.TaskResult) {
+		if task.ShortlistRank != nil {
+			t.Errorf("index shortlist rank after undo = &%d, want nil", *task.ShortlistRank)
+		}
+	})
+}
+
+func TestUndoLastTaskMutation_RestoresShortlistClear(t *testing.T) {
+	app := newTestApp(t)
+	const id = "a11d0017-1111-1111-1111-111111111111"
+	content := "- [ ] ship [shortlist:: 2] <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "UndoShortClear", "2026-07-01", content)
+
+	// &2 → nil: undo must restore the pointer, not just a value.
+	if err := app.SetTaskShortlistRank(id, -1); err != nil {
+		t.Fatalf("SetTaskShortlistRank clear: %v", err)
+	}
+	if line := requireTaskLine(t, readTaskPage(t, filePath), id); strings.Contains(line, "[shortlist::") {
+		t.Fatalf("clear mutation did not land on disk: %q", line)
+	}
+	result, err := app.UndoLastTaskMutation()
+	if err != nil {
+		t.Fatalf("UndoLastTaskMutation: %v", err)
+	}
+	if !result.Undone || !taskUndoContains(result.ChangedFields, "shortlist") {
+		t.Fatalf("undo result = %+v, want shortlist restored", result)
+	}
+	if line := requireTaskLine(t, readTaskPage(t, filePath), id); !strings.Contains(line, "[shortlist:: 2]") {
+		t.Errorf("undo did not restore the cleared rank: %q", line)
+	}
+	requireTaskProjection(t, app, id, func(t *testing.T, task parser.TaskResult) {
+		if task.ShortlistRank == nil || *task.ShortlistRank != 2 {
+			t.Errorf("index shortlist rank after undo = %v, want &2", task.ShortlistRank)
+		}
+	})
+}
+
+func TestUndoLastTaskMutation_RestoresShortlistRankChange(t *testing.T) {
+	app := newTestApp(t)
+	const id = "a11d0018-1111-1111-1111-111111111111"
+	content := "- [ ] ship [shortlist:: 1] <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "UndoShortChange", "2026-07-01", content)
+
+	// &1 → &2.
+	if err := app.SetTaskShortlistRank(id, 2); err != nil {
+		t.Fatalf("SetTaskShortlistRank: %v", err)
+	}
+	if line := requireTaskLine(t, readTaskPage(t, filePath), id); !strings.Contains(line, "[shortlist:: 2]") {
+		t.Fatalf("mutation did not land on disk: %q", line)
+	}
+	result, err := app.UndoLastTaskMutation()
+	if err != nil {
+		t.Fatalf("UndoLastTaskMutation: %v", err)
+	}
+	if !result.Undone || !taskUndoContains(result.ChangedFields, "shortlist") {
+		t.Fatalf("undo result = %+v, want shortlist restored", result)
+	}
+	if line := requireTaskLine(t, readTaskPage(t, filePath), id); !strings.Contains(line, "[shortlist:: 1]") {
+		t.Errorf("undo did not restore the previous rank: %q", line)
+	}
+	requireTaskProjection(t, app, id, func(t *testing.T, task parser.TaskResult) {
+		if task.ShortlistRank == nil || *task.ShortlistRank != 1 {
+			t.Errorf("index shortlist rank after undo = %v, want &1", task.ShortlistRank)
+		}
+	})
+
+	// There is no redo; re-issuing the write is itself journaled.
+	if err := app.SetTaskShortlistRank(id, 2); err != nil {
+		t.Fatalf("SetTaskShortlistRank re-set: %v", err)
+	}
+	if got := taskUndoLen(app); got != 1 {
+		t.Fatalf("re-set journaled %d entries, want 1", got)
+	}
+	if line := requireTaskLine(t, readTaskPage(t, filePath), id); !strings.Contains(line, "[shortlist:: 2]") {
+		t.Errorf("re-set did not land on disk: %q", line)
+	}
+}
+
+func TestSetTaskShortlistRank_SameRankIsNotJournaled(t *testing.T) {
+	// &2 → &2 changes no user-visible field, so the write never reaches the
+	// journal (recordTaskUndo drops field-identical entries). The pointer-
+	// aware nil-vs-&0 distinction is covered by the rank-0 tests above.
+	app := newTestApp(t)
+	const id = "a11d0019-1111-1111-1111-111111111111"
+	content := "- [ ] ship [shortlist:: 2] <!-- id: " + id + " -->\n"
+	indexTestFile(t, app, "W", "S", "UndoShortNoop", "2026-07-01", content)
+
+	if err := app.SetTaskShortlistRank(id, 2); err != nil {
+		t.Fatalf("SetTaskShortlistRank same-rank: %v", err)
+	}
+	if got := taskUndoLen(app); got != 0 {
+		t.Fatalf("re-sending the current rank journaled %d entries, want 0", got)
+	}
+}
