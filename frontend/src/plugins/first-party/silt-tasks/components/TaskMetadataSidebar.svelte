@@ -52,6 +52,14 @@
     onClose?: () => void
     /** Gives the host dialog a stable accessible name without duplicating UI. */
     headingId?: string
+    /**
+     * Prefixes every internal id (and those of the pickers/comments it mounts).
+     * A host that can render alongside another sidebar — the sub-editor modal
+     * opens over the still-mounted drawer — must pass a unique value, otherwise
+     * the second instance's label[for]/aria-* resolve to the first instance's
+     * controls.
+     */
+    idPrefix?: string
     /** Forwarded to CommentThread (drawer inspector vs inline sub-editor). */
     commentLayout?: 'inline' | 'drawer'
   }
@@ -70,10 +78,13 @@
     stickyPrimary = false,
     onClose,
     headingId,
+    idPrefix = '',
     commentLayout = 'inline'
   }: Props = $props()
 
   let rootRef = $state<HTMLDivElement | null>(null)
+
+  const id = (name: string) => `${idPrefix}${name}`
 
   // Friendly local rendering of the [created::]/[completed::] ISO timestamps
   // (#417). Falls back to the raw string when the value isn't a parseable date.
@@ -768,8 +779,8 @@
       {/if}
     </div>
 
-    <section aria-labelledby="task-status-label">
-      <h3 id="task-status-label" class="mb-1 {FIELD_LABEL}">Status</h3>
+    <section aria-labelledby={id('task-status-label')}>
+      <h3 id={id('task-status-label')} class="mb-1 {FIELD_LABEL}">Status</h3>
       <div
         class="flex items-center gap-0.5 rounded-lg border border-surface-panel-border bg-surface-panel p-0.5"
         role="radiogroup"
@@ -799,9 +810,11 @@
 
     <div class="field-pair grid grid-cols-2 gap-2">
       <section class="min-w-0">
-        <h3 id="task-due-date-label" class="mb-1 {FIELD_LABEL}">Due date</h3>
+        <h3 id={id('task-due-date-label')} class="mb-1 {FIELD_LABEL}">
+          Due date
+        </h3>
         <button
-          id="task-due-date-trigger"
+          id={id('task-due-date-trigger')}
           bind:this={dueDateTrigger}
           type="button"
           onclick={() => {
@@ -811,7 +824,7 @@
           disabled={dueDateField.pending}
           aria-haspopup="dialog"
           aria-expanded={dueDateOpen}
-          aria-labelledby="task-due-date-label task-due-date-trigger"
+          aria-labelledby={`${id('task-due-date-label')} ${id('task-due-date-trigger')}`}
           class="flex w-full items-center justify-between gap-1 rounded border border-surface-card-border bg-surface-card px-2 py-1.5 font-label-sm text-type-xs text-text-primary transition-colors hover:bg-hover disabled:opacity-50"
         >
           <span class="flex min-w-0 items-center gap-1.5">
@@ -894,9 +907,11 @@
       </section>
 
       <section class="min-w-0">
-        <h3 id="task-start-date-label" class="mb-1 {FIELD_LABEL}">Start day</h3>
+        <h3 id={id('task-start-date-label')} class="mb-1 {FIELD_LABEL}">
+          Start day
+        </h3>
         <button
-          id="task-start-date-trigger"
+          id={id('task-start-date-trigger')}
           bind:this={startDateTrigger}
           type="button"
           onclick={() => {
@@ -906,7 +921,7 @@
           disabled={startDateField.pending}
           aria-haspopup="dialog"
           aria-expanded={startDateOpen}
-          aria-labelledby="task-start-date-label task-start-date-trigger"
+          aria-labelledby={`${id('task-start-date-label')} ${id('task-start-date-trigger')}`}
           class="flex w-full items-center justify-between gap-1 rounded border border-surface-card-border bg-surface-card px-2 py-1.5 font-label-sm text-type-xs text-text-primary transition-colors hover:bg-hover disabled:opacity-50"
         >
           <span class="flex min-w-0 items-center gap-1.5">
@@ -988,12 +1003,14 @@
       </section>
     </div>
 
-    <section aria-labelledby="task-priority-label">
-      <h3 id="task-priority-label" class="mb-1 {FIELD_LABEL}">Priority</h3>
+    <section aria-labelledby={id('task-priority-label')}>
+      <h3 id={id('task-priority-label')} class="mb-1 {FIELD_LABEL}">
+        Priority
+      </h3>
       <div
         class="flex items-center gap-0.5 rounded-lg border border-surface-panel-border bg-surface-panel p-0.5"
         role="radiogroup"
-        aria-labelledby="task-priority-label"
+        aria-labelledby={id('task-priority-label')}
         tabindex="-1"
         onkeydown={onPriorityKeydown}
       >
@@ -1074,7 +1091,7 @@
   </header>
 
   <section
-    aria-labelledby="task-essentials-heading"
+    aria-labelledby={id('task-essentials-heading')}
     class="space-y-3 px-5 py-4"
   >
     <div class="flex items-center gap-2">
@@ -1082,16 +1099,18 @@
         class="material-symbols-outlined text-icon-md text-text-muted"
         aria-hidden="true">person_edit</span
       >
-      <h3 id="task-essentials-heading" class={SECTION_LABEL}>Essentials</h3>
+      <h3 id={id('task-essentials-heading')} class={SECTION_LABEL}>
+        Essentials
+      </h3>
     </div>
     <dl class="space-y-2 font-label-sm text-type-sm">
       <div class="flex items-center gap-3">
         <dt class="w-20 shrink-0 text-text-muted">
-          <label class={FIELD_LABEL} for="task-owner-input">Owner</label>
+          <label class={FIELD_LABEL} for={id('task-owner-input')}>Owner</label>
         </dt>
         <dd class="min-w-0 flex-1">
           <input
-            id="task-owner-input"
+            id={id('task-owner-input')}
             type="text"
             class="w-full rounded-sm border border-surface-card-border bg-surface-card px-2 py-1 text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {ownerField.pending
               ? 'opacity-50'
@@ -1134,9 +1153,9 @@
               </li>
             {/each}
             <li class="min-w-0 flex-1">
-              <label class="sr-only" for="task-tag-add">Add a tag</label>
+              <label class="sr-only" for={id('task-tag-add')}>Add a tag</label>
               <input
-                id="task-tag-add"
+                id={id('task-tag-add')}
                 type="text"
                 class="w-full rounded border border-surface-card-border bg-transparent px-1.5 py-0.5 text-type-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 disabled:opacity-50"
                 placeholder="Add tag…"
@@ -1157,7 +1176,7 @@
   </section>
 
   <section
-    aria-labelledby="task-planning-heading"
+    aria-labelledby={id('task-planning-heading')}
     class="space-y-3 border-t border-surface-card-border px-5 py-4"
     data-testid="task-planning-section"
   >
@@ -1166,14 +1185,14 @@
         class="material-symbols-outlined text-icon-md text-text-muted"
         aria-hidden="true">tune</span
       >
-      <h3 id="task-planning-heading" class={SECTION_LABEL}>
+      <h3 id={id('task-planning-heading')} class={SECTION_LABEL}>
         Planning & tracking
       </h3>
     </div>
     <div class="space-y-4">
-      <section aria-labelledby="task-progress-label">
+      <section aria-labelledby={id('task-progress-label')}>
         <div class="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h3 id="task-progress-label" class={FIELD_LABEL}>Progress</h3>
+          <h3 id={id('task-progress-label')} class={FIELD_LABEL}>Progress</h3>
           <span class="font-label-sm text-type-xs text-text-primary">
             {progressState}%{#if task.subtask_total > 0}
               <span
@@ -1203,13 +1222,13 @@
 
       <section class="flex items-start gap-3">
         <label
-          for="task-estimate-input"
+          for={id('task-estimate-input')}
           class="w-20 shrink-0 pt-1 {FIELD_LABEL}">Estimate</label
         >
         <div class="min-w-0 flex-1">
           <div class="flex flex-wrap items-center gap-2">
             <input
-              id="task-estimate-input"
+              id={id('task-estimate-input')}
               type="text"
               data-testid="task-estimate-input"
               class="w-28 rounded-sm border border-surface-card-border bg-surface-card px-2 py-0.5 text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {estimateField.pending
@@ -1221,7 +1240,7 @@
               readonly={estimateField.pending}
               aria-busy={estimateField.pending}
               aria-invalid={estimateInvalid}
-              aria-describedby="task-estimate-hint"
+              aria-describedby={id('task-estimate-hint')}
               onblur={() => void commitEstimate()}
               onkeydown={(e) => {
                 if (e.key === 'Enter') {
@@ -1231,7 +1250,7 @@
               }}
             />
             <p
-              id="task-estimate-hint"
+              id={id('task-estimate-hint')}
               class="font-label-sm text-type-2xs text-text-muted"
             >
               Try 30m, 2h, 1d, or 2.5d
@@ -1254,7 +1273,7 @@
             disabled={recurrenceField.pending}
             aria-haspopup="listbox"
             aria-expanded={recurrenceOpen}
-            aria-controls="recurrence-listbox"
+            aria-controls={id('recurrence-listbox')}
             class="flex w-full items-center justify-between rounded border border-surface-card-border bg-surface-card px-3 py-2 font-label-sm text-type-sm text-text-primary transition-colors hover:bg-hover disabled:opacity-50"
           >
             <span class="flex items-center gap-2">
@@ -1280,7 +1299,7 @@
           >
             {#snippet content()}
               <div
-                id="recurrence-listbox"
+                id={id('recurrence-listbox')}
                 transition:fly={{ y: -4, duration: motionDuration(100) }}
                 role="listbox"
                 tabindex="-1"
@@ -1374,12 +1393,13 @@
         blockedBy={blockedByList}
         {ctx}
         {onMetaChanged}
+        {idPrefix}
       />
     </div>
   </section>
 
   <section
-    aria-labelledby="task-activity-heading"
+    aria-labelledby={id('task-activity-heading')}
     class="space-y-3 border-t border-surface-card-border px-5 py-4"
     data-testid="task-activity-section"
   >
@@ -1388,7 +1408,7 @@
         class="material-symbols-outlined text-icon-md text-text-muted"
         aria-hidden="true">forum</span
       >
-      <h3 id="task-activity-heading" class={SECTION_LABEL}>Activity</h3>
+      <h3 id={id('task-activity-heading')} class={SECTION_LABEL}>Activity</h3>
       <span class="font-label-sm text-type-xs text-text-muted">
         {task.comments_count} comments · {task.links_count} links · timestamps
       </span>
@@ -1428,6 +1448,7 @@
         {ctx}
         onCommentsChanged={onMetaChanged}
         layout={commentLayout}
+        {idPrefix}
       />
     </div>
   </section>

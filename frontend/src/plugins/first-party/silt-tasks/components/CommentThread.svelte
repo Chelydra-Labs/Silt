@@ -32,6 +32,8 @@
      * inline: unbounded list for the narrow sub-editor sidebar.
      */
     layout?: 'inline' | 'drawer'
+    /** Scopes internal ids so two mounted threads never collide. */
+    idPrefix?: string
   }
 
   let {
@@ -42,8 +44,11 @@
     fileDate,
     ctx,
     onCommentsChanged,
-    layout = 'inline'
+    layout = 'inline',
+    idPrefix = ''
   }: Props = $props()
+
+  const id = (name: string) => `${idPrefix}${name}`
 
   let isDrawerLayout = $derived(layout === 'drawer')
 
@@ -527,9 +532,11 @@
     {@render commentBody(c)}
     {#if replyToId === c.id}
       <div class="mt-2 flex flex-col gap-1.5" data-testid="reply-composer">
-        <label for="reply-composer-{c.id}" class="sr-only">Reply text</label>
+        <label for={id(`reply-composer-${c.id}`)} class="sr-only"
+          >Reply text</label
+        >
         <textarea
-          id="reply-composer-{c.id}"
+          id={id(`reply-composer-${c.id}`)}
           bind:this={replyTextareaEl}
           bind:value={replyText}
           onkeydown={onReplyKey}
@@ -560,7 +567,7 @@
 {/snippet}
 
 <section
-  aria-labelledby="comment-thread-heading"
+  aria-labelledby={id('comment-thread-heading')}
   class="pt-3 border-t border-surface-card-border"
   class:flex={isDrawerLayout}
   class:flex-col={isDrawerLayout}
@@ -568,7 +575,7 @@
 >
   <div class="flex items-center gap-2 mb-2 flex-shrink-0">
     <h3
-      id="comment-thread-heading"
+      id={id('comment-thread-heading')}
       class="text-type-sm font-label-sm-bold text-text-primary"
     >
       Comments
@@ -638,28 +645,30 @@
     class:flex-shrink-0={isDrawerLayout}
     data-testid={isDrawerLayout ? 'comment-composer-sticky' : undefined}
   >
-    <label for="comment-composer-{taskId}" class="sr-only">Comment text</label>
+    <label for={id(`comment-composer-${taskId}`)} class="sr-only"
+      >Comment text</label
+    >
     <textarea
-      id="comment-composer-{taskId}"
+      id={id(`comment-composer-${taskId}`)}
       bind:value={composerText}
       onkeydown={onComposerKey}
       placeholder="Add a comment…"
       aria-label="Comment text"
-      aria-describedby="comment-composer-help-{taskId}"
+      aria-describedby={id(`comment-composer-help-${taskId}`)}
       class="w-full resize-y min-h-[2.5rem] rounded border border-surface-card-border bg-surface-card px-2 py-1 text-type-sm text-text-primary focus:outline-none focus:border-accent-primary-start"
       rows="2"></textarea>
-    <p id="comment-composer-help-{taskId}" class="sr-only">
+    <p id={id(`comment-composer-help-${taskId}`)} class="sr-only">
       Press Enter to post, Shift+Enter for a new line.
     </p>
     <div class="flex items-center gap-2">
       <label
-        for="comment-author-{taskId}"
+        for={id(`comment-author-${taskId}`)}
         class="text-type-2xs font-label-sm text-text-muted"
       >
         Author
       </label>
       <input
-        id="comment-author-{taskId}"
+        id={id(`comment-author-${taskId}`)}
         bind:value={composerAuthor}
         onblur={onAuthorBlur}
         aria-label="Default comment author"

@@ -300,24 +300,6 @@
     onClose()
   }
 
-  // --- Writing-surface focus indicator (#1095) ---
-  // Styling keys off the data attribute itself, so the DOM contract the
-  // tests assert and the visual treatment share one source of truth.
-  let editorBodyEl = $state<HTMLDivElement | null>(null)
-  let editorFocused = $state(false)
-
-  function handleEditorFocusIn(): void {
-    editorFocused = true
-  }
-
-  function handleEditorFocusOut(e: FocusEvent): void {
-    // Only leaving the container clears the flag — moving between nested
-    // descendants (e.g. block node-view controls) must not.
-    const next = e.relatedTarget
-    if (next instanceof Node && editorBodyEl?.contains(next)) return
-    editorFocused = false
-  }
-
   // Mirrors whether the sidebar has a popover/dialog open so Esc doesn't close
   // the modal mid-interaction.
   let sidebarBusy = $state(false)
@@ -418,7 +400,9 @@
   bind:dialogRef
   onKeydown={handleKeydown}
 >
-  <!-- Header: breadcrumbs + parent task title + status -->
+  <!-- Header: breadcrumbs + chrome only. The visible title lives in the
+       sidebar's editable input — a second header copy duplicated it and
+       truncated against it (D6). -->
   <header
     class="flex items-center gap-3 px-5 py-3 border-b border-surface-modal-border flex-shrink-0"
   >
@@ -440,12 +424,9 @@
           >{page}
         </div>
       {/if}
-      <h2
-        id="sub-editor-title"
-        class="text-text-primary font-label-md text-base truncate"
-      >
-        {headerTitle}
-      </h2>
+      <!-- Always rendered so labelledBy="sub-editor-title" never dangles,
+           including while the sidebar (and its own title input) is shut. -->
+      <h2 id="sub-editor-title" class="sr-only">{headerTitle}</h2>
     </div>
     {#if task && !isNarrow}
       <button
@@ -504,16 +485,9 @@
         </button>
       {/if}
 
-      <!-- Editor body: writing surface (#1095). The treatment lives here,
-           not on .ProseMirror — the global outline:none there keeps the page
-           editor borderless — and focusin/focusout catch mouse, keyboard, and
-           the open-time commands.focus() alike. -->
+      <!-- Editor body -->
       <div
-        bind:this={editorBodyEl}
-        class="relative flex-1 overflow-y-auto custom-scrollbar px-5 py-4 min-h-0 rounded-lg border border-surface-modal-border transition-colors data-[editor-focused=true]:border-accent-primary-start data-[editor-focused=true]:ring-2 data-[editor-focused=true]:ring-inset data-[editor-focused=true]:ring-accent-primary-start"
-        data-editor-focused={editorFocused}
-        onfocusin={handleEditorFocusIn}
-        onfocusout={handleEditorFocusOut}
+        class="relative flex-1 overflow-y-auto custom-scrollbar px-5 py-4 min-h-0"
       >
         {#if loading}
           <div
@@ -579,6 +553,7 @@
           {ctx}
           {onMetaChanged}
           stickyPrimary
+          idPrefix="sub-editor-"
           bind:busy={sidebarBusy}
         />
       </aside>
@@ -592,6 +567,7 @@
           {ctx}
           {onMetaChanged}
           stickyPrimary
+          idPrefix="sub-editor-"
           bind:busy={sidebarBusy}
         />
       </aside>
