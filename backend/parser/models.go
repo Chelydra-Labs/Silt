@@ -100,6 +100,11 @@ type ParsedBlock struct {
 	// index caches a 0/1 projection for query speed but the file is the
 	// source of truth.
 	Pinned *bool `json:"pinned,omitempty"`
+	// ShortlistRank is the user-set focus rank (`[shortlist:: N]` in the
+	// markdown inline task syntax). 0 is a REAL (top) rank, not "unranked";
+	// nil = unranked (no token). Stored as NULL in the tasks cache; the
+	// markdown file is the source of truth (#1092).
+	ShortlistRank *int `json:"shortlist_rank,omitempty"`
 	// Progress is a 0-100 user-set progress indicator (`[progress:: N]`
 	// or `[prog:: N]` in the markdown inline task syntax). 0 = not set
 	// (renderer omits the marker). Lives only in the file; SQLite caches
@@ -416,8 +421,12 @@ type TaskResult struct {
 	// §0 "Storage-of-Truth Tiers" — these are file-resident user intent;
 	// the SQLite index is allowed to cache them, not to own them). Pinned
 	// is a tri-state pointer for parity with ParsedBlock.Pinned (#123).
-	Pinned   *bool `json:"pinned,omitempty"`
-	Progress int   `json:"progress,omitempty"`
+	// ShortlistRank is a nullable pointer for parity with
+	// ParsedBlock.ShortlistRank (#1092): 0 is a real (top) rank, nil =
+	// unranked (NULL in the cache; never coerced to a sentinel).
+	Pinned        *bool `json:"pinned,omitempty"`
+	ShortlistRank *int  `json:"shortlist_rank,omitempty"`
+	Progress      int   `json:"progress,omitempty"`
 	// Recurrence mirrors ParsedBlock.Recurrence (#296): the
 	// natural-language repeat rule (`every week` etc.) cached on the
 	// task row so the Kanban/Agenda queries can surface the repeat badge

@@ -143,7 +143,7 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 	query := `
 		SELECT b.id, b.parent_id, b.source, b.notebook, b.section, b.page, b.file_date, b.depth, b.raw_content, b.clean_content, b.line_number,
 		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0),
-		       t.created_at, t.completed_at, t.manual_order, t.modified_at, t.estimate_minutes, t.subtask_total, t.subtask_done
+		       t.created_at, t.completed_at, t.manual_order, t.modified_at, t.estimate_minutes, t.shortlist_rank, t.subtask_total, t.subtask_done
 		FROM blocks b
 		LEFT JOIN tasks t ON b.id = t.block_id
 		WHERE b.id IN (SELECT block_id FROM tags WHERE raw_path = ? OR raw_path LIKE ?)
@@ -165,10 +165,10 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 		var status, owner, start, due string
 		var priority int
 		var createdAt, completedAt, modifiedAt sql.NullString
-		var manualOrder, estimateMinutes, subtaskTotal, subtaskDone sql.NullInt64
+		var manualOrder, estimateMinutes, shortlistRank, subtaskTotal, subtaskDone sql.NullInt64
 		if err := rows.Scan(
 			&r.ID, &parentID, &r.Source, &r.Notebook, &r.Section, &r.Page, &r.FileDate, &r.Depth, &r.RawContent, &r.CleanContent, &r.LineNumber,
-			&status, &owner, &start, &due, &priority, &createdAt, &completedAt, &manualOrder, &modifiedAt, &estimateMinutes, &subtaskTotal, &subtaskDone,
+			&status, &owner, &start, &due, &priority, &createdAt, &completedAt, &manualOrder, &modifiedAt, &estimateMinutes, &shortlistRank, &subtaskTotal, &subtaskDone,
 		); err != nil {
 			return nil, err
 		}
@@ -195,6 +195,11 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 		if estimateMinutes.Valid {
 			r.EstimateMinutes = int(estimateMinutes.Int64)
 			r.Estimate = parser.FormatEstimateMinutes(r.EstimateMinutes)
+		}
+		// Shortlist (#1092): NULL stays nil (unranked); 0 is a real top rank.
+		if shortlistRank.Valid {
+			rank := int(shortlistRank.Int64)
+			r.ShortlistRank = &rank
 		}
 		if subtaskTotal.Valid {
 			r.SubtaskTotal = int(subtaskTotal.Int64)

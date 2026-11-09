@@ -222,7 +222,7 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 		if recur.Valid && recur.String != "" {
 			b.Recurrence = recur.String
 		}
-		// [estimate::] (#439) plus [pin::]/[blocked_by::]/unknown
+		// [estimate::] (#439) plus [pin::]/[shortlist::]/[blocked_by::]/unknown
 		// [key:: value] tokens (#1005): render-emitted fields whose only
 		// storage is the raw line this query already loaded, so re-derive
 		// them through the canonical parser (estimate_minutes cannot
@@ -234,6 +234,7 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 			if pb, _, _ := parser.ParseLine(b.RawText, 0, 0); pb.Type == parser.BlockTask {
 				b.Estimate = pb.Estimate
 				b.Pinned = pb.Pinned
+				b.ShortlistRank = pb.ShortlistRank
 				b.BlockedBy = pb.BlockedBy
 				b.ExtraTokens = pb.ExtraTokens
 			}

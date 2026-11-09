@@ -191,9 +191,9 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
   }
 }
 
-// A row factory covering every TaskDetail field the query/projects so the
-// card richness markup (priority stripe, owner badge, blocked indicator)
-// renders without coercion holes.
+// A row factory covering every TaskDetail field the query projects
+// (shortlist_rank included) so the card richness markup (priority stripe,
+// owner badge, blocked indicator) renders without coercion holes.
 function row(p: Partial<Record<string, unknown>>): Record<string, unknown> {
   return {
     id: 'r',
@@ -218,6 +218,7 @@ function row(p: Partial<Record<string, unknown>>): Record<string, unknown> {
     manual_order: 0,
     modified_at: '',
     estimate_minutes: null,
+    shortlist_rank: null,
     subtask_total: 0,
     subtask_done: 0,
     tags: '',

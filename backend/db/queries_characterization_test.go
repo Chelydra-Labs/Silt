@@ -78,11 +78,15 @@ func TestFetchPageBlocks_OrderedAndScoped(t *testing.T) {
 
 func TestQueryBlocksByTag_PrefixSemantics(t *testing.T) {
 	dm := newTestDB(t)
+	// Shortlist ranks exercise this path's nil-vs-&0 hydration (#1092):
+	// leaf ranks 0 (a REAL top rank), root ranks 2, mid stays unranked.
+	zero, two := 0, 2
 	blocks := []parser.ParsedBlock{
 		{
 			ID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", Type: parser.BlockTask,
 			RawText:   "- [ ] leaf #work/project/milestone-one <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->",
 			CleanText: "leaf", Status: "TODO", LineNumber: 1,
+			ShortlistRank: &zero,
 		},
 		{
 			ID: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", Type: parser.BlockTask,
@@ -93,6 +97,7 @@ func TestQueryBlocksByTag_PrefixSemantics(t *testing.T) {
 			ID: "cccccccc-cccc-cccc-cccc-cccccccccccc", Type: parser.BlockTask,
 			RawText:   "- [ ] root #work <!-- id: cccccccc-cccc-cccc-cccc-cccccccccccc -->",
 			CleanText: "root", Status: "TODO", LineNumber: 3,
+			ShortlistRank: &two,
 		},
 	}
 	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
@@ -105,6 +110,32 @@ func TestQueryBlocksByTag_PrefixSemantics(t *testing.T) {
 	}
 	if len(res) != 3 {
 		t.Errorf("expected #work to match all 3 (prefix), got %d", len(res))
+	}
+
+	// The tag read path must hydrate the cache with the same contract as
+	// the tasks query paths: NULL→nil, 0→&0 (distinct from unranked).
+	wantRank := map[string]*int{
+		"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa": &zero,
+		"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb": nil,
+		"cccccccc-cccc-cccc-cccc-cccccccccccc": &two,
+	}
+	gotRank := make(map[string]*int, len(res))
+	for _, r := range res {
+		gotRank[r.ID] = r.ShortlistRank
+	}
+	for id, want := range wantRank {
+		got, ok := gotRank[id]
+		if !ok {
+			t.Errorf("task %s missing from tag results", id)
+			continue
+		}
+		if (got == nil) != (want == nil) {
+			t.Errorf("task %s: expected shortlist nil=%v, got nil=%v", id, want == nil, got == nil)
+			continue
+		}
+		if got != nil && *got != *want {
+			t.Errorf("task %s: expected *shortlist_rank=%d, got %d", id, *want, *got)
+		}
 	}
 
 	res2, err := dm.QueryBlocksByTag("work/project/milestone-one")
