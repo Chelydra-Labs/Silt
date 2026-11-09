@@ -40,6 +40,7 @@ import {
   pasteFromClipboard,
   type ClipboardDeps
 } from './clipboard'
+import { insertMeetingSection } from '../../plugins/first-party/silt-meeting'
 
 const editors: Editor[] = []
 const notify = vi.fn()
@@ -506,5 +507,41 @@ describe('context-menu paste', () => {
         message: 'Paste failed: the clipboard contents could not be inserted.'
       })
     )
+  })
+})
+
+describe('paste inside a /meeting section (#1105)', () => {
+  it('an Outlook paste at the section caret lands inside detailsContent', () => {
+    const editor = makeEditor()
+    // The seeded 'seed' noteBlock is non-empty, so the section prepends via
+    // the insert path and the caret parks on the first field line.
+    expect(insertMeetingSection(editor)).toBe(true)
+
+    // Sanity: the caret really is inside the section before the paste.
+    const $from = editor.state.selection.$from
+    const chain: string[] = []
+    for (let d = 1; d <= $from.depth; d++) chain.push($from.node(d).type.name)
+    expect(chain).toEqual(['details', 'detailsContent', 'noteBlock'])
+
+    // Real interop target: a captured Outlook/Word clipboard body.
+    editor.view.pasteHTML(OUTLOOK_BODY)
+
+    const top = blocks(editor)
+    // Nothing was appended at doc end: the section is still first and the
+    // seed block is still last, unchanged.
+    expect(top.map((node) => node.type)).toEqual(['details', 'noteBlock'])
+    expect(textOf(top[1])).toBe('seed')
+    // The Outlook content normalized inside the section, alongside the
+    // seeded field labels.
+    const detailsText = textOf(top[0])
+    expect(detailsText).toContain('Meeting information')
+    expect(detailsText).toContain('Subject:')
+    expect(detailsText).toContain('Q3 Planning')
+    // 'Bold launch' and 'and italic body text' are separated by the
+    // fixture's mso-spacerun NBSP, so assert them separately.
+    expect(detailsText).toContain('Bold launch')
+    expect(detailsText).toContain('and italic body text')
+    expect(detailsText).toContain('Ship the beta')
+    expect(detailsText).toContain('Write the docs')
   })
 })

@@ -50,6 +50,9 @@ export function buildMeetingSection(
       [schema.text(label)]
     )
   )
+  // `open: true` below mirrors keymaps' insertDetails. TipTap's Details
+  // extension only declares that attr with persist:true (off here), so the
+  // schema drops it — expansion at insert is the NodeView's concern.
   return details.create({ id: null, open: true, file_date: today }, [
     detailsSummary.create({ id: null }, schema.text('Meeting information')),
     detailsContent.create({ id: null }, fields)
@@ -82,14 +85,16 @@ export function insertMeetingSection(editor: Editor): boolean {
   }
 
   // Park the caret at the start of the first field line so typing and
-  // pasting land inside the section, not below it. The section is doc
-  // child 0 in both paths, so descendant positions are already absolute.
+  // pasting land inside the section, not below it. descendants() positions
+  // are relative to the details node's content start, so +1 crosses the
+  // details' own open token (the section is doc child 0 in both paths) and
+  // +1 steps past the noteBlock's open token onto its first text position.
   const inserted = editor.state.doc.child(0)
   if (inserted.type.name === 'details') {
     let caret = -1
     inserted.descendants((node, pos) => {
       if (caret < 0 && node.type.name === 'noteBlock') {
-        caret = pos + 1
+        caret = pos + 2
         return false
       }
       return true
