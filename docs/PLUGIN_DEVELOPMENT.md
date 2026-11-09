@@ -69,7 +69,7 @@ interface PluginContext {
 `sqliteQuery` runs **read-only** SQL against the in-memory SQLite index. Anything other than `SELECT`/`WITH` is rejected. The schema (see `ARCHITECTURE.md` §3):
 
 - `blocks(id, parent_id, notebook, section, page, file_date, depth, type, raw_content, clean_content, line_number)`
-- `tasks(block_id, status, owner, start_date, due_date, priority, shortlist_rank, pinned, progress, recur, comments_count, links_count, created_at, completed_at, manual_order, modified_at, estimate_minutes, subtask_total, subtask_done)`
+- `tasks(block_id, status, owner, start_date, due_date, priority, pinned, progress, recur, comments_count, links_count, created_at, completed_at, manual_order, modified_at, estimate_minutes, shortlist_rank, subtask_total, subtask_done)`
 - `tags(block_id, raw_path, level_0, level_1, level_2)`
 
 Example — all active tasks with a due date:

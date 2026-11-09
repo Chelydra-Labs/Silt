@@ -272,7 +272,6 @@ CREATE TABLE tasks (
     start_date TEXT,         -- YYYY-MM-DD or NULL
     due_date TEXT,           -- YYYY-MM-DD or NULL
     priority INTEGER,        -- 1, 2, 3
-    shortlist_rank INTEGER,  -- rank 0-3 from [shortlist:: N], 0 = top focus; NULL = unranked (#1092)
     pinned INTEGER DEFAULT 0,         -- NULL/0/1 tri-state cache: NULL=no [pin::] token, 0=[pin:: false], 1=[pin:: true]; reproducible from markdown
     progress INTEGER DEFAULT 0,       -- 0-100; cached from [progress:: N] markdown token
     recur TEXT,                       -- recurrence rule (e.g. 'every week'); NULL for one-off tasks; cached from [recur:: RULE] token
@@ -283,6 +282,7 @@ CREATE TABLE tasks (
     manual_order INTEGER,             -- 1-based [order:: N] sort position; NULL when absent (no backfill); reproducible from markdown
     modified_at TEXT,                 -- ISO 8601 local [modified::]; NULL when absent; reproducible from markdown
     estimate_minutes INTEGER,         -- minutes from [estimate::]; NULL when absent; reproducible from markdown
+    shortlist_rank INTEGER,           -- rank 0-3 from [shortlist:: N], 0 = top focus; NULL = unranked (#1092)
     subtask_total INTEGER DEFAULT 0,  -- derived: direct TASK children
     subtask_done INTEGER DEFAULT 0,   -- derived: direct TASK children with status DONE
     FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
