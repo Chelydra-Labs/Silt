@@ -10,7 +10,7 @@ import (
 
 // installForCurrentOS launches the verified NSIS installer so it can replace
 // the running binary. The Silt installer is per-user-only — RequestExecutionLevel
-// user → an asInvoker manifest (build/windows/installer/project.nsi) — so it runs
+// user → an asInvoker manifest (build/windows/nsis/project.nsi) — so it runs
 // with the launching user's token and never needs elevation.
 //
 // ShellExecute with a nil verb launches the installer exactly as Explorer would

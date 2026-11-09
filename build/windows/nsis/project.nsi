@@ -55,6 +55,10 @@ ManifestDPIAware true
 !define MUI_UNICON "..\icon.ico"
 # !define MUI_WELCOMEFINISHPAGE_BITMAP "resources\leftimage.bmp" #Include this to add a bitmap on the left side of the Welcome Page. Must be a size of 164x314
 !define MUI_FINISHPAGE_NOAUTOCLOSE # Wait on the INSTFILES page so the user can take a look into the details of the installation steps
+## "Launch Silt" checkbox on the finish page, checked by default. An in-app
+## upgrade reopens the new version automatically; the user can uncheck it.
+## The value carries no quotes: MUI adds them when it Exec's the target.
+!define MUI_FINISHPAGE_RUN $INSTDIR\${PRODUCT_EXECUTABLE}
 !define MUI_ABORTWARNING # This will warn the user if they exit from the installer.
 
 !insertmacro MUI_PAGE_WELCOME # Welcome to the installer page.
@@ -100,6 +104,19 @@ FunctionEnd
 
 Section
     !insertmacro wails.setShellContext
+
+    ## Windows locks a running executable, so an in-app update — and a
+    ## close-to-tray instance that stays resident after the window hides —
+    ## would block the file overwrite below. Prefer a graceful WM_CLOSE so
+    ## Application.Quit can drain WAL/autosave; then /F as the guarantee for
+    ## tray-resident instances that ignore close. Exit 128 (not running) is
+    ## expected and harmless on either attempt.
+    nsExec::Exec 'taskkill /IM "${PRODUCT_EXECUTABLE}"'
+    Pop $0
+    Sleep 2000
+    nsExec::Exec 'taskkill /IM "${PRODUCT_EXECUTABLE}" /F'
+    Pop $0
+    Sleep 500  ; let the kernel release file handles before overwriting
 
     ## If a prior version is installed (per-user), silently run its
     ## uninstaller first for a clean upgrade. The wails3 writeUninstaller
