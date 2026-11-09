@@ -28,8 +28,31 @@
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive dedupe set
   const invokedActionIds = new Set<number>()
 
+  function handleWindowKeydown(e: KeyboardEvent): void {
+    if (e.key !== 'Escape' || e.defaultPrevented) return
+    if (notificationsState.items.length === 0) return
+    // Guard against stealing Escape from active modal overlays or focused dropdown menus/listboxes (#1080):
+    // Note: non-modal docked panels (e.g. PropertiesPanel with aria-modal="false") and inline sidebar
+    // widgets (e.g. SmartLists with role="listbox") do not block Escape unless focus is actively inside them.
+    const activeOverlay =
+      document.querySelector(
+        '[aria-modal="true"], dialog[open], [data-focus-trap], [role="dialog"]:not([aria-modal="false"]), [role="alertdialog"]'
+      ) ||
+      document.activeElement?.closest(
+        '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]'
+      )
+    if (activeOverlay) return
+    e.preventDefault()
+    const latest = notificationsState.items[notificationsState.items.length - 1]
+    if (latest) {
+      dismissNotification(latest.id)
+    }
+  }
+
   onMount(() => {
+    window.addEventListener('keydown', handleWindowKeydown)
     return () => {
+      window.removeEventListener('keydown', handleWindowKeydown)
       list = null
       invokedActionIds.clear()
     }

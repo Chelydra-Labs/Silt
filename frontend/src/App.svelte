@@ -102,7 +102,10 @@
   import NamePromptDialog from './components/NamePromptDialog.svelte'
   import { parseAuditHarnessParams } from './lib/testing/auditHarness'
   import { setDisplayMode as setTaskHubDisplayMode } from './plugins/first-party/silt-tasks/state.svelte'
-  import { pushNotification } from './notifications/store.svelte'
+  import {
+    pushNotification,
+    advanceViewGeneration
+  } from './notifications/store.svelte'
   import {
     initStartupUpdateCheck,
     disposeUpdateStore
@@ -123,6 +126,8 @@
   import { routeJumpTarget } from './lib/standaloneTasksNav'
 
   let isInitialized = $state(false)
+  let isInitializingVault = $state(false)
+  let initVaultError = $state<string | null>(null)
   let loading = $state(true)
 
   // Tab manager (#142, #768). Owns openTabs/activeTabId, the per-notebook
@@ -194,6 +199,14 @@
     tabManager.handleCloseTab(tabId)
   }
   let activeView = $state('notes')
+  let previousActiveView = ''
+  $effect(() => {
+    const current = activeView
+    if (previousActiveView !== '' && current !== previousActiveView) {
+      advanceViewGeneration()
+    }
+    previousActiveView = current
+  })
   const views = [
     { id: 'notes', label: 'Notes', icon: 'description' },
     { id: 'backlinks', label: 'Backlinks', icon: 'hub' },
@@ -731,6 +744,10 @@
 
     switch (targetView) {
       case 'onboarding':
+        if (params.state === 'error') {
+          initVaultError =
+            'Failed to initialize workspace folder: access denied'
+        }
         break
       case 'notes':
       case 'backlinks':
@@ -882,6 +899,8 @@
   })
 
   async function handleSelectFolder() {
+    isInitializingVault = true
+    initVaultError = null
     try {
       const success = await InitializeVault()
       if (success) {
@@ -896,7 +915,9 @@
         window.dispatchEvent(new CustomEvent('refresh-navigation'))
       }
     } catch (e) {
-      alert('Failed to initialize vault: ' + String(e))
+      initVaultError = coerceIPCError(e).message
+    } finally {
+      isInitializingVault = false
     }
   }
 
@@ -904,6 +925,8 @@
   // screen so the user can pick (or re-pick) a workspace folder (#33). The
   // backend CloseVault waits on any in-flight writes and checkpoints the WAL.
   async function handleChangeVault() {
+    initVaultError = null
+    isInitializingVault = false
     try {
       await CloseVault()
       // Re-query rather than assume — CloseVault is the source of truth.
@@ -1154,6 +1177,9 @@
     <Onboarding
       {loading}
       initialized={isInitialized}
+      initializing={isInitializingVault}
+      error={initVaultError}
+      onRetry={handleSelectFolder}
       onSelectFolder={handleSelectFolder}
     />
   {:else}

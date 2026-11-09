@@ -4,6 +4,8 @@ import {
   pushNotification,
   dismissNotification,
   clearAllNotifications,
+  advanceViewGeneration,
+  getCurrentViewGeneration,
   _resetForTests
 } from './store.svelte'
 
@@ -82,5 +84,47 @@ describe('notifications/store.svelte (#86)', () => {
     vi.advanceTimersByTime(1100)
     expect(notificationsState.items).toHaveLength(0)
     vi.useRealTimers()
+  })
+
+  it('stamps toasts with currentViewGeneration and clears stale toasts on advanceViewGeneration', () => {
+    expect(getCurrentViewGeneration()).toBe(1)
+    pushNotification({ kind: 'info', message: 'from-view-1' })
+    expect(notificationsState.items[0].viewGeneration).toBe(1)
+
+    // Stale toast from generation 1 (> gracePeriod) should be dismissed:
+    advanceViewGeneration({ gracePeriodMs: 0 })
+    expect(getCurrentViewGeneration()).toBe(2)
+    expect(notificationsState.items).toHaveLength(0)
+
+    // New toast created in generation 2
+    pushNotification({ kind: 'info', message: 'from-view-2' })
+    expect(notificationsState.items).toHaveLength(1)
+    expect(notificationsState.items[0].viewGeneration).toBe(2)
+  })
+
+  it('preserves transition-time toasts and re-stamps them with the new view generation', () => {
+    expect(getCurrentViewGeneration()).toBe(1)
+    // Toast created right at view transition
+    pushNotification({ kind: 'info', message: 'transition-toast' })
+    expect(notificationsState.items[0].viewGeneration).toBe(1)
+
+    // Default grace period preserves recent transition toasts
+    advanceViewGeneration()
+    expect(getCurrentViewGeneration()).toBe(2)
+    expect(notificationsState.items).toHaveLength(1)
+    expect(notificationsState.items[0].message).toBe('transition-toast')
+    expect(notificationsState.items[0].viewGeneration).toBe(2)
+  })
+
+  it('preserves toasts marked preserveAcrossViews across view generations', () => {
+    pushNotification({
+      kind: 'info',
+      message: 'persistent-toast',
+      preserveAcrossViews: true
+    })
+
+    advanceViewGeneration({ gracePeriodMs: 0 })
+    expect(notificationsState.items).toHaveLength(1)
+    expect(notificationsState.items[0].message).toBe('persistent-toast')
   })
 })

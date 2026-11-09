@@ -19,6 +19,8 @@ export interface Notification {
   /** Set to a non-zero value (ms) to auto-dismiss; 0 means sticky. */
   autoDismissMs: number
   createdAt: number
+  viewGeneration: number
+  preserveAcrossViews?: boolean
 }
 
 export interface NotificationsState {
@@ -36,9 +38,51 @@ const DEFAULT_AUTO_DISMISS_MS: Record<NotificationKind, number> = {
 }
 
 let nextId = 1
+let currentViewGeneration = 1
 // Timer handles only — not read during render.
 // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive timer map
 const dismissTimers = new Map<number, ReturnType<typeof setTimeout>>()
+
+export function getCurrentViewGeneration(): number {
+  return currentViewGeneration
+}
+
+/**
+ * Advances the active view generation counter and clears stale toasts from
+ * previous view generations (#1080).
+ *
+ * Toasts explicitly flagged with `preserveAcrossViews` or created recently
+ * within the transition grace period (default 1000ms) survive the transition
+ * and are re-stamped with the new view generation.
+ */
+export function advanceViewGeneration(options?: {
+  gracePeriodMs?: number
+}): void {
+  currentViewGeneration++
+  const graceMs = options?.gracePeriodMs ?? 1000
+  const now = Date.now()
+
+  // Single-pass O(N) filtering and timer cleanup:
+  const remaining: Notification[] = []
+  for (const n of notificationsState.items) {
+    const isTransitionToast = now - n.createdAt < graceMs
+    if (
+      n.preserveAcrossViews ||
+      isTransitionToast ||
+      n.viewGeneration === currentViewGeneration
+    ) {
+      n.viewGeneration = currentViewGeneration
+      remaining.push(n)
+    } else {
+      const timer = dismissTimers.get(n.id)
+      if (timer) {
+        clearTimeout(timer)
+        dismissTimers.delete(n.id)
+      }
+    }
+  }
+  notificationsState.items = remaining
+}
 
 export interface PushOptions {
   kind?: NotificationKind
@@ -46,6 +90,8 @@ export interface PushOptions {
   action?: NotificationAction
   /** Override the default auto-dismiss for this kind. 0 = sticky. */
   autoDismissMs?: number
+  /** When true, this notification survives view transitions across generations. */
+  preserveAcrossViews?: boolean
 }
 
 const MAX_NOTIFICATIONS = 5
@@ -71,7 +117,9 @@ export function pushNotification(opts: PushOptions): number {
     message: opts.message,
     action: opts.action,
     autoDismissMs: opts.autoDismissMs ?? DEFAULT_AUTO_DISMISS_MS[kind],
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    viewGeneration: currentViewGeneration,
+    preserveAcrossViews: opts.preserveAcrossViews
   }
   notificationsState.items.push(n)
   while (notificationsState.items.length > MAX_NOTIFICATIONS) {
@@ -108,4 +156,5 @@ export function clearAllNotifications(): void {
 export function _resetForTests(): void {
   clearAllNotifications()
   nextId = 1
+  currentViewGeneration = 1
 }
