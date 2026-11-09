@@ -28,6 +28,7 @@
   import TypeDashboardTable from './TypeDashboardTable.svelte'
   import TypeDashboardBoard from './TypeDashboardBoard.svelte'
   import ViewHeader from '../components/ui/ViewHeader.svelte'
+  import ViewState from '../components/ui/ViewState.svelte'
   import { createReprojectionStatus } from './reprojectionStatus.svelte'
   import {
     PAGE_COLUMN_KEY,
@@ -637,19 +638,21 @@
   </div>
 
   {#if typesLoading}
-    <div class="state" role="status" aria-live="polite">Loading types…</div>
+    <ViewState kind="loading" title="Loading types…" />
   {:else if typesError}
-    <div class="state error" role="alert">{typesError}</div>
+    <ViewState
+      kind="error"
+      title="Failed to load types"
+      description={typesError}
+    />
   {:else if types.length === 0}
-    <div class="state empty">
-      <span class="material-symbols-outlined text-icon-2xl" aria-hidden="true"
-        >category</span
-      >
-      <h2 class="state-title">No types defined yet</h2>
-      <p class="state-body">
-        Create a type to see its pages here, or restore the shipped examples.
-      </p>
-      <div class="state-actions">
+    <ViewState
+      kind="empty"
+      icon="category"
+      title="No types defined yet"
+      description="Create a type to see its pages here, or restore the shipped examples."
+    >
+      {#snippet actions()}
         <button
           type="button"
           class="action-btn primary"
@@ -672,8 +675,8 @@
           >
           Restore examples
         </button>
-      </div>
-    </div>
+      {/snippet}
+    </ViewState>
   {:else}
     <TypeDashboardFilters
       {types}
@@ -784,39 +787,36 @@
     </section>
 
     {#if error}
-      <div class="state error" role="alert">{error}</div>
+      <ViewState kind="error" title="Error loading pages" description={error} />
     {:else if loading}
-      <div class="state" role="status" aria-live="polite">Loading…</div>
+      <ViewState kind="loading" title="Loading…" />
     {:else if rows.length === 0}
       {#if hasFilters}
-        <div class="state empty">
-          <span
-            class="material-symbols-outlined text-icon-2xl"
-            aria-hidden="true">filter_alt_off</span
-          >
-          <h2 class="state-title">No matches</h2>
-          <p class="state-body">
-            No pages match your
-            {activeFilterCount === 1 ? 'filter' : 'filters'}. Try adjusting or
-            clearing them.
-          </p>
-          <button type="button" class="clear-btn" onclick={clearFilters}>
-            <span
-              class="material-symbols-outlined text-icon-sm"
-              aria-hidden="true">close</span
-            >
-            Clear {activeFilterCount === 1 ? 'filter' : 'filters'}
-          </button>
-        </div>
+        <ViewState
+          kind="empty"
+          icon="filter_alt_off"
+          title="No matches"
+          description="No pages match your {activeFilterCount === 1
+            ? 'filter'
+            : 'filters'}. Try adjusting or clearing them."
+        >
+          {#snippet actions()}
+            <button type="button" class="clear-btn" onclick={clearFilters}>
+              <span
+                class="material-symbols-outlined text-icon-sm"
+                aria-hidden="true">close</span
+              >
+              Clear {activeFilterCount === 1 ? 'filter' : 'filters'}
+            </button>
+          {/snippet}
+        </ViewState>
       {:else}
-        <div class="state empty">
-          <span
-            class="material-symbols-outlined text-icon-2xl"
-            aria-hidden="true">inbox</span
-          >
-          <h2 class="state-title">No pages of this type</h2>
-          <p class="state-body">Assign this type to a page to see it here.</p>
-        </div>
+        <ViewState
+          kind="empty"
+          icon="inbox"
+          title="No pages of this type"
+          description="Assign this type to a page to see it here."
+        />
       {/if}
     {:else}
       <div class="view-shell">
@@ -1008,45 +1008,6 @@
   .back:focus-visible {
     outline: 2px solid var(--color-border-focus);
     outline-offset: 1px;
-  }
-  .state {
-    padding: 2rem;
-    color: var(--color-text-muted);
-    font-size: var(--text-type-md);
-    text-align: center;
-  }
-  .state.error {
-    color: var(--color-error-fg);
-  }
-  .state.empty {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 3rem 1rem;
-  }
-  .state.empty .material-symbols-outlined {
-    opacity: 0.4;
-  }
-  .state-title {
-    font-family: var(--font-headline, sans-serif);
-    font-size: var(--text-type-lg);
-    font-weight: 600;
-    color: var(--color-text-primary);
-    margin: 0;
-  }
-  .state-body {
-    color: var(--color-text-muted);
-    font-size: var(--text-type-sm);
-    margin: 0;
-    max-width: 28rem;
-  }
-  .state-actions {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 0.5rem;
-    margin-top: 0.8rem;
   }
   .action-btn {
     display: inline-flex;
