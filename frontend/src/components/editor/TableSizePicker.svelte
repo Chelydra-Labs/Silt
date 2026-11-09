@@ -321,7 +321,7 @@
 
   .tsp-preview {
     margin: 0;
-    font-size: 11px;
+    font-size: var(--text-type-2xs);
     color: var(--color-text-muted);
     text-align: center;
   }
@@ -339,7 +339,7 @@
     gap: 2px;
   }
   .tsp-label {
-    font-size: 10px;
+    font-size: var(--text-type-3xs);
     color: var(--color-text-muted);
   }
   .tsp-range {
@@ -351,15 +351,17 @@
     min-height: 40px;
     padding: 4px 6px;
     border: 1px solid var(--color-surface-popover-border);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     background: var(--color-surface-popover);
     color: var(--color-text-primary);
-    font-size: 0.85rem;
+    font-size: var(--text-type-sm);
     outline: none;
   }
   .tsp-input:focus,
   .tsp-input:focus-visible {
     border-color: var(--color-border-focus, currentColor);
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
   }
 
   .tsp-times {
@@ -373,10 +375,10 @@
     margin-left: auto;
     padding: 6px 16px;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     background: var(--color-accent-primary-start);
     color: var(--color-text-on-accent);
-    font-size: 0.85rem;
+    font-size: var(--text-type-sm);
     font-weight: 600;
     cursor: pointer;
   }
@@ -385,12 +387,12 @@
   }
   .tsp-insert:focus-visible {
     outline: 2px solid var(--color-border-focus, currentColor);
-    outline-offset: 2px;
+    outline-offset: 1px;
   }
 
   .tsp-adjusted {
     margin: 0;
-    font-size: 11px;
+    font-size: var(--text-type-2xs);
     color: var(--color-text-primary);
   }
 </style>

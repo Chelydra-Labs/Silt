@@ -418,11 +418,11 @@
     border: none;
     background: transparent;
     color: var(--color-text-primary);
-    font-size: 12px;
+    font-size: var(--text-type-xs);
     font-family: var(--font-body, inherit);
     text-align: left;
     cursor: pointer;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     transition: background-color 120ms ease-out;
   }
 

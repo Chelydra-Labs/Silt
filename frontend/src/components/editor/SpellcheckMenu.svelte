@@ -218,9 +218,9 @@
     padding: 4px;
     background: var(--color-surface-popover);
     border: 1px solid var(--color-surface-popover-border);
-    border-radius: 8px;
+    border-radius: var(--radius-md, 8px);
     box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.45));
-    font-size: 13px;
+    font-size: var(--text-type-xs);
   }
   .menu-item {
     display: block;
@@ -230,7 +230,7 @@
     background: transparent;
     color: var(--color-text-primary);
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     cursor: pointer;
     font: inherit;
   }

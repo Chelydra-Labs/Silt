@@ -233,7 +233,7 @@
   }
 
   .color-trigger .material-symbols-outlined {
-    font-size: 18px;
+    font-size: var(--text-icon-lg);
   }
 
   .color-menu {
@@ -243,7 +243,7 @@
     z-index: 50;
     min-width: 200px;
     padding: 6px;
-    border-radius: 8px;
+    border-radius: var(--radius-md, 8px);
     background: var(--color-surface-popover);
     border: 1px solid var(--color-surface-popover-border);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
@@ -258,10 +258,10 @@
     gap: 6px;
     padding: 4px 8px;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     background: transparent;
     color: var(--color-text-primary);
-    font-size: 0.75rem;
+    font-size: var(--text-type-xs);
     text-align: left;
     cursor: pointer;
   }
@@ -275,7 +275,7 @@
   }
 
   .color-action .material-symbols-outlined {
-    font-size: 16px;
+    font-size: var(--text-icon-md);
     color: var(--color-text-muted);
   }
 
@@ -319,7 +319,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 4px 8px;
-    font-size: 0.75rem;
+    font-size: var(--text-type-xs);
     color: var(--color-text-muted);
   }
 

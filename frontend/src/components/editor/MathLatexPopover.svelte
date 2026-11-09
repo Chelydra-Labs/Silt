@@ -182,7 +182,7 @@
   }
 
   .mlp-label {
-    font-size: 10px;
+    font-size: var(--text-type-3xs);
     color: var(--color-text-muted);
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -192,17 +192,20 @@
     width: 100%;
     padding: 6px 8px;
     border: 1px solid var(--color-surface-popover-border);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     background: var(--color-surface-popover);
     color: var(--color-text-primary);
     font-family: var(--font-mono, monospace);
-    font-size: 0.85rem;
+    font-size: var(--text-type-sm);
     line-height: 1.4;
     resize: vertical;
     outline: none;
   }
-  .mlp-input:focus {
-    border-color: var(--color-accent-primary-glow);
+  .mlp-input:focus,
+  .mlp-input:focus-visible {
+    border-color: var(--color-border-focus);
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
   }
 
   /* Preview pane: a subtly distinct background so it reads as rendered output
@@ -211,7 +214,7 @@
     min-height: 44px;
     padding: 8px;
     border: 1px solid var(--color-surface-popover-border);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     background: var(--color-hover);
     color: var(--color-text-primary);
     overflow-x: auto;
@@ -221,12 +224,12 @@
   }
   .mlp-preview-empty {
     color: var(--color-text-muted);
-    font-size: 0.8rem;
+    font-size: var(--text-type-sm);
   }
   .mlp-error {
     color: var(--color-error);
     font-family: var(--font-mono, monospace);
-    font-size: 0.8rem;
+    font-size: var(--text-type-xs);
   }
 
   .mlp-actions {
@@ -237,10 +240,10 @@
   .mlp-btn {
     padding: 4px 12px;
     border: 1px solid var(--color-surface-popover-border);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     background: transparent;
     color: var(--color-text-primary);
-    font-size: 0.8rem;
+    font-size: var(--text-type-xs);
     font-weight: 600;
     cursor: pointer;
   }
