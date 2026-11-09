@@ -855,6 +855,61 @@ describe('TaskMetadataSidebar', () => {
       ).toHaveAttribute('aria-checked', 'true')
     })
 
+    it('keeps the optimistic rank when a host re-query lands mid-chain', async () => {
+      const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
+      let releaseLookup: (v: {
+        rows: unknown[]
+        truncated: boolean
+      }) => void = () => {}
+      const sqliteQuery = vi
+        .fn()
+        .mockImplementationOnce(() => new Promise((r) => (releaseLookup = r)))
+        .mockResolvedValue({ rows: [], truncated: false })
+      const ctx = makeCtx({ setTaskShortlistRank, sqliteQuery })
+      const { rerender } = render(TaskMetadataSidebar, {
+        props: { task: makeTask(), ctx }
+      })
+      const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
+      ;(
+        within(group).getByRole('radio', { name: '2' }) as HTMLButtonElement
+      ).click()
+      // A concurrent write to another field (status flip) fires onMetaChanged
+      // → host re-query → fresh task prop whose server rank is still the
+      // stale pre-commit value. pending stays false during the lookup+demote
+      // awaits, so only the in-flight flag keeps the reset effect from
+      // snapping the radio back mid-chain.
+      await rerender({
+        task: makeTask({ status: 'DONE', shortlist_rank: null }),
+        ctx
+      })
+      await flush()
+      expect(within(group).getByRole('radio', { name: '2' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+
+      releaseLookup({ rows: [], truncated: false })
+      await flush()
+      await flush()
+      expect(setTaskShortlistRank).toHaveBeenCalledWith('task-1', 2)
+      expect(within(group).getByRole('radio', { name: '2' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+
+      // With no chain in flight the reset applies again — a later re-query
+      // reflecting a persisted rank re-seeds the control.
+      await rerender({
+        task: makeTask({ status: 'DONE', shortlist_rank: 1 }),
+        ctx
+      })
+      await flush()
+      expect(within(group).getByRole('radio', { name: '1' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    })
+
     it('lands a pointer cancel back to the previous rank during the pre-commit window', async () => {
       const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
       let releaseLookup: (v: {

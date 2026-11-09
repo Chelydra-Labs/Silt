@@ -286,9 +286,12 @@
       priorityField.reset(task?.priority ?? 2)
       priorityCommitted = task?.priority ?? 2
     }
-    if (untrack(() => !shortlistField.pending)) {
+    if (untrack(() => !shortlistField.pending && !shortlistCommitInFlight)) {
       // ?? (not ||): rank 0 must survive the reset — only null/undefined map
-      // to the unranked state.
+      // to the unranked state. The in-flight flag covers the lookup+demote
+      // awaits before pending turns on, where a host re-query (new task prop
+      // from an unrelated write) would otherwise snap the optimistic rank
+      // back to the server value mid-chain.
       shortlistField.reset(task?.shortlist_rank ?? null)
       shortlistCommitted = task?.shortlist_rank ?? null
     }
