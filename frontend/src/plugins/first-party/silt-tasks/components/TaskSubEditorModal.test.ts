@@ -1038,10 +1038,11 @@ describe('TaskSubEditorModal — cross-surface sidebar parity (D7)', () => {
       expect(ids.filter((id) => idSets[0].includes(id))).toEqual([])
     }
 
-    // aria-controls names a popover body that only renders while open, so it
-    // is required to resolve only when the target is already in the document.
+    // aria-controls and aria-activedescendant name popover content that only
+    // renders while open, so they must resolve only when the target is already
+    // in the document.
     const required = ['for', 'aria-labelledby', 'aria-describedby']
-    const optional = ['aria-controls']
+    const optional = ['aria-controls', 'aria-activedescendant']
     const attrs = [...required, ...optional]
     for (const root of roots) {
       const selector = attrs.map((a) => `[${a}]`).join(',')
@@ -1057,14 +1058,32 @@ describe('TaskSubEditorModal — cross-surface sidebar parity (D7)', () => {
               )
               continue
             }
+            // Popover bodies are portaled to <body>, so they resolve outside
+            // every sidebar; the invariant is that they never land in a
+            // *different* one.
             expect(
-              root.contains(target),
-              `${attr}="${id}" must resolve inside its own sidebar`
-            ).toBe(true)
+              roots.some((other) => other !== root && other.contains(target)),
+              `${attr}="${id}" must not resolve inside another sidebar`
+            ).toBe(false)
           }
         }
       }
     }
+  }
+
+  // The typeahead debounces its search; drive it past the timer so the
+  // dependency popover is open for the coexistence scan.
+  async function openDependencyPopover(
+    root: Element
+  ): Promise<HTMLInputElement> {
+    const input = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Search tasks to add as dependencies"]'
+    )
+    expect(input, 'dependency combobox must render').not.toBeNull()
+    await fireEvent.input(input!, { target: { value: 'found' } })
+    await new Promise((r) => setTimeout(r, 220))
+    await flush()
+    return input!
   }
 
   function makeDetail(): TaskDetail {
@@ -1097,9 +1116,18 @@ describe('TaskSubEditorModal — cross-surface sidebar parity (D7)', () => {
   }
 
   it('renders the same sidebar field order, grouping, and labels as the drawer', async () => {
+    const searchTasks = async () => [
+      {
+        id: 'dep-found',
+        clean_content: 'Found task',
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily'
+      }
+    ]
     render(TaskSubEditorModal, {
       ...BASE_PROPS,
-      ctx: makeCtx(),
+      ctx: makeCtx({ searchTasks }),
       onClose: () => {}
     })
     await vi.waitFor(() => expect(mocks.sqliteQuery).toHaveBeenCalled())
@@ -1110,7 +1138,11 @@ describe('TaskSubEditorModal — cross-surface sidebar parity (D7)', () => {
     expect(modalSidebar, 'modal sidebar must render').not.toBeNull()
 
     render(TaskEditDrawer, {
-      props: { task: makeDetail(), ctx: makeCtx(), onClose: () => {} }
+      props: {
+        task: makeDetail(),
+        ctx: makeCtx({ searchTasks }),
+        onClose: () => {}
+      }
     })
     const drawerSidebar = screen
       .getByTestId('task-edit-drawer')
@@ -1135,8 +1167,35 @@ describe('TaskSubEditorModal — cross-surface sidebar parity (D7)', () => {
       readSidebarLayout(drawerSidebar!)
     )
 
-    // "Open sub-editor" leaves the drawer mounted, so coexistence is the flow
-    // where shared-sidebar ids can cross-wire; pin that they do not.
+    // Open both dependency popovers so their combobox wiring is on screen
+    // while both sidebars share one document; "Open sub-editor" leaves the
+    // drawer mounted, so coexistence is where a shared id can cross-wire.
+    const modalCombobox = await openDependencyPopover(modalSidebar!)
+    const drawerCombobox = await openDependencyPopover(drawerSidebar!)
     expectScopedIds(modalSidebar!, drawerSidebar!)
+
+    // The popover body is portaled out of the sidebar, so assert the wiring
+    // directly: each combobox must control the listbox that holds its own
+    // active descendant, and those ids must be unique across both hosts.
+    const modalOptionId = modalCombobox.getAttribute('aria-activedescendant')
+    const drawerOptionId = drawerCombobox.getAttribute('aria-activedescendant')
+    expect(modalOptionId).toBeTruthy()
+    expect(drawerOptionId).toBeTruthy()
+    expect(modalOptionId).not.toBe(drawerOptionId)
+    for (const [combobox, optionId] of [
+      [modalCombobox, modalOptionId],
+      [drawerCombobox, drawerOptionId]
+    ] as const) {
+      const listboxId = combobox.getAttribute('aria-controls')
+      const listbox = listboxId ? document.getElementById(listboxId) : null
+      const option = optionId ? document.getElementById(optionId) : null
+      expect(listboxId, 'combobox must control its listbox').toBeTruthy()
+      expect(listbox?.getAttribute('role')).toBe('listbox')
+      expect(option?.getAttribute('role')).toBe('option')
+      expect(listbox?.contains(option), 'option must be in its listbox').toBe(
+        true
+      )
+      expect(document.querySelectorAll(`[id="${optionId}"]`)).toHaveLength(1)
+    }
   })
 })
