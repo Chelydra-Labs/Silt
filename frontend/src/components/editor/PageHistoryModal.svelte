@@ -7,7 +7,6 @@
     RestorePageVersion,
     RestoreDeletedPageVersion
   } from '../../../bindings/silt/app.js'
-  import { trapFocus } from '../../lib/focusTrap'
   import { settings } from '../../settings/store.svelte'
   import { getEditorForLocator } from '../../lib/editor/editorRegistry.svelte'
   import { fetchPageMarkdownProgrammatic } from '../../lib/editor/pageMarkdown'
@@ -20,6 +19,7 @@
   import { EventName, IPCErrorCode } from '../../generated/enums'
   import { openDeletedPageHistory } from './openDeletedPageHistory'
   import ConfirmDialog from '../ConfirmDialog.svelte'
+  import Dialog from '../ui/Dialog.svelte'
 
   interface PageVersionRow {
     id: string
@@ -582,12 +582,6 @@
   function handleKeydown(e: KeyboardEvent): void {
     // ConfirmDialog owns Esc / Tab while it is open.
     if (restoreTarget) return
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      e.stopPropagation()
-      dismissHistory()
-      return
-    }
     const inList = !!(e.target as HTMLElement | null)?.closest(
       '[data-testid="page-history-list"]'
     )
@@ -622,7 +616,6 @@
 
   onMount(() => {
     previouslyFocused = document.activeElement as HTMLElement | null
-    window.addEventListener('keydown', handleKeydown, true)
     preferSplit = readPreferSplit()
     const mq =
       typeof window.matchMedia === 'function'
@@ -649,648 +642,409 @@
       void enterCompare({ force: true })
     })
     return () => {
-      window.removeEventListener('keydown', handleKeydown, true)
       mq?.removeEventListener('change', onViewport)
       offReload?.()
       if (previouslyFocused?.isConnected) previouslyFocused.focus?.()
     }
   })
-
-  $effect(() => {
-    if (restoreTarget || !dialogRef) return
-    const dispose = trapFocus(dialogRef)
-    return () => dispose()
-  })
 </script>
 
-<div
-  class="fixed inset-0 z-[180] flex items-center justify-center bg-black/45 backdrop-blur-[3px] px-4"
-  data-focus-trap
+<Dialog
+  open={true}
+  onClose={dismissHistory}
+  closeOnEscape={!restoreTarget}
+  zIndex="z-[180]"
+  maxWidth={paneMode === 'compare' ? 'max-w-6xl' : 'max-w-4xl'}
+  labelledBy="page-history-title"
+  describedBy="page-history-path page-history-honesty"
+  backdropLabel={deleted && onBack
+    ? 'Back to deleted pages'
+    : 'Close page history'}
+  surfaceClass="dialog-surface relative flex h-[min(36rem,calc(100vh-4rem))] w-full flex-col overflow-hidden rounded-xl border border-surface-modal-border glass-palette glass-palette-strong shadow-2xl {paneMode ===
+  'compare'
+    ? 'is-comparing'
+    : ''}"
+  bind:dialogRef
+  dataTestId="page-history-modal"
+  onKeydown={handleKeydown}
 >
-  <button
-    type="button"
-    tabindex="-1"
-    aria-label={deleted && onBack
-      ? 'Back to deleted pages'
-      : 'Close page history'}
-    class="absolute inset-0 cursor-default border-none bg-transparent p-0"
-    onclick={dismissHistory}
-  ></button>
-
-  <div
-    bind:this={dialogRef}
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="page-history-title"
-    aria-describedby="page-history-path page-history-honesty"
-    tabindex="-1"
-    data-testid="page-history-modal"
-    class="dialog-surface relative flex h-[min(36rem,calc(100vh-4rem))] w-full flex-col overflow-hidden rounded-xl border border-surface-modal-border glass-palette glass-palette-strong shadow-2xl"
-    class:is-comparing={paneMode === 'compare'}
+  <header
+    class="flex items-center gap-3 border-b border-surface-modal-border px-5 py-3.5"
   >
-    <header
-      class="flex items-center gap-3 border-b border-surface-modal-border px-5 py-3.5"
+    <span
+      class="material-symbols-outlined text-icon-xl text-accent-primary-start"
+      aria-hidden="true">history</span
     >
-      <span
-        class="material-symbols-outlined text-icon-xl text-accent-primary-start"
-        aria-hidden="true">history</span
+    <div class="min-w-0 flex-1">
+      <h2
+        id="page-history-title"
+        class="font-headline-md text-headline-md text-text-primary"
       >
-      <div class="min-w-0 flex-1">
-        <h2
-          id="page-history-title"
-          class="font-headline-md text-headline-md text-text-primary"
+        {deleted ? 'Deleted page history' : 'Page history'}
+      </h2>
+      <p
+        id="page-history-path"
+        class="truncate text-type-xs font-body-md text-text-muted"
+        title="{notebook}{section ? ` / ${section}` : ''} / {page}"
+      >
+        {notebook}{section ? ` / ${section}` : ''} / {page}
+      </p>
+      <p
+        id="page-history-honesty"
+        class="mt-1 text-type-2xs font-body-md text-text-muted"
+      >
+        Snapshots stay in this vault under .system/history. They sync with the
+        vault, are not encrypted, and are not a backup.
+      </p>
+    </div>
+    <div class="flex shrink-0 items-center gap-1">
+      {#if deleted && onBack}
+        <button
+          type="button"
+          data-testid="page-history-back"
+          onclick={onBack}
+          class="rounded-lg border-none bg-transparent px-2.5 py-1.5 text-type-xs font-label-sm-bold text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
         >
-          {deleted ? 'Deleted page history' : 'Page history'}
-        </h2>
-        <p
-          id="page-history-path"
-          class="truncate text-type-xs font-body-md text-text-muted"
-          title="{notebook}{section ? ` / ${section}` : ''} / {page}"
+          Back
+        </button>
+      {:else if !deleted}
+        <button
+          type="button"
+          data-testid="page-history-deleted-pages"
+          onclick={openDeletedPages}
+          class="rounded-lg border-none bg-transparent px-2.5 py-1.5 text-type-xs font-label-sm-bold text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
         >
-          {notebook}{section ? ` / ${section}` : ''} / {page}
-        </p>
-        <p
-          id="page-history-honesty"
-          class="mt-1 text-type-2xs font-body-md text-text-muted"
+          Deleted pages
+        </button>
+      {/if}
+      <button
+        type="button"
+        aria-label={deleted && onBack
+          ? 'Back to deleted pages'
+          : 'Close page history'}
+        onclick={dismissHistory}
+        class="flex h-8 w-8 items-center justify-center rounded-lg border-none bg-transparent text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
+      >
+        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
+          >close</span
         >
-          Snapshots stay in this vault under .system/history. They sync with the
-          vault, are not encrypted, and are not a backup.
-        </p>
+      </button>
+    </div>
+  </header>
+
+  {#if listError}
+    <div
+      class="mx-5 mt-4 flex items-start gap-2 rounded-lg border border-error-border bg-error-bg px-3 py-2 text-type-sm font-body-md text-error"
+      role="alert"
+    >
+      <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
+        >error</span
+      >
+      <span class="flex-1">{listError}</span>
+      <button
+        type="button"
+        class="rounded-md border border-error-border bg-transparent px-2 py-1 text-type-xs font-label-sm-bold text-error hover:brightness-110"
+        onclick={() => void loadVersions(selectedId)}
+      >
+        Retry
+      </button>
+    </div>
+  {/if}
+
+  {#if statusMessage}
+    <div
+      class="mx-5 mt-4 rounded-lg border border-surface-modal-border bg-surface-panel/40 px-3 py-2 text-type-sm font-body-md text-text-primary"
+      role="status"
+      data-testid="page-history-status"
+    >
+      {statusMessage}
+    </div>
+  {/if}
+
+  {#if restoreError}
+    <div
+      id="page-history-restore-error"
+      class="mx-5 mt-4 flex items-start gap-2 rounded-lg border border-error-border bg-error-bg px-3 py-2 text-type-sm font-body-md text-error"
+      role="alert"
+    >
+      <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
+        >error</span
+      >
+      <span class="flex-1">{restoreError}</span>
+    </div>
+  {/if}
+
+  {#if compareError}
+    <div
+      class="mx-5 mt-4 flex items-start gap-2 rounded-lg border border-error-border bg-error-bg px-3 py-2 text-type-sm font-body-md text-error"
+      role="alert"
+      data-testid="page-history-compare-error"
+    >
+      <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
+        >error</span
+      >
+      <span class="flex-1">{compareError}</span>
+    </div>
+  {/if}
+
+  {#if deleted && restoreAs}
+    <div
+      class="restore-as mx-5 mt-4 rounded-lg border border-surface-modal-border bg-surface-panel/40 px-3 py-3"
+      data-testid="page-history-restore-as"
+    >
+      <p class="mb-2 text-type-sm font-label-sm-bold text-text-primary">
+        Restore as…
+      </p>
+      <p class="mb-3 text-type-xs font-body-md text-text-muted">
+        A page already exists at that location. Choose another name or place in
+        this vault.
+      </p>
+      <div class="restore-as-fields">
+        <label class="restore-as-field">
+          <span>Notebook</span>
+          <input
+            bind:value={destNotebook}
+            type="text"
+            autocomplete="off"
+            aria-label="Restore as notebook"
+            aria-invalid={restoreAs && restoreError ? true : undefined}
+            aria-describedby={[
+              source === 'linked' ? 'page-history-linked-notebook-hint' : '',
+              restoreAs && restoreError ? 'page-history-restore-error' : ''
+            ]
+              .filter(Boolean)
+              .join(' ') || undefined}
+            data-testid="page-history-dest-notebook"
+            readonly={source === 'linked'}
+          />
+          {#if source === 'linked'}
+            <p id="page-history-linked-notebook-hint" class="restore-as-hint">
+              Linked leftovers must stay in this notebook.
+            </p>
+          {/if}
+        </label>
+        <label class="restore-as-field">
+          <span>Section</span>
+          <input
+            bind:value={destSection}
+            type="text"
+            autocomplete="off"
+            aria-label="Restore as section"
+            aria-invalid={restoreAs && restoreError ? true : undefined}
+            aria-describedby={restoreAs && restoreError
+              ? 'page-history-restore-error'
+              : undefined}
+            data-testid="page-history-dest-section"
+          />
+        </label>
+        <label class="restore-as-field">
+          <span>Page</span>
+          <input
+            bind:this={destPageRef}
+            bind:value={destPage}
+            type="text"
+            autocomplete="off"
+            aria-label="Restore as page"
+            aria-invalid={restoreAs && restoreError ? true : undefined}
+            aria-describedby={restoreAs && restoreError
+              ? 'page-history-restore-error'
+              : undefined}
+            data-testid="page-history-dest-page"
+          />
+        </label>
       </div>
-      <div class="flex shrink-0 items-center gap-1">
-        {#if deleted && onBack}
+    </div>
+  {/if}
+
+  <div class="history-split min-h-0 flex-1">
+    {#if !listLoading && versions.length === 0 && !listError}
+      <div
+        class="history-list custom-scrollbar flex flex-col items-start gap-2 px-4 py-6"
+        role="status"
+        data-testid="page-history-empty"
+      >
+        <p class="text-type-md font-body-md text-text-primary">
+          No versions yet
+        </p>
+        {#if !versioningEnabled}
+          <p class="text-type-sm font-body-md text-text-muted">
+            Turn on Capture page history in Settings → Editor to start saving
+            snapshots.
+          </p>
           <button
             type="button"
-            data-testid="page-history-back"
-            onclick={onBack}
-            class="rounded-lg border-none bg-transparent px-2.5 py-1.5 text-type-xs font-label-sm-bold text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
+            class="mt-1 rounded-lg border border-accent-primary-start/40 bg-accent-primary-start/15 px-3 py-1.5 text-type-sm font-label-sm-bold text-text-primary transition-all hover:brightness-110"
+            onclick={openEditorSettings}
           >
-            Back
+            Open Editor settings
           </button>
-        {:else if !deleted}
+        {:else}
+          <p class="text-type-sm font-body-md text-text-muted">
+            Snapshots appear after the next saved change to this page. Pages
+            larger than 1 MB are not snapshotted.
+          </p>
+        {/if}
+        {#if !deleted}
           <button
             type="button"
-            data-testid="page-history-deleted-pages"
+            class="mt-1 rounded-lg border border-surface-modal-border bg-transparent px-3 py-1.5 text-type-sm font-label-sm-bold text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
+            data-testid="page-history-empty-deleted"
             onclick={openDeletedPages}
-            class="rounded-lg border-none bg-transparent px-2.5 py-1.5 text-type-xs font-label-sm-bold text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
           >
             Deleted pages
           </button>
         {/if}
-        <button
-          type="button"
-          aria-label={deleted && onBack
-            ? 'Back to deleted pages'
-            : 'Close page history'}
-          onclick={dismissHistory}
-          class="flex h-8 w-8 items-center justify-center rounded-lg border-none bg-transparent text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
-        >
-          <span
-            class="material-symbols-outlined text-icon-lg"
-            aria-hidden="true">close</span
+      </div>
+    {:else}
+      <div
+        bind:this={listRef}
+        class="history-list custom-scrollbar"
+        role="listbox"
+        aria-label="Versions"
+        aria-busy={listLoading || undefined}
+        tabindex="0"
+        aria-activedescendant={versions.length > 0 && selectedId
+          ? versionOptionId(selectedId)
+          : undefined}
+        data-testid="page-history-list"
+      >
+        {#if listLoading}
+          <div
+            class="flex items-center gap-2 px-4 py-6 text-type-sm font-body-md text-text-muted"
+            role="status"
           >
-        </button>
-      </div>
-    </header>
-
-    {#if listError}
-      <div
-        class="mx-5 mt-4 flex items-start gap-2 rounded-lg border border-error-border bg-error-bg px-3 py-2 text-type-sm font-body-md text-error"
-        role="alert"
-      >
-        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
-          >error</span
-        >
-        <span class="flex-1">{listError}</span>
-        <button
-          type="button"
-          class="rounded-md border border-error-border bg-transparent px-2 py-1 text-type-xs font-label-sm-bold text-error hover:brightness-110"
-          onclick={() => void loadVersions(selectedId)}
-        >
-          Retry
-        </button>
-      </div>
-    {/if}
-
-    {#if statusMessage}
-      <div
-        class="mx-5 mt-4 rounded-lg border border-surface-modal-border bg-surface-panel/40 px-3 py-2 text-type-sm font-body-md text-text-primary"
-        role="status"
-        data-testid="page-history-status"
-      >
-        {statusMessage}
-      </div>
-    {/if}
-
-    {#if restoreError}
-      <div
-        id="page-history-restore-error"
-        class="mx-5 mt-4 flex items-start gap-2 rounded-lg border border-error-border bg-error-bg px-3 py-2 text-type-sm font-body-md text-error"
-        role="alert"
-      >
-        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
-          >error</span
-        >
-        <span class="flex-1">{restoreError}</span>
-      </div>
-    {/if}
-
-    {#if compareError}
-      <div
-        class="mx-5 mt-4 flex items-start gap-2 rounded-lg border border-error-border bg-error-bg px-3 py-2 text-type-sm font-body-md text-error"
-        role="alert"
-        data-testid="page-history-compare-error"
-      >
-        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
-          >error</span
-        >
-        <span class="flex-1">{compareError}</span>
-      </div>
-    {/if}
-
-    {#if deleted && restoreAs}
-      <div
-        class="restore-as mx-5 mt-4 rounded-lg border border-surface-modal-border bg-surface-panel/40 px-3 py-3"
-        data-testid="page-history-restore-as"
-      >
-        <p class="mb-2 text-type-sm font-label-sm-bold text-text-primary">
-          Restore as…
-        </p>
-        <p class="mb-3 text-type-xs font-body-md text-text-muted">
-          A page already exists at that location. Choose another name or place
-          in this vault.
-        </p>
-        <div class="restore-as-fields">
-          <label class="restore-as-field">
-            <span>Notebook</span>
-            <input
-              bind:value={destNotebook}
-              type="text"
-              autocomplete="off"
-              aria-label="Restore as notebook"
-              aria-invalid={restoreAs && restoreError ? true : undefined}
-              aria-describedby={[
-                source === 'linked' ? 'page-history-linked-notebook-hint' : '',
-                restoreAs && restoreError ? 'page-history-restore-error' : ''
-              ]
-                .filter(Boolean)
-                .join(' ') || undefined}
-              data-testid="page-history-dest-notebook"
-              readonly={source === 'linked'}
-            />
-            {#if source === 'linked'}
-              <p id="page-history-linked-notebook-hint" class="restore-as-hint">
-                Linked leftovers must stay in this notebook.
-              </p>
-            {/if}
-          </label>
-          <label class="restore-as-field">
-            <span>Section</span>
-            <input
-              bind:value={destSection}
-              type="text"
-              autocomplete="off"
-              aria-label="Restore as section"
-              aria-invalid={restoreAs && restoreError ? true : undefined}
-              aria-describedby={restoreAs && restoreError
-                ? 'page-history-restore-error'
-                : undefined}
-              data-testid="page-history-dest-section"
-            />
-          </label>
-          <label class="restore-as-field">
-            <span>Page</span>
-            <input
-              bind:this={destPageRef}
-              bind:value={destPage}
-              type="text"
-              autocomplete="off"
-              aria-label="Restore as page"
-              aria-invalid={restoreAs && restoreError ? true : undefined}
-              aria-describedby={restoreAs && restoreError
-                ? 'page-history-restore-error'
-                : undefined}
-              data-testid="page-history-dest-page"
-            />
-          </label>
-        </div>
-      </div>
-    {/if}
-
-    <div class="history-split min-h-0 flex-1">
-      {#if !listLoading && versions.length === 0 && !listError}
-        <div
-          class="history-list custom-scrollbar flex flex-col items-start gap-2 px-4 py-6"
-          role="status"
-          data-testid="page-history-empty"
-        >
-          <p class="text-type-md font-body-md text-text-primary">
-            No versions yet
-          </p>
-          {#if !versioningEnabled}
-            <p class="text-type-sm font-body-md text-text-muted">
-              Turn on Capture page history in Settings → Editor to start saving
-              snapshots.
-            </p>
+            <span
+              class="material-symbols-outlined animate-spin text-icon-lg text-accent-primary-start"
+              aria-hidden="true">sync</span
+            >
+            Loading versions…
+          </div>
+        {:else}
+          {#each versions as version, idx (version.id)}
             <button
               type="button"
-              class="mt-1 rounded-lg border border-accent-primary-start/40 bg-accent-primary-start/15 px-3 py-1.5 text-type-sm font-label-sm-bold text-text-primary transition-all hover:brightness-110"
-              onclick={openEditorSettings}
+              role="option"
+              id={versionOptionId(version.id)}
+              data-version-id={version.id}
+              aria-selected={selectedId === version.id}
+              tabindex="-1"
+              class="version-row"
+              class:selected={selectedId === version.id}
+              onclick={() => selectVersion(version.id)}
             >
-              Open Editor settings
-            </button>
-          {:else}
-            <p class="text-type-sm font-body-md text-text-muted">
-              Snapshots appear after the next saved change to this page. Pages
-              larger than 1 MB are not snapshotted.
-            </p>
-          {/if}
-          {#if !deleted}
-            <button
-              type="button"
-              class="mt-1 rounded-lg border border-surface-modal-border bg-transparent px-3 py-1.5 text-type-sm font-label-sm-bold text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
-              data-testid="page-history-empty-deleted"
-              onclick={openDeletedPages}
-            >
-              Deleted pages
-            </button>
-          {/if}
-        </div>
-      {:else}
-        <div
-          bind:this={listRef}
-          class="history-list custom-scrollbar"
-          role="listbox"
-          aria-label="Versions"
-          aria-busy={listLoading || undefined}
-          tabindex="0"
-          aria-activedescendant={versions.length > 0 && selectedId
-            ? versionOptionId(selectedId)
-            : undefined}
-          data-testid="page-history-list"
-        >
-          {#if listLoading}
-            <div
-              class="flex items-center gap-2 px-4 py-6 text-type-sm font-body-md text-text-muted"
-              role="status"
-            >
-              <span
-                class="material-symbols-outlined animate-spin text-icon-lg text-accent-primary-start"
-                aria-hidden="true">sync</span
+              <span class="version-time"
+                >{formatTimestamp(version.timestamp)}</span
               >
-              Loading versions…
-            </div>
-          {:else}
-            {#each versions as version, idx (version.id)}
-              <button
-                type="button"
-                role="option"
-                id={versionOptionId(version.id)}
-                data-version-id={version.id}
-                aria-selected={selectedId === version.id}
-                tabindex="-1"
-                class="version-row"
-                class:selected={selectedId === version.id}
-                onclick={() => selectVersion(version.id)}
-              >
-                <span class="version-time"
-                  >{formatTimestamp(version.timestamp)}</span
-                >
-                <span class="version-meta">
-                  <span class="source-badge source-{version.source}">
-                    {sourceLabel(version.source)}
-                  </span>
-                  {#if Number.isFinite(version.bytes) && version.bytes >= 0}
-                    <span class="version-bytes"
-                      >{formatBytes(version.bytes)}</span
-                    >
-                  {/if}
+              <span class="version-meta">
+                <span class="source-badge source-{version.source}">
+                  {sourceLabel(version.source)}
                 </span>
-                {#if idx === 0}
-                  <span class="sr-only">Newest</span>
+                {#if Number.isFinite(version.bytes) && version.bytes >= 0}
+                  <span class="version-bytes">{formatBytes(version.bytes)}</span
+                  >
                 {/if}
-              </button>
-            {/each}
-          {/if}
-        </div>
-      {/if}
+              </span>
+              {#if idx === 0}
+                <span class="sr-only">Newest</span>
+              {/if}
+            </button>
+          {/each}
+        {/if}
+      </div>
+    {/if}
 
-      {#if versions.length > 0 || listLoading || listError}
-        <section
-          class="history-preview"
-          aria-label={paneMode === 'compare'
-            ? 'Compare with current page'
-            : 'Version preview'}
-          data-testid="page-history-preview"
-        >
-          {#if selected}
-            <div class="preview-toolbar">
-              <div class="min-w-0 flex-1">
-                <p class="truncate text-type-sm font-body-md text-text-primary">
-                  {formatTimestamp(selected.timestamp)}
-                </p>
-                <p class="text-type-2xs font-label-sm text-text-muted">
-                  {sourceLabel(selected.source)}
-                  {#if Number.isFinite(selected.bytes) && selected.bytes >= 0}
-                    · {formatBytes(selected.bytes)}
-                  {/if}
-                  · read-only
-                </p>
-              </div>
-              <div class="preview-toolbar-actions">
-                <div
-                  class="pane-switch"
-                  role="radiogroup"
-                  aria-label="History pane"
-                  aria-busy={compareLoading || undefined}
-                  aria-describedby={deleted
-                    ? 'page-history-compare-unavailable'
-                    : undefined}
-                  tabindex="-1"
-                  data-testid="page-history-pane"
-                  onkeydown={onPaneKeydown}
-                >
-                  <button
-                    type="button"
-                    role="radio"
-                    data-history-pane="preview"
-                    data-testid="page-history-pane-preview"
-                    aria-checked={paneMode === 'preview'}
-                    tabindex={paneMode === 'preview' ? 0 : -1}
-                    class="pane-switch-btn"
-                    class:active={paneMode === 'preview'}
-                    onclick={() => choosePane('preview')}
-                  >
-                    Preview
-                  </button>
-                  <button
-                    type="button"
-                    role="radio"
-                    data-history-pane="compare"
-                    data-testid="page-history-pane-compare"
-                    aria-checked={paneMode === 'compare'}
-                    aria-disabled={deleted ||
-                      (!previewReady && paneMode !== 'compare')}
-                    disabled={deleted ||
-                      (!previewReady && paneMode !== 'compare')}
-                    title={deleted ? 'No current page to compare' : undefined}
-                    tabindex={paneMode === 'compare' ? 0 : -1}
-                    class="pane-switch-btn"
-                    class:active={paneMode === 'compare'}
-                    onclick={() => choosePane('compare')}
-                  >
-                    {#if compareLoading}
-                      <span
-                        class="material-symbols-outlined animate-spin text-icon-xs"
-                        aria-hidden="true">sync</span
-                      >
-                    {/if}
-                    Compare
-                  </button>
-                </div>
-                {#if deleted}
-                  <span id="page-history-compare-unavailable" class="sr-only">
-                    No current page to compare
-                  </span>
+    {#if versions.length > 0 || listLoading || listError}
+      <section
+        class="history-preview"
+        aria-label={paneMode === 'compare'
+          ? 'Compare with current page'
+          : 'Version preview'}
+        data-testid="page-history-preview"
+      >
+        {#if selected}
+          <div class="preview-toolbar">
+            <div class="min-w-0 flex-1">
+              <p class="truncate text-type-sm font-body-md text-text-primary">
+                {formatTimestamp(selected.timestamp)}
+              </p>
+              <p class="text-type-2xs font-label-sm text-text-muted">
+                {sourceLabel(selected.source)}
+                {#if Number.isFinite(selected.bytes) && selected.bytes >= 0}
+                  · {formatBytes(selected.bytes)}
                 {/if}
+                · read-only
+              </p>
+            </div>
+            <div class="preview-toolbar-actions">
+              <div
+                class="pane-switch"
+                role="radiogroup"
+                aria-label="History pane"
+                aria-busy={compareLoading || undefined}
+                aria-describedby={deleted
+                  ? 'page-history-compare-unavailable'
+                  : undefined}
+                tabindex="-1"
+                data-testid="page-history-pane"
+                onkeydown={onPaneKeydown}
+              >
                 <button
                   type="button"
-                  data-page-history-restore
-                  data-testid="page-history-restore"
-                  disabled={!canRestoreSelected()}
-                  onclick={openRestoreConfirm}
-                  class="shrink-0 rounded-lg border border-status-danger/40 bg-status-danger/15 px-3 py-1.5 text-type-sm font-label-sm-bold text-status-danger transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                  role="radio"
+                  data-history-pane="preview"
+                  data-testid="page-history-pane-preview"
+                  aria-checked={paneMode === 'preview'}
+                  tabindex={paneMode === 'preview' ? 0 : -1}
+                  class="pane-switch-btn"
+                  class:active={paneMode === 'preview'}
+                  onclick={() => choosePane('preview')}
                 >
-                  Restore
+                  Preview
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  data-history-pane="compare"
+                  data-testid="page-history-pane-compare"
+                  aria-checked={paneMode === 'compare'}
+                  aria-disabled={deleted ||
+                    (!previewReady && paneMode !== 'compare')}
+                  disabled={deleted ||
+                    (!previewReady && paneMode !== 'compare')}
+                  title={deleted ? 'No current page to compare' : undefined}
+                  tabindex={paneMode === 'compare' ? 0 : -1}
+                  class="pane-switch-btn"
+                  class:active={paneMode === 'compare'}
+                  onclick={() => choosePane('compare')}
+                >
+                  {#if compareLoading}
+                    <span
+                      class="material-symbols-outlined animate-spin text-icon-xs"
+                      aria-hidden="true">sync</span
+                    >
+                  {/if}
+                  Compare
                 </button>
               </div>
-            </div>
-            {#if paneMode === 'compare'}
-              {#if compareLoading || (previewLoading && !pageDiff)}
-                <div
-                  class="flex items-center gap-2 px-5 py-6 text-type-sm font-body-md text-text-muted"
-                  role="status"
-                >
-                  <span
-                    class="material-symbols-outlined animate-spin text-icon-lg text-accent-primary-start"
-                    aria-hidden="true">sync</span
-                  >
-                  Loading comparison…
-                </div>
-              {:else if previewError}
-                <div
-                  class="flex items-start gap-2 px-5 py-6 text-type-sm font-body-md text-error"
-                  role="alert"
-                >
-                  <span class="flex-1">{previewError}</span>
-                  <button
-                    type="button"
-                    class="rounded-md border border-error-border bg-transparent px-2 py-1 text-type-xs font-label-sm-bold text-error hover:brightness-110"
-                    onclick={() => selectedId && void loadPreview(selectedId)}
-                  >
-                    Retry
-                  </button>
-                </div>
-              {:else if pageDiff}
-                <div class="compare-chrome">
-                  <p
-                    class="compare-summary"
-                    role="status"
-                    aria-live="polite"
-                    data-testid="page-history-diff-summary"
-                  >
-                    {diffSummary}
-                    {#if compareFromSaved}
-                      <span data-testid="page-history-compare-saved">
-                        Comparing the last saved page.
-                      </span>
-                    {/if}
-                  </p>
-                  <div
-                    class="pane-switch"
-                    role="radiogroup"
-                    aria-label="Diff layout"
-                    tabindex="-1"
-                    data-testid="page-history-layout"
-                    onkeydown={onLayoutKeydown}
-                  >
-                    <button
-                      type="button"
-                      role="radio"
-                      data-diff-layout="split"
-                      data-testid="page-history-layout-split"
-                      aria-checked={layout === 'split'}
-                      tabindex={layout === 'split' ? 0 : -1}
-                      class="pane-switch-btn"
-                      class:active={layout === 'split'}
-                      onclick={() => chooseLayout('split')}
-                    >
-                      Split
-                    </button>
-                    <button
-                      type="button"
-                      role="radio"
-                      data-diff-layout="unified"
-                      data-testid="page-history-layout-unified"
-                      aria-checked={layout === 'unified'}
-                      tabindex={layout === 'unified' ? 0 : -1}
-                      class="pane-switch-btn"
-                      class:active={layout === 'unified'}
-                      onclick={() => chooseLayout('unified')}
-                    >
-                      Unified
-                    </button>
-                  </div>
-                </div>
-                <!-- Keyboard-scrollable region: role=region is correct; tabindex lets the pane receive focus. -->
-                <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-                <div
-                  class="diff-scroll custom-scrollbar"
-                  tabindex="0"
-                  role="region"
-                  aria-label="Page difference"
-                  data-testid="page-history-compare"
-                >
-                  <div
-                    class="diff-board"
-                    class:is-split={layout === 'split'}
-                    data-testid="page-history-diff"
-                  >
-                    {#if pageDiff.tooLarge}
-                      <p
-                        class="px-1 py-4 text-type-sm font-body-md text-text-muted"
-                      >
-                        This comparison is too large to show. Use Preview
-                        instead.
-                      </p>
-                    {:else if layout === 'split'}
-                      <div class="diff-col-head old">Version</div>
-                      <div class="diff-col-head new">
-                        {compareFromSaved ? 'Last saved page' : 'Current page'}
-                      </div>
-                    {:else}
-                      <div class="diff-legend">
-                        <span>Version</span>
-                        <span class="diff-legend-sep" aria-hidden="true">·</span
-                        >
-                        <span
-                          >{compareFromSaved
-                            ? 'Last saved page'
-                            : 'Current page'}</span
-                        >
-                      </div>
-                    {/if}
-                    {#each pageDiff.hunks as hunk, hunkIndex (hunkIndex)}
-                      {#if hunkCollapsed(hunk, hunkIndex)}
-                        <button
-                          type="button"
-                          class="diff-expand"
-                          id={`diff-hunk-expand-${hunkIndex}`}
-                          aria-expanded="false"
-                          aria-controls={`diff-hunk-${hunkIndex}`}
-                          onclick={() => expandHunk(hunkIndex)}
-                        >
-                          {hunk.hiddenLines ?? 0} unchanged
-                          {hunk.hiddenLines === 1 ? 'line' : 'lines'}
-                        </button>
-                      {:else}
-                        {@const oldLines = sideLines(hunk, 'previous')}
-                        {@const newLines = sideLines(hunk, 'current')}
-                        <div id={`diff-hunk-${hunkIndex}`} class="diff-hunk">
-                          <div
-                            class="diff-side old"
-                            class:is-empty={oldLines.length === 0}
-                            class:is-dup={hunk.kind === 'equal'}
-                            data-kind={hunk.kind === 'add'
-                              ? 'empty'
-                              : hunk.kind === 'equal'
-                                ? 'equal'
-                                : 'remove'}
-                          >
-                            {#each oldLines as line, lineIndex (`o-${hunkIndex}-${lineIndex}`)}
-                              <div
-                                class="diff-line"
-                                class:remove={hunk.kind !== 'equal'}
-                              >
-                                {#if hunk.kind !== 'equal'}
-                                  <span class="sr-only">Removed</span>
-                                  <span class="diff-gutter" aria-hidden="true"
-                                    >−</span
-                                  >
-                                {:else}
-                                  <span class="diff-gutter" aria-hidden="true"
-                                  ></span>
-                                {/if}
-                                <span class="diff-text">
-                                  {#if line.parts}
-                                    {#each line.parts as part, partIndex (`op-${lineIndex}-${partIndex}`)}
-                                      {#if part.kind === 'remove'}
-                                        <span class="word-remove"
-                                          >{part.text}</span
-                                        >
-                                      {:else}
-                                        {part.text}
-                                      {/if}
-                                    {/each}
-                                  {:else}
-                                    {line.text}
-                                  {/if}
-                                </span>
-                              </div>
-                            {/each}
-                          </div>
-                          <div
-                            class="diff-side new"
-                            class:is-empty={newLines.length === 0}
-                            class:is-dup={hunk.kind === 'equal'}
-                            aria-hidden={layout === 'split' &&
-                            hunk.kind === 'equal'
-                              ? true
-                              : undefined}
-                            data-kind={hunk.kind === 'remove'
-                              ? 'empty'
-                              : hunk.kind === 'equal'
-                                ? 'equal'
-                                : 'add'}
-                          >
-                            {#each newLines as line, lineIndex (`n-${hunkIndex}-${lineIndex}`)}
-                              <div
-                                class="diff-line"
-                                class:add={hunk.kind !== 'equal'}
-                              >
-                                {#if hunk.kind !== 'equal'}
-                                  <span class="sr-only">Added</span>
-                                  <span class="diff-gutter" aria-hidden="true"
-                                    >+</span
-                                  >
-                                {:else}
-                                  <span class="diff-gutter" aria-hidden="true"
-                                  ></span>
-                                {/if}
-                                <span class="diff-text">
-                                  {#if line.parts}
-                                    {#each line.parts as part, partIndex (`np-${lineIndex}-${partIndex}`)}
-                                      {#if part.kind === 'add'}
-                                        <span class="word-add">{part.text}</span
-                                        >
-                                      {:else}
-                                        {part.text}
-                                      {/if}
-                                    {/each}
-                                  {:else}
-                                    {line.text}
-                                  {/if}
-                                </span>
-                              </div>
-                            {/each}
-                          </div>
-                        </div>
-                      {/if}
-                    {/each}
-                  </div>
-                </div>
+              {#if deleted}
+                <span id="page-history-compare-unavailable" class="sr-only">
+                  No current page to compare
+                </span>
               {/if}
-            {:else if previewLoading}
+              <button
+                type="button"
+                data-page-history-restore
+                data-testid="page-history-restore"
+                disabled={!canRestoreSelected()}
+                onclick={openRestoreConfirm}
+                class="shrink-0 rounded-lg border border-status-danger/40 bg-status-danger/15 px-3 py-1.5 text-type-sm font-label-sm-bold text-status-danger transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Restore
+              </button>
+            </div>
+          </div>
+          {#if paneMode === 'compare'}
+            {#if compareLoading || (previewLoading && !pageDiff)}
               <div
                 class="flex items-center gap-2 px-5 py-6 text-type-sm font-body-md text-text-muted"
                 role="status"
@@ -1299,7 +1053,7 @@
                   class="material-symbols-outlined animate-spin text-icon-lg text-accent-primary-start"
                   aria-hidden="true">sync</span
                 >
-                Loading preview…
+                Loading comparison…
               </div>
             {:else if previewError}
               <div
@@ -1315,26 +1069,246 @@
                   Retry
                 </button>
               </div>
-            {:else}
+            {:else if pageDiff}
+              <div class="compare-chrome">
+                <p
+                  class="compare-summary"
+                  role="status"
+                  aria-live="polite"
+                  data-testid="page-history-diff-summary"
+                >
+                  {diffSummary}
+                  {#if compareFromSaved}
+                    <span data-testid="page-history-compare-saved">
+                      Comparing the last saved page.
+                    </span>
+                  {/if}
+                </p>
+                <div
+                  class="pane-switch"
+                  role="radiogroup"
+                  aria-label="Diff layout"
+                  tabindex="-1"
+                  data-testid="page-history-layout"
+                  onkeydown={onLayoutKeydown}
+                >
+                  <button
+                    type="button"
+                    role="radio"
+                    data-diff-layout="split"
+                    data-testid="page-history-layout-split"
+                    aria-checked={layout === 'split'}
+                    tabindex={layout === 'split' ? 0 : -1}
+                    class="pane-switch-btn"
+                    class:active={layout === 'split'}
+                    onclick={() => chooseLayout('split')}
+                  >
+                    Split
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    data-diff-layout="unified"
+                    data-testid="page-history-layout-unified"
+                    aria-checked={layout === 'unified'}
+                    tabindex={layout === 'unified' ? 0 : -1}
+                    class="pane-switch-btn"
+                    class:active={layout === 'unified'}
+                    onclick={() => chooseLayout('unified')}
+                  >
+                    Unified
+                  </button>
+                </div>
+              </div>
               <!-- Keyboard-scrollable region: role=region is correct; tabindex lets the pane receive focus. -->
               <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-              <pre
-                class="preview-body custom-scrollbar"
+              <div
+                class="diff-scroll custom-scrollbar"
                 tabindex="0"
                 role="region"
-                aria-label="Version preview body"
-                data-testid="page-history-preview-body">{preview}</pre>
+                aria-label="Page difference"
+                data-testid="page-history-compare"
+              >
+                <div
+                  class="diff-board"
+                  class:is-split={layout === 'split'}
+                  data-testid="page-history-diff"
+                >
+                  {#if pageDiff.tooLarge}
+                    <p
+                      class="px-1 py-4 text-type-sm font-body-md text-text-muted"
+                    >
+                      This comparison is too large to show. Use Preview instead.
+                    </p>
+                  {:else if layout === 'split'}
+                    <div class="diff-col-head old">Version</div>
+                    <div class="diff-col-head new">
+                      {compareFromSaved ? 'Last saved page' : 'Current page'}
+                    </div>
+                  {:else}
+                    <div class="diff-legend">
+                      <span>Version</span>
+                      <span class="diff-legend-sep" aria-hidden="true">·</span>
+                      <span
+                        >{compareFromSaved
+                          ? 'Last saved page'
+                          : 'Current page'}</span
+                      >
+                    </div>
+                  {/if}
+                  {#each pageDiff.hunks as hunk, hunkIndex (hunkIndex)}
+                    {#if hunkCollapsed(hunk, hunkIndex)}
+                      <button
+                        type="button"
+                        class="diff-expand"
+                        id={`diff-hunk-expand-${hunkIndex}`}
+                        aria-expanded="false"
+                        aria-controls={`diff-hunk-${hunkIndex}`}
+                        onclick={() => expandHunk(hunkIndex)}
+                      >
+                        {hunk.hiddenLines ?? 0} unchanged
+                        {hunk.hiddenLines === 1 ? 'line' : 'lines'}
+                      </button>
+                    {:else}
+                      {@const oldLines = sideLines(hunk, 'previous')}
+                      {@const newLines = sideLines(hunk, 'current')}
+                      <div id={`diff-hunk-${hunkIndex}`} class="diff-hunk">
+                        <div
+                          class="diff-side old"
+                          class:is-empty={oldLines.length === 0}
+                          class:is-dup={hunk.kind === 'equal'}
+                          data-kind={hunk.kind === 'add'
+                            ? 'empty'
+                            : hunk.kind === 'equal'
+                              ? 'equal'
+                              : 'remove'}
+                        >
+                          {#each oldLines as line, lineIndex (`o-${hunkIndex}-${lineIndex}`)}
+                            <div
+                              class="diff-line"
+                              class:remove={hunk.kind !== 'equal'}
+                            >
+                              {#if hunk.kind !== 'equal'}
+                                <span class="sr-only">Removed</span>
+                                <span class="diff-gutter" aria-hidden="true"
+                                  >−</span
+                                >
+                              {:else}
+                                <span class="diff-gutter" aria-hidden="true"
+                                ></span>
+                              {/if}
+                              <span class="diff-text">
+                                {#if line.parts}
+                                  {#each line.parts as part, partIndex (`op-${lineIndex}-${partIndex}`)}
+                                    {#if part.kind === 'remove'}
+                                      <span class="word-remove"
+                                        >{part.text}</span
+                                      >
+                                    {:else}
+                                      {part.text}
+                                    {/if}
+                                  {/each}
+                                {:else}
+                                  {line.text}
+                                {/if}
+                              </span>
+                            </div>
+                          {/each}
+                        </div>
+                        <div
+                          class="diff-side new"
+                          class:is-empty={newLines.length === 0}
+                          class:is-dup={hunk.kind === 'equal'}
+                          aria-hidden={layout === 'split' &&
+                          hunk.kind === 'equal'
+                            ? true
+                            : undefined}
+                          data-kind={hunk.kind === 'remove'
+                            ? 'empty'
+                            : hunk.kind === 'equal'
+                              ? 'equal'
+                              : 'add'}
+                        >
+                          {#each newLines as line, lineIndex (`n-${hunkIndex}-${lineIndex}`)}
+                            <div
+                              class="diff-line"
+                              class:add={hunk.kind !== 'equal'}
+                            >
+                              {#if hunk.kind !== 'equal'}
+                                <span class="sr-only">Added</span>
+                                <span class="diff-gutter" aria-hidden="true"
+                                  >+</span
+                                >
+                              {:else}
+                                <span class="diff-gutter" aria-hidden="true"
+                                ></span>
+                              {/if}
+                              <span class="diff-text">
+                                {#if line.parts}
+                                  {#each line.parts as part, partIndex (`np-${lineIndex}-${partIndex}`)}
+                                    {#if part.kind === 'add'}
+                                      <span class="word-add">{part.text}</span>
+                                    {:else}
+                                      {part.text}
+                                    {/if}
+                                  {/each}
+                                {:else}
+                                  {line.text}
+                                {/if}
+                              </span>
+                            </div>
+                          {/each}
+                        </div>
+                      </div>
+                    {/if}
+                  {/each}
+                </div>
+              </div>
             {/if}
-          {:else if !listLoading && versions.length > 0}
-            <p class="px-5 py-6 text-type-sm font-body-md text-text-muted">
-              Select a version to preview.
-            </p>
+          {:else if previewLoading}
+            <div
+              class="flex items-center gap-2 px-5 py-6 text-type-sm font-body-md text-text-muted"
+              role="status"
+            >
+              <span
+                class="material-symbols-outlined animate-spin text-icon-lg text-accent-primary-start"
+                aria-hidden="true">sync</span
+              >
+              Loading preview…
+            </div>
+          {:else if previewError}
+            <div
+              class="flex items-start gap-2 px-5 py-6 text-type-sm font-body-md text-error"
+              role="alert"
+            >
+              <span class="flex-1">{previewError}</span>
+              <button
+                type="button"
+                class="rounded-md border border-error-border bg-transparent px-2 py-1 text-type-xs font-label-sm-bold text-error hover:brightness-110"
+                onclick={() => selectedId && void loadPreview(selectedId)}
+              >
+                Retry
+              </button>
+            </div>
+          {:else}
+            <!-- Keyboard-scrollable region: role=region is correct; tabindex lets the pane receive focus. -->
+            <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+            <pre
+              class="preview-body custom-scrollbar"
+              tabindex="0"
+              role="region"
+              aria-label="Version preview body"
+              data-testid="page-history-preview-body">{preview}</pre>
           {/if}
-        </section>
-      {/if}
-    </div>
+        {:else if !listLoading && versions.length > 0}
+          <p class="px-5 py-6 text-type-sm font-body-md text-text-muted">
+            Select a version to preview.
+          </p>
+        {/if}
+      </section>
+    {/if}
   </div>
-</div>
+</Dialog>
 
 {#if restoreTarget}
   <ConfirmDialog

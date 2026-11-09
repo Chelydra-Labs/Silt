@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
   import { ListDeletedPageHistory } from '../../../bindings/silt/app.js'
-  import { trapFocus } from '../../lib/focusTrap'
   import { asString } from '../../lib/asString'
   import { coerceIPCError } from '../../lib/ipcError'
   import PageHistoryModal from './PageHistoryModal.svelte'
+  import Dialog from '../ui/Dialog.svelte'
 
   interface DeletedPageRow {
     notebook: string
@@ -176,12 +176,6 @@
 
   function handleKeydown(e: KeyboardEvent): void {
     if (opened) return
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      e.stopPropagation()
-      onClose()
-      return
-    }
     const target = e.target as HTMLElement | null
     const inSearch = target === searchRef
     const inList = !!target?.closest(
@@ -240,19 +234,11 @@
 
   onMount(() => {
     previouslyFocused = document.activeElement as HTMLElement | null
-    window.addEventListener('keydown', handleKeydown, true)
     void tick().then(() => dialogRef?.focus())
     void loadRows()
     return () => {
-      window.removeEventListener('keydown', handleKeydown, true)
       if (previouslyFocused?.isConnected) previouslyFocused.focus?.()
     }
-  })
-
-  $effect(() => {
-    if (opened || !dialogRef) return
-    const dispose = trapFocus(dialogRef)
-    return () => dispose()
   })
 </script>
 
@@ -270,180 +256,169 @@
     {onClose}
   />
 {:else}
-  <div
-    class="fixed inset-0 z-[180] flex items-center justify-center bg-black/45 backdrop-blur-[3px] px-4"
-    data-focus-trap
+  <Dialog
+    open={true}
+    {onClose}
+    zIndex="z-[180]"
+    maxWidth="max-w-2xl"
+    labelledBy="deleted-page-history-title"
+    describedBy="deleted-page-history-honesty"
+    backdropLabel="Close deleted page history"
+    surfaceClass="dialog-surface relative flex h-[min(32rem,calc(100vh-4rem))] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-surface-modal-border glass-palette glass-palette-strong shadow-2xl"
+    bind:dialogRef
+    dataTestId="deleted-page-history-modal"
+    initialFocus={() => searchRef}
+    onKeydown={handleKeydown}
   >
-    <button
-      type="button"
-      tabindex="-1"
-      aria-label="Close deleted page history"
-      class="absolute inset-0 cursor-default border-none bg-transparent p-0"
-      onclick={onClose}
-    ></button>
-
-    <div
-      bind:this={dialogRef}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="deleted-page-history-title"
-      aria-describedby="deleted-page-history-honesty"
-      tabindex="-1"
-      data-testid="deleted-page-history-modal"
-      class="dialog-surface relative flex h-[min(32rem,calc(100vh-4rem))] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-surface-modal-border glass-palette glass-palette-strong shadow-2xl"
+    <header
+      class="flex items-center gap-3 border-b border-surface-modal-border px-5 py-3.5"
     >
-      <header
-        class="flex items-center gap-3 border-b border-surface-modal-border px-5 py-3.5"
+      <span
+        class="material-symbols-outlined text-icon-xl text-accent-primary-start"
+        aria-hidden="true">history</span
       >
-        <span
-          class="material-symbols-outlined text-icon-xl text-accent-primary-start"
-          aria-hidden="true">history</span
+      <div class="min-w-0 flex-1">
+        <h2
+          id="deleted-page-history-title"
+          class="font-headline-md text-headline-md text-text-primary"
         >
-        <div class="min-w-0 flex-1">
-          <h2
-            id="deleted-page-history-title"
-            class="font-headline-md text-headline-md text-text-primary"
-          >
-            Deleted pages
-          </h2>
-          <p
-            id="deleted-page-history-honesty"
-            class="mt-1 text-type-2xs font-body-md text-text-muted"
-          >
-            Snapshots stay in this vault under .system/history. They sync with
-            the vault, are not encrypted, and are not a backup.
-          </p>
-        </div>
+          Deleted pages
+        </h2>
+        <p
+          id="deleted-page-history-honesty"
+          class="mt-1 text-type-2xs font-body-md text-text-muted"
+        >
+          Snapshots stay in this vault under .system/history. They sync with the
+          vault, are not encrypted, and are not a backup.
+        </p>
+      </div>
+      <button
+        type="button"
+        aria-label="Close deleted page history"
+        onclick={onClose}
+        class="flex h-8 w-8 items-center justify-center rounded-lg border-none bg-transparent text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
+      >
+        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
+          >close</span
+        >
+      </button>
+    </header>
+
+    <div class="search-bar">
+      <span
+        class="material-symbols-outlined text-icon-lg text-text-muted"
+        aria-hidden="true">search</span
+      >
+      <input
+        bind:this={searchRef}
+        bind:value={query}
+        type="search"
+        aria-label="Search deleted pages"
+        aria-controls="deleted-page-history-list"
+        placeholder="Search notebook, section, or page"
+        data-testid="deleted-page-history-search"
+        class="search-input"
+      />
+    </div>
+
+    <p
+      class="count-line"
+      role="status"
+      aria-live="polite"
+      data-testid="deleted-page-history-count"
+    >
+      {countLabel}
+    </p>
+
+    {#if listError}
+      <div
+        class="mx-5 mb-3 flex items-start gap-2 rounded-lg border border-error-border bg-error-bg px-3 py-2 text-type-sm font-body-md text-error"
+        role="alert"
+      >
+        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
+          >error</span
+        >
+        <span class="flex-1">{listError}</span>
         <button
           type="button"
-          aria-label="Close deleted page history"
-          onclick={onClose}
-          class="flex h-8 w-8 items-center justify-center rounded-lg border-none bg-transparent text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
+          class="rounded-md border border-error-border bg-transparent px-2 py-1 text-type-xs font-label-sm-bold text-error hover:brightness-110"
+          onclick={() => void loadRows()}
         >
-          <span
-            class="material-symbols-outlined text-icon-lg"
-            aria-hidden="true">close</span
-          >
+          Retry
         </button>
-      </header>
-
-      <div class="search-bar">
-        <span
-          class="material-symbols-outlined text-icon-lg text-text-muted"
-          aria-hidden="true">search</span
-        >
-        <input
-          bind:this={searchRef}
-          bind:value={query}
-          type="search"
-          aria-label="Search deleted pages"
-          aria-controls="deleted-page-history-list"
-          placeholder="Search notebook, section, or page"
-          data-testid="deleted-page-history-search"
-          class="search-input"
-        />
       </div>
+    {/if}
 
-      <p
-        class="count-line"
-        role="status"
-        aria-live="polite"
-        data-testid="deleted-page-history-count"
-      >
-        {countLabel}
-      </p>
-
-      {#if listError}
+    <div
+      bind:this={listRef}
+      id="deleted-page-history-list"
+      class="deleted-list custom-scrollbar"
+      role="listbox"
+      aria-label="Deleted pages"
+      aria-busy={listLoading || undefined}
+      tabindex="0"
+      aria-activedescendant={selected ? optionId(selected) : undefined}
+      data-testid="deleted-page-history-list"
+    >
+      {#if listLoading}
         <div
-          class="mx-5 mb-3 flex items-start gap-2 rounded-lg border border-error-border bg-error-bg px-3 py-2 text-type-sm font-body-md text-error"
-          role="alert"
+          class="flex items-center gap-2 px-4 py-6 text-type-sm font-body-md text-text-muted"
+          role="status"
         >
           <span
-            class="material-symbols-outlined text-icon-lg"
-            aria-hidden="true">error</span
+            class="material-symbols-outlined animate-spin text-icon-lg text-accent-primary-start"
+            aria-hidden="true">sync</span
           >
-          <span class="flex-1">{listError}</span>
+          Loading deleted pages…
+        </div>
+      {:else if filtered.length === 0 && !listError}
+        <div
+          class="flex flex-col items-start gap-2 px-4 py-6"
+          data-testid="deleted-page-history-empty"
+        >
+          <p class="text-type-md font-body-md text-text-primary">
+            {rows.length === 0
+              ? 'No deleted pages with history.'
+              : 'No matching deleted pages.'}
+          </p>
+          <p class="text-type-sm font-body-md text-text-muted">
+            {rows.length === 0
+              ? 'Pages with leftover snapshots will appear here after they are deleted.'
+              : 'Try a different notebook, section, or page name.'}
+          </p>
+        </div>
+      {:else}
+        {#each filtered as row (rowKey(row))}
           <button
             type="button"
-            class="rounded-md border border-error-border bg-transparent px-2 py-1 text-type-xs font-label-sm-bold text-error hover:brightness-110"
-            onclick={() => void loadRows()}
+            role="option"
+            id={optionId(row)}
+            data-deleted-key={optionId(row)}
+            aria-selected={selectedKey === rowKey(row)}
+            tabindex="-1"
+            class="deleted-row"
+            class:selected={selectedKey === rowKey(row)}
+            onclick={() => {
+              selectRow(rowKey(row))
+              openSelected()
+            }}
           >
-            Retry
-          </button>
-        </div>
-      {/if}
-
-      <div
-        bind:this={listRef}
-        id="deleted-page-history-list"
-        class="deleted-list custom-scrollbar"
-        role="listbox"
-        aria-label="Deleted pages"
-        aria-busy={listLoading || undefined}
-        tabindex="0"
-        aria-activedescendant={selected ? optionId(selected) : undefined}
-        data-testid="deleted-page-history-list"
-      >
-        {#if listLoading}
-          <div
-            class="flex items-center gap-2 px-4 py-6 text-type-sm font-body-md text-text-muted"
-            role="status"
-          >
-            <span
-              class="material-symbols-outlined animate-spin text-icon-lg text-accent-primary-start"
-              aria-hidden="true">sync</span
-            >
-            Loading deleted pages…
-          </div>
-        {:else if filtered.length === 0 && !listError}
-          <div
-            class="flex flex-col items-start gap-2 px-4 py-6"
-            data-testid="deleted-page-history-empty"
-          >
-            <p class="text-type-md font-body-md text-text-primary">
-              {rows.length === 0
-                ? 'No deleted pages with history.'
-                : 'No matching deleted pages.'}
-            </p>
-            <p class="text-type-sm font-body-md text-text-muted">
-              {rows.length === 0
-                ? 'Pages with leftover snapshots will appear here after they are deleted.'
-                : 'Try a different notebook, section, or page name.'}
-            </p>
-          </div>
-        {:else}
-          {#each filtered as row (rowKey(row))}
-            <button
-              type="button"
-              role="option"
-              id={optionId(row)}
-              data-deleted-key={optionId(row)}
-              aria-selected={selectedKey === rowKey(row)}
-              tabindex="-1"
-              class="deleted-row"
-              class:selected={selectedKey === rowKey(row)}
-              onclick={() => {
-                selectRow(rowKey(row))
-                openSelected()
-              }}
-            >
-              <span class="deleted-path">{locatorPath(row)}</span>
-              <span class="deleted-meta">
-                <span class="source-badge source-{row.source}">
-                  {sourceLabel(row.source)}
-                </span>
-                <span>{formatTimestamp(row.latestTimestamp)}</span>
-                <span>{formatVersionCount(row.versionCount)}</span>
-                {#if Number.isFinite(row.latestBytes) && row.latestBytes >= 0}
-                  <span>{formatBytes(row.latestBytes)}</span>
-                {/if}
+            <span class="deleted-path">{locatorPath(row)}</span>
+            <span class="deleted-meta">
+              <span class="source-badge source-{row.source}">
+                {sourceLabel(row.source)}
               </span>
-            </button>
-          {/each}
-        {/if}
-      </div>
+              <span>{formatTimestamp(row.latestTimestamp)}</span>
+              <span>{formatVersionCount(row.versionCount)}</span>
+              {#if Number.isFinite(row.latestBytes) && row.latestBytes >= 0}
+                <span>{formatBytes(row.latestBytes)}</span>
+              {/if}
+            </span>
+          </button>
+        {/each}
+      {/if}
     </div>
-  </div>
+  </Dialog>
 {/if}
 
 <style>
