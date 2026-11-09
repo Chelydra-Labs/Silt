@@ -24,10 +24,10 @@
 
   /**
    * The shared task metadata surface — extracted from TaskEditDrawer so the
-   * same controls (title, status, due date, pin, progress, estimate,
-   * recurrence, owner, priority, timestamps, tags, dependencies, comments)
-   * render identically inside the TaskEditDrawer inspector AND the
-   * TaskSubEditorModal right sidebar (#780).
+   * same controls (title, status, due date, start date, pin, progress,
+   * estimate, recurrence, owner, priority, shortlist, timestamps, tags,
+   * dependencies, comments) render identically inside the TaskEditDrawer
+   * inspector AND the TaskSubEditorModal right sidebar (#780).
    *
    * Owns every optimistic-commit field + the DONE-on-blocked guard. The host
    * (drawer / modal) owns only the chrome and calls `onMetaChanged` after each

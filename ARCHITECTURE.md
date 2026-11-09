@@ -57,8 +57,9 @@ correctness regression, not a style choice.
 **The cardinal rules:**
 
 1. **Markdown is the source of truth for content.** Every per-block
-   metadata field (status, owner, priority, dates, pin, progress) MUST
-   round-trip through the markdown inline task syntax. The block
+   metadata field (status, owner, priority, dates, pin, progress,
+   shortlist rank) MUST round-trip through the markdown inline task
+   syntax. The block
    identity comment is the only identifier stored in the file; the file
    position and the inline syntax are the source for everything else.
    Deleting the entire `<vault>` should be recoverable by re-creating
@@ -80,9 +81,11 @@ correctness regression, not a style choice.
    any core-index corruption is *delete the index file and relaunch* — the
    documented, supported operation. The core index holds the block↔location projection, FTS5, file
    mtime/size caches, and re-derived per-task caches (comments/links counts,
-   pin, progress, lifecycle timestamps/sort position — re-derived from
-   markdown `[pin:: true]` / `[progress:: N]` / `[created::]` / `[completed::]`
-   / `[order:: N]` tokens on every re-index; plus NOTE-block comment
+   pin, progress, lifecycle timestamps/sort position, estimate,
+   shortlist rank — re-derived from markdown `[pin:: true]` /
+   `[progress:: N]` / `[created::]` / `[completed::]` / `[modified::]` /
+   `[order:: N]` / `[estimate::]` / `[shortlist:: N]` tokens on every
+   re-index; plus NOTE-block comment
    attribution `[author::]` / `[ts::]` into the sparse `block_meta`
    projection). It is **forbidden** to hold user intent *as the source of
    truth* there: pin state, progress, custom column names, filter
