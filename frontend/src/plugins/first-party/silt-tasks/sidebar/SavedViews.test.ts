@@ -52,6 +52,7 @@ import { v2CtxStubs } from '../../../test-helpers'
 import {
   getTaskHubState,
   resetTaskHubState,
+  setFilters,
   type SavedView
 } from '../state.svelte'
 import { SYSTEM_VIEWS } from '../savedViews'
@@ -165,5 +166,44 @@ describe('sidebar/SavedViews (#763)', () => {
       expect.not.arrayContaining([expect.objectContaining({ id: 'u1' })])
     )
     expect(screen.queryByTestId('view-u1')).toBeNull()
+  })
+
+  it('overwriting the active view snapshots the shortlist filter too (#1092)', async () => {
+    const userView: SavedView = {
+      id: 'u1',
+      name: 'My View',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([userView])
+    render(SavedViews)
+    await flush()
+
+    // Activate, then diverge by toggling the shortlist filter on.
+    const activateBtn = document.querySelector<HTMLElement>(
+      '[data-testid="view-u1"] button'
+    )
+    await fireEvent.click(activateBtn!)
+    await flush()
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('manage-view-u1'))
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-update-view'))
+    await flush()
+
+    const s = getTaskHubState()
+    const saved = s.savedViews.find((v) => v.id === 'u1')
+    expect(saved?.filters?.shortlist).toBe(true)
+    // The overwrite flow applies the view back; the toggle must stay on.
+    expect(s.filters.shortlist).toBe(true)
+    expect(s.savedViewsDirty).toBe(false)
   })
 })

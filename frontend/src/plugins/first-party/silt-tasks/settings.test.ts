@@ -228,6 +228,32 @@ describe('persistSavedViews (#427)', () => {
     })
     expect(written[0].filters).not.toHaveProperty('text')
   })
+
+  it('round-trips the shortlist filter through persist -> load (#1092)', async () => {
+    // Save with the shortlist dimension on...
+    await persistSavedViews([
+      {
+        id: 'u-sl',
+        name: 'Focus set',
+        displayMode: 'list',
+        filters: {
+          owners: [],
+          priorities: [],
+          dueDate: '',
+          tags: [],
+          shortlist: true
+        }
+      }
+    ])
+    const [, value] = mocks.updatePluginSetting.mock.calls[0]
+    const written = value as Array<{ filters: Record<string, unknown> }>
+    // ...the YAML payload carries it (wholesale filters write minus text)...
+    expect(written[0].filters.shortlist).toBe(true)
+    // ...and coerceSavedView restores it on load instead of stripping it.
+    await setTasksSettings({ saved_views: written })
+    const loaded = loadSavedViews().find((v) => v.id === 'u-sl')
+    expect(loaded?.filters?.shortlist).toBe(true)
+  })
 })
 
 describe('loadColumns (#421/#437)', () => {

@@ -658,7 +658,8 @@
         priorities: [...hubState.filters.priorities],
         dueDate: hubState.filters.dueDate,
         tags: [...hubState.filters.tags],
-        stale: hubState.filters.stale
+        stale: hubState.filters.stale,
+        shortlist: hubState.filters.shortlist
       },
       calendarSubMode: hubState.calendarSubMode,
       columns: cloneColumns(hubState.columns),

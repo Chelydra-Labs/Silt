@@ -148,7 +148,8 @@
         priorities: [...s.filters.priorities],
         dueDate: s.filters.dueDate,
         tags: [...s.filters.tags],
-        stale: s.filters.stale
+        stale: s.filters.stale,
+        shortlist: s.filters.shortlist
       },
       calendarSubMode: s.calendarSubMode,
       columns: s.columns.map((c) => ({ ...c })),
