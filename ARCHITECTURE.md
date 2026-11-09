@@ -50,15 +50,16 @@ correctness regression, not a style choice.
 | **Per-linked-notebook overrides** | YAML | `<linkedRoot>/.system/config.yaml` | Per-notebook plugin setting overrides for a linked (external) notebook. Read-only to Silt (user-authored); deep-merged over the vault defaults (linked wins per-key). See §3.1. | `plugins.plugin_settings.silt-tasks.default_group_by: status` |
 | **Per-vault schema assets** | YAML | `<vault>/.system/types/*.yaml` | Type schemas: property definitions, hero field, target-type constraints for `page`/`pages` relations. Sibling to `.system/templates/` and `.system/themes/`. User-authored or shipped defaults; durable and portable. See ADR `docs/decisions/0008-typed-notes.md`. | `TypeDef` YAML with `properties: [{name, type, target, ...}]` |
 | **User-global, pre-vault** | JSON | `<config>/silt/settings.json` | Settings that must be known before any vault is open: active theme id, dark/light/system mode, non-vault font preferences | `{"active_theme": "silt-graphite", "mode": "dark"}` |
-| **Working memory** | SQLite (WAL) | `<DataDir>/silt/indexes/<vault-key>/index.sqlite*` (per-user local DataDir; relocated OUT of the synced vault) | Re-derivable caches: block↔location projection, FTS5 search index, denormalized per-task caches (comments/links counts, pin, progress — all re-derived from markdown on re-index), file mtime/size for incremental re-index, typed-notes projection (`page_types`/`page_properties` — page→type membership + property values, re-derived from frontmatter `type:` + the type schema) | The `blocks` table, `blocks_fts` virtual table, `files` mtime cache, `page_types`/`page_properties` projection |
+| **Working memory** | SQLite (WAL) | `<DataDir>/silt/indexes/<vault-key>/index.sqlite*` (per-user local DataDir; relocated OUT of the synced vault) | Re-derivable caches: block↔location projection, FTS5 search index, denormalized per-task caches (full re-derived inventory: see cardinal rule 4), file mtime/size for incremental re-index, typed-notes projection (`page_types`/`page_properties` — page→type membership + property values, re-derived from frontmatter `type:` + the type schema) | The `blocks` table, `blocks_fts` virtual table, `files` mtime cache, `page_types`/`page_properties` projection |
 | **Plugin-owned storage** | SQLite (WAL) | `<vault>/.system/plugins/<id>/data/plugin.db` | Per-plugin private data the plugin owns the schema for: working memory OR durable storage at the plugin's discretion (embeddings, content-hash caches, agent memory). The plugin decides durability semantics; data that must survive uninstall or be portable MUST round-trip through markdown. | A plugin's `vec0` vector index, a content-hash cache table |
 | **Page history** | gzip + JSONL | `<vault>/.system/history/` (linked: `<linkedRoot>/.system/history/`) | Opt-in previous-content snapshots of page markdown plus a per-page append-only manifest. Durable user recovery data — not reproducible working memory. Deleting `index.sqlite` must not delete it. Scanner skips leading-`.` dirs, so history is not indexed, not in nav, and not in FTS. | `.system/history/pages/vault/Work/__root__/Note.jsonl` + matching `.md.gz` blob |
 
 **The cardinal rules:**
 
 1. **Markdown is the source of truth for content.** Every per-block
-   metadata field (status, owner, priority, dates, pin, progress,
-   estimate, recurrence, blocked-by, manual order, shortlist rank) MUST
+   metadata field (status, owner, priority, dates, lifecycle timestamps,
+   tags, pin, progress, estimate, recurrence, blocked-by, manual order,
+   shortlist rank) MUST
    round-trip through the markdown inline task
    syntax. The block
    identity comment is the only identifier stored in the file; the file
