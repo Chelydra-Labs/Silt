@@ -238,7 +238,7 @@
   </div>
 
   <div
-    class="flex-shrink-0 space-y-3 border-t border-surface-card-border px-5 py-4"
+    class="flex-shrink-0 space-y-2 border-t border-surface-card-border px-5 py-3"
   >
     <!-- The drawer is where metadata edits happen, so the undo it offers
          belongs next to the task it would restore. Same control/state as the
@@ -272,7 +272,7 @@
           Open source page
         </button>
       </section>
-      <section class="pt-2 border-t border-surface-card-border">
+      <section class="pt-1.5 border-t border-surface-card-border">
         <p class="text-type-2xs font-label-sm text-text-muted break-all">
           {task.notebook} › {task.section} › {task.page}
         </p>
