@@ -1,5 +1,11 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
-import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  within
+} from '@testing-library/svelte'
 
 if (!Element.prototype.animate) {
   Element.prototype.animate = function () {
@@ -150,15 +156,28 @@ describe('TaskMetadataSidebar', () => {
     render(TaskMetadataSidebar, {
       props: { task: makeTask(), ctx }
     })
-    expect(screen.getByLabelText('Task title')).toBeTruthy()
-    expect(screen.getByText('Status')).toBeTruthy()
-    expect(screen.getByText('Due date')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Pin task' })).toBeTruthy()
-    expect(screen.getByText('Essentials')).toBeTruthy()
-    expect(screen.getByLabelText('Owner')).toBeTruthy()
-    expect(screen.getByText('Priority')).toBeTruthy()
-    expect(screen.getByLabelText('Start day')).toBeTruthy()
-    expect(screen.getByLabelText('Add a tag')).toBeTruthy()
+    const header = screen.getByTestId('task-primary-header')
+    expect(within(header).getByLabelText('Task title')).toBeTruthy()
+    expect(within(header).getByText('Status')).toBeTruthy()
+    expect(
+      within(header).getByRole('radiogroup', { name: 'Task status' })
+    ).toBeTruthy()
+    expect(within(header).getByText('Due date')).toBeTruthy()
+    expect(within(header).getByText('Start day')).toBeTruthy()
+    expect(
+      within(header).getByRole('button', { name: 'Pin task' })
+    ).toBeTruthy()
+    // Priority moved out of Essentials into the primary group (D1).
+    expect(within(header).getByText('Priority')).toBeTruthy()
+    expect(
+      within(header).getByRole('radiogroup', { name: 'Priority' })
+    ).toBeTruthy()
+
+    // Essentials now carries only Owner + Tags as full-width rows (D2).
+    const essentials = screen.getByRole('region', { name: 'Essentials' })
+    expect(within(essentials).getByLabelText('Owner')).toBeTruthy()
+    expect(within(essentials).getByLabelText('Add a tag')).toBeTruthy()
+    expect(within(essentials).queryByText('Priority')).toBeNull()
   })
 
   it('exposes Start day as a popover trigger matching Due date', () => {
@@ -372,20 +391,21 @@ describe('TaskMetadataSidebar', () => {
     expect(screen.queryAllByTestId('task-activity-disclosure')).toHaveLength(0)
   })
 
-  it('wires the responsive container + field-pairs so the narrow modal sidebar stacks to one column', () => {
+  it('wires the responsive container + date field-pair so the narrow modal sidebar stacks to one column', () => {
     const { container } = render(TaskMetadataSidebar, {
       props: { task: makeTask(), ctx: makeCtx() }
     })
 
-    // The sidebar root is a container (container-type: inline-size) and the date
-    // pair + Essentials [Owner | Priority] pair carry .field-pair, which the
-    // @container (max-width: 360px) rule collapses to one column inside the 320px
-    // sub-editor modal aside. jsdom can't evaluate container queries, so this
-    // guards the mechanism's presence rather than the computed geometry.
+    // The sidebar root is a container (container-type: inline-size) and the
+    // Due/Start pair carries .field-pair, which the @container (max-width: 360px)
+    // rule collapses to one column inside the 320px sub-editor modal aside.
+    // Essentials rows are single full-width rows now, so they need no collapse.
+    // jsdom can't evaluate container queries, so this guards the mechanism's
+    // presence rather than the computed geometry.
     expect(container.querySelector('.task-metadata-sidebar')).toBeTruthy()
-    expect(
-      container.querySelectorAll('.field-pair').length
-    ).toBeGreaterThanOrEqual(2)
+    const pairs = container.querySelectorAll('.field-pair')
+    expect(pairs).toHaveLength(1)
+    expect(pairs[0].className).toContain('grid-cols-2')
   })
 
   it('an optimistic status edit calls ctx.updateBlockState', async () => {
@@ -451,5 +471,86 @@ describe('TaskMetadataSidebar', () => {
     expect(screen.getByText('End of next week')).toBeTruthy()
     expect(screen.getByText('2026-07-18')).toBeTruthy()
     expect(screen.queryByText('Next week')).toBeNull()
+  })
+
+  it('shows the full task title as a tooltip on the title input', () => {
+    const longTitle = 'Water the plants in the greenhouse before the frost'
+    render(TaskMetadataSidebar, {
+      props: {
+        task: makeTask({ clean_content: longTitle }),
+        ctx: makeCtx()
+      }
+    })
+    expect(screen.getByLabelText('Task title')).toHaveAttribute(
+      'title',
+      longTitle
+    )
+  })
+
+  it('commits priority from the primary header via ctx.setTaskPriority', async () => {
+    const setTaskPriority = vi.fn().mockResolvedValue(true)
+    const ctx = makeCtx({ setTaskPriority })
+    render(TaskMetadataSidebar, {
+      props: { task: makeTask({ priority: 3 }), ctx }
+    })
+
+    const group = within(screen.getByTestId('task-primary-header')).getByRole(
+      'radiogroup',
+      { name: 'Priority' }
+    )
+    await fireEvent.click(within(group).getByRole('radio', { name: 'Normal' }))
+    await flush()
+    expect(setTaskPriority).toHaveBeenCalledWith('task-1', 2)
+  })
+
+  it('renders one progress slider with no duplicate progress bar', () => {
+    render(TaskMetadataSidebar, {
+      props: {
+        task: makeTask({ progress: 40, subtask_total: 3, subtask_done: 1 }),
+        ctx: makeCtx()
+      }
+    })
+
+    const planning = screen.getByTestId('task-planning-section')
+    expect(planning.querySelectorAll('input[type="range"]')).toHaveLength(1)
+    // The native range is the only progress affordance — the old decorative
+    // bar duplicated it (its inline width style is the tell).
+    expect(planning.querySelector('[style*="width"]')).toBeNull()
+    expect(screen.getByTestId('task-subtask-count')).toHaveTextContent('[1/3]')
+  })
+
+  it('renders every editable field from the no-capability-loss list', () => {
+    render(TaskMetadataSidebar, {
+      props: {
+        task: makeTask({
+          owner: 'Alice',
+          tags: 'garden|spring',
+          progress: 30,
+          estimate_minutes: 90,
+          recurrence: 'every week'
+        }),
+        ctx: makeCtx()
+      }
+    })
+
+    // Primary group
+    expect(screen.getByLabelText('Task title')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Pin task' })).toBeTruthy()
+    expect(screen.getByRole('radiogroup', { name: 'Task status' })).toBeTruthy()
+    expect(document.getElementById('task-due-date-trigger')).toBeTruthy()
+    expect(document.getElementById('task-start-date-trigger')).toBeTruthy()
+    expect(screen.getByRole('radiogroup', { name: 'Priority' })).toBeTruthy()
+    // Essentials
+    expect(screen.getByLabelText('Owner')).toBeTruthy()
+    expect(screen.getByLabelText('Add a tag')).toBeTruthy()
+    // Planning & tracking
+    expect(screen.getByLabelText('Task progress')).toBeTruthy()
+    expect(screen.getByTestId('task-estimate-input')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /every week/ })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Dependencies' })).toBeTruthy()
+    // Activity
+    expect(screen.getByRole('heading', { name: 'Activity' })).toBeTruthy()
+    expect(screen.getByText('0 comments · 0 links · timestamps')).toBeTruthy()
+    expect(screen.getByText('Comments')).toBeTruthy()
   })
 })
