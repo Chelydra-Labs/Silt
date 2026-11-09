@@ -391,7 +391,7 @@ Typography: Monospace font stack, 0.75rem.
 
 Style: Background: rgba(99, 102, 241, 0.08), Border: 1px solid rgba(99, 102, 241, 0.20), Color: #a5b4fc.
 
-Priority Chip (Critical / #1):
+Priority Chip (High / #1):
 
 Style: Background: rgba(244, 63, 94, 0.08), Border: 1px solid rgba(244, 63, 94, 0.30), Color: #fca5a5, Font-Weight: 700.
 

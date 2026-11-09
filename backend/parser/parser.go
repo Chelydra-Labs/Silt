@@ -43,7 +43,7 @@ var TaskCheckboxRegex = regexp.MustCompile(`^([\s]*)-\s\[([ x/])\]\s+(.*)$`)
 //	[due:: DATE]       — due date (YYYY-MM-DD)
 //	[start:: DATE]     — start date (YYYY-MM-DD)
 //	[owner:: name]     — owner/assignee
-//	[priority:: N]     — priority (1=critical, 2=normal, 3=low)
+//	[priority:: N]     — priority (1=high, 2=normal, 3=low)
 //	[p:: N]            — priority shorthand (alias for [priority:: N])
 //	[pin:: true]       — pinned (boolean; presence also implies true)
 //	[progress:: N]     — progress (0-100)
