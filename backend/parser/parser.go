@@ -49,6 +49,7 @@ var TaskCheckboxRegex = regexp.MustCompile(`^([\s]*)-\s\[([ x/])\]\s+(.*)$`)
 //	[progress:: N]     — progress (0-100)
 //	[prog:: N]         — progress shorthand
 //	[recur:: RULE]     — recurrence rule (e.g. `every week`, `every 2 months`)
+//	[shortlist:: N]    — shortlist focus rank (0-3; 0 = top)
 //
 // The scanner is the single source of truth for token → ParsedBlock
 // field mapping; adding a new metadata type is a one-line addition to
@@ -258,7 +259,7 @@ func parseLeadingIndent(line string, spacesPerTab int) int {
 // Adding a new metadata type is a one-line addition to the switch below.
 // Unknown keys are preserved in extraTokens so the file round-trips
 // without data loss.
-func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priority int, pinned *bool, progress int, recurrence, description string, blockedBy []string, extraTokens []string, createdAt, completedAt string, manualOrder int, modifiedAt, estimate string) {
+func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priority int, pinned *bool, shortlistRank *int, progress int, recurrence, description string, blockedBy []string, extraTokens []string, createdAt, completedAt string, manualOrder int, modifiedAt, estimate string) {
 	priority = LegacyMissingTaskPriority
 	progress = 0
 	matches := TaskTokenRegex.FindAllStringSubmatch(remainder, -1)
@@ -283,6 +284,16 @@ func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priorit
 		case "priority", "p":
 			if val != "" {
 				fmt.Sscanf(val, "%d", &priority)
+			}
+		case "shortlist":
+			// Focus rank 0-3, 0 = top (#1092). NO shorthand alias — the
+			// token is `shortlist` only. Out-of-range or non-integer
+			// values fall through to extraTokens so they round-trip
+			// verbatim instead of being silently dropped.
+			if n, err := strconv.Atoi(val); err == nil && n >= 0 && n <= 3 {
+				shortlistRank = &n
+			} else {
+				extraTokens = append(extraTokens, m[0])
 			}
 		case "pin", "pinned":
 			// Tri-state (#123): the token's PRESENCE is what matters —
@@ -429,33 +440,34 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 		}
 
 		// Scan for [key:: value] metadata tokens in the remainder.
-		owner, startDate, dueDate, priority, pinned, progress, recurrence, description, blockedBy, extraTokens, createdAt, completedAt, manualOrder, modifiedAt, estimate := scanTaskTokens(remainder)
+		owner, startDate, dueDate, priority, pinned, shortlistRank, progress, recurrence, description, blockedBy, extraTokens, createdAt, completedAt, manualOrder, modifiedAt, estimate := scanTaskTokens(remainder)
 
 		depth := parseLeadingIndent(indent, spacesPerTab)
 
 		return ParsedBlock{
-			ID:          blockID,
-			Type:        BlockTask,
-			Depth:       depth,
-			RawText:     newLine,
-			CleanText:   description,
-			Status:      status,
-			Owner:       owner,
-			StartDate:   startDate,
-			DueDate:     dueDate,
-			Priority:    priority,
-			Pinned:      pinned,
-			Progress:    progress,
-			Recurrence:  recurrence,
-			BlockedBy:   blockedBy,
-			CreatedAt:   createdAt,
-			CompletedAt: completedAt,
-			ManualOrder: manualOrder,
-			ModifiedAt:  modifiedAt,
-			Estimate:    estimate,
-			ExtraTokens: extraTokens,
-			LineNumber:  lineNumber,
-			FileDate:    blockFileDate,
+			ID:            blockID,
+			Type:          BlockTask,
+			Depth:         depth,
+			RawText:       newLine,
+			CleanText:     description,
+			Status:        status,
+			Owner:         owner,
+			StartDate:     startDate,
+			DueDate:       dueDate,
+			Priority:      priority,
+			Pinned:        pinned,
+			ShortlistRank: shortlistRank,
+			Progress:      progress,
+			Recurrence:    recurrence,
+			BlockedBy:     blockedBy,
+			CreatedAt:     createdAt,
+			CompletedAt:   completedAt,
+			ManualOrder:   manualOrder,
+			ModifiedAt:    modifiedAt,
+			Estimate:      estimate,
+			ExtraTokens:   extraTokens,
+			LineNumber:    lineNumber,
+			FileDate:      blockFileDate,
 		}, newLine, modified
 	}
 
@@ -1442,12 +1454,17 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		// format — see ARCHITECTURE.md §0 "Storage-of-Truth Tiers").
 		// Each metadata field that is set gets its own [key:: value] token
 		// appended after the description. The order is fixed: priority,
-		// start, due, recur, owner, pin, progress, blocked_by, created,
-		// completed, order — matching the canonical field order so a
-		// parse → render round trip is byte-stable.
+		// shortlist, start, due, recur, owner, pin, progress, blocked_by,
+		// created, completed, modified, order, estimate — matching the
+		// canonical field order so a parse → render round trip is byte-stable.
 		var tokens []string
 		if block.Priority > 0 && block.Priority != 3 {
 			tokens = append(tokens, fmt.Sprintf("[priority:: %d]", block.Priority))
+		}
+		// Shortlist (#1092): emitted whenever the pointer is non-nil —
+		// 0 is a real (top) rank, so [shortlist:: 0] must render.
+		if block.ShortlistRank != nil {
+			tokens = append(tokens, fmt.Sprintf("[shortlist:: %d]", *block.ShortlistRank))
 		}
 		if block.StartDate != "" {
 			tokens = append(tokens, fmt.Sprintf("[start:: %s]", block.StartDate))

@@ -343,7 +343,7 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 			SELECT b.id, b.parent_id, b.source, b.notebook, b.section, b.page, b.file_date, b.depth,
 			       b.raw_content, b.clean_content, b.line_number,
 			       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''),
-			       COALESCE(t.due_date, ''), COALESCE(t.priority, 0),
+			       COALESCE(t.due_date, ''), COALESCE(t.priority, 0), t.shortlist_rank,
 			       snippet(blocks_fts, 0, '<mark>', '</mark>', '...', 20),
 			       bm25(blocks_fts) AS rank
 			FROM blocks_fts
@@ -363,11 +363,12 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 			var parentID sql.NullString
 			var status, owner, start, due string
 			var priority int
+			var shortlistRank sql.NullInt64
 			var rank float64
 			if err := rows.Scan(
 				&r.ID, &parentID, &r.Source, &r.Notebook, &r.Section, &r.Page, &r.FileDate, &r.Depth,
 				&r.RawContent, &r.CleanContent, &r.LineNumber,
-				&status, &owner, &start, &due, &priority,
+				&status, &owner, &start, &due, &priority, &shortlistRank,
 				&r.Snippet, &rank,
 			); err != nil {
 				rows.Close()
@@ -381,6 +382,12 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 			r.StartDate = start
 			r.DueDate = due
 			r.Priority = priority
+			// Shortlist (#1092): NULL stays nil (unranked); 0 is a real
+			// top rank (badge parity with the tasks query paths).
+			if shortlistRank.Valid {
+				sr := int(shortlistRank.Int64)
+				r.ShortlistRank = &sr
+			}
 			flat = append(flat, r)
 		}
 		if err := rows.Err(); err != nil {

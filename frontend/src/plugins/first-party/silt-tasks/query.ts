@@ -39,7 +39,7 @@ const TASK_DETAIL_SELECT = `SELECT b.id, b.source, b.notebook, b.section, b.page
            b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority,
            t.pinned, t.progress, t.recur AS recurrence, t.comments_count, t.links_count,
            t.created_at, t.completed_at, t.manual_order,
-           t.modified_at, t.estimate_minutes, t.subtask_total, t.subtask_done,
+           t.modified_at, t.estimate_minutes, t.shortlist_rank, t.subtask_total, t.subtask_done,
            (SELECT GROUP_CONCAT(raw_path, '|') FROM tags WHERE block_id = b.id) AS tags,
            (SELECT GROUP_CONCAT(blocked_by_id, '|') FROM task_dependencies WHERE block_id = b.id) AS blocked_by,
            EXISTS (

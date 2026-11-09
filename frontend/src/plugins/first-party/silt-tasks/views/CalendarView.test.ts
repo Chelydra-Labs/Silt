@@ -165,7 +165,8 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
 }
 
 // A row factory covering every TaskDetail field the unified query projects
-// so chip richness + drawer rendering don't hit coercion holes.
+// (shortlist_rank included) so chip richness + drawer rendering don't hit
+// coercion holes.
 function row(p: Partial<Record<string, unknown>>): Record<string, unknown> {
   return {
     id: 'r',
@@ -190,6 +191,7 @@ function row(p: Partial<Record<string, unknown>>): Record<string, unknown> {
     manual_order: 0,
     modified_at: '',
     estimate_minutes: null,
+    shortlist_rank: null,
     subtask_total: 0,
     subtask_done: 0,
     tags: '',

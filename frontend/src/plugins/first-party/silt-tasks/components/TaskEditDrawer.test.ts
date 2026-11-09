@@ -113,6 +113,7 @@ function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
     manual_order: 0,
     modified_at: '',
     estimate_minutes: null,
+    shortlist_rank: null,
     subtask_total: 0,
     subtask_done: 0,
     ...overrides

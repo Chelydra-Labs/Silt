@@ -374,6 +374,138 @@ func TestParseLine_PinAndProgress(t *testing.T) {
 	})
 }
 
+// TestParseLine_Shortlist covers the [shortlist:: N] token (#1092): rank
+// 0-3 parsing with pointer semantics (0 is a REAL top rank, nil = unranked),
+// the extraTokens verbatim fallback for out-of-range/non-integer values, and
+// the render emission order (immediately after [priority::], never omitted
+// for rank 0).
+func TestParseLine_Shortlist(t *testing.T) {
+	t.Run("ranks 0-3 parse to real pointers (0 is NOT unranked)", func(t *testing.T) {
+		for rank := 0; rank <= 3; rank++ {
+			line := fmt.Sprintf("- [ ] Focus item [shortlist:: %d] <!-- id: 11111111-1111-1111-1111-111111111111 -->", rank)
+			block, _, _ := ParseLine(line, 1, 4)
+			if block.ShortlistRank == nil {
+				t.Fatalf("[shortlist:: %d]: expected non-nil pointer, got nil", rank)
+			}
+			if *block.ShortlistRank != rank {
+				t.Errorf("[shortlist:: %d]: expected *ShortlistRank=%d, got %d", rank, rank, *block.ShortlistRank)
+			}
+			if len(block.ExtraTokens) != 0 {
+				t.Errorf("[shortlist:: %d]: expected no ExtraTokens, got %v", rank, block.ExtraTokens)
+			}
+		}
+	})
+	t.Run("absent token leaves nil pointer", func(t *testing.T) {
+		line := "- [ ] Unranked work <!-- id: 22222222-2222-2222-2222-222222222222 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.ShortlistRank != nil {
+			t.Errorf("expected nil ShortlistRank without token, got %d", *block.ShortlistRank)
+		}
+	})
+	t.Run("out-of-range and non-integer values round-trip verbatim via ExtraTokens", func(t *testing.T) {
+		// 7/4 exercise the upper-bound arm, -1 the n >= 0 arm (distinct
+		// from the Atoi error arm hit by abc and the empty value).
+		for _, token := range []string{"[shortlist:: 7]", "[shortlist:: 4]", "[shortlist:: -1]", "[shortlist:: abc]", "[shortlist::]"} {
+			line := "- [ ] Legacy line " + token + " <!-- id: 33333333-3333-3333-3333-333333333333 -->"
+			block, _, _ := ParseLine(line, 1, 4)
+			if block.ShortlistRank != nil {
+				t.Errorf("%s: expected nil ShortlistRank, got %d", token, *block.ShortlistRank)
+			}
+			if len(block.ExtraTokens) != 1 || block.ExtraTokens[0] != token {
+				t.Errorf("%s: expected verbatim ExtraTokens [%s], got %v", token, token, block.ExtraTokens)
+			}
+			// Byte-identical render round-trip: the garbage token survives.
+			rendered := renderBlock(block, 4)
+			parsed2, _, _ := ParseLine(rendered, 1, 4)
+			if len(parsed2.ExtraTokens) != 1 || parsed2.ExtraTokens[0] != token {
+				t.Errorf("%s: round-trip lost the verbatim token, got %v", token, parsed2.ExtraTokens)
+			}
+			rendered2 := renderBlock(parsed2, 4)
+			if rendered != rendered2 {
+				t.Errorf("%s: render not byte-stable:\n  %q\n  %q", token, rendered, rendered2)
+			}
+		}
+	})
+	t.Run("keys are case-insensitive", func(t *testing.T) {
+		line := "- [ ] Focus item [Shortlist:: 2] <!-- id: 66666666-6666-6666-6666-666666666666 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.ShortlistRank == nil || *block.ShortlistRank != 2 {
+			t.Errorf("expected rank 2 from [Shortlist:: 2], got %v", block.ShortlistRank)
+		}
+		if len(block.ExtraTokens) != 0 {
+			t.Errorf("expected no ExtraTokens for valid token, got %v", block.ExtraTokens)
+		}
+	})
+	t.Run("duplicate tokens — last one wins", func(t *testing.T) {
+		line := "- [ ] Focus item [shortlist:: 1] [shortlist:: 3] <!-- id: 77777777-7777-7777-7777-777777777777 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.ShortlistRank == nil || *block.ShortlistRank != 3 {
+			t.Errorf("expected last-wins rank 3, got %v", block.ShortlistRank)
+		}
+		if len(block.ExtraTokens) != 0 {
+			t.Errorf("valid duplicates must not leak into ExtraTokens, got %v", block.ExtraTokens)
+		}
+	})
+	t.Run("render emits [shortlist:: 0] for rank 0, omits for nil", func(t *testing.T) {
+		zero := 0
+		ranked := &ParsedBlock{Type: BlockTask, Status: "TODO", CleanText: "Task", ShortlistRank: &zero}
+		rendered := renderBlock(*ranked, 4)
+		if !strings.Contains(rendered, "[shortlist:: 0]") {
+			t.Errorf("expected [shortlist:: 0] in render for rank 0, got: %s", rendered)
+		}
+		unranked := &ParsedBlock{Type: BlockTask, Status: "TODO", CleanText: "Task"}
+		rendered = renderBlock(*unranked, 4)
+		if strings.Contains(rendered, "[shortlist::") {
+			t.Errorf("expected no [shortlist:: token when nil, got: %s", rendered)
+		}
+	})
+	t.Run("render emits shortlist immediately after priority", func(t *testing.T) {
+		line := "- [ ] Ranked work [priority:: 1] [shortlist:: 2] <!-- id: 44444444-4444-4444-4444-444444444444 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.Priority != 1 || block.ShortlistRank == nil || *block.ShortlistRank != 2 {
+			t.Fatalf("parse: expected priority=1 rank=2, got priority=%d rank=%v", block.Priority, block.ShortlistRank)
+		}
+		rendered := renderBlock(block, 4)
+		priIdx := strings.Index(rendered, "[priority:: 1]")
+		slIdx := strings.Index(rendered, "[shortlist:: 2]")
+		if priIdx == -1 || slIdx == -1 {
+			t.Fatalf("expected both tokens in render, got: %s", rendered)
+		}
+		if slIdx < priIdx+len("[priority:: 1]") {
+			t.Errorf("expected [shortlist::] immediately after [priority::], got: %s", rendered)
+		}
+		// Fixed order: nothing but a space between them.
+		between := rendered[priIdx+len("[priority:: 1]") : slIdx]
+		if between != " " {
+			t.Errorf("expected priority directly followed by shortlist, got %q in %s", between, rendered)
+		}
+	})
+	t.Run("round trip — parse then render then parse is stable", func(t *testing.T) {
+		line := "- [x] Ship focus [priority:: 2] [shortlist:: 1] [pin:: true] <!-- id: 55555555-5555-5555-5555-555555555555 -->"
+		parsed, _, _ := ParseLine(line, 1, 4)
+		rendered := renderBlock(parsed, 4)
+		parsed2, _, _ := ParseLine(rendered, 1, 4)
+		if parsed2.ShortlistRank == nil || *parsed2.ShortlistRank != 1 {
+			t.Errorf("round-trip ShortlistRank drift: got %v", parsed2.ShortlistRank)
+		}
+		if parsed2.Priority != parsed.Priority {
+			t.Errorf("round-trip Priority drift: %d → %d", parsed.Priority, parsed2.Priority)
+		}
+	})
+	t.Run("rank 0 double-render is byte-stable", func(t *testing.T) {
+		line := "- [ ] Top focus [shortlist:: 0] <!-- id: 88888888-8888-8888-8888-888888888888 -->"
+		parsed, _, _ := ParseLine(line, 1, 4)
+		rendered := renderBlock(parsed, 4)
+		parsed2, _, _ := ParseLine(rendered, 1, 4)
+		if parsed2.ShortlistRank == nil || *parsed2.ShortlistRank != 0 {
+			t.Fatalf("rank 0 lost in round trip: got %v", parsed2.ShortlistRank)
+		}
+		if rendered2 := renderBlock(parsed2, 4); rendered != rendered2 {
+			t.Errorf("rank 0 render not byte-stable:\n  %q\n  %q", rendered, rendered2)
+		}
+	})
+}
+
 // TestParseLine_Recurrence covers the [recur::] token (#295): detection,
 // empty-value handling, whitespace/case normalization, round-trip through
 // render, coexistence with [due::], and that a known recur token is NOT

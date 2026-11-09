@@ -194,6 +194,11 @@ describe('buildQuery — combined scope + filters (ported from silt-kanban)', ()
     expect(sql).toContain('t.subtask_total')
     expect(sql).toContain('t.subtask_done')
   })
+
+  it('includes the shortlist rank column in the SELECT (#1092)', () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx)
+    expect(sql).toContain('t.shortlist_rank')
+  })
 })
 
 // ── New: groupBy lever (ORDER BY changes) ─────────────────────────────
