@@ -1025,6 +1025,71 @@ describe('TaskMetadataSidebar', () => {
       )
     })
 
+    it('drops the queued intent when the assign fails — a failed write never auto-retries', async () => {
+      const setTaskShortlistRank = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('assign failed'))
+        .mockResolvedValue(true)
+      let releaseLookup: (v: {
+        rows: unknown[]
+        truncated: boolean
+      }) => void = () => {}
+      const sqliteQuery = vi
+        .fn()
+        .mockImplementationOnce(() => new Promise((r) => (releaseLookup = r)))
+        .mockResolvedValue({ rows: [], truncated: false })
+      render(TaskMetadataSidebar, {
+        props: {
+          task: makeTask(),
+          ctx: makeCtx({ setTaskShortlistRank, sqliteQuery })
+        }
+      })
+      const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
+      const rank2 = within(group).getByRole('radio', {
+        name: '2'
+      }) as HTMLButtonElement
+      rank2.click()
+      // Queue a newer intent (1) while the holder lookup holds the chain
+      // open; the chain's assign write then fails.
+      ;(
+        within(group).getByRole('radio', { name: '1' }) as HTMLButtonElement
+      ).click()
+      releaseLookup({ rows: [], truncated: false })
+      await flush()
+      await flush()
+
+      // The assign was attempted exactly once and failed; the queued 1 must
+      // not land as an echo of the failed chain.
+      expect(setTaskShortlistRank).toHaveBeenCalledTimes(1)
+      expect(setTaskShortlistRank).toHaveBeenCalledWith('task-1', 2)
+      expect(setTaskShortlistRank).not.toHaveBeenCalledWith('task-1', 1)
+      expect(screen.getByTestId('task-meta-error')).toHaveTextContent(
+        "Couldn't save: assign failed"
+      )
+      // Selection reverts to the committed (unranked) anchor.
+      expect(
+        within(group).getByRole('radio', { name: 'None' })
+      ).toHaveAttribute('aria-checked', 'true')
+
+      // Past the commit debounce the drop must hold — no re-armed flush
+      // commits the abandoned intent behind the user's back.
+      await new Promise((r) => setTimeout(r, 230))
+      await flush()
+      expect(setTaskShortlistRank).toHaveBeenCalledTimes(1)
+      expect(
+        within(group).getByRole('radio', { name: 'None' })
+      ).toHaveAttribute('aria-checked', 'true')
+
+      // The guard released in finally — an explicit click still commits.
+      await fireEvent.click(within(group).getByRole('radio', { name: '1' }))
+      await flush()
+      expect(setTaskShortlistRank).toHaveBeenLastCalledWith('task-1', 1)
+      expect(within(group).getByRole('radio', { name: '1' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    })
+
     it('banners and reverts when the holder lookup rejects, then still accepts input', async () => {
       const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
       const sqliteQuery = vi
