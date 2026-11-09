@@ -126,4 +126,57 @@ describe('ToastContainer (#86)', () => {
       document.body.removeChild(dialog)
     }
   })
+
+  it('dismisses notification on Escape when an inline non-modal listbox is present', async () => {
+    pushNotification({ kind: 'info', message: 'Tasks view toast' })
+    render(ToastContainer)
+
+    const listbox = document.createElement('ul')
+    listbox.setAttribute('role', 'listbox')
+    document.body.appendChild(listbox)
+
+    try {
+      await fireEvent.keyDown(window, { key: 'Escape' })
+      expect(screen.queryByText('Tasks view toast')).not.toBeInTheDocument()
+    } finally {
+      document.body.removeChild(listbox)
+    }
+  })
+
+  it('dismisses notification on Escape when a non-modal dialog (aria-modal=false) is present and unfocused', async () => {
+    pushNotification({ kind: 'info', message: 'Props open toast' })
+    render(ToastContainer)
+
+    const panel = document.createElement('div')
+    panel.setAttribute('role', 'dialog')
+    panel.setAttribute('aria-modal', 'false')
+    document.body.appendChild(panel)
+
+    try {
+      await fireEvent.keyDown(window, { key: 'Escape' })
+      expect(screen.queryByText('Props open toast')).not.toBeInTheDocument()
+    } finally {
+      document.body.removeChild(panel)
+    }
+  })
+
+  it('does not dismiss notification on Escape when focus is inside a menu or listbox', async () => {
+    pushNotification({ kind: 'info', message: 'Focused menu toast' })
+    render(ToastContainer)
+
+    const menu = document.createElement('div')
+    menu.setAttribute('role', 'menu')
+    const item = document.createElement('button')
+    item.setAttribute('role', 'menuitem')
+    menu.appendChild(item)
+    document.body.appendChild(menu)
+    item.focus()
+
+    try {
+      await fireEvent.keyDown(window, { key: 'Escape' })
+      expect(screen.getByText('Focused menu toast')).toBeInTheDocument()
+    } finally {
+      document.body.removeChild(menu)
+    }
+  })
 })

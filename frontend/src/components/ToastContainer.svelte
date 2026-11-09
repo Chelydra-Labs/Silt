@@ -31,10 +31,16 @@
   function handleWindowKeydown(e: KeyboardEvent): void {
     if (e.key !== 'Escape' || e.defaultPrevented) return
     if (notificationsState.items.length === 0) return
-    // If any modal, alertdialog, menu, or listbox overlay is open, let that surface handle Escape (#1080).
-    const activeOverlay = document.querySelector(
-      '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]'
-    )
+    // Guard against stealing Escape from active modal overlays or focused dropdown menus/listboxes (#1080):
+    // Note: non-modal docked panels (e.g. PropertiesPanel with aria-modal="false") and inline sidebar
+    // widgets (e.g. SmartLists with role="listbox") do not block Escape unless focus is actively inside them.
+    const activeOverlay =
+      document.querySelector(
+        '[aria-modal="true"], dialog[open], [data-focus-trap], [role="dialog"]:not([aria-modal="false"]), [role="alertdialog"]'
+      ) ||
+      document.activeElement?.closest(
+        '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]'
+      )
     if (activeOverlay) return
     e.preventDefault()
     const latest = notificationsState.items[notificationsState.items.length - 1]

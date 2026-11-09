@@ -51,7 +51,7 @@
         <div
           role="alert"
           aria-live="assertive"
-          class="flex w-full items-start gap-2 rounded-lg border border-status-danger/40 bg-status-danger/10 px-3 py-2 text-left text-sm text-status-danger"
+          class="flex w-full select-text items-start gap-2 rounded-lg border border-status-danger/40 bg-status-danger/10 px-3 py-2 text-left text-sm text-status-danger"
         >
           <span
             class="material-symbols-outlined mt-0.5 text-icon-md shrink-0"
@@ -66,7 +66,9 @@
             <button
               type="button"
               onclick={onRetry}
-              class="shrink-0 rounded border border-status-danger/40 bg-surface-panel px-2 py-0.5 text-xs font-semibold text-status-danger hover:bg-status-danger/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-status-danger"
+              disabled={initializing}
+              aria-busy={initializing ? 'true' : undefined}
+              class="shrink-0 rounded border border-status-danger/40 bg-surface-panel px-2 py-0.5 text-xs font-semibold text-status-danger hover:bg-status-danger/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-status-danger disabled:opacity-60 disabled:cursor-not-allowed"
             >
               Retry
             </button>

@@ -85,4 +85,19 @@ describe('Onboarding (#1080)', () => {
     await fireEvent.click(retryBtn)
     expect(onRetry).toHaveBeenCalledTimes(1)
   })
+
+  it('disables retry button and sets aria-busy when initializing', () => {
+    render(Onboarding, {
+      loading: false,
+      initialized: false,
+      initializing: true,
+      error: 'Disk failure',
+      onRetry: vi.fn(),
+      onSelectFolder: vi.fn()
+    })
+
+    const retryBtn = screen.getByRole('button', { name: 'Retry' })
+    expect(retryBtn).toBeDisabled()
+    expect(retryBtn).toHaveAttribute('aria-busy', 'true')
+  })
 })
