@@ -331,10 +331,10 @@ manifest.
 
 ### 7.3 Reserved first-party plugin ids (#240)
 
-The ids in `plugins.FirstPartyPluginIDs` (`silt-tasks`,
-`silt-attachments`) are reserved for the bundled first-party
-plugins. A `.silt-plugin` archive whose manifest `id` collides with one of
-these is **rejected at install time** with:
+The ids in `plugins.FirstPartyPluginIDs` (see `backend/plugins/first_party.go`
+for the authoritative set; e.g. `silt-tasks`, `silt-meeting`) are reserved for
+the bundled first-party plugins. A `.silt-plugin` archive whose manifest `id`
+collides with one of these is **rejected at install time** with:
 
 ```
 id "silt-tasks" is reserved for a bundled plugin

@@ -19,18 +19,19 @@ content, containing:
 - **Notes:**
 
 The caret lands on the **Subject:** line, so typing or pasting immediately
-goes inside the section. In a brand-new note (the only block was the
-`/meeting` text itself), the section replaces that emptied block and is the
-note's only content. Running `/meeting` again inserts a second section —
-there is no de-duplication.
+goes inside the section. In a brand-new note whose sole block was the emptied
+`/meeting` trigger — a note or header block — the section replaces it and is
+the note's only content (a sole emptied task/code/callout block is inserted
+above instead, matching the `/details` command's replace set). Running
+`/meeting` again inserts a second section — there is no de-duplication.
 
 ## Expanded / collapsed behavior
 
 The section is inserted **expanded** (its `open` flag is set in the document
 model, and the section's view auto-expands), with the caret on the
 **Subject:** line. Collapse and expand in-session via the section's toggle —
-each toggle flips the in-document `open` flag, so the change follows the
-normal edit/save cycle (the saved bytes are identical either way).
+the toggle flips the in-document `open` flag but is treated as view state: it
+never dirties the note, triggers no save, and leaves undo history alone.
 
 Collapse state is **ephemeral**: the on-disk file never records it (no
 `<details open>` is ever written; the file is the truth), and a section
