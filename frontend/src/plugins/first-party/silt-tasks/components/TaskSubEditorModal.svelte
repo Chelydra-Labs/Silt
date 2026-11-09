@@ -566,7 +566,6 @@
           {task}
           {ctx}
           {onMetaChanged}
-          stickyPrimary
           idPrefix="sub-editor-"
           bind:busy={sidebarBusy}
         />

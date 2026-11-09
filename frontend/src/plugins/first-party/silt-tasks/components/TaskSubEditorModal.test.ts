@@ -597,6 +597,13 @@ describe('TaskSubEditorModal — metadata sidebar (#780 / #826)', () => {
     expect(screen.getByText('Essentials')).toBeInTheDocument()
     expect(screen.getByLabelText('Owner')).toBeInTheDocument()
     expect(screen.getByTestId('task-planning-section')).toBeInTheDocument()
+
+    // Wide keeps the sticky header: it stays pinned while the aside scrolls.
+    const widePrimaryHeader = document
+      .getElementById('sub-editor-sidebar')
+      ?.querySelector('[data-testid="task-primary-header"]')
+    expect(widePrimaryHeader, 'wide primary header must render').not.toBeNull()
+    expect(widePrimaryHeader).toHaveClass('sticky')
   })
 
   it('keeps the modal open when Escape dismisses a nested metadata popover', async () => {
@@ -702,6 +709,17 @@ describe('TaskSubEditorModal — metadata sidebar (#780 / #826)', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
     expect(toggle).toHaveAttribute('aria-controls', 'sub-editor-sidebar')
     expect(screen.getByText('Status')).toBeTruthy()
+
+    // Narrow lets the header scroll: pinning it would cover most of the
+    // max-h-[40vh] pane and leave little room for metadata (#1110).
+    const narrowPrimaryHeader = document
+      .getElementById('sub-editor-sidebar')
+      ?.querySelector('[data-testid="task-primary-header"]')
+    expect(
+      narrowPrimaryHeader,
+      'narrow primary header must render'
+    ).not.toBeNull()
+    expect(narrowPrimaryHeader).not.toHaveClass('sticky')
   })
 
   it('collapses the wide sidebar via the header Details toggle (#826)', async () => {
