@@ -683,7 +683,9 @@
       // above reset it to r) so the display tells the truth and the re-arm
       // below flushes it as a fresh chain. On a failed chain the record is
       // dropped — the value already reverted to the anchor and a failed
-      // write never auto-retries.
+      // write never auto-retries. Except: an activation landing during the
+      // compensating-restore await above mirrors into the value after that
+      // revert ran, so the re-arm check below lands it as a fresh chain.
       const queuedIntent = shortlistNewestIntent
       shortlistNewestIntent = undefined
       if (
