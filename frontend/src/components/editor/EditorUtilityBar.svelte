@@ -170,7 +170,7 @@
   }
 
   .page-action .material-symbols-outlined {
-    font-size: 18px;
+    font-size: var(--text-icon-lg);
   }
 
   @container editor-utility-bar (max-width: 680px) {

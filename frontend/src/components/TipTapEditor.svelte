@@ -1432,7 +1432,7 @@
       >
         <span
           class="material-symbols-outlined"
-          style="font-size:16px"
+          style="font-size: var(--text-icon-md)"
           aria-hidden="true">format_color_reset</span
         >
       </button>
@@ -1598,14 +1598,14 @@
   }
 
   .page-link-alias-toggle .material-symbols-outlined {
-    font-size: 15px;
+    font-size: var(--text-icon-md);
   }
 
   .page-link-alias-toggle:focus-visible,
   .page-link-alias-field input:focus-visible,
   .page-link-retry button:focus-visible {
-    outline: 2px solid var(--color-accent-primary-start);
-    outline-offset: 2px;
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
   }
 
   .page-link-alias-field {
@@ -1619,7 +1619,7 @@
     min-width: 0;
     padding: 5px 7px;
     border: 1px solid var(--color-surface-popover-border);
-    border-radius: 5px;
+    border-radius: var(--radius-sm, 6px);
     background: var(--color-surface-raised, var(--color-surface-popover));
     color: var(--color-text-primary);
     font: inherit;
@@ -1641,7 +1641,7 @@
 
   .tiptap-editor-host .conflict-hold-notice {
     margin: 0 0 8px;
-    font-size: 0.78rem;
+    font-size: var(--text-type-xs);
     color: var(--color-status-warning, #b8860b);
   }
 
@@ -1667,7 +1667,7 @@
     z-index: 100;
     margin-top: 4px;
     padding: 4px;
-    border-radius: 8px;
+    border-radius: var(--radius-md, 8px);
     background: var(--color-surface-popover);
     border: 1px solid var(--color-surface-popover-border);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
@@ -1677,15 +1677,18 @@
     width: 240px;
     padding: 4px 8px;
     border: 1px solid var(--color-surface-popover-border);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     background: var(--color-surface-popover);
     color: var(--color-text-primary);
-    font-size: 0.8rem;
+    font-size: var(--text-type-sm);
     outline: none;
   }
 
-  .link-input:focus {
-    border-color: var(--color-accent-primary-glow);
+  .link-input:focus,
+  .link-input:focus-visible {
+    border-color: var(--color-border-focus);
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
   }
 
   .color-picker-popover {
