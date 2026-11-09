@@ -201,7 +201,12 @@ export function createBoardDndController({
     const sort = getSort()
     const dndEnabled = isDndEnabled()
     if (!dndEnabled) return
-    if (groupBy !== 'tag' && toCol.key === fromColKey) return
+    // Same-column no-op; tag columns are the one exception (a same-tag drop
+    // re-sets the idempotent tag and re-tails the manual token) — except
+    // under the shortlist lens, where rank leads the lane and that re-tail
+    // would be invisible until the lens lifts (see the card-level gate).
+    if ((groupBy !== 'tag' || getShortlistFirst()) && toCol.key === fromColKey)
+      return
     if (groupBy === 'tag' && !toCol.value) {
       liveMessage =
         "No Tag column doesn't remove tags — drop on a tag column to add."

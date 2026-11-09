@@ -2098,4 +2098,47 @@ describe('BoardView — shortlist rank order (#1092)', () => {
     expect(mocks.updateBlockState).not.toHaveBeenCalled()
     expect(laneCardIds('To Do')).toEqual(['u0', 'p3'])
   })
+
+  it('sort=manual + lens on: tag same-column drop writes nothing (no silent re-tail)', async () => {
+    await renderBoardWithSort('tag', 'manual', [
+      row({
+        id: 'g0',
+        tags: 'alpha',
+        shortlist_rank: 0,
+        manual_order: 1,
+        clean_content: 'G0'
+      }),
+      row({
+        id: 'g3',
+        tags: 'alpha',
+        shortlist_rank: 3,
+        manual_order: 2,
+        clean_content: 'G3'
+      })
+    ])
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    await flush()
+    // Rank leads the lane while the filter is the active lens.
+    expect(laneCardIds('alpha')).toEqual(['g0', 'g3'])
+
+    // Same-tag drop under the lens: the card-level gate returns early so
+    // the drop bubbles to the lane handler — the one path that still let a
+    // manual re-tail through. No visible move can be expressed while rank
+    // leads, so nothing may be written and the lane keeps its rank order.
+    await fireEvent.dragStart(cardByText('G0'))
+    await fireEvent.drop(cardByText('G3'))
+    await flush()
+
+    expect(mocks.setTaskOrders).not.toHaveBeenCalled()
+    expect(mocks.setTaskOrder).not.toHaveBeenCalled()
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    expect(mocks.setTaskTags).not.toHaveBeenCalled()
+    expect(laneCardIds('alpha')).toEqual(['g0', 'g3'])
+  })
 })
