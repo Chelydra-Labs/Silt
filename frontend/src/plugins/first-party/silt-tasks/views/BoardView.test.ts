@@ -89,6 +89,7 @@ const mocks = vi.hoisted(() => ({
   setTaskOrder: vi.fn(),
   setTaskOrders: vi.fn(),
   createTask: vi.fn().mockResolvedValue('new-task-id'),
+  updateTaskMeta: vi.fn().mockResolvedValue(true),
   getTaskBlockers: vi.fn().mockResolvedValue([]),
   updatePluginSetting: vi.fn().mockResolvedValue(true),
   notify: vi.fn().mockResolvedValue(true),
@@ -127,6 +128,14 @@ import type {
   PluginEventName,
   PluginEventPayload
 } from '../../../sdk'
+import { sortTasks } from '../taskOrder'
+
+// Wrap (not replace) the shared comparator so the sort-only rebin test can
+// prove the client re-sort ran while the re-query was still pending.
+vi.mock('../taskOrder', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../taskOrder')>()
+  return { ...actual, sortTasks: vi.fn(actual.sortTasks) }
+})
 import { v2CtxStubs } from '../../../test-helpers'
 import {
   getTaskHubState,
@@ -152,7 +161,6 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     sqliteQuery: mocks.sqliteQuery,
     mutateBlock: vi.fn(),
     updateBlockState: mocks.updateBlockState,
-    updateTaskMeta: vi.fn(),
     setTaskOwner: mocks.setTaskOwner,
     setTaskPriority: mocks.setTaskPriority,
     setTaskDueDate: mocks.setTaskDueDate,
@@ -160,6 +168,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     setTaskOrder: mocks.setTaskOrder,
     setTaskOrders: mocks.setTaskOrders,
     createTask: mocks.createTask,
+    updateTaskMeta: mocks.updateTaskMeta,
     getTaskBlockers: mocks.getTaskBlockers,
     getPluginSettings: vi.fn(() => Promise.resolve(mocks.tasksSettings)),
     updatePluginSetting: mocks.updatePluginSetting,
@@ -222,6 +231,14 @@ async function flush() {
   await new Promise((r) => setTimeout(r, 0))
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((r) => {
+    resolve = r
+  })
+  return { promise, resolve }
+}
+
 // Locate a rendered card by its clean_content. Within-column manual
 // reorders reshuffle DOM order, so position-based lookups (cards[N]) are
 // unstable across an optimistic update; text lookup stays correct.
@@ -229,6 +246,15 @@ function cardByText(text: string): HTMLElement {
   return Array.from(document.querySelectorAll<HTMLElement>('[data-card]')).find(
     (c) => c.textContent?.includes(text)
   )!
+}
+
+/** Rendered card ids inside a lane, in DOM (display) order. */
+function laneCardIds(label: string): string[] {
+  return Array.from(
+    screen
+      .getByRole('group', { name: label })
+      .querySelectorAll<HTMLElement>('[data-card]')
+  ).map((c) => c.dataset.card ?? '')
 }
 
 async function renderBoard(
@@ -280,6 +306,7 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     mocks.setTaskOrder.mockReset().mockResolvedValue(true)
     mocks.setTaskOrders.mockReset().mockResolvedValue(true)
     mocks.createTask.mockReset().mockResolvedValue('new-task-id')
+    mocks.updateTaskMeta.mockReset().mockResolvedValue(true)
     mocks.getTaskBlockers.mockReset().mockResolvedValue([])
     mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
     mocks.notify.mockReset().mockResolvedValue(true)
@@ -987,6 +1014,146 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     expect(mocks.setTaskOrder).not.toHaveBeenCalled()
   })
 
+  it('sort=manual: dropping a pinned card into the unpinned block announces the pin boundary', async () => {
+    await renderBoardWithSort('status', 'manual', [
+      row({
+        id: 'p1',
+        status: 'TODO',
+        pinned: 1,
+        manual_order: 1,
+        clean_content: 'Pinned'
+      }),
+      row({
+        id: 'u1',
+        status: 'TODO',
+        manual_order: 1,
+        clean_content: 'Unpinned'
+      })
+    ])
+
+    expect(laneCardIds('To Do')).toEqual(['p1', 'u1'])
+    await fireEvent.dragStart(cardByText('Pinned'))
+    await fireEvent.drop(cardByText('Unpinned'))
+    await flush()
+
+    // The pin boundary swallows the drop: no order write, card snaps back.
+    expect(mocks.setTaskOrders).not.toHaveBeenCalled()
+    expect(laneCardIds('To Do')).toEqual(['p1', 'u1'])
+    // ...but the no-op is explained to assistive tech.
+    expect(
+      screen.getByText('Pinned tasks stay at the top of To Do.')
+    ).toBeInTheDocument()
+  })
+
+  it('sort=manual: dropping an unpinned card into the pinned block announces the pin boundary', async () => {
+    await renderBoardWithSort('status', 'manual', [
+      row({
+        id: 'p1',
+        status: 'TODO',
+        pinned: 1,
+        manual_order: 1,
+        clean_content: 'Pinned'
+      }),
+      row({
+        id: 'u1',
+        status: 'TODO',
+        manual_order: 1,
+        clean_content: 'Unpinned'
+      })
+    ])
+
+    expect(laneCardIds('To Do')).toEqual(['p1', 'u1'])
+    await fireEvent.dragStart(cardByText('Unpinned'))
+    await fireEvent.drop(cardByText('Pinned'))
+    await flush()
+
+    expect(mocks.setTaskOrders).not.toHaveBeenCalled()
+    expect(laneCardIds('To Do')).toEqual(['p1', 'u1'])
+    expect(
+      screen.getByText('Unpinned tasks stay below pinned tasks in To Do.')
+    ).toBeInTheDocument()
+  })
+
+  it('sort=manual: reordering unpinned cards leaves a pinned sibling’s order token untouched', async () => {
+    await renderBoardWithSort('status', 'manual', [
+      row({
+        id: 'p1',
+        status: 'TODO',
+        pinned: 1,
+        manual_order: 5,
+        clean_content: 'Pinned'
+      }),
+      row({
+        id: 'a1',
+        status: 'TODO',
+        manual_order: 1,
+        clean_content: 'Apple'
+      }),
+      row({
+        id: 'b1',
+        status: 'TODO',
+        manual_order: 2,
+        clean_content: 'Banana'
+      })
+    ])
+
+    // Pin-first display: [p1(5), a1(1), b1(2)]. Drag Banana before Apple.
+    expect(laneCardIds('To Do')).toEqual(['p1', 'a1', 'b1'])
+    await fireEvent.dragStart(cardByText('Banana'))
+    await fireEvent.drop(cardByText('Apple'))
+    await flush()
+
+    // Renumber stays inside the unpinned partition: b1=1, a1=2. The pinned
+    // card keeps its token (5), so an unrelated drag can't lose its saved
+    // manual position for a later unpin.
+    expect(mocks.setTaskOrders).toHaveBeenCalledTimes(1)
+    const batch = mocks.setTaskOrders.mock.calls[0]![0] as {
+      id: string
+      order: number
+    }[]
+    expect(batch).toEqual(
+      expect.arrayContaining([
+        { id: 'b1', order: 1 },
+        { id: 'a1', order: 2 }
+      ])
+    )
+    expect(batch.some((x) => x.id === 'p1')).toBe(false)
+    expect(laneCardIds('To Do')).toEqual(['p1', 'b1', 'a1'])
+
+    // Unpin p1: the reload reports its untouched order 5, which lands after
+    // the renumbered unpinned pair rather than at the front.
+    await fireEvent.click(screen.getByTestId('tasks-pin-p1'))
+    await flush()
+    expect(mocks.updateTaskMeta).toHaveBeenCalledWith('p1', { pinned: false })
+    mocks.sqliteQuery.mockResolvedValue({
+      rows: [
+        row({
+          id: 'p1',
+          status: 'TODO',
+          manual_order: 5,
+          clean_content: 'Pinned'
+        }),
+        row({
+          id: 'a1',
+          status: 'TODO',
+          manual_order: 2,
+          clean_content: 'Apple'
+        }),
+        row({
+          id: 'b1',
+          status: 'TODO',
+          manual_order: 1,
+          clean_content: 'Banana'
+        })
+      ],
+      truncated: false
+    })
+    mocks.blockChangedCallbacks.forEach((cb) => cb())
+    await new Promise((r) => setTimeout(r, 120))
+    await flush()
+    expect(laneCardIds('To Do')).toEqual(['b1', 'a1', 'p1'])
+  })
+
   it('sort=manual: cross-column drop assigns the destination tail order (N+1)', async () => {
     await renderBoardWithSort('status', 'manual', [
       row({ id: 't1', status: 'TODO', clean_content: 'A', manual_order: 1 }),
@@ -1528,6 +1695,221 @@ describe('BoardView — dimension-aware Board (#421)', () => {
       expect.objectContaining({ title: 'New over limit', status: 'TODO' })
     )
   })
+
+  // --- Pin toggle --------------------------------------------------------
+
+  it('toggling an open card pin writes pinned:true and does not open the drawer', async () => {
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', clean_content: 'A' })
+    ])
+
+    await fireEvent.click(screen.getByTestId('tasks-pin-t1'))
+    await flush()
+
+    expect(mocks.updateTaskMeta).toHaveBeenCalledWith('t1', { pinned: true })
+    // Pin is display ordering only: no status/group/manual-order write.
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    expect(mocks.setTaskOrder).not.toHaveBeenCalled()
+    expect(mocks.setTaskOrders).not.toHaveBeenCalled()
+    expect(screen.getByTestId('tasks-board-live-message')).toHaveTextContent(
+      'Task pinned'
+    )
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(
+      document.querySelector('[data-card="t1"]')?.getAttribute('aria-current')
+    ).toBeNull()
+  })
+
+  it('renders pinned cards before unpinned cards within their column', async () => {
+    await renderBoard('status', [
+      row({ id: 'u1', status: 'TODO', clean_content: 'Unpinned' }),
+      row({ id: 'p1', status: 'TODO', pinned: 1, clean_content: 'Pinned' })
+    ])
+
+    expect(laneCardIds('To Do')).toEqual(['p1', 'u1'])
+  })
+
+  it('keeps the pinned card first after a groupBy-only rebin', async () => {
+    await renderBoard('status', [
+      row({ id: 'u1', status: 'TODO', priority: 2, clean_content: 'Unpinned' }),
+      row({
+        id: 'p1',
+        status: 'TODO',
+        priority: 2,
+        pinned: 1,
+        clean_content: 'Pinned'
+      })
+    ])
+
+    setGroupBy('priority')
+    await flush()
+    expect(laneCardIds('Normal')).toEqual(['p1', 'u1'])
+
+    setGroupBy('none')
+    await flush()
+    expect(laneCardIds('All Tasks')).toEqual(['p1', 'u1'])
+  })
+
+  it('unpin restores the sorted position after the reload lands', async () => {
+    resetTaskHubState()
+    setGroupBy('status')
+    setSort('title')
+    mocks.sqliteQuery.mockReset()
+    const pinnedRows = [
+      row({ id: 'z1', status: 'TODO', pinned: 1, clean_content: 'Zebra' }),
+      row({ id: 'a1', status: 'TODO', clean_content: 'Apple' })
+    ]
+    mocks.sqliteQuery.mockResolvedValue({ rows: pinnedRows, truncated: false })
+    render(BoardView, { ctx: makeCtx(), onCountChange: vi.fn() })
+    await flush()
+    expect(laneCardIds('To Do')).toEqual(['z1', 'a1'])
+
+    await fireEvent.click(screen.getByTestId('tasks-pin-z1'))
+    await flush()
+    expect(mocks.updateTaskMeta).toHaveBeenCalledWith('z1', { pinned: false })
+
+    // The mocked write fires no block:changed; hand the view the persisted
+    // row set the real SDK would push after the file write.
+    mocks.sqliteQuery.mockResolvedValue({
+      rows: [
+        row({ id: 'z1', status: 'TODO', clean_content: 'Zebra' }),
+        row(pinnedRows[1])
+      ],
+      truncated: false
+    })
+    mocks.blockChangedCallbacks.forEach((cb) => cb())
+    await new Promise((r) => setTimeout(r, 120))
+    await flush()
+
+    expect(laneCardIds('To Do')).toEqual(['a1', 'z1'])
+  })
+
+  it('DONE cards render no pin toggle', async () => {
+    await renderBoard('status', [
+      row({ id: 'd1', status: 'DONE', clean_content: 'Done task' })
+    ])
+
+    expect(screen.queryByTestId('tasks-pin-d1')).toBeNull()
+  })
+
+  it('a pinned completed card leads its lane but renders no pin toggle', async () => {
+    // Pin is the primary sort key in every lane, so a DONE card that was
+    // pinned before completion still leads. It keeps no control or glyph.
+    await renderBoard('status', [
+      row({ id: 'u1', status: 'DONE', clean_content: 'Unpinned done' }),
+      row({ id: 'p1', status: 'DONE', pinned: 1, clean_content: 'Pinned done' })
+    ])
+
+    expect(laneCardIds('Done')).toEqual(['p1', 'u1'])
+    expect(screen.queryByTestId('tasks-pin-p1')).toBeNull()
+    expect(screen.queryByTestId('tasks-pin-u1')).toBeNull()
+  })
+
+  it('Enter/Space on the pin toggle does not select the card or open the drawer', async () => {
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', clean_content: 'A' })
+    ])
+    const pin = screen.getByTestId('tasks-pin-t1')
+    pin.focus()
+
+    // The pin is a sibling of the card, so the card's keydown handler never
+    // sees these events; the event's outcome still matches the AC. The
+    // onCardKeydown target guard is defence-in-depth for future nesting.
+    for (const key of ['Enter', ' ']) {
+      await fireEvent.keyDown(pin, { key })
+    }
+    await flush()
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(
+      document.querySelector('[data-card="t1"]')?.getAttribute('aria-current')
+    ).toBeNull()
+    expect(document.activeElement).toBe(pin)
+  })
+
+  it('a failed pin write surfaces the banner and reverts the icon', async () => {
+    mocks.updateTaskMeta.mockRejectedValueOnce(new Error('lock held'))
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', clean_content: 'A' })
+    ])
+    const pin = screen.getByTestId('tasks-pin-t1')
+
+    await fireEvent.click(pin)
+    await flush()
+
+    expect(screen.getByTestId('tasks-pin-error')).toHaveTextContent(
+      "Couldn't update pin: lock held"
+    )
+    expect(pin).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('restores pin focus across two rapid toggles on the same card', async () => {
+    const originalFocus = HTMLElement.prototype.focus
+    const focusCalls: Array<{ testId: string | null; disabled: boolean }> = []
+    const focusSpy = vi
+      .spyOn(HTMLElement.prototype, 'focus')
+      .mockImplementation(function (this: HTMLElement) {
+        // Record the state at call time: jsdom's native focus() silently
+        // ignores a disabled element, so the suite would otherwise miss it.
+        focusCalls.push({
+          testId: this.getAttribute('data-testid'),
+          disabled: (this as HTMLButtonElement).disabled
+        })
+        return originalFocus.call(this)
+      })
+    try {
+      await renderBoard('status', [
+        row({ id: 't1', status: 'TODO', clean_content: 'A' })
+      ])
+      focusCalls.length = 0
+
+      const settle = async () => {
+        await flush()
+        await new Promise((r) => setTimeout(r, 20))
+        await flush()
+      }
+
+      await fireEvent.click(screen.getByTestId('tasks-pin-t1'))
+      await settle()
+      // Second toggle inside the 1.5 s expiry window — the id is unchanged,
+      // so a bare-string token would suppress the refocus.
+      await fireEvent.click(screen.getByTestId('tasks-pin-t1'))
+      await settle()
+
+      const pinFocus = focusCalls.filter((c) => c.testId === 'tasks-pin-t1')
+      expect(pinFocus).toHaveLength(2)
+      expect(pinFocus.every((c) => !c.disabled)).toBe(true)
+    } finally {
+      focusSpy.mockRestore()
+    }
+  })
+
+  it('re-sorts existing lanes on a sort-only change before the reload lands', async () => {
+    const initialRows = [
+      row({ id: 'b1', status: 'TODO', priority: 1, clean_content: 'Bravo' }),
+      row({ id: 'a1', status: 'TODO', priority: 3, clean_content: 'Alpha' })
+    ]
+    await renderBoardWithSort('status', 'title', initialRows)
+    expect(laneCardIds('To Do')).toEqual(['a1', 'b1'])
+    vi.mocked(sortTasks).mockClear()
+
+    const pending = deferred<{ rows: unknown[]; truncated: boolean }>()
+    mocks.sqliteQuery.mockReset()
+    mocks.sqliteQuery.mockReturnValue(pending.promise)
+
+    setSort('priority')
+    await flush()
+
+    // The reactive rebin re-sorted the loaded lanes even though the re-query
+    // has not landed; the reload returns the same rows, so it cannot be the
+    // source of the new order.
+    expect(sortTasks).toHaveBeenCalledWith('priority', expect.anything())
+
+    pending.resolve({ rows: initialRows, truncated: false })
+    await flush()
+
+    expect(laneCardIds('To Do')).toEqual(['b1', 'a1'])
+  })
 })
 
 // The block:changed debounce was extracted into useBlockChangedReload during
@@ -1547,6 +1929,7 @@ describe('BoardView — block:changed debounced reload', () => {
     mocks.setTaskOrder.mockReset().mockResolvedValue(true)
     mocks.setTaskOrders.mockReset().mockResolvedValue(true)
     mocks.createTask.mockReset().mockResolvedValue('new-task-id')
+    mocks.updateTaskMeta.mockReset().mockResolvedValue(true)
     mocks.getTaskBlockers.mockReset().mockResolvedValue([])
     mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
     mocks.notify.mockReset().mockResolvedValue(true)

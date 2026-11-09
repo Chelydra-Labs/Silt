@@ -4,7 +4,7 @@
 
   interface Props {
     pinned: boolean
-    onToggle: (next: boolean) => Promise<unknown>
+    onToggle: (next: boolean) => Promise<unknown> | void
     /** Receives the friendly failure message; '' clears it at commit start. */
     onError?: (message: string) => void
     disabled?: boolean
@@ -24,7 +24,9 @@
 
   const pinField = optimisticField<boolean>({
     initial: untrack(() => pinned),
-    write: (next) => onToggle(next),
+    // Adopt a returned promise so a failed host write still reverts; a
+    // synchronous host callback resolves immediately.
+    write: (next) => Promise.resolve(onToggle(next)),
     onError: (message) => onError?.(message)
   })
 

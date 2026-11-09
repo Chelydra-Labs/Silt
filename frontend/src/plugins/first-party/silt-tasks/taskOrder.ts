@@ -11,7 +11,9 @@ export function compareTasks(
   a: TaskDetail,
   b: TaskDetail
 ): number {
-  // Callers pass open rows only, so a pinned DONE task never reaches here.
+  // Pin leads unconditionally: Board lanes include completed rows and their
+  // pin token still sorts first (they show no control/glyph); List's
+  // completed path bypasses this comparator via file_date ordering.
   if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
   switch (sort) {
     case 'manual': {

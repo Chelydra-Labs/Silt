@@ -173,10 +173,10 @@ describe('buildQuery — combined scope + filters (ported from silt-kanban)', ()
     expect(params).toEqual(['Work', 'Alice', 2, '2026-06-22'])
   })
 
-  it('always includes the priority + due_date ORDER BY by default', () => {
+  it('always includes the pin-first priority + due_date ORDER BY by default', () => {
     const { sql } = buildQuery('vault', emptyFilters, ctx)
     expect(sql).toContain(
-      "ORDER BY t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC"
+      "ORDER BY CASE WHEN t.pinned = 1 THEN 0 ELSE 1 END, t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC"
     )
   })
 
@@ -199,12 +199,12 @@ describe('buildQuery — combined scope + filters (ported from silt-kanban)', ()
 // ── New: groupBy lever (ORDER BY changes) ─────────────────────────────
 
 describe('buildQuery — groupBy lever (new in #419)', () => {
-  it("groupBy='none' keeps the legacy priority-first ORDER BY", () => {
+  it("groupBy='none' keeps the legacy priority-first ORDER BY (pin-first)", () => {
     const { sql } = buildQuery('vault', emptyFilters, ctx, {
       groupBy: 'none'
     })
     expect(sql).toContain(
-      "ORDER BY t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC"
+      "ORDER BY CASE WHEN t.pinned = 1 THEN 0 ELSE 1 END, t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC"
     )
   })
 
@@ -216,36 +216,44 @@ describe('buildQuery — groupBy lever (new in #419)', () => {
     expect(without).toBe(withExplicit)
   })
 
-  it("groupBy='priority' keeps the legacy priority-first ORDER BY", () => {
+  it("groupBy='priority' keeps the legacy priority-first ORDER BY (pin-first)", () => {
     const { sql } = buildQuery('vault', emptyFilters, ctx, {
       groupBy: 'priority'
     })
     expect(sql).toContain(
-      "ORDER BY t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC"
+      "ORDER BY CASE WHEN t.pinned = 1 THEN 0 ELSE 1 END, t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC"
     )
   })
 
-  it("groupBy='status' sorts by status first", () => {
+  it("groupBy='status' sorts by status first, then pin-first within groups", () => {
     const { sql } = buildQuery('vault', emptyFilters, ctx, {
       groupBy: 'status'
     })
-    expect(sql).toContain('ORDER BY t.status ASC,')
-    // Tiebreaker still present.
-    expect(sql).toContain('COALESCE(t.due_date')
+    expect(sql).toContain(
+      'ORDER BY t.status ASC, CASE WHEN t.pinned = 1 THEN 0 ELSE 1 END,'
+    )
+    // Tiebreaker still present after the pin term.
+    expect(sql).toMatch(
+      /CASE WHEN t\.pinned = 1 THEN 0 ELSE 1 END, COALESCE\(t\.due_date/
+    )
   })
 
-  it("groupBy='owner' sorts by owner first", () => {
+  it("groupBy='owner' sorts by owner first, then pin-first within groups", () => {
     const { sql } = buildQuery('vault', emptyFilters, ctx, {
       groupBy: 'owner'
     })
-    expect(sql).toContain('ORDER BY t.owner ASC,')
+    expect(sql).toContain(
+      'ORDER BY t.owner ASC, CASE WHEN t.pinned = 1 THEN 0 ELSE 1 END,'
+    )
   })
 
-  it("groupBy='dueDate' promotes due date to the leading sort key", () => {
+  it("groupBy='dueDate' promotes due date to the leading sort key after the pin key", () => {
     const { sql } = buildQuery('vault', emptyFilters, ctx, {
       groupBy: 'dueDate'
     })
-    expect(sql).toContain('ORDER BY COALESCE(t.due_date')
+    expect(sql).toContain(
+      'ORDER BY CASE WHEN t.pinned = 1 THEN 0 ELSE 1 END, COALESCE(t.due_date'
+    )
     // The legacy priority-first order is NOT used.
     expect(sql).not.toContain('ORDER BY t.priority ASC,')
   })
@@ -310,11 +318,11 @@ describe('buildQuery — window lever (new in #419)', () => {
 
 describe('buildQuery — tag/notebook/section/page groupBy shares the legacy ORDER BY', () => {
   it.each(['tag', 'notebook', 'section', 'page'] as const)(
-    "groupBy='%s' falls through to the priority-first ORDER BY (client-side binning)",
+    "groupBy='%s' falls through to the pin-first priority ORDER BY (client-side binning)",
     (g) => {
       const { sql } = buildQuery('vault', emptyFilters, ctx, { groupBy: g })
       expect(sql).toContain(
-        "ORDER BY t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC"
+        "ORDER BY CASE WHEN t.pinned = 1 THEN 0 ELSE 1 END, t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC"
       )
     }
   )
@@ -331,18 +339,22 @@ describe('buildQuery — sort lever (new in #423)', () => {
     expect(sql).toContain('t.manual_order ASC')
   })
 
-  it("sort='priority' promotes priority to the leading key", () => {
+  it("sort='priority' promotes priority to the leading key after pin", () => {
     const { sql } = buildQuery('vault', emptyFilters, ctx, {
       sort: 'priority'
     })
-    expect(sql).toContain('ORDER BY t.priority ASC,')
+    expect(sql).toContain(
+      'ORDER BY CASE WHEN t.pinned = 1 THEN 0 ELSE 1 END, t.priority ASC,'
+    )
   })
 
-  it("sort='title' orders by clean_content", () => {
+  it("sort='title' orders by clean_content after pin", () => {
     const { sql } = buildQuery('vault', emptyFilters, ctx, {
       sort: 'title'
     })
-    expect(sql).toContain('ORDER BY b.clean_content ASC')
+    expect(sql).toContain(
+      'ORDER BY CASE WHEN t.pinned = 1 THEN 0 ELSE 1 END, b.clean_content ASC'
+    )
   })
 
   it("sort='created' pushes empty created_at to the bottom via CASE WHEN", () => {
@@ -361,11 +373,13 @@ describe('buildQuery — sort lever (new in #423)', () => {
     expect(sql).toContain("COALESCE(NULLIF(t.owner, ''), '~')")
   })
 
-  it("sort='dueDate' is the canonical tiebreaker-only ORDER BY", () => {
+  it("sort='dueDate' is the canonical tiebreaker-only ORDER BY after pin", () => {
     const { sql } = buildQuery('vault', emptyFilters, ctx, {
       sort: 'dueDate'
     })
-    expect(sql).toContain('ORDER BY COALESCE(t.due_date')
+    expect(sql).toContain(
+      'ORDER BY CASE WHEN t.pinned = 1 THEN 0 ELSE 1 END, COALESCE(t.due_date'
+    )
     expect(sql).not.toContain('ORDER BY t.priority ASC,')
   })
 
@@ -416,6 +430,66 @@ describe('buildQuery — sort lever (new in #423)', () => {
       'CASE WHEN t.estimate_minutes IS NULL THEN 1 ELSE 0 END'
     )
     expect(sql).toContain('t.estimate_minutes ASC')
+  })
+})
+
+// ── New: pin-first ordering (#1091) ───────────────────────────────────
+
+describe('buildQuery — pin-first ordering (#1091)', () => {
+  const PIN = 'CASE WHEN t.pinned = 1 THEN 0 ELSE 1 END'
+
+  it.each([
+    'manual',
+    'priority',
+    'title',
+    'created',
+    'owner',
+    'modified',
+    'estimate',
+    'dueDate'
+  ] as const)(
+    "sort='%s' leads its within-group clause with the pin key",
+    (s) => {
+      const { sql } = buildQuery('vault', emptyFilters, ctx, { sort: s })
+      const orderBy = sql.slice(sql.indexOf('ORDER BY'))
+      expect(orderBy.startsWith(`ORDER BY ${PIN},`)).toBe(true)
+    }
+  )
+
+  it('keeps status as the leading key, then pin, then the sort key', () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      groupBy: 'status',
+      sort: 'title'
+    })
+    const orderBy = sql.slice(sql.indexOf('ORDER BY'))
+    expect(orderBy).toContain(
+      `ORDER BY t.status ASC, ${PIN}, b.clean_content ASC`
+    )
+    expect(orderBy.indexOf('t.status')).toBeLessThan(orderBy.indexOf(PIN))
+    expect(orderBy.indexOf(PIN)).toBeLessThan(
+      orderBy.indexOf('b.clean_content')
+    )
+  })
+
+  it('keeps owner as the leading key, then pin, then the sort key', () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      groupBy: 'owner',
+      sort: 'priority'
+    })
+    const orderBy = sql.slice(sql.indexOf('ORDER BY'))
+    expect(orderBy.indexOf('t.owner')).toBeLessThan(orderBy.indexOf(PIN))
+    expect(orderBy.indexOf(PIN)).toBeLessThan(orderBy.indexOf('t.priority ASC'))
+  })
+
+  it("groupBy='dueDate' keeps COALESCE(t.due_date after the pin key", () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      groupBy: 'dueDate',
+      sort: 'dueDate'
+    })
+    const orderBy = sql.slice(sql.indexOf('ORDER BY'))
+    expect(orderBy.indexOf(PIN)).toBeLessThan(
+      orderBy.indexOf('COALESCE(t.due_date')
+    )
   })
 })
 

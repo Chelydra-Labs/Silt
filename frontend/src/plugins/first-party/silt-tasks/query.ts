@@ -144,10 +144,19 @@ function inClause(column: string, values: unknown[]): string {
 }
 
 /**
+ * Pin-first primary key (#1091). `t.pinned` is a tri-state cache column —
+ * only 1 counts as pinned, so NULL (unmigrated/no token) sorts with unpinned.
+ * Composed after a status/owner group key (groups stay contiguous) and ahead
+ * of the within-group key (pinned rows lead each subset).
+ */
+const PIN_FIRST = 'CASE WHEN t.pinned = 1 THEN 0 ELSE 1 END'
+
+/**
  * The ORDER BY clause for a given groupBy. Each clause puts the grouping
- * column first (so equal values are contiguous) and falls back to the
- * canonical priority-then-due-date tiebreaker so within-group order is
- * stable and matches the legacy board when groupBy is 'none'/'priority'.
+ * column first (so equal values are contiguous), then the pin-first key, then
+ * falls back to the canonical priority-then-due-date tiebreaker so
+ * within-group order is stable and matches the legacy board when groupBy is
+ * 'none'/'priority'.
  *
  * 'priority' intentionally shares the 'none' clause — the legacy order
  * already sorts by priority first, so grouping by priority is a no-op
@@ -164,11 +173,11 @@ function orderByFor(groupBy: GroupBy | undefined): string {
   const tiebreaker = "COALESCE(t.due_date, '9999-12-31') ASC, t.priority ASC"
   switch (groupBy) {
     case 'status':
-      return ` ORDER BY t.status ASC, ${tiebreaker}`
+      return ` ORDER BY t.status ASC, ${PIN_FIRST}, ${tiebreaker}`
     case 'owner':
-      return ` ORDER BY t.owner ASC, ${tiebreaker}`
+      return ` ORDER BY t.owner ASC, ${PIN_FIRST}, ${tiebreaker}`
     case 'dueDate':
-      return ` ORDER BY ${tiebreaker}`
+      return ` ORDER BY ${PIN_FIRST}, ${tiebreaker}`
     case 'priority':
     case 'none':
     case 'tag':
@@ -177,14 +186,15 @@ function orderByFor(groupBy: GroupBy | undefined): string {
     case 'page':
     default:
       // Legacy Kanban order: priority first, due date as tiebreaker.
-      return ` ORDER BY t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC`
+      return ` ORDER BY ${PIN_FIRST}, t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC`
   }
 }
 
 /**
- * The within-group ORDER BY clause for a given SortMode. Always ends with
- * the canonical tiebreaker (due date then priority) so equal-primary-key
- * rows stay in a deterministic order.
+ * The within-group ORDER BY clause for a given SortMode. Leads with the
+ * pin-first key so pinned rows precede unpinned ones inside every group, and
+ * always ends with the canonical tiebreaker (due date then priority) so
+ * equal-primary-key rows stay in a deterministic order.
  *
  * SQLite has no NULLS LAST syntax; the CASE WHEN ... THEN 1 ELSE 0 trick
  * emulates it for manual_order, and COALESCE/NULLIF push empty-string
@@ -195,24 +205,24 @@ function sortClauseFor(sort: SortMode): string {
   const tiebreaker = "COALESCE(t.due_date, '9999-12-31') ASC, t.priority ASC"
   switch (sort) {
     case 'manual':
-      return ` ORDER BY CASE WHEN t.manual_order IS NULL THEN 1 ELSE 0 END, t.manual_order ASC, ${tiebreaker}`
+      return ` ORDER BY ${PIN_FIRST}, CASE WHEN t.manual_order IS NULL THEN 1 ELSE 0 END, t.manual_order ASC, ${tiebreaker}`
     case 'priority':
-      return ` ORDER BY t.priority ASC, ${tiebreaker}`
+      return ` ORDER BY ${PIN_FIRST}, t.priority ASC, ${tiebreaker}`
     case 'title':
-      return ` ORDER BY b.clean_content ASC, ${tiebreaker}`
+      return ` ORDER BY ${PIN_FIRST}, b.clean_content ASC, ${tiebreaker}`
     case 'created':
-      return ` ORDER BY CASE WHEN t.created_at IS NULL OR t.created_at = '' THEN '9999' ELSE t.created_at END ASC, ${tiebreaker}`
+      return ` ORDER BY ${PIN_FIRST}, CASE WHEN t.created_at IS NULL OR t.created_at = '' THEN '9999' ELSE t.created_at END ASC, ${tiebreaker}`
     case 'owner':
-      return ` ORDER BY COALESCE(NULLIF(t.owner, ''), '~') ASC, ${tiebreaker}`
+      return ` ORDER BY ${PIN_FIRST}, COALESCE(NULLIF(t.owner, ''), '~') ASC, ${tiebreaker}`
     case 'modified':
       // Recently modified first; null/empty modified_at sorts as oldest.
-      return ` ORDER BY CASE WHEN t.modified_at IS NULL OR t.modified_at = '' THEN '0000' ELSE t.modified_at END DESC, ${tiebreaker}`
+      return ` ORDER BY ${PIN_FIRST}, CASE WHEN t.modified_at IS NULL OR t.modified_at = '' THEN '0000' ELSE t.modified_at END DESC, ${tiebreaker}`
     case 'estimate':
       // Null estimates last; then ascending minutes.
-      return ` ORDER BY CASE WHEN t.estimate_minutes IS NULL THEN 1 ELSE 0 END, t.estimate_minutes ASC, ${tiebreaker}`
+      return ` ORDER BY ${PIN_FIRST}, CASE WHEN t.estimate_minutes IS NULL THEN 1 ELSE 0 END, t.estimate_minutes ASC, ${tiebreaker}`
     case 'dueDate':
     default:
-      return ` ORDER BY ${tiebreaker}`
+      return ` ORDER BY ${PIN_FIRST}, ${tiebreaker}`
   }
 }
 
@@ -382,16 +392,17 @@ export function buildQuery(
  * within-group order; if `groupBy` is also present and is one of the
  * server-sortable dimensions (status/owner), the grouping column stays
  * leading so groups remain contiguous, and the sort clause provides the
- * within-group tiebreaker. If only `groupBy` is present, the legacy
- * orderByFor clause is used unchanged. If neither is present, the legacy
- * 'none' priority-first order falls out of orderByFor.
+ * pin-first + within-group tiebreaker. If only `groupBy` is present, the
+ * legacy orderByFor clause is used unchanged (now pin-first within the
+ * group). If neither is present, the legacy 'none' priority-first order
+ * falls out of orderByFor.
  */
 function composeOrderBy(
   groupBy: GroupBy | undefined,
   sort: SortMode | undefined
 ): string {
   if (!sort) return orderByFor(groupBy)
-  const within = sortClauseFor(sort).replace('ORDER BY ', '')
+  const within = sortClauseFor(sort).replace('ORDER BY ', '').trim()
   if (groupBy === 'status') {
     return ` ORDER BY t.status ASC, ${within}`
   }
