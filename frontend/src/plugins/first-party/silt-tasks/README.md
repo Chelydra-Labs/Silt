@@ -92,9 +92,9 @@ All prefs live under `plugins.plugin_settings.silt-tasks` in the vault
 | `saved_views[]` | User-defined saved views (system views are re-derived from code, never persisted). |
 | `local_author` | Seeded from the OS username (`ctx.getLocalAuthor`) on first comment; the user's override always wins. |
 
-The `filters` shape (`{ owners, priorities, dueDate, tags, stale? }`) is held
-in hub state and snapshotted into saved views; it is not separately persisted
-as a default. Hub hotkey `tasks_command_palette` (default Ctrl+K when the hub
+The `filters` shape (`{ owners, priorities, dueDate, tags, stale?, shortlist? }`)
+is held in hub state and snapshotted into saved views; it is not separately
+persisted as a default. Hub hotkey `tasks_command_palette` (default Ctrl+K when the hub
 is focused and the editor is not) opens `TasksCommandPalette`.
 
 ## Extending
