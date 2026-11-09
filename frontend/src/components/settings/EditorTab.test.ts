@@ -184,3 +184,76 @@ describe('EditorTab page history (#937)', () => {
     window.removeEventListener('silt:open-deleted-page-history', seen)
   })
 })
+
+describe('EditorTab headings and accessible validation (#1077)', () => {
+  beforeEach(() => {
+    mocks.settings.config.editor = {
+      font_family: 'Plus Jakarta Sans',
+      mono_font_family: 'JetBrains Mono',
+      font_size_px: 14,
+      line_height: 1.6,
+      tab_indent_spaces: 4,
+      auto_save_delay_ms: 500,
+      focus_highlight_ancestors: true,
+      auto_versioning_enabled: false,
+      max_versions_per_page: 50
+    }
+    mocks.settings.dirty = false
+    mocks.saveConfig.mockClear()
+  })
+  afterEach(() => cleanup())
+
+  it('renders section headings as h3 elements', async () => {
+    resetThemeState(false)
+    render(EditorTab)
+    await tick()
+    expect(
+      screen.getByRole('heading', { level: 3, name: 'Typography' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { level: 3, name: 'Writing Preferences' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { level: 3, name: 'Date format' })
+    ).toBeInTheDocument()
+  })
+
+  it('validates font_size_px with aria-invalid, inline error, and disables Save', async () => {
+    resetThemeState(false)
+    render(EditorTab)
+    await tick()
+    const input = screen.getByLabelText(/Font size/)
+    await fireEvent.input(input, { target: { value: '0' } })
+    await tick()
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    expect(input).toHaveAttribute('aria-describedby', 'editor-font-size-error')
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /Font size must be greater than 0/i
+    )
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled()
+
+    // Valid value restores validity
+    await fireEvent.input(input, { target: { value: '16' } })
+    await tick()
+    expect(input).not.toHaveAttribute('aria-invalid')
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(
+      screen.getByRole('button', { name: 'Save changes' })
+    ).not.toBeDisabled()
+  })
+
+  it('validates auto_save_delay_ms cannot be negative', async () => {
+    resetThemeState(false)
+    render(EditorTab)
+    await tick()
+    const input = screen.getByLabelText(/Auto-save delay/)
+    await fireEvent.input(input, { target: { value: '-100' } })
+    await tick()
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    expect(input).toHaveAttribute('aria-describedby', 'editor-autosave-error')
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /Auto-save delay cannot be negative/i
+    )
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled()
+  })
+})

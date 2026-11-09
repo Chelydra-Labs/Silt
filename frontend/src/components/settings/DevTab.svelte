@@ -17,13 +17,13 @@
 
 <div class="p-6 max-w-4xl mx-auto w-full space-y-6">
   <div
-    class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-4"
+    class="bg-surface-panel border border-surface-panel-border rounded-lg p-4 space-y-4"
   >
-    <h4
-      class="font-label-sm-bold text-text-primary uppercase tracking-wider text-type-2xs"
+    <h3
+      class="font-label-sm-bold text-text-muted uppercase tracking-wider text-type-xs"
     >
       Developer Tools
-    </h4>
+    </h3>
 
     <div class="space-y-3">
       <p class="text-text-muted text-type-sm font-body-md leading-relaxed">

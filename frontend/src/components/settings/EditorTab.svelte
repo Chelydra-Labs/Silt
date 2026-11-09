@@ -62,15 +62,57 @@
     )
   }
 
+  let fontSizeError = $derived.by(() => {
+    if (!draft?.editor) return null
+    const v = draft.editor.font_size_px
+    if (v == null || !Number.isFinite(v) || v <= 0)
+      return 'Font size must be greater than 0.'
+    if (v < 8 || v > 48) return 'Font size must be between 8 and 48 px.'
+    return null
+  })
+
+  let lineHeightError = $derived.by(() => {
+    if (!draft?.editor) return null
+    const v = draft.editor.line_height
+    if (v == null || !Number.isFinite(v) || v <= 0)
+      return 'Line height must be greater than 0.'
+    if (v < 1 || v > 3) return 'Line height must be between 1.0 and 3.0.'
+    return null
+  })
+
+  let tabIndentError = $derived.by(() => {
+    if (!draft?.editor) return null
+    const v = draft.editor.tab_indent_spaces
+    if (v == null || !Number.isFinite(v) || v <= 0)
+      return 'Tab width must be greater than 0.'
+    if (v < 1 || v > 8) return 'Tab width must be between 1 and 8 spaces.'
+    return null
+  })
+
+  let autoSaveError = $derived.by(() => {
+    if (!draft?.editor) return null
+    const v = draft.editor.auto_save_delay_ms
+    if (v == null || !Number.isFinite(v) || v < 0)
+      return 'Auto-save delay cannot be negative.'
+    return null
+  })
+
+  let maxVersionsError = $derived.by(() => {
+    if (!draft?.editor) return null
+    const v = draft.editor.max_versions_per_page
+    if (v == null) return null
+    if (!Number.isFinite(v) || v < 1 || v > 500)
+      return 'Versions to keep must be between 1 and 500.'
+    return null
+  })
+
   let isValid = $derived(
     draft !== null &&
-      draft.editor.font_size_px > 0 &&
-      draft.editor.tab_indent_spaces > 0 &&
-      draft.editor.line_height > 0 &&
-      draft.editor.auto_save_delay_ms >= 0 &&
-      (draft.editor.max_versions_per_page == null ||
-        (draft.editor.max_versions_per_page >= 1 &&
-          draft.editor.max_versions_per_page <= 500))
+      !fontSizeError &&
+      !lineHeightError &&
+      !tabIndentError &&
+      !autoSaveError &&
+      !maxVersionsError
   )
 
   let themeBodyFont = $derived(themeState.darkTokens['--font-body'] ?? '')
@@ -142,15 +184,15 @@
       <!-- Typography Card -->
       <div
         id="editor-typography"
-        class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-5 {ringClass(
+        class="bg-surface-panel border border-surface-panel-border rounded-lg p-4 space-y-4 {ringClass(
           'editor-typography'
         )}"
       >
-        <h4
-          class="font-label-sm-bold text-text-primary uppercase tracking-wider text-type-2xs"
+        <h3
+          class="font-label-sm-bold text-text-muted uppercase tracking-wider text-type-xs"
         >
           Typography
-        </h4>
+        </h3>
         {#if themeSetsFonts}
           <!-- Cross-link to Appearance: when the active theme sets fonts, the
                "reset to theme default" buttons above point here; this hint
@@ -246,8 +288,23 @@
               type="number"
               min="8"
               max="48"
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors"
+              aria-invalid={fontSizeError ? 'true' : undefined}
+              aria-describedby={fontSizeError
+                ? 'editor-font-size-error'
+                : undefined}
+              class="bg-surface-panel border {fontSizeError
+                ? 'border-status-danger'
+                : 'border-surface-panel-border'} rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors"
             />
+            {#if fontSizeError}
+              <p
+                id="editor-font-size-error"
+                class="text-type-xs text-status-danger"
+                role="alert"
+              >
+                {fontSizeError}
+              </p>
+            {/if}
           </label>
 
           <label class="flex flex-col gap-1.5">
@@ -262,8 +319,23 @@
               step="0.1"
               min="1"
               max="3"
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors"
+              aria-invalid={lineHeightError ? 'true' : undefined}
+              aria-describedby={lineHeightError
+                ? 'editor-line-height-error'
+                : undefined}
+              class="bg-surface-panel border {lineHeightError
+                ? 'border-status-danger'
+                : 'border-surface-panel-border'} rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors"
             />
+            {#if lineHeightError}
+              <p
+                id="editor-line-height-error"
+                class="text-type-xs text-status-danger"
+                role="alert"
+              >
+                {lineHeightError}
+              </p>
+            {/if}
           </label>
 
           <label class="flex flex-col gap-1.5">
@@ -277,8 +349,23 @@
               type="number"
               min="1"
               max="8"
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors"
+              aria-invalid={tabIndentError ? 'true' : undefined}
+              aria-describedby={tabIndentError
+                ? 'editor-tab-indent-error'
+                : undefined}
+              class="bg-surface-panel border {tabIndentError
+                ? 'border-status-danger'
+                : 'border-surface-panel-border'} rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors"
             />
+            {#if tabIndentError}
+              <p
+                id="editor-tab-indent-error"
+                class="text-type-xs text-status-danger"
+                role="alert"
+              >
+                {tabIndentError}
+              </p>
+            {/if}
           </label>
         </div>
       </div>
@@ -286,15 +373,15 @@
       <!-- Preferences Card -->
       <div
         id="editor-preferences"
-        class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-5 {ringClass(
+        class="bg-surface-panel border border-surface-panel-border rounded-lg p-4 space-y-4 {ringClass(
           'editor-preferences'
         )}"
       >
-        <h4
-          class="font-label-sm-bold text-text-primary uppercase tracking-wider text-type-2xs"
+        <h3
+          class="font-label-sm-bold text-text-muted uppercase tracking-wider text-type-xs"
         >
           Writing Preferences
-        </h4>
+        </h3>
         <div class="space-y-4">
           <label class="flex flex-col gap-1.5 max-w-xs">
             <span
@@ -307,8 +394,23 @@
               type="number"
               min="0"
               step="100"
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors"
+              aria-invalid={autoSaveError ? 'true' : undefined}
+              aria-describedby={autoSaveError
+                ? 'editor-autosave-error'
+                : undefined}
+              class="bg-surface-panel border {autoSaveError
+                ? 'border-status-danger'
+                : 'border-surface-panel-border'} rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors"
             />
+            {#if autoSaveError}
+              <p
+                id="editor-autosave-error"
+                class="text-type-xs text-status-danger"
+                role="alert"
+              >
+                {autoSaveError}
+              </p>
+            {/if}
           </label>
 
           <div class="grid grid-cols-2 gap-3 pt-2">
@@ -481,11 +583,9 @@
                   oninput={(e: Event) => {
                     const raw = (e.currentTarget as HTMLInputElement).value
                     const n = Number(raw)
-                    if (!Number.isFinite(n)) return
-                    draftEditor().max_versions_per_page = Math.min(
-                      500,
-                      Math.max(1, Math.round(n))
-                    )
+                    draftEditor().max_versions_per_page = Number.isFinite(n)
+                      ? n
+                      : 0
                     touch()
                   }}
                   onblur={(e: Event) => {
@@ -502,8 +602,23 @@
                   min="1"
                   max="500"
                   step="1"
-                  class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors"
+                  aria-invalid={maxVersionsError ? 'true' : undefined}
+                  aria-describedby={maxVersionsError
+                    ? 'editor-max-versions-error'
+                    : undefined}
+                  class="bg-surface-panel border {maxVersionsError
+                    ? 'border-status-danger'
+                    : 'border-surface-panel-border'} rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors"
                 />
+                {#if maxVersionsError}
+                  <p
+                    id="editor-max-versions-error"
+                    class="text-type-xs text-status-danger"
+                    role="alert"
+                  >
+                    {maxVersionsError}
+                  </p>
+                {/if}
               </label>
             {/if}
           </div>
@@ -512,14 +627,14 @@
 
       <!-- Date format (#730) -->
       <div
-        class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-3"
+        class="bg-surface-panel border border-surface-panel-border rounded-lg p-4 space-y-4"
       >
         <div class="space-y-1">
-          <h4
-            class="font-label-sm-bold text-text-primary uppercase tracking-wider text-type-2xs"
+          <h3
+            class="font-label-sm-bold text-text-muted uppercase tracking-wider text-type-xs"
           >
             Date format
-          </h4>
+          </h3>
           <p class="text-text-muted text-type-sm font-body-md max-w-xl">
             Controls how dates are inserted by the Date Glance popover and the
             /today command.

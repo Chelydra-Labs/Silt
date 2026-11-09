@@ -276,11 +276,11 @@
   </section>
 
   <section class="border-t border-surface-panel-border pt-4 mt-4">
-    <h4
-      class="font-label-sm-bold text-text-primary uppercase tracking-wider text-type-2xs mb-3"
+    <h3
+      class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
     >
       Developer
-    </h4>
+    </h3>
     <div class="space-y-2">
       <button
         type="button"

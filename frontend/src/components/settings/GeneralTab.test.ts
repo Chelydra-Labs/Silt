@@ -214,22 +214,38 @@ describe('GeneralTab vault relocate menu (#141)', () => {
     ).toBeInTheDocument()
   })
 
-  it('Escape on a menu item collapses the menu', async () => {
+  it('Escape on a menu item collapses the menu and restores focus', async () => {
     render(GeneralTab)
     await tick()
-    await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
+    const trigger = screen.getByRole('button', { name: 'Vault actions' })
+    await fireEvent.click(trigger)
     await tick()
     const moveItem = screen.getByRole('menuitem', { name: /Move vault/ })
     moveItem.focus()
     await fireEvent.keyDown(moveItem, { key: 'Escape' })
     await tick()
     expect(screen.queryByRole('menuitem', { name: /Move vault/ })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
   })
 
-  it('clicking outside the menu collapses it', async () => {
+  it('ArrowUp on the menu button opens the menu and focuses the last item', async () => {
     render(GeneralTab)
     await tick()
-    await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
+    const trigger = screen.getByRole('button', { name: 'Vault actions' })
+    await fireEvent.keyDown(trigger, { key: 'ArrowUp' })
+    await tick()
+    const switchItem = screen.getByRole('menuitem', { name: /Switch vault/ })
+    expect(switchItem).toBeInTheDocument()
+    await waitFor(() => {
+      expect(document.activeElement).toBe(switchItem)
+    })
+  })
+
+  it('clicking outside the menu collapses it and restores focus', async () => {
+    render(GeneralTab)
+    await tick()
+    const trigger = screen.getByRole('button', { name: 'Vault actions' })
+    await fireEvent.click(trigger)
     await tick()
     expect(
       screen.getByRole('menuitem', { name: /Move vault/ })
@@ -237,6 +253,53 @@ describe('GeneralTab vault relocate menu (#141)', () => {
     await fireEvent.click(document.body)
     await tick()
     expect(screen.queryByRole('menuitem', { name: /Move vault/ })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+})
+
+describe('GeneralTab custom dictionary validation (#1077)', () => {
+  beforeEach(() => {
+    mocks.settings.config = mocks.baseConfig
+    appMocks.GetCustomDictionary.mockResolvedValue(['existingword'])
+    appMocks.AddCustomDictionaryWord.mockClear()
+  })
+  afterEach(() => cleanup())
+
+  it('validates empty/whitespace word on submit with aria-invalid and inline error', async () => {
+    render(GeneralTab)
+    await tick()
+    const input = screen.getByPlaceholderText('Add a word')
+    await fireEvent.input(input, { target: { value: '   ' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await tick()
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    expect(input).toHaveAttribute('aria-describedby', 'custom-dict-word-error')
+    expect(screen.getByRole('alert')).toHaveTextContent(/Word cannot be empty/i)
+    expect(appMocks.AddCustomDictionaryWord).not.toHaveBeenCalled()
+  })
+
+  it('validates duplicate word client-side without backend call', async () => {
+    render(GeneralTab)
+    await tick()
+    await waitFor(() => {
+      expect(appMocks.GetCustomDictionary).toHaveBeenCalled()
+    })
+    const input = screen.getByPlaceholderText('Add a word')
+    await fireEvent.input(input, { target: { value: 'existingword' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await tick()
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    expect(input).toHaveAttribute('aria-describedby', 'custom-dict-word-error')
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /Word already in dictionary/i
+    )
+    expect(appMocks.AddCustomDictionaryWord).not.toHaveBeenCalled()
+
+    // Typing a non-duplicate clears the error
+    await fireEvent.input(input, { target: { value: 'newword' } })
+    await tick()
+    expect(input).not.toHaveAttribute('aria-invalid')
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 })
 

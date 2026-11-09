@@ -176,17 +176,17 @@
       <!-- Hotkeys Group Card -->
       <div
         id="hotkeys-shortcuts"
-        class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-4 {ringAnchor ===
+        class="bg-surface-panel border border-surface-panel-border rounded-lg p-4 space-y-4 {ringAnchor ===
         'hotkeys-shortcuts'
           ? 'ring-2 ring-accent-primary-start transition-shadow'
           : ''}"
       >
         <div class="flex items-center justify-between gap-3 flex-wrap">
-          <h4
-            class="font-label-sm-bold text-text-primary uppercase tracking-wider text-type-2xs"
+          <h3
+            class="font-label-sm-bold text-text-muted uppercase tracking-wider text-type-xs"
           >
             Keyboard Shortcuts
-          </h4>
+          </h3>
           <span class="text-text-muted text-type-2xs">
             Click a field and press a shortcut. Clear or Backspace to disable.
           </span>

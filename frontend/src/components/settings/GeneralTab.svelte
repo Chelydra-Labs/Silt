@@ -71,11 +71,17 @@
 
   function toggleMenu() {
     vaultMenuOpen = !vaultMenuOpen
+    if (vaultMenuOpen) {
+      queueMicrotask(() => menuItemRefs[0]?.focus())
+    } else {
+      triggerBtn?.focus()
+    }
   }
 
   function openAction(action: 'move' | 'copy' | 'export' | 'import') {
     vaultAction = action
     vaultMenuOpen = false
+    triggerBtn?.focus()
   }
 
   function handleWindowClick(e: MouseEvent) {
@@ -85,6 +91,7 @@
       !menuWrapper.contains(e.target as Node)
     ) {
       vaultMenuOpen = false
+      triggerBtn?.focus()
     }
   }
 
@@ -93,6 +100,10 @@
       e.preventDefault()
       vaultMenuOpen = true
       queueMicrotask(() => menuItemRefs[0]?.focus())
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      vaultMenuOpen = true
+      queueMicrotask(() => menuItemRefs[menuItemRefs.length - 1]?.focus())
     }
   }
 
@@ -115,6 +126,37 @@
       vaultMenuOpen = false
       triggerBtn?.focus()
     }
+  }
+
+  let dictWordError = $state<string | null>(null)
+
+  function validateDictWord(raw: string): string | null {
+    const w = raw.trim()
+    if (!w) return 'Word cannot be empty.'
+    if (customDictionary.words.includes(w)) return 'Word already in dictionary.'
+    return null
+  }
+
+  function handleDictWordInput() {
+    if (dictWordError) {
+      dictWordError = validateDictWord(customDictionary.newWord)
+    }
+  }
+
+  function handleDictWordBlur() {
+    if (customDictionary.newWord.trim().length > 0) {
+      dictWordError = validateDictWord(customDictionary.newWord)
+    }
+  }
+
+  function handleAddDictWord() {
+    const err = validateDictWord(customDictionary.newWord)
+    if (err) {
+      dictWordError = err
+      return
+    }
+    dictWordError = null
+    void customDictionary.add()
   }
 
   // Landing summary strip ("home base"): active vault, theme/mode, AI status,
@@ -431,6 +473,7 @@
                 role="menuitem"
                 onclick={() => {
                   vaultMenuOpen = false
+                  triggerBtn?.focus()
                   // Tear down this vault and return to the onboarding screen so
                   // the user can pick a different workspace folder. App.svelte
                   // owns the CloseVault flow and closes this settings overlay.
@@ -476,30 +519,50 @@
           dictionary", or add one here. Language and technical word lists are
           under Editor.
         </p>
-        <div class="flex items-center gap-2">
-          <label class="flex-1 flex flex-col gap-1">
-            <span class="sr-only">New word</span>
-            <input
-              bind:value={customDictionary.newWord}
-              placeholder="Add a word"
-              disabled={customDictionary.busy}
-              onkeydown={(e: KeyboardEvent) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  void customDictionary.add()
-                }
-              }}
-              class="w-full px-2.5 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-md font-body-md focus:outline-none focus:border-accent-primary-start/60 disabled:opacity-50"
-            />
-          </label>
-          <button
-            type="button"
-            onclick={() => void customDictionary.add()}
-            disabled={!customDictionary.newWord.trim() || customDictionary.busy}
-            class="px-3 py-1.5 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start text-type-md font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            Add
-          </button>
+        <div>
+          <div class="flex items-center gap-2">
+            <label class="flex-1 flex flex-col gap-1">
+              <span class="sr-only">New word</span>
+              <input
+                bind:value={customDictionary.newWord}
+                oninput={handleDictWordInput}
+                onblur={handleDictWordBlur}
+                placeholder="Add a word"
+                disabled={customDictionary.busy}
+                aria-invalid={dictWordError ? 'true' : undefined}
+                aria-describedby={dictWordError
+                  ? 'custom-dict-word-error'
+                  : undefined}
+                onkeydown={(e: KeyboardEvent) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    handleAddDictWord()
+                  }
+                }}
+                class="w-full px-2.5 py-1.5 rounded-lg bg-surface-panel border {dictWordError
+                  ? 'border-status-danger'
+                  : 'border-surface-panel-border'} text-text-primary text-type-md font-body-md focus:outline-none focus:border-accent-primary-start/60 disabled:opacity-50"
+              />
+            </label>
+            <button
+              type="button"
+              onclick={handleAddDictWord}
+              disabled={!customDictionary.newWord.trim() ||
+                customDictionary.busy}
+              class="px-3 py-1.5 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start text-type-md font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Add
+            </button>
+          </div>
+          {#if dictWordError}
+            <p
+              id="custom-dict-word-error"
+              class="text-type-xs text-status-danger mt-1.5"
+              role="alert"
+            >
+              {dictWordError}
+            </p>
+          {/if}
         </div>
         {#if customDictionary.words.length > 0}
           <div class="relative w-full">
