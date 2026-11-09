@@ -208,7 +208,7 @@ within a 300 ms cooldown of our own atomic write. See
 
 Every file ingested is scanned line-by-line using a customized Markdown AST engine built on top of yuin/goldmark (`backend/parser`).
 
-**Block model.** A GFM checkbox item (`- [ ]`, `- [/]`, `- [x]`) is a task; the remainder of any line is scanned for Dataview-style `[key:: value]` metadata tokens (due, start, owner, priority, pin, progress, recur, blocked_by, created, completed, order) — order-independent and extensible via the `scanTaskTokens` dispatch. NOTE blocks are scanned separately for two comment-attribution tokens (`author`, `ts`) via `scanNoteTokens`; the TASK and NOTE token spaces are disjoint by design, so comment attribution never leaks into task queries and task metadata never lands on a note. Each parsed line becomes a `ParsedBlock` typed as one of three prose types (`TASK`, `NOTE`, `HEADER`) or one of four multi-line region types (`CODE`, `TABLE`, `DETAILS`, `CALLOUT`).
+**Block model.** A GFM checkbox item (`- [ ]`, `- [/]`, `- [x]`) is a task; the remainder of any line is scanned for Dataview-style `[key:: value]` metadata tokens (due, start, owner, priority, shortlist, pin, progress, recur, blocked_by, created, completed, order) — order-independent and extensible via the `scanTaskTokens` dispatch. NOTE blocks are scanned separately for two comment-attribution tokens (`author`, `ts`) via `scanNoteTokens`; the TASK and NOTE token spaces are disjoint by design, so comment attribution never leaks into task queries and task metadata never lands on a note. Each parsed line becomes a `ParsedBlock` typed as one of three prose types (`TASK`, `NOTE`, `HEADER`) or one of four multi-line region types (`CODE`, `TABLE`, `DETAILS`, `CALLOUT`).
 
 **Multi-line region blocks.** The parser's `accumulateRegion` detects four region shapes — fenced code, GFM table runs (header + separator), `<details>` HTML (depth-counted), and Obsidian callouts (`> [!variant]` + consecutive `>` lines) — and collapses each into one managed `ParsedBlock` (one `blocks`-table row, one UUID, one FTS5 document). The block-identity comment lives on its own dedicated trailing line after the region so the on-disk format stays strictly GFM/HTML/Obsidian syntax (byte-exact interop with Obsidian/GitHub/VS Code). `ParseFileContent` and `RenderFileContent` share the region-boundary helpers (`detectRegionKind` / `findRegionCloser` / `skipManagedRegion`) so both paths agree. Legacy files with per-line id comments are detected (id comments stripped before matching), migrated to the trailing-id format on first parse, and `((uuid))` references to vanished per-line ids are remapped to the region block's id.
 
@@ -272,6 +272,7 @@ CREATE TABLE tasks (
     start_date TEXT,         -- YYYY-MM-DD or NULL
     due_date TEXT,           -- YYYY-MM-DD or NULL
     priority INTEGER,        -- 1, 2, 3
+    shortlist_rank INTEGER,  -- rank 0-3 from [shortlist:: N], 0 = top focus; NULL = unranked (#1092)
     pinned INTEGER DEFAULT 0,         -- NULL/0/1 tri-state cache: NULL=no [pin::] token, 0=[pin:: false], 1=[pin:: true]; reproducible from markdown
     progress INTEGER DEFAULT 0,       -- 0-100; cached from [progress:: N] markdown token
     recur TEXT,                       -- recurrence rule (e.g. 'every week'); NULL for one-off tasks; cached from [recur:: RULE] token

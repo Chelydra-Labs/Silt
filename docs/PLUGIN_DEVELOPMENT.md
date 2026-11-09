@@ -69,7 +69,7 @@ interface PluginContext {
 `sqliteQuery` runs **read-only** SQL against the in-memory SQLite index. Anything other than `SELECT`/`WITH` is rejected. The schema (see `ARCHITECTURE.md` §3):
 
 - `blocks(id, parent_id, notebook, section, page, file_date, depth, type, raw_content, clean_content, line_number)`
-- `tasks(block_id, status, owner, start_date, due_date, priority, pinned, progress, recur, comments_count, links_count, created_at, completed_at, manual_order, modified_at, estimate_minutes, subtask_total, subtask_done)`
+- `tasks(block_id, status, owner, start_date, due_date, priority, shortlist_rank, pinned, progress, recur, comments_count, links_count, created_at, completed_at, manual_order, modified_at, estimate_minutes, subtask_total, subtask_done)`
 - `tags(block_id, raw_path, level_0, level_1, level_2)`
 
 Example — all active tasks with a due date:
@@ -95,6 +95,7 @@ Beyond `updateTaskMeta` (pin/progress), the SDK exposes dedicated setters that e
 
 - **`setTaskOwner(id, owner)`** — rewrites `[owner:: NAME]`. Pass `''` to clear.
 - **`setTaskPriority(id, priority)`** — rewrites `[priority:: N]` (1=High, 2=Normal, 3=Low). Pass `0` to clear.
+- **`setTaskShortlistRank(id, rank)`** — rewrites `[shortlist:: N]` (0=top focus … 3). Pass `null` to clear; `0` is a real rank, never "unranked". Note the clear convention differs from `updateTaskMeta`'s integer sentinels: the SDK takes an explicit `null` here because `0` is a meaningful value.
 - **`setTaskTags(id, tags)`** — rewrites the task's `#hashtag` set. Pass the **full new tag set** (an empty array clears all); the backend performs the surgical add/remove on the prose, preserving `((uuid))` refs and inline `[key:: value]` tokens.
 - **`setTaskTitle(id, title)`** — rewrites the prose portion of the task line. The backend preserves `#tags`, `((uuid))` references, and every inline `[key:: value]` token during the rewrite — callers edit only the prose.
 - **`setTaskEstimate(id, estimate)`** — rewrites `[estimate:: DURATION]` (`30m` / `2h` / `1d`; 1d = 8h). Pass `''` to clear. Invalid durations are rejected.
@@ -103,6 +104,7 @@ Beyond `updateTaskMeta` (pin/progress), the SDK exposes dedicated setters that e
 ```ts
 await ctx.setTaskOwner(uuid, 'Alice')   // → `[owner:: Alice]`
 await ctx.setTaskPriority(uuid, 1)      // → `[priority:: 1]`
+await ctx.setTaskShortlistRank(uuid, 0) // → `[shortlist:: 0]` — 0 is the TOP rank; pass null to clear
 await ctx.setTaskTags(uuid, ['work/sprint-4', 'urgent'])  // surgical #hashtag rewrite
 await ctx.setTaskTitle(uuid, 'Ship the v2 theme editor')  // tags + tokens preserved
 ```
