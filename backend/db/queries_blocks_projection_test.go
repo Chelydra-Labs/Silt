@@ -110,3 +110,47 @@ func TestFetchPageBlocks_HydratesPinBlockedByAndUnknownTokens(t *testing.T) {
 		t.Errorf("ExtraTokens not hydrated: got %v, want [mood:: focused] (verbatim token)", got[0].ExtraTokens)
 	}
 }
+
+// TestFetchPageBlocks_HydratesShortlistRank pins the [shortlist::] projection
+// (#1092): like pin/blocked_by/unknown tokens, the rank's only storage is the
+// raw line, so a hydration gap would strip [shortlist:: 0] from the file on
+// every rows-echo save. Rank 0 must hydrate to &0 (a real top rank), and no
+// token must hydrate to nil.
+func TestFetchPageBlocks_HydratesShortlistRank(t *testing.T) {
+	dm := newTestDB(t)
+	rankedID := "ddddddaa-dddd-4ddd-8ddd-dddddddddddc"
+	unrankedID := "ddddddaa-dddd-4ddd-8ddd-dddddddddddd"
+	rankedRaw := "- [ ] top focus [shortlist:: 0] <!-- id: " + rankedID + " -->"
+	unrankedRaw := "- [ ] plain task <!-- id: " + unrankedID + " -->"
+	fm := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Ranks\"\ndate: \"2026-01-03\"\ntags: []\n---\n" + rankedRaw + "\n" + unrankedRaw + "\n"
+	blocks, _, _, _, err := parser.ParseFileContent(fm, "Work", "Journal", "Ranks", "2026-01-03", 4)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d", len(blocks))
+	}
+	if blocks[0].ShortlistRank == nil || *blocks[0].ShortlistRank != 0 {
+		t.Fatalf("seed parse lost rank 0: %+v", blocks[0].ShortlistRank)
+	}
+	if blocks[1].ShortlistRank != nil {
+		t.Fatalf("expected nil seed rank, got %+v", blocks[1].ShortlistRank)
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Ranks", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+
+	got, err := dm.FetchPageBlocks("vault", "Work", "Journal", "Ranks")
+	if err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(got))
+	}
+	if got[0].ShortlistRank == nil || *got[0].ShortlistRank != 0 {
+		t.Errorf("rank 0 not hydrated: got %v, want &0 (top rank, not unranked)", got[0].ShortlistRank)
+	}
+	if got[1].ShortlistRank != nil {
+		t.Errorf("unranked task hydrated a rank: got %v, want nil", got[1].ShortlistRank)
+	}
+}

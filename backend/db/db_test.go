@@ -616,6 +616,132 @@ func TestQueryTasksWithFilters_HydratesPinnedTriState(t *testing.T) {
 	}
 }
 
+// TestIndexFileBlocks_ShortlistProjection verifies the markdown *int rank
+// projects onto the nullable tasks.shortlist_rank cache (#1092): 2 for
+// [shortlist:: 2], 0 for [shortlist:: 0] (0 is a REAL top rank, never
+// coerced), NULL for no token. Re-indexing after the token is removed must
+// restore NULL — the cache is reproducible from markdown.
+func TestIndexFileBlocks_ShortlistProjection(t *testing.T) {
+	dm := newTestDB(t)
+
+	intPtr := func(n int) *int { return &n }
+	mk := func(id string, rank *int) parser.ParsedBlock {
+		b := sampleTaskBlock(id, 1)
+		b.ShortlistRank = rank
+		return b
+	}
+	rankedID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	zeroID := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	unrankedID := "cccccccc-cccc-cccc-cccc-cccccccccccc"
+	blocks := []parser.ParsedBlock{
+		mk(rankedID, intPtr(2)), // -> 2
+		mk(zeroID, intPtr(0)),   // -> 0
+		mk(unrankedID, nil),     // -> NULL
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks failed: %v", err)
+	}
+
+	cases := []struct {
+		id     string
+		valid  bool
+		intVal int64
+	}{
+		{rankedID, true, 2},
+		{zeroID, true, 0},
+		{unrankedID, false, 0}, // NULL (no [shortlist::] token)
+	}
+	for _, c := range cases {
+		var got sql.NullInt64
+		if err := dm.SQLDB().QueryRow("SELECT shortlist_rank FROM tasks WHERE block_id = ?", c.id).Scan(&got); err != nil {
+			t.Fatalf("select shortlist_rank for %s: %v", c.id, err)
+		}
+		if got.Valid != c.valid {
+			t.Errorf("%s: expected valid=%v, got valid=%v int=%d", c.id, c.valid, got.Valid, got.Int64)
+			continue
+		}
+		if got.Valid && got.Int64 != c.intVal {
+			t.Errorf("%s: expected shortlist_rank=%d, got %d", c.id, c.intVal, got.Int64)
+		}
+	}
+
+	// Re-index reproducibility: the ranked task's token is removed (nil) and
+	// the unranked task gains [shortlist:: 0]. The cache must follow the
+	// markdown — 2 becomes NULL, NULL becomes 0 (no stuck stale values).
+	blocks = []parser.ParsedBlock{
+		mk(rankedID, nil),
+		mk(zeroID, intPtr(0)),
+		mk(unrankedID, intPtr(0)),
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
+		t.Fatalf("re-index failed: %v", err)
+	}
+	var got sql.NullInt64
+	if err := dm.SQLDB().QueryRow("SELECT shortlist_rank FROM tasks WHERE block_id = ?", rankedID).Scan(&got); err != nil {
+		t.Fatalf("re-select ranked: %v", err)
+	}
+	if got.Valid {
+		t.Errorf("ranked→unranked re-index: expected NULL, got valid=%v int=%d", got.Valid, got.Int64)
+	}
+	if err := dm.SQLDB().QueryRow("SELECT shortlist_rank FROM tasks WHERE block_id = ?", unrankedID).Scan(&got); err != nil {
+		t.Fatalf("re-select unranked: %v", err)
+	}
+	if !got.Valid || got.Int64 != 0 {
+		t.Errorf("unranked→rank-0 re-index: expected 0, got valid=%v int=%d", got.Valid, got.Int64)
+	}
+}
+
+// TestQueryTasksWithFilters_HydratesShortlistRank verifies the reader
+// hydrates the nullable cache back into TaskResult.ShortlistRank *int:
+// NULL→nil (unranked), 0→&0 (top rank, distinct from nil) (#1092).
+func TestQueryTasksWithFilters_HydratesShortlistRank(t *testing.T) {
+	dm := newTestDB(t)
+
+	intPtr := func(n int) *int { return &n }
+	mk := func(id string, rank *int) parser.ParsedBlock {
+		b := sampleTaskBlock(id, 1)
+		b.ShortlistRank = rank
+		return b
+	}
+	blocks := []parser.ParsedBlock{
+		mk("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", intPtr(0)), // &0 (top)
+		mk("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", intPtr(3)), // &3
+		mk("cccccccc-cccc-cccc-cccc-cccccccccccc", nil),       // nil
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+
+	results, err := dm.QueryTasksWithFilters(parser.TaskQueryFilter{})
+	if err != nil {
+		t.Fatalf("QueryTasksWithFilters: %v", err)
+	}
+
+	want := map[string]*int{
+		"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa": intPtr(0),
+		"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb": intPtr(3),
+		"cccccccc-cccc-cccc-cccc-cccccccccccc": nil,
+	}
+	got := make(map[string]*int, len(results))
+	for _, r := range results {
+		got[r.ID] = r.ShortlistRank
+	}
+	for id, wantRank := range want {
+		gotRank, ok := got[id]
+		if !ok {
+			t.Errorf("task %s missing from query results", id)
+			continue
+		}
+		if (gotRank == nil) != (wantRank == nil) {
+			t.Errorf("task %s: expected shortlist nil=%v, got nil=%v", id, wantRank == nil, gotRank == nil)
+			continue
+		}
+		if gotRank != nil && *gotRank != *wantRank {
+			t.Errorf("task %s: expected *shortlist_rank=%d, got %d", id, *wantRank, *gotRank)
+		}
+	}
+}
+
 // TestPluginRawQuery_PinnedFilterRegression confirms the Kanban-style raw SQL
 // path (`WHERE t.pinned = 1`) still returns exactly the explicitly-pinned
 // task now that the cache column is tri-state (NULL/0/1). NULL (no token) and
