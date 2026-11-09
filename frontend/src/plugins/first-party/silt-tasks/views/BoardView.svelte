@@ -93,9 +93,16 @@
   let pinError = $state('')
   let pinErrorTimer: ReturnType<typeof setTimeout> | null = null
   // The pending-disable blurs the toggle to <body>; refocus the card's pin
-  // control once the write settles. Cleared on destroy.
+  // control once the write settles. The counter is the per-commit token:
+  // re-toggling the same card inside the expiry window must still re-run the
+  // focus effect, which a bare id cannot do (strict-equality $state).
   let pinFocusId = $state<string | null>(null)
+  let pinFocusSeq = $state(0)
   let pinFocusTimer: ReturnType<typeof setTimeout> | null = null
+  let pinFocusRetryTimer: ReturnType<typeof setTimeout> | null = null
+  // Separate from the DnD region so a pin announcement never overwrites a
+  // move announcement (and vice versa).
+  let pinLiveMessage = $state('')
 
   let selectedCard = $state<TaskDetail | null>(null)
   let selectedFilteredOut = $state(false)
@@ -469,27 +476,54 @@
     try {
       await trackTaskUndoWrite(ctx.updateTaskMeta(card.id, { pinned: next }))
     } finally {
-      // The pending-disable blurs the button to <body>; refocus after settle.
-      pinFocusId = card.id
-      if (pinFocusTimer) clearTimeout(pinFocusTimer)
-      pinFocusTimer = setTimeout(() => {
-        pinFocusId = null
-        pinFocusTimer = null
-      }, 1_500)
+      // Bump the token even when the write fails: the pending-disable still
+      // blurred the button, so keyboard position must be restored either way.
+      schedulePinFocus(card.id)
     }
+    pinLiveMessage = next ? 'Task pinned' : 'Task unpinned'
+  }
+
+  function schedulePinFocus(id: string) {
+    pinFocusId = id
+    pinFocusSeq += 1
+    if (pinFocusTimer) clearTimeout(pinFocusTimer)
+    if (pinFocusRetryTimer) {
+      clearTimeout(pinFocusRetryTimer)
+      pinFocusRetryTimer = null
+    }
+    pinFocusTimer = setTimeout(() => {
+      pinFocusId = null
+      pinFocusTimer = null
+    }, 1_500)
+  }
+
+  const PIN_FOCUS_MAX_RETRIES = 10
+
+  // A disabled button is not focusable (a silent no-op in browsers + jsdom),
+  // and the pending-disable can still be set when the effect first runs, so
+  // wait for the re-enable instead of focusing blindly.
+  function focusPinWhenEnabled(id: string, seq: number, attempt = 0): void {
+    if (pinFocusId !== id || pinFocusSeq !== seq) return
+    const el = document.querySelector<HTMLButtonElement>(
+      `[data-testid="tasks-pin-${CSS.escape(id)}"]`
+    )
+    if (!el) return
+    if (el.disabled) {
+      if (attempt >= PIN_FOCUS_MAX_RETRIES) return
+      pinFocusRetryTimer = setTimeout(() => {
+        pinFocusRetryTimer = null
+        focusPinWhenEnabled(id, seq, attempt + 1)
+      }, 16)
+      return
+    }
+    el.focus()
   }
 
   $effect(() => {
     const id = pinFocusId
+    const seq = pinFocusSeq
     if (!id) return
-    void tick().then(() => {
-      if (pinFocusId !== id) return
-      document
-        .querySelector<HTMLButtonElement>(
-          `[data-testid="tasks-pin-${CSS.escape(id)}"]`
-        )
-        ?.focus()
-    })
+    void tick().then(() => focusPinWhenEnabled(id, seq))
   })
 
   // --- Keyboard parity (a11y) --------------------------------------------
@@ -499,8 +533,9 @@
   // Location dimensions (DnD disabled) get no arrow move — the card stays
   // put. Kept in BoardView because it straddles DnD-move + drawer-open.
   function onCardKeydown(e: KeyboardEvent, card: TaskDetail, col: Lane) {
-    // A nested control (the pin toggle) handles its own Enter/Space; only
-    // the card itself may move/select.
+    // Only the card itself may move/select. The pin toggle is a sibling
+    // today (so this handler never sees its events); the target guard is
+    // defence-in-depth for future nesting.
     if (e.target !== e.currentTarget) return
     if (dndEnabled && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
       e.preventDefault()
@@ -592,10 +627,12 @@
   }
 
   onDestroy(() => {
-    // No persistent timers to clear here; block:changed cleanup runs in the
-    // effect's teardown. Hook kept for symmetry with Kanban/ListView.
     if (pinErrorTimer) clearTimeout(pinErrorTimer)
     if (pinFocusTimer) clearTimeout(pinFocusTimer)
+    if (pinFocusRetryTimer) clearTimeout(pinFocusRetryTimer)
+    // Drop the token so a queued tick() from this view can't focus a
+    // same-testid pin in another view after a mode switch.
+    pinFocusId = null
   })
 
   /** True when any status column is over its soft WIP limit (#437). */
@@ -676,6 +713,14 @@
 
   <!-- aria-live region for drag/keyboard move announcements -->
   <div class="sr-only" aria-live="polite">{dnd.liveMessage}</div>
+  <!-- Separate polite region for pin/unpin announcements (mirrors ListView) -->
+  <div
+    class="sr-only"
+    aria-live="polite"
+    data-testid="tasks-board-live-message"
+  >
+    {pinLiveMessage}
+  </div>
 
   <div class="flex-1 overflow-hidden">
     {#if loading}
