@@ -354,7 +354,7 @@ export interface PluginContext {
   getTaskUndoState: () => Promise<TaskUndoState>
   /**
    * Rewrite a task's `[priority:: N]` inline token on disk atomically (#412).
-   * 1=Critical, 2=Normal, 3=Low (matches PRIORITY_LABELS). Round-trips through
+   * 1=High, 2=Normal, 3=Low (matches PRIORITY_LABELS). Round-trips through
    * the markdown file, re-indexes, and emits block:changed. Gated by
    * content-mutate.
    */

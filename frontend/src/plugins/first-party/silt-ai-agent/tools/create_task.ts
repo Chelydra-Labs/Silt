@@ -48,7 +48,7 @@ export const createTaskToolDef = {
       },
       priority: {
         type: 'integer',
-        description: '1=Critical, 2=Normal, 3=Low (optional).',
+        description: '1=High, 2=Normal, 3=Low (optional).',
         minimum: 1,
         maximum: 3
       },
@@ -116,7 +116,7 @@ export async function handleCreateTask(
       auditWrite(ctx, 'create_task', 'error')
       return {
         content: '',
-        error: 'priority must be an integer 1–3 (1=Critical, 2=Normal, 3=Low)'
+        error: 'priority must be an integer 1–3 (1=High, 2=Normal, 3=Low)'
       }
     }
     priority = p

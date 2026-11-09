@@ -354,7 +354,7 @@ export function makePluginContext(
         source: res?.source ?? ''
       }
     },
-    // Rewrite a task's [priority:: N] token (#412). 1=Critical, 2=Normal, 3=Low.
+    // Rewrite a task's [priority:: N] token (#412). 1=High, 2=Normal, 3=Low.
     setTaskPriority: (id, priority) =>
       PluginSetTaskPriority(pluginID, sessionToken ?? '', id, priority),
     // Rewrite a task's [tags:: a|b|c] token (#412). Empty array clears all tags.
