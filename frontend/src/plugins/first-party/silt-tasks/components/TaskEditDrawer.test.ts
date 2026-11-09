@@ -985,7 +985,7 @@ describe('TaskEditDrawer — priority editor (#412)', () => {
     render(TaskEditDrawer, {
       props: { task: makeTask({ priority: 3 }), ctx, onClose: () => {} }
     })
-    await fireEvent.click(screen.getByRole('radio', { name: 'Critical' }))
+    await fireEvent.click(screen.getByRole('radio', { name: 'High' }))
     expect(setTaskPriority).toHaveBeenCalledWith('task-1', 1)
   })
 
@@ -1005,7 +1005,7 @@ describe('TaskEditDrawer — priority editor (#412)', () => {
     await tick()
     await new Promise((r) => setTimeout(r, 250))
     expect(setTaskPriority).toHaveBeenCalledWith('task-1', 2)
-    // Home jumps to Critical (priority 1).
+    // Home jumps to High (priority 1).
     await fireEvent.keyDown(rg, { key: 'Home' })
     await tick()
     await new Promise((r) => setTimeout(r, 250))
@@ -1023,16 +1023,16 @@ describe('TaskEditDrawer — priority editor (#412)', () => {
     ) as HTMLElement
     await tick()
     // Two quick arrows within the 200ms debounce window: Normal(2) → Low(3)
-    // → wrap to Critical(1). tick() between presses lets priorityState update
+    // → wrap to High(1). tick() between presses lets priorityState update
     // so the next index is computed correctly, but no 200ms elapses, so both
     // collapse to ONE trailing commit of the final selection.
     await fireEvent.keyDown(rg, { key: 'ArrowRight' }) // 2 → 3 (Low)
     await tick()
-    await fireEvent.keyDown(rg, { key: 'ArrowRight' }) // 3 → 1 (Critical, wrap)
+    await fireEvent.keyDown(rg, { key: 'ArrowRight' }) // 3 → 1 (High, wrap)
     await tick()
     expect(setTaskPriority).not.toHaveBeenCalled()
     await new Promise((r) => setTimeout(r, 250)) // past the debounce window
-    // Exactly one commit, for the final selection (Critical, priority 1).
+    // Exactly one commit, for the final selection (High, priority 1).
     expect(setTaskPriority).toHaveBeenCalledTimes(1)
     expect(setTaskPriority).toHaveBeenLastCalledWith('task-1', 1)
   })
@@ -1087,7 +1087,7 @@ describe('TaskEditDrawer — priority editor (#412)', () => {
     render(TaskEditDrawer, {
       props: { task: makeTask({ priority: 3 }), ctx, onClose: () => {} }
     })
-    await fireEvent.click(screen.getByRole('radio', { name: 'Critical' }))
+    await fireEvent.click(screen.getByRole('radio', { name: 'High' }))
     await new Promise((r) => setTimeout(r, 10))
     expect(screen.getByText(/Couldn't save/)).toBeTruthy()
   })

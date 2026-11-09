@@ -40,7 +40,7 @@ export const META_KEYS: readonly MetaKey[] = [
   {
     key: 'priority',
     label: 'priority',
-    description: 'Priority (1=critical, 2=normal, 3=low)'
+    description: 'Priority (1=high, 2=normal, 3=low)'
   },
   { key: 'pin', label: 'pin', description: 'Pinned task' },
   {

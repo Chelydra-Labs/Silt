@@ -36,8 +36,7 @@
   }
 
   function priorityLabel(p: number): string {
-    if (p === 1) return '! CRITICAL'
-    if (p === 2) return '! HIGH'
+    if (p === 1) return '! HIGH'
     return ''
   }
   let depth = $derived(node.attrs.depth || 0)

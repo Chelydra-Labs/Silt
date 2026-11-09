@@ -380,7 +380,7 @@ describe('BoardView — dimension-aware Board (#421)', () => {
       row({ id: 't4', priority: 0, clean_content: 'legacy' })
     ])
 
-    expect(screen.getByRole('group', { name: 'Critical' })).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'High' })).toBeInTheDocument()
     expect(screen.getByRole('group', { name: 'Normal' })).toBeInTheDocument()
     expect(screen.getByRole('group', { name: 'Low' })).toBeInTheDocument()
     // The priority-0 row lands in the Low (P3) column alongside real P3s.
@@ -443,10 +443,10 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     const lowCard = screen
       .getByRole('group', { name: 'Low' })
       .querySelector<HTMLElement>('[data-card]')!
-    const critCol = screen.getByRole('group', { name: 'Critical' })
+    const highCol = screen.getByRole('group', { name: 'High' })
 
     await fireEvent.dragStart(lowCard)
-    await fireEvent.drop(critCol)
+    await fireEvent.drop(highCol)
     await flush()
 
     expect(mocks.setTaskPriority).toHaveBeenCalledWith('t1', 1)

@@ -144,10 +144,10 @@ function rowValue(row: TaskDetail, dim: GroupBy): string {
 
 function valueLabel(value: string, dim: GroupBy): string {
   if (dim === 'priority') {
-    // PRIORITY_LABELS maps 1→Critical, 2→Normal, 3→Low; fall back to the
+    // PRIORITY_LABELS maps 1→High, 2→Normal, 3→Low; fall back to the
     // raw numeric for any custom value.
     const labels: Record<string, string> = {
-      '1': 'Critical',
+      '1': 'High',
       '2': 'Normal',
       '3': 'Low'
     }
