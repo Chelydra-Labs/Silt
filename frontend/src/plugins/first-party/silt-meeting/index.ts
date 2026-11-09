@@ -75,9 +75,11 @@ export function insertMeetingSection(editor: Editor): boolean {
 
   const doc = editor.state.doc
   const only = doc.childCount === 1 ? doc.child(0) : null
+  // noteBlock || headerBlock mirrors insertDetails (keymaps.ts): /h1-style
+  // commands can leave an empty header as the sole trigger block.
   const isEmptyTrigger =
     only !== null &&
-    only.type.name === 'noteBlock' &&
+    (only.type.name === 'noteBlock' || only.type.name === 'headerBlock') &&
     (only.content.size === 0 || only.textContent.trim() === '')
   if (isEmptyTrigger && only) {
     editor.view.dispatch(editor.state.tr.replaceWith(0, only.nodeSize, section))

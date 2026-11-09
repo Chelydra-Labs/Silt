@@ -86,9 +86,9 @@ function fakeSchema() {
 
 // A top-level doc child: the emptiness check reads content.size and
 // textContent, the replace path reads nodeSize.
-function docBlock(text: string) {
+function docBlock(text: string, typeName = 'noteBlock') {
   return {
-    type: { name: 'noteBlock' },
+    type: { name: typeName },
     attrs: { id: 'seed' },
     content: { size: text.length },
     textContent: text,
@@ -236,6 +236,25 @@ describe('silt-meeting plugin (#1105)', () => {
     expect(from).toBe(0)
     expect(to).toBe(2) // the empty trigger noteBlock
     assertMeetingSection(section)
+    expect(calls.insertContentAt).not.toHaveBeenCalled()
+    expect(current).toHaveLength(1)
+  })
+
+  it('replaces an emptied header trigger block too (insertDetails parity)', () => {
+    // A /h1-style command can leave an empty header as the sole block —
+    // keymaps' insertDetails admits noteBlock || headerBlock, and so does
+    // the emptiness check here: the section must become the only block,
+    // not leave a stray empty heading below itself.
+    const { editor, calls, current } = makeFakeEditor([
+      docBlock('', 'headerBlock')
+    ])
+    expect(
+      insertMeetingSection(
+        editor as unknown as Parameters<typeof insertMeetingSection>[0]
+      )
+    ).toBe(true)
+    expect(calls.replaceWith).toHaveBeenCalledTimes(1)
+    assertMeetingSection(calls.replaceWith.mock.calls[0]?.[2] as FakeNode)
     expect(calls.insertContentAt).not.toHaveBeenCalled()
     expect(current).toHaveLength(1)
   })
