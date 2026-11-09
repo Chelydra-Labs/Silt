@@ -399,6 +399,7 @@
     void filters.dueDate
     void filters.tags
     void filters.stale
+    void filters.shortlist
     void filters.text
     void ctx.activeNotebook
     void ctx.activeSection
