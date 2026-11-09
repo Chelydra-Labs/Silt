@@ -761,6 +761,10 @@
         "signature": "PluginSetTaskRecurrence(pluginID, sessionToken, blockID, recurrenceRule string) (bool, error)"
       },
       {
+        "name": "PluginSetTaskShortlistRank",
+        "signature": "PluginSetTaskShortlistRank(pluginID, sessionToken, blockID string, rank int) (bool, error)"
+      },
+      {
         "name": "PluginSetTaskStartDate",
         "signature": "PluginSetTaskStartDate(pluginID, sessionToken, blockID, startDate string) (bool, error)"
       },
@@ -1097,6 +1101,10 @@
         "signature": "SetTaskRecurrence(blockID, recurrenceRule string) error"
       },
       {
+        "name": "SetTaskShortlistRank",
+        "signature": "SetTaskShortlistRank(blockID string, rank int) error"
+      },
+      {
         "name": "SetTaskTags",
         "signature": "SetTaskTags(blockID string, tags []string) error"
       },
@@ -1221,6 +1229,7 @@
       "frontend/src/App.hotkeys.test.ts",
       "frontend/src/App.menu-save.test.ts",
       "frontend/src/App.pagetype-refresh.test.ts",
+      "frontend/src/App.responsive.test.ts",
       "frontend/src/App.search-jump.test.ts",
       "frontend/src/App.startup-events.test.ts",
       "frontend/src/App.svelte",
@@ -1243,6 +1252,7 @@
       "frontend/src/components/TabStrip.test.ts",
       "frontend/src/components/TagSidebarPanel.svelte",
       "frontend/src/components/TagsExplorer.svelte",
+      "frontend/src/components/TagsExplorer.test.ts",
       "frontend/src/components/TipTapEditor.block-ref-suggest.test.ts",
       "frontend/src/components/TipTapEditor.context-menu.test.ts",
       "frontend/src/components/TipTapEditor.external-reload.test.ts",
@@ -1338,6 +1348,7 @@
       "frontend/src/lib/tabs/persistence.svelte.ts",
       "frontend/src/lib/tabs/useTabManager.svelte.test.ts",
       "frontend/src/lib/tabs/useTabManager.svelte.ts",
+      "frontend/src/lib/testing/auditHarness.test.ts",
       "frontend/src/lib/testing/ipcMock.ts",
       "frontend/src/plugins/context.ai.test.ts",
       "frontend/src/plugins/context.test.ts",
@@ -1385,6 +1396,7 @@
       "frontend/src/App.hotkeys.test.ts",
       "frontend/src/App.menu-save.test.ts",
       "frontend/src/App.pagetype-refresh.test.ts",
+      "frontend/src/App.responsive.test.ts",
       "frontend/src/App.search-jump.test.ts",
       "frontend/src/App.startup-events.test.ts",
       "frontend/src/App.tabs.test.ts",
@@ -1438,6 +1450,8 @@
       "frontend/src/lib/editor/editorRegistry.svelte.ts",
       "frontend/src/lib/editor/nodeview-test-harness.test.ts",
       "frontend/src/lib/editor/spellcheck/customDictionary.svelte.test.ts",
+      "frontend/src/lib/testing/auditHarness.test.ts",
+      "frontend/src/lib/testing/auditHarness.ts",
       "frontend/src/plugins/context.ai.test.ts",
       "frontend/src/plugins/context.ts",
       "frontend/src/plugins/events.test.ts",
@@ -1517,6 +1531,6 @@
       "vault:moved",
       "vault:watch-coverage"
     ],
-    "plugin_method_count": 63
+    "plugin_method_count": 64
   }
 }

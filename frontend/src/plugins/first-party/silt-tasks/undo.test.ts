@@ -403,6 +403,7 @@ describe('undo copy', () => {
   it('names one or many restored attributes', () => {
     expect(describeChangedFields([])).toBe('change')
     expect(describeChangedFields(['status'])).toBe('status change')
+    expect(describeChangedFields(['shortlist'])).toBe('shortlist change')
     expect(describeChangedFields(['status', 'completed'])).toBe(
       'status and completion changes'
     )
