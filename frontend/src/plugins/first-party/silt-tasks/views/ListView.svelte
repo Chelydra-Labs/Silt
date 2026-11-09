@@ -765,11 +765,17 @@
   // shortlist lens leads, rank dominates manual_order, so a drop would
   // renumber the section from the rank-sorted DOM — the drop is a no-op.
   function onRowDragOver(e: DragEvent, item: TaskDetail, groupKey: string) {
-    if (hubSort !== 'manual' || shortlistFirst || !dragItem) return
+    if (hubSort !== 'manual' || !dragItem) return
     // Only within-group reorder; cross-group is a no-op (see Block above).
     if (groupKey !== dragGroupKey) return
+    // Cancel BEFORE the lens gate: browsers only fire `drop` on a target
+    // whose dragover was canceled, so returning early under the lens would
+    // make the row an invalid drop target and strand onRowDrop's locked-
+    // reorder announcement as dead code (mirrors the Board lane handler,
+    // which cancels lens-independently).
     e.preventDefault()
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+    if (shortlistFirst) return
     dragOverId = item.id
   }
 
@@ -779,8 +785,12 @@
       // the lens on means a reorder attempt was just swallowed. Announce
       // why instead of snapping back silently; cross-group drops are no-ops
       // regardless of the lens (see onRowDragOver) and stay quiet.
-      if (shortlistFirst && dragItem && groupKey === dragGroupKey)
+      if (shortlistFirst && dragItem && groupKey === dragGroupKey) {
+        // The dragover above marked the row a valid target; cancel the drop
+        // too so the browser's default drop action has nothing to run.
+        e.preventDefault()
         liveMessage = 'Manual order is locked while the Shortlist lens is on.'
+      }
       return
     }
     e.preventDefault()

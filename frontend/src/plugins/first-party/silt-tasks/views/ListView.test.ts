@@ -2064,6 +2064,17 @@ describe('ListView — shortlist badge + filter (#1092)', () => {
     expect(rowR3).toBeTruthy()
 
     await fireEvent.dragStart(handleR0)
+    // Real browsers only fire `drop` on a target whose dragover was
+    // canceled — jsdom doesn't model that precondition, so assert it here:
+    // without the cancel, this drop (and the announcement below) could
+    // never fire in a real browser and the test would false-certify.
+    let dragOverEvent: Event | undefined
+    rowR3.addEventListener('dragover', (e) => (dragOverEvent = e))
+    await fireEvent.dragOver(rowR3)
+    expect(dragOverEvent?.defaultPrevented).toBe(true)
+    // No insertion highlight under the lens — the drop is announced, not
+    // performed.
+    expect(rowR3.className).not.toContain('tasks-drag-over')
     await fireEvent.drop(rowR3)
     await flush()
 
