@@ -528,17 +528,24 @@
   // Rendered open-task order for J/K and prev/next (matches section layout).
   let flatOpenOrder = $derived.by((): TaskDetail[] => {
     if (hubGroupBy === 'dueDate') {
-      return [...overdue, ...todayItems, ...upcoming, ...later, ...undated]
+      return [
+        ...pinnedOpen,
+        ...overdue,
+        ...todayItems,
+        ...upcoming,
+        ...later,
+        ...undated
+      ]
     }
     if (hubGroupBy === 'none') {
-      return sortTasks(hubSort, unpinnedOpen)
+      return [...pinnedOpen, ...sortTasks(hubSort, unpinnedOpen)]
     }
     const out: TaskDetail[] = []
     for (const g of groupedSections) {
       if (collapsedSections.has(g.key)) continue
       out.push(...g.items)
     }
-    return out
+    return [...pinnedOpen, ...out]
   })
 
   let selectedIndex = $derived(
