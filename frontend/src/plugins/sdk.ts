@@ -29,6 +29,7 @@ export type TaskChangedField =
   | 'startDate'
   | 'dueDate'
   | 'priority'
+  | 'shortlist'
   | 'pinned'
   | 'progress'
   | 'recurrence'

@@ -13,6 +13,7 @@ const FIELD_LABELS: Record<TaskChangedField, string> = {
   startDate: 'start date',
   dueDate: 'due date',
   priority: 'priority',
+  shortlist: 'shortlist',
   pinned: 'pin',
   progress: 'progress',
   recurrence: 'recurrence',
