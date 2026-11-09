@@ -572,7 +572,11 @@
   )
 
   // Current holder of a shortlist rank, if any (#1092). Ranks are
-  // single-holder by design, so assigning R has to free it first.
+  // single-holder by design, so assigning R has to free it first. If
+  // duplicates exist at rest (hand-edited [shortlist:: N] tokens, or the
+  // restore race below), this picks one row arbitrarily and demotes only
+  // that one — ties are legal data and the UI resolves the one conflict
+  // it knows about, not every duplicate.
   async function findShortlistHolder(rank: number): Promise<string | null> {
     const res = await ctx.sqliteQuery(
       'SELECT block_id FROM tasks WHERE shortlist_rank = ? AND block_id != ?',
@@ -660,6 +664,9 @@
         // a failed assign would leave both tasks unranked. Best-effort,
         // journaled restore — no retry loop; if it also fails, extend the
         // banner so the loss is visible (the journal keeps Ctrl+Z viable).
+        // The restore assumes r stayed free across the failed assign; a
+        // concurrent writer claiming it in that window leaves a benign
+        // duplicate that sorts deterministically until re-ranked.
         if (demotedHolder != null) {
           try {
             await trackTaskUndoWrite(ctx.setTaskShortlistRank(demotedHolder, r))
