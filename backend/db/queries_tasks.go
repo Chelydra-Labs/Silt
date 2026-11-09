@@ -22,7 +22,7 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 	defer release()
 	baseQuery := `
 		SELECT b.id, b.parent_id, b.source, b.notebook, b.section, b.page, b.file_date, b.depth, b.raw_content, b.clean_content, b.line_number,
-		       t.status, t.owner, t.start_date, t.due_date, t.priority, t.pinned, t.recur, t.created_at, t.completed_at, t.manual_order,
+		       t.status, t.owner, t.start_date, t.due_date, t.priority, t.pinned, t.shortlist_rank, t.recur, t.created_at, t.completed_at, t.manual_order,
 		       t.modified_at, t.estimate_minutes, t.subtask_total, t.subtask_done
 		FROM blocks b
 		INNER JOIN tasks t ON b.id = t.block_id
@@ -93,12 +93,13 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 		var status, owner, start, due, recur interface{}
 		var priority int
 		var pinned sql.NullInt64
+		var shortlistRank sql.NullInt64
 		var createdAt, completedAt, modifiedAt interface{}
 		var manualOrder, estimateMinutes, subtaskTotal, subtaskDone sql.NullInt64
 
 		err := rows.Scan(
 			&r.ID, &parentID, &r.Source, &r.Notebook, &r.Section, &r.Page, &r.FileDate, &r.Depth, &r.RawContent, &r.CleanContent, &r.LineNumber,
-			&status, &owner, &start, &due, &priority, &pinned, &recur, &createdAt, &completedAt, &manualOrder,
+			&status, &owner, &start, &due, &priority, &pinned, &shortlistRank, &recur, &createdAt, &completedAt, &manualOrder,
 			&modifiedAt, &estimateMinutes, &subtaskTotal, &subtaskDone,
 		)
 		if err != nil {
@@ -127,6 +128,12 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 		if pinned.Valid {
 			b := pinned.Int64 != 0
 			r.Pinned = &b
+		}
+		// Shortlist rank (#1092): NULL stays nil (unranked), 0-3 hydrate
+		// to a real pointer — 0 is the TOP rank, not "absent".
+		if shortlistRank.Valid {
+			rank := int(shortlistRank.Int64)
+			r.ShortlistRank = &rank
 		}
 		if recurStr, ok := recur.(string); ok {
 			r.Recurrence = recurStr

@@ -118,6 +118,7 @@ func (dm *DatabaseManager) initSchema() error {
 		manual_order INTEGER,               -- 1-based [order:: N] sort position; NULL when absent (no backfill) (#417)
 		modified_at TEXT,                   -- ISO 8601 local [modified::] last task-line touch; NULL when absent (#440)
 		estimate_minutes INTEGER,           -- minutes from [estimate::]; NULL when absent (#439)
+		shortlist_rank INTEGER,             -- rank 0-3 from [shortlist:: N], 0 = top focus rank; NULL = unranked; disposable cache reproducible from markdown (#1092)
 		subtask_total INTEGER DEFAULT 0,    -- direct TASK children count (derived cache, #434)
 		subtask_done INTEGER DEFAULT 0,     -- direct TASK children in DONE (derived cache, #434)
 		FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
@@ -150,6 +151,10 @@ func (dm *DatabaseManager) initSchema() error {
 		// block hierarchy. NULL/0 means absent; no backfill of old tasks.
 		{"modified_at", "TEXT"},
 		{"estimate_minutes", "INTEGER"},
+		// #1092 shortlist rank: nullable cache from [shortlist:: N]; 0 is a
+		// real (top) rank, NULL = unranked. No default, no backfill — NULL
+		// must stay distinct from 0.
+		{"shortlist_rank", "INTEGER"},
 		{"subtask_total", "INTEGER DEFAULT 0"},
 		{"subtask_done", "INTEGER DEFAULT 0"},
 	} {

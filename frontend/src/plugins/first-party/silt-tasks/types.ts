@@ -53,6 +53,9 @@ export interface TaskDetail {
   // Duration from [estimate::] in whole minutes (#439). null when absent or
   // unparseable — never coerce missing to 0 (0 would look like "0m").
   estimate_minutes: number | null
+  // Rank 0-3 from [shortlist::], 0 = top; null = unranked — never coerce to
+  // a sentinel (#1092).
+  shortlist_rank: number | null
   // Cached child-task rollups (#434). 0 when the task has no subtasks.
   subtask_total: number
   subtask_done: number
@@ -136,6 +139,8 @@ export function coerceTaskRow(raw: unknown): TaskDetail {
     modified_at: (r.modified_at as string) ?? '',
     estimate_minutes:
       r.estimate_minutes == null ? null : Number(r.estimate_minutes),
+    shortlist_rank:
+      r.shortlist_rank == null ? null : Number(r.shortlist_rank),
     subtask_total: (r.subtask_total as number) ?? 0,
     subtask_done: (r.subtask_done as number) ?? 0
   } as unknown as TaskDetail

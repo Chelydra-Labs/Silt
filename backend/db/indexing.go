@@ -225,7 +225,7 @@ func prepareBlockIndexStmts(tx *sql.Tx) (*blockIndexStmts, error) {
 	if s.block, err = tx.Prepare("INSERT INTO blocks (id, parent_id, source, notebook, section, page, page_fold, file_date, depth, type, raw_content, clean_content, line_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"); err != nil {
 		return nil, err
 	}
-	if s.task, err = tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority, pinned, progress, recur, comments_count, links_count, created_at, completed_at, manual_order, modified_at, estimate_minutes, subtask_total, subtask_done) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"); err != nil {
+	if s.task, err = tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority, pinned, shortlist_rank, progress, recur, comments_count, links_count, created_at, completed_at, manual_order, modified_at, estimate_minutes, subtask_total, subtask_done) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"); err != nil {
 		return nil, err
 	}
 	// task_dependencies edges: one row per [blocked_by:: ((uuid))] ref on a
@@ -424,8 +424,15 @@ func (s *blockIndexStmts) indexBlocks(source, notebook, section, page string, bl
 					pinnedVal = sql.NullInt64{Int64: 1, Valid: true}
 				}
 			}
+			// Shortlist projection (#1092): NULL = unranked (nil pointer),
+			// 0-3 = ranked (0 is the TOP rank, a real value — never coerce
+			// to a sentinel). Cache only; markdown is the source of truth.
+			var shortlistRankVal sql.NullInt64
+			if block.ShortlistRank != nil {
+				shortlistRankVal = sql.NullInt64{Int64: int64(*block.ShortlistRank), Valid: true}
+			}
 			linksCount := len(parser.BlockRefRegex.FindAllString(block.RawText, -1))
-			if _, err := s.task.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority, pinnedVal, block.Progress, recurVal, commentsByTask[block.ID], linksCount, createdAtVal, completedAtVal, manualOrderVal, modifiedAtVal, estimateMinsVal, subtaskTotalByTask[block.ID], subtaskDoneByTask[block.ID]); err != nil {
+			if _, err := s.task.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority, pinnedVal, shortlistRankVal, block.Progress, recurVal, commentsByTask[block.ID], linksCount, createdAtVal, completedAtVal, manualOrderVal, modifiedAtVal, estimateMinsVal, subtaskTotalByTask[block.ID], subtaskDoneByTask[block.ID]); err != nil {
 				return fmt.Errorf("failed to insert task for block %s: %w", block.ID, err)
 			}
 		}
