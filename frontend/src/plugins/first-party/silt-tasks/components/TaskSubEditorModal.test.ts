@@ -124,7 +124,9 @@ vi.mock('@wailsio/runtime', () => ({
 }))
 
 import TaskSubEditorModal from './TaskSubEditorModal.svelte'
+import TaskEditDrawer from './TaskEditDrawer.svelte'
 import type { PluginContext } from '../../../sdk'
+import type { TaskDetail } from '../types'
 import { v2CtxStubs } from '../../../test-helpers'
 import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
 
@@ -222,7 +224,8 @@ describe('TaskSubEditorModal (#304)', () => {
 
     const dialog = screen.getByRole('dialog')
     expect(dialog).toHaveAttribute('aria-modal', 'true')
-    // The title is the parent task text.
+    // The accessible name comes from the sr-only header heading (the visible
+    // title lives in the sidebar's editable input).
     expect(dialog).toHaveTextContent('Ship the feature')
     // The breadcrumb carries notebook › section › page.
     expect(dialog).toHaveTextContent('Work')
@@ -247,7 +250,7 @@ describe('TaskSubEditorModal (#304)', () => {
     expect(dialog).not.toHaveTextContent('Standalone task')
     expect(dialog).not.toHaveTextContent('.silt')
     expect(dialog).not.toHaveTextContent('tasks.md')
-    // Header still shows the parent task title.
+    // Header still carries the parent task title in its sr-only heading.
     expect(dialog).toHaveTextContent('Ship the feature')
   })
 
@@ -882,5 +885,207 @@ describe('TaskSubEditorModal — writing-surface focus indicator (#1095)', () =>
 
     await fireFocusEvent(pm, 'focusout', nested)
     expect(focusState()).toBe('true')
+  })
+})
+
+describe('TaskSubEditorModal — pop-up single title (#1096)', () => {
+  beforeEach(() => {
+    mocks.fetchSubtree.mockReset().mockResolvedValue([])
+    mocks.saveSubtreeBlocks.mockReset().mockResolvedValue(true)
+    mocks.sqliteQuery
+      .mockReset()
+      .mockResolvedValue({ rows: [makeTaskRow()], truncated: false })
+    mql.matches = false
+    mqlListeners.length = 0
+  })
+
+  afterEach(() => cleanup())
+
+  async function mountWithSidebar() {
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => expect(mocks.sqliteQuery).toHaveBeenCalled())
+    await flush()
+  }
+
+  function heading(): HTMLElement {
+    const el = document.getElementById('sub-editor-title')
+    expect(el, 'dialog heading must always render').not.toBeNull()
+    return el as HTMLElement
+  }
+
+  it('shows exactly one editable title — the sidebar input — with the sidebar open', async () => {
+    await mountWithSidebar()
+
+    const titles = screen.getAllByLabelText('Task title')
+    expect(titles).toHaveLength(1)
+    expect(titles[0]).toHaveValue('Ship the feature')
+    expect(document.getElementById('sub-editor-sidebar')).toContainElement(
+      titles[0]
+    )
+
+    // The header copy is visually hidden, not deleted: it is the dialog name.
+    expect(heading()).toHaveClass('sr-only')
+    expect(heading()).toHaveTextContent('Ship the feature')
+    expect(
+      screen.getByRole('dialog', { name: 'Ship the feature' })
+    ).toBeInTheDocument()
+  })
+
+  it('keeps the dialog named and the Details toggle usable with the sidebar shut', async () => {
+    await mountWithSidebar()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Hide details' }))
+    await tick()
+    expect(screen.queryAllByLabelText('Task title')).toHaveLength(0)
+    expect(heading()).toHaveTextContent('Ship the feature')
+    expect(
+      screen.getByRole('dialog', { name: 'Ship the feature' })
+    ).toBeInTheDocument()
+
+    // The toggle still reopens the sidebar after a shut.
+    await fireEvent.click(screen.getByRole('button', { name: 'Show details' }))
+    await tick()
+    expect(screen.getAllByLabelText('Task title')).toHaveLength(1)
+  })
+
+  it('names the dialog from the sr-only heading while the narrow sidebar is shut', async () => {
+    mql.matches = true
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => expect(mocks.sqliteQuery).toHaveBeenCalled())
+    await flush()
+
+    // Narrow defaults to the collapsed disclosure.
+    expect(
+      screen.getByRole('button', { name: 'Show details' })
+    ).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryAllByLabelText('Task title')).toHaveLength(0)
+    expect(heading()).toHaveTextContent('Ship the feature')
+    expect(
+      screen.getByRole('dialog', { name: 'Ship the feature' })
+    ).toBeInTheDocument()
+  })
+})
+
+describe('TaskSubEditorModal — cross-surface sidebar parity (D7)', () => {
+  beforeEach(() => {
+    mocks.fetchSubtree.mockReset().mockResolvedValue([])
+    mocks.saveSubtreeBlocks.mockReset().mockResolvedValue(true)
+    mocks.sqliteQuery
+      .mockReset()
+      .mockResolvedValue({ rows: [makeTaskRow()], truncated: false })
+    mql.matches = false
+    mqlListeners.length = 0
+  })
+
+  afterEach(() => cleanup())
+
+  function textOf(el: Element | null): string {
+    return (el?.textContent ?? '').replace(/\s+/g, ' ').trim()
+  }
+
+  // The sidebar is shared, so its DOM order is the parity contract both hosts
+  // render; reading it per host catches any prop that changes layout.
+  function readSidebarLayout(root: Element) {
+    const labels = (scope: Element | null, selector: string) =>
+      scope
+        ? Array.from(scope.querySelectorAll(selector)).map((el) => textOf(el))
+        : []
+    return {
+      primary: labels(
+        root.querySelector('[data-testid="task-primary-header"]'),
+        'h3'
+      ),
+      essentials: labels(
+        root.querySelector(
+          'section[aria-labelledby="task-essentials-heading"]'
+        ),
+        'dt'
+      ),
+      planning: labels(
+        root.querySelector('[data-testid="task-planning-section"]'),
+        'h3, label[for="task-estimate-input"]'
+      ),
+      activity: labels(
+        root.querySelector('[data-testid="task-activity-section"]'),
+        'h3'
+      )
+    }
+  }
+
+  function makeDetail(): TaskDetail {
+    return {
+      id: 'task-1',
+      source: 'vault',
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      file_date: '2026-07-01',
+      clean_content: 'Ship the feature',
+      status: 'TODO',
+      owner: '',
+      start_date: '',
+      due_date: '2026-07-15',
+      priority: 2,
+      pinned: false,
+      progress: 0,
+      recurrence: '',
+      comments_count: 0,
+      links_count: 0,
+      created_at: '',
+      completed_at: '',
+      manual_order: 0,
+      modified_at: '',
+      estimate_minutes: null,
+      subtask_total: 0,
+      subtask_done: 0
+    }
+  }
+
+  it('renders the same sidebar field order, grouping, and labels as the drawer', async () => {
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => expect(mocks.sqliteQuery).toHaveBeenCalled())
+    await flush()
+    const modalSidebar = document.querySelector(
+      '#sub-editor-sidebar .task-metadata-sidebar'
+    )
+    expect(modalSidebar, 'modal sidebar must render').not.toBeNull()
+
+    render(TaskEditDrawer, {
+      props: { task: makeDetail(), ctx: makeCtx(), onClose: () => {} }
+    })
+    const drawerSidebar = screen
+      .getByTestId('task-edit-drawer')
+      .querySelector('.task-metadata-sidebar')
+    expect(drawerSidebar, 'drawer sidebar must render').not.toBeNull()
+
+    const expected = {
+      primary: ['Status', 'Due date', 'Start day', 'Priority'],
+      essentials: ['Owner', 'Tags'],
+      planning: [
+        'Planning & tracking',
+        'Progress',
+        'Estimate',
+        'Recurrence',
+        'Dependencies'
+      ],
+      activity: ['Activity', 'Comments']
+    }
+    expect(readSidebarLayout(modalSidebar!)).toEqual(expected)
+    expect(readSidebarLayout(drawerSidebar!)).toEqual(expected)
+    expect(readSidebarLayout(modalSidebar!)).toEqual(
+      readSidebarLayout(drawerSidebar!)
+    )
   })
 })

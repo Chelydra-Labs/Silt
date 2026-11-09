@@ -239,6 +239,7 @@
 
   <div
     class="flex-shrink-0 space-y-2 border-t border-surface-card-border px-5 py-3"
+    data-testid="task-edit-drawer-footer"
   >
     <!-- The drawer is where metadata edits happen, so the undo it offers
          belongs next to the task it would restore. Same control/state as the
