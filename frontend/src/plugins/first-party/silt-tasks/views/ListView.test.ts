@@ -5,6 +5,7 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 const mocks = vi.hoisted(() => ({
   sqliteQuery: vi.fn(),
   updateBlockState: vi.fn(),
+  updateTaskMeta: vi.fn(),
   createTask: vi.fn().mockResolvedValue('new-task-id'),
   setTaskOrder: vi.fn().mockResolvedValue(true),
   setTaskOrders: vi.fn().mockResolvedValue(true),
@@ -96,7 +97,7 @@ function makeCtx(): PluginContext {
     createTask: mocks.createTask,
     setTaskOrder: mocks.setTaskOrder,
     setTaskOrders: mocks.setTaskOrders,
-    updateTaskMeta: vi.fn(),
+    updateTaskMeta: mocks.updateTaskMeta,
     getPluginSettings: vi.fn(() => Promise.resolve({})),
     on: <E extends PluginEventName>(
       event: E,
@@ -2254,5 +2255,249 @@ describe('Tasks view — session undo (#1011)', () => {
     expect(
       document.getElementById('task-due-date-trigger')!.textContent
     ).toContain('Set date…')
+  })
+})
+
+// --- Pinned block + toggle (#1091) -----------------------------------------
+
+describe('Tasks view — pinned block (#1091)', () => {
+  beforeEach(() => {
+    resetTaskHubState()
+    mocks.sqliteQuery.mockReset()
+    mocks.updateTaskMeta.mockReset().mockResolvedValue(true)
+    mocks.blockChangedCallbacks.length = 0
+  })
+
+  afterEach(cleanup)
+
+  function mockOpenRows(rows: TaskRow[]) {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) return { rows, truncated: false }
+      return { rows: [], truncated: false }
+    })
+  }
+
+  it('renders pinned open tasks in a Pinned block above the groups', async () => {
+    mockOpenRows([
+      task('p1', 'pinned task', { pinned: true }),
+      task('u1', 'unpinned task')
+    ])
+
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const pinned = document.querySelector('[data-group="pinned"]')
+    expect(pinned).toBeInTheDocument()
+    expect(pinned?.getAttribute('aria-label')).toBe('Pinned')
+    expect(pinned?.querySelector('[data-block-id="p1"]')).toBeInTheDocument()
+    expect(pinned?.querySelector('[data-block-id="u1"]')).toBeNull()
+    // A pinned row is not duplicated into its date group.
+    expect(document.querySelectorAll('[data-block-id="p1"]')).toHaveLength(1)
+
+    const unpinned = document
+      .querySelector('[data-block-id="u1"]')
+      ?.closest('[data-group]')
+    expect(unpinned?.getAttribute('data-group')).toBe('today')
+
+    const keys = Array.from(
+      document.querySelectorAll('section[data-group]')
+    ).map((s) => s.getAttribute('data-group'))
+    expect(keys.indexOf('pinned')).toBeLessThan(keys.indexOf('today'))
+
+    // The toggle is always visible (no responsive hide) and starts unpinned.
+    const toggle = screen.getByTestId('tasks-pin-u1')
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(toggle).toHaveAccessibleName('Pin task')
+    expect(toggle.className).not.toContain('hidden')
+  })
+
+  it('renders the divider only when pinned and unpinned open tasks coexist', async () => {
+    mockOpenRows([
+      task('p1', 'pinned task', { pinned: true }),
+      task('u1', 'unpinned task')
+    ])
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    expect(screen.getByTestId('tasks-pinned-divider')).toBeInTheDocument()
+  })
+
+  it('renders no Pinned block or divider when nothing is pinned', async () => {
+    mockOpenRows([task('u1', 'unpinned task')])
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(document.querySelector('[data-group="pinned"]')).toBeNull()
+    expect(screen.queryByTestId('tasks-pinned-divider')).toBeNull()
+  })
+
+  it('omits the divider when every open task is pinned', async () => {
+    mockOpenRows([
+      task('p1', 'pinned one', { pinned: true }),
+      task('p2', 'pinned two', { pinned: true })
+    ])
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(document.querySelector('[data-group="pinned"]')).toBeInTheDocument()
+    expect(screen.queryByTestId('tasks-pinned-divider')).toBeNull()
+    // Pinned rows leave no normal groups behind.
+    expect(document.querySelector('[data-group="today"]')).toBeNull()
+    expect(document.querySelector('[data-group="undated"]')).toBeNull()
+  })
+
+  it('toggling pin calls updateTaskMeta and does not select the row', async () => {
+    mockOpenRows([task('u1', 'unpinned task')])
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('tasks-pin-u1'))
+    await flush()
+
+    expect(mocks.updateTaskMeta).toHaveBeenCalledWith('u1', { pinned: true })
+    const row = document.querySelector('[data-block-id="u1"]')
+    expect(row?.getAttribute('aria-current')).toBeNull()
+    expect(
+      document.querySelector('[aria-labelledby="task-edit-drawer-title"]')
+    ).toBeNull()
+    expect(screen.getByTestId('tasks-pin-u1')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+  })
+
+  it('surfaces a failed pin write and reverts the icon', async () => {
+    mocks.updateTaskMeta.mockRejectedValueOnce(new Error('lock held'))
+    mockOpenRows([task('u1', 'unpinned task')])
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('tasks-pin-u1'))
+    await flush()
+
+    const banner = screen.getByTestId('tasks-pin-error')
+    expect(banner).toHaveAttribute('role', 'alert')
+    expect(banner.textContent).toContain("Couldn't update pin: lock held")
+
+    const toggle = screen.getByTestId('tasks-pin-u1')
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(toggle).toHaveAccessibleName('Pin task')
+  })
+
+  it('applies the active sort within the pinned set', async () => {
+    setSort('title')
+    mockOpenRows([
+      task('z', 'Zebra', { pinned: true, due_date: '' }),
+      task('a', 'Apple', { pinned: true, due_date: '' }),
+      task('m', 'Mango', { due_date: '' })
+    ])
+
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const pinnedIds = Array.from(
+      document.querySelectorAll('[data-group="pinned"] [data-block-id]')
+    ).map((el) => el.getAttribute('data-block-id'))
+    expect(pinnedIds).toEqual(['a', 'z'])
+
+    const undatedIds = Array.from(
+      document.querySelectorAll('[data-group="undated"] [data-block-id]')
+    ).map((el) => el.getAttribute('data-block-id'))
+    expect(undatedIds).toEqual(['m'])
+  })
+
+  it('never renders a pinned DONE task in the Pinned block', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return { rows: [task('u1', 'open one')], truncated: false }
+      }
+      if (isDoneSql(sql)) {
+        return {
+          rows: [
+            {
+              id: 'd1',
+              notebook: '.silt',
+              section: '',
+              page: 'tasks',
+              file_date: todayStr(),
+              clean_content: 'done pinned',
+              status: 'DONE',
+              pinned: true
+            }
+          ],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(document.querySelector('[data-group="pinned"]')).toBeNull()
+    expect(screen.queryByTestId('tasks-pin-d1')).toBeNull()
+
+    await fireEvent.click(screen.getByTestId('tasks-completed-toggle'))
+    await flush()
+    expect(document.querySelector('[data-block-id="d1"]')).toBeInTheDocument()
+    expect(screen.queryByTestId('tasks-pin-d1')).toBeNull()
+  })
+
+  it('starts J/K traversal at the pinned block', async () => {
+    mockOpenRows([
+      task('p1', 'first pinned', { pinned: true }),
+      task('p2', 'second pinned', { pinned: true }),
+      task('u1', 'unpinned task')
+    ])
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const bodyBtn = document.querySelector(
+      '[data-block-id="p1"] button[aria-label^="Edit metadata for"]'
+    ) as HTMLElement
+    await fireEvent.click(bodyBtn)
+    await flush()
+
+    await fireEvent.keyDown(window, { key: 'j' })
+    await flush()
+    expect(
+      document
+        .querySelector('[data-block-id="p2"]')
+        ?.getAttribute('aria-current')
+    ).toBe('true')
+  })
+
+  it('returns an unpinned row to its normal group after the reload', async () => {
+    const rows: TaskRow[] = [
+      task('p1', 'pinned one', { pinned: true }),
+      task('u1', 'plain one')
+    ]
+    mockOpenRows(rows)
+    mocks.updateTaskMeta.mockImplementation(
+      async (id: string, meta: { pinned?: boolean | null }) => {
+        const row = rows.find((r) => r.id === id)
+        if (row && typeof meta.pinned === 'boolean') row.pinned = meta.pinned
+        return true
+      }
+    )
+
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    expect(
+      document.querySelector('[data-group="pinned"] [data-block-id="p1"]')
+    ).toBeInTheDocument()
+
+    await fireEvent.click(screen.getByTestId('tasks-pin-p1'))
+    await flush()
+    // The backend write emits block:changed in production; drive the reload
+    // manually so the fresh (unpinned) row re-bins into its date group.
+    mocks.blockChangedCallbacks.forEach((cb) => cb())
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    await flush()
+
+    expect(
+      document.querySelector('[data-group="today"] [data-block-id="p1"]')
+    ).toBeInTheDocument()
+    expect(document.querySelector('[data-group="pinned"]')).toBeNull()
+    expect(screen.queryByTestId('tasks-pinned-divider')).toBeNull()
   })
 })
