@@ -72,7 +72,7 @@
     tabindex="0"
     aria-grabbed={dragging ? 'true' : 'false'}
     aria-current={selected ? 'true' : undefined}
-    aria-label={`${card.clean_content}, ${colLabel}${card.owner ? `, owner ${card.owner}` : ''}${card.due_date ? `, due ${card.due_date}` : ''}${card.pinned ? ', pinned' : ''}${card.recurrence ? `, recurring ${card.recurrence}` : ''}${card.is_blocked ? ', blocked by unfinished prerequisite' : ''}${card.subtask_total > 0 ? `, ${card.subtask_done} of ${card.subtask_total} subtasks done` : ''}.${dndEnabled ? ' Arrow keys change ' + groupBy + '.' : ''}`}
+    aria-label={`${card.clean_content}, ${colLabel}${card.owner ? `, owner ${card.owner}` : ''}${card.due_date ? `, due ${card.due_date}` : ''}${card.pinned ? ', pinned' : ''}${card.shortlist_rank != null ? `, shortlist rank ${card.shortlist_rank}` : ''}${card.recurrence ? `, recurring ${card.recurrence}` : ''}${card.is_blocked ? ', blocked by unfinished prerequisite' : ''}${card.subtask_total > 0 ? `, ${card.subtask_done} of ${card.subtask_total} subtasks done` : ''}.${dndEnabled ? ' Arrow keys change ' + groupBy + '.' : ''}`}
     draggable={dndEnabled ? 'true' : 'false'}
     class="task-card group relative overflow-hidden rounded-lg border border-surface-card-border bg-surface-card p-3 pl-3.5 shadow-sm transition-all duration-200 hover:-translate-y-px hover:border-border-active hover:bg-hover hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-border-focus {dndEnabled
       ? 'cursor-grab active:cursor-grabbing'

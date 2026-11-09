@@ -89,4 +89,19 @@ describe('TaskCard shortlist badge (#1092)', () => {
     expect(badge.className).toContain('font-mono')
     expect(badge.className).not.toMatch(/text-error|accent-primary/)
   })
+
+  it('announces the rank in the card label — 0 included, unranked silent', () => {
+    // The explicit aria-label overrides subtree text, so the badge span is
+    // invisible to AT; the rank must ride the label itself.
+    render(TaskCard, makeProps(makeCard({ shortlist_rank: 0, priority: 1 })))
+    expect(
+      document.querySelector('[data-card="c1"]')!.getAttribute('aria-label')
+    ).toBe('Ship the shortlist, To Do, shortlist rank 0.')
+
+    cleanup()
+    render(TaskCard, makeProps(makeCard({ shortlist_rank: null })))
+    expect(
+      document.querySelector('[data-card="c1"]')!.getAttribute('aria-label')
+    ).not.toContain('shortlist rank')
+  })
 })
