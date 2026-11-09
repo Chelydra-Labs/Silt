@@ -1040,13 +1040,13 @@
       </div>
     </section>
 
-    <section aria-labelledby="task-shortlist-label">
-      <h3 id="task-shortlist-label" class="mb-1 {FIELD_LABEL}">Shortlist</h3>
+    <section aria-labelledby={id('task-shortlist-label')}>
+      <h3 id={id('task-shortlist-label')} class="mb-1 {FIELD_LABEL}">Shortlist</h3>
       <div
         class="flex items-center gap-0.5 rounded-lg border border-surface-panel-border bg-surface-panel p-0.5"
         role="radiogroup"
         aria-label="Shortlist rank"
-        aria-describedby="task-shortlist-hint"
+        aria-describedby={id('task-shortlist-hint')}
         tabindex="-1"
         onkeydown={onShortlistKeydown}
       >
@@ -1075,7 +1075,7 @@
         {/each}
       </div>
       <p
-        id="task-shortlist-hint"
+        id={id('task-shortlist-hint')}
         class="mt-1 font-label-sm text-type-2xs text-text-muted"
       >
         0 is the top rank

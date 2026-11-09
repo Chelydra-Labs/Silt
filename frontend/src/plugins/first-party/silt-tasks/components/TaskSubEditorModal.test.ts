@@ -1039,7 +1039,7 @@ describe('TaskSubEditorModal — cross-surface sidebar parity (D7)', () => {
     expect(drawerSidebar, 'drawer sidebar must render').not.toBeNull()
 
     const expected = {
-      primary: ['Status', 'Due date', 'Start day', 'Priority'],
+      primary: ['Status', 'Due date', 'Start day', 'Priority', 'Shortlist'],
       essentials: ['Owner', 'Tags'],
       planning: [
         'Planning & tracking',
