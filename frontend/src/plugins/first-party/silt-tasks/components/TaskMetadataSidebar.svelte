@@ -585,17 +585,25 @@
   // Sibling radiogroups are atomic for free — field.pending flips on before
   // their first await. The shortlist lookup+demote+commit chain spans two
   // awaits before pending turns on, so this flag closes that reentrancy
-  // window; a second activation inside it is a no-op, never a revert.
+  // window; a second activation inside it queues behind the flush, never
+  // reverts mid-chain.
   let shortlistCommitInFlight = $state(false)
 
   async function commitShortlist(r: number | null) {
-    if (
-      !task ||
-      shortlistCommitInFlight ||
-      shortlistField.pending ||
-      r === shortlistCommitted
-    )
+    if (!task || r === shortlistCommitted) return
+    if (shortlistCommitInFlight || shortlistField.pending) {
+      // A pointer activation landing in the pre-commit window carries the
+      // same intent as the keystroke the newest-intent path already keeps:
+      // record it and let the armed flush land it once the in-flight chain
+      // settles, instead of dropping it. (flush reads the live value, so a
+      // failed chain reverts this to the committed anchor and the flush
+      // no-ops — a failed write never auto-retries.)
+      if (r !== shortlistField.value) {
+        shortlistField.value = r
+        shortlistDebouncer.trigger()
+      }
       return
+    }
     // Value at entry. The keyboard flush passes value as r, so a change by
     // the time commit() runs is a keystroke that landed during the pre-commit
     // awaits (holder lookup / demotion run while the radios are still

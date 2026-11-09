@@ -773,6 +773,47 @@ describe('TaskMetadataSidebar', () => {
       ).toHaveAttribute('aria-checked', 'true')
     })
 
+    it('queues a pointer click that lands during the pre-commit lookup window', async () => {
+      const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
+      // First lookup stays pending until released, so the second click hits
+      // the pre-commit window; later lookups resolve empty.
+      let releaseLookup: (v: {
+        rows: unknown[]
+        truncated: boolean
+      }) => void = () => {}
+      const sqliteQuery = vi
+        .fn()
+        .mockImplementationOnce(() => new Promise((r) => (releaseLookup = r)))
+        .mockResolvedValue({ rows: [], truncated: false })
+      render(TaskMetadataSidebar, {
+        props: {
+          task: makeTask(),
+          ctx: makeCtx({ setTaskShortlistRank, sqliteQuery })
+        }
+      })
+      const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
+      const rank2 = within(group).getByRole('radio', {
+        name: '2'
+      }) as HTMLButtonElement
+      rank2.click()
+      // A pointer click during the pending lookup used to be dropped while
+      // the keyboard path survived; it now queues behind the armed flush.
+      ;(
+        within(group).getByRole('radio', { name: '1' }) as HTMLButtonElement
+      ).click()
+      releaseLookup({ rows: [], truncated: false })
+      await flush()
+      await new Promise((r) => setTimeout(r, 230))
+      await flush()
+
+      expect(setTaskShortlistRank).toHaveBeenNthCalledWith(1, 'task-1', 2)
+      expect(setTaskShortlistRank).toHaveBeenLastCalledWith('task-1', 1)
+      expect(within(group).getByRole('radio', { name: '1' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    })
+
     it('commits exactly once when a second activation lands while the holder lookup is pending', async () => {
       const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
       // First lookup stays pending until released, so the second click hits
