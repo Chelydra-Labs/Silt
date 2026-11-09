@@ -773,6 +773,80 @@ describe('TaskMetadataSidebar', () => {
       ).toHaveAttribute('aria-checked', 'true')
     })
 
+    it('lands an activation during the compensating-restore await as a fresh chain', async () => {
+      let releaseRestore: (v: boolean) => void = () => {}
+      const setTaskShortlistRank = vi
+        .fn()
+        .mockResolvedValueOnce(true) // demote (holder-1 → null)
+        .mockRejectedValueOnce(new Error('assign failed')) // assign (task-1 → 2)
+        // Compensating restore (holder-1 → 2) — held pending so the chain
+        // sits inside its await while the test activates a rank.
+        .mockImplementationOnce(
+          () => new Promise<boolean>((r) => (releaseRestore = r))
+        )
+        .mockResolvedValue(true)
+      const sqliteQuery = vi
+        .fn()
+        .mockResolvedValueOnce({
+          rows: [{ block_id: 'holder-1' }],
+          truncated: false
+        })
+        .mockResolvedValue({ rows: [], truncated: false })
+      render(TaskMetadataSidebar, {
+        props: {
+          task: makeTask(),
+          ctx: makeCtx({ setTaskShortlistRank, sqliteQuery })
+        }
+      })
+      const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
+      ;(
+        within(group).getByRole('radio', { name: '2' }) as HTMLButtonElement
+      ).click()
+      // Lookup → demote ok → assign fails → restore held: the chain is now
+      // parked inside the compensating-restore await with the value reverted
+      // to the committed anchor.
+      await flush()
+      await flush()
+      expect(setTaskShortlistRank).toHaveBeenNthCalledWith(3, 'holder-1', 2)
+      expect(screen.getByTestId('task-meta-error')).toHaveTextContent(
+        "Couldn't save: assign failed"
+      )
+      expect(
+        within(group).getByRole('radio', { name: 'None' })
+      ).toHaveAttribute('aria-checked', 'true')
+
+      // Click 3 while the restore await holds the chain open: the in-flight
+      // branch mirrors the intent into the value AFTER the anchor revert
+      // already ran, so the chain tail re-arms the flush and lands it as a
+      // fresh chain once the restore settles — the documented asymmetry vs.
+      // intents recorded before the revert, which a failed chain drops.
+      ;(
+        within(group).getByRole('radio', { name: '3' }) as HTMLButtonElement
+      ).click()
+      await flush()
+      expect(within(group).getByRole('radio', { name: '3' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+
+      releaseRestore(true)
+      await flush()
+      // Re-armed flush fires past the 200 ms commit debounce.
+      await new Promise((r) => setTimeout(r, 230))
+      await flush()
+      await flush()
+
+      expect(setTaskShortlistRank).toHaveBeenNthCalledWith(1, 'holder-1', null)
+      expect(setTaskShortlistRank).toHaveBeenNthCalledWith(2, 'task-1', 2)
+      expect(setTaskShortlistRank).toHaveBeenNthCalledWith(3, 'holder-1', 2)
+      expect(setTaskShortlistRank).toHaveBeenNthCalledWith(4, 'task-1', 3)
+      expect(setTaskShortlistRank).toHaveBeenCalledTimes(4)
+      expect(within(group).getByRole('radio', { name: '3' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    })
+
     it('queues a pointer click that lands during the pre-commit lookup window', async () => {
       const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
       // First lookup stays pending until released, so the second click hits
