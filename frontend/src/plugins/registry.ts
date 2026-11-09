@@ -102,6 +102,7 @@ registerPlugin({
 // command is the whole surface; no view component.
 registerPlugin({
   manifest: MeetingPlugin.manifest,
+  onVaultOpen: (ctx) => MeetingPlugin.onVaultOpen(ctx),
   source: 'first-party'
 })
 
