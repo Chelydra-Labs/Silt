@@ -984,6 +984,50 @@ describe('TaskMetadataSidebar', () => {
       )
     })
 
+    it('lands a queued intent despite the host success re-query re-seeding the control', async () => {
+      const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
+      let releaseLookup: (v: {
+        rows: unknown[]
+        truncated: boolean
+      }) => void = () => {}
+      const sqliteQuery = vi
+        .fn()
+        .mockImplementationOnce(() => new Promise((r) => (releaseLookup = r)))
+        .mockResolvedValue({ rows: [], truncated: false })
+      const ctx = makeCtx({ setTaskShortlistRank, sqliteQuery })
+      const { rerender } = render(TaskMetadataSidebar, {
+        props: { task: makeTask(), ctx }
+      })
+      const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
+      ;(
+        within(group).getByRole('radio', { name: '2' }) as HTMLButtonElement
+      ).click()
+      // Queue rank 1 behind the in-flight rank-2 chain.
+      ;(
+        within(group).getByRole('radio', { name: '1' }) as HTMLButtonElement
+      ).click()
+      releaseLookup({ rows: [], truncated: false })
+      await flush()
+      // The chain settled and armed the rank-1 flush. The host's onMetaChanged
+      // reload now lands inside the 200 ms debounce carrying the rank this
+      // chain just wrote (2) — that echo must not be treated as newer than
+      // the queued intent.
+      await rerender({ task: makeTask({ shortlist_rank: 2 }), ctx })
+      await flush()
+      expect(setTaskShortlistRank).toHaveBeenCalledTimes(1)
+      expect(setTaskShortlistRank).toHaveBeenLastCalledWith('task-1', 2)
+
+      // The armed flush fires past the 200 ms debounce and lands rank 1.
+      await new Promise((r) => setTimeout(r, 230))
+      await flush()
+      expect(setTaskShortlistRank).toHaveBeenLastCalledWith('task-1', 1)
+      expect(setTaskShortlistRank).toHaveBeenCalledTimes(2)
+      expect(within(group).getByRole('radio', { name: '1' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    })
+
     it('lands a pointer cancel back to the previous rank during the pre-commit window', async () => {
       const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
       let releaseLookup: (v: {

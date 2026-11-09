@@ -286,7 +286,20 @@
       priorityField.reset(task?.priority ?? 2)
       priorityCommitted = task?.priority ?? 2
     }
-    if (untrack(() => !shortlistField.pending && !shortlistCommitInFlight)) {
+    if (
+      untrack(
+        () =>
+          !shortlistField.pending &&
+          !shortlistCommitInFlight &&
+          // value !== committed means the debouncer is armed with newer
+          // local intent (a queued activation the chain tail mirrored into
+          // the value). The host's success re-query echoes the rank the
+          // chain just wrote and would clobber that intent before the
+          // flush lands; with no intent armed, value === committed is the
+          // resting invariant, so genuine external changes still re-seed.
+          shortlistField.value === shortlistCommitted
+      )
+    ) {
       // ?? (not ||): rank 0 must survive the reset — only null/undefined map
       // to the unranked state. The in-flight flag covers the lookup+demote
       // awaits before pending turns on, where a host re-query (new task prop
