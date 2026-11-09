@@ -50,6 +50,7 @@
   import { binByDimension, type GroupSection } from '../grouping'
   import { buildQuery } from '../query'
   import { useBlockChangedReload, useBlockedDoneGuard } from '../shared.svelte'
+  import { sortTasks } from '../taskOrder'
   import { trackTaskUndoWrite } from '../undo.svelte'
 
   interface Props extends TaskViewProps {
@@ -341,96 +342,41 @@
     onCountChange?.(open, done)
   })
 
+  // The hub's current grouping + sort dimensions, read reactively so a
+  // selector change re-bins the rows without a re-query.
+  let hubGroupBy = $derived(getTaskHubViewState().groupBy)
+  let hubSort = $derived(getTaskHubViewState().sort)
+
+  // Pinned open tasks render in their own block above every grouping branch,
+  // so the group derivations below read `unpinnedOpen` and never duplicate a
+  // pinned row (#1091).
+  let pinnedOpen = $derived(
+    sortTasks(
+      hubSort,
+      filteredOpen.filter((i) => i.pinned)
+    )
+  )
+  let unpinnedOpen = $derived(filteredOpen.filter((i) => !i.pinned))
+
   let overdue = $derived(
-    filteredOpen.filter((i) => !!i.due_date && i.due_date < today)
+    unpinnedOpen.filter((i) => !!i.due_date && i.due_date < today)
   )
   let todayItems = $derived(
-    filteredOpen.filter((i) => !!i.due_date && i.due_date === today)
+    unpinnedOpen.filter((i) => !!i.due_date && i.due_date === today)
   )
   let upcoming = $derived(
-    filteredOpen
+    unpinnedOpen
       .filter(
         (i) => !!i.due_date && i.due_date > today && i.due_date <= weekEnd
       )
       .sort((a, b) => a.due_date.localeCompare(b.due_date))
   )
   let later = $derived(
-    filteredOpen
+    unpinnedOpen
       .filter((i) => !!i.due_date && i.due_date > weekEnd)
       .sort((a, b) => a.due_date.localeCompare(b.due_date))
   )
-  let undated = $derived(filteredOpen.filter((i) => !i.due_date))
-
-  // The hub's current grouping + sort dimensions, read reactively so a
-  // selector change re-bins the rows without a re-query.
-  let hubGroupBy = $derived(getTaskHubViewState().groupBy)
-  let hubSort = $derived(getTaskHubViewState().sort)
-
-  // Within-section sort comparator for the active SortMode (#423). Mirrors
-  // the SQL ORDER BY in query.ts so a sort change without a re-query still
-  // produces the same order the next query would. Only called for the
-  // generalized-grouping path; the dueDate path uses the legacy $derived
-  // buckets above unchanged.
-  function rowCompare(a: TaskDetail, b: TaskDetail): number {
-    switch (hubSort) {
-      case 'manual': {
-        const am = a.manual_order ?? 0
-        const bm = b.manual_order ?? 0
-        if ((am === 0) !== (bm === 0)) return am === 0 ? 1 : -1
-        if (am !== bm) return am - bm
-        break
-      }
-      case 'priority': {
-        if (a.priority !== b.priority) return a.priority - b.priority
-        break
-      }
-      case 'title': {
-        const c = (a.clean_content ?? '').localeCompare(b.clean_content ?? '')
-        if (c !== 0) return c
-        break
-      }
-      case 'created': {
-        const ac = a.created_at || '9999'
-        const bc = b.created_at || '9999'
-        if (ac !== bc) return ac.localeCompare(bc)
-        break
-      }
-      case 'owner': {
-        const ao = a.owner || '~'
-        const bo = b.owner || '~'
-        if (ao !== bo) return ao.localeCompare(bo)
-        break
-      }
-      case 'modified': {
-        // Recently modified first; empty/null as oldest.
-        const am = a.modified_at || '0000'
-        const bm = b.modified_at || '0000'
-        if (am !== bm) return bm.localeCompare(am)
-        break
-      }
-      case 'estimate': {
-        // Null estimates last; then ascending minutes.
-        const ae = a.estimate_minutes
-        const be = b.estimate_minutes
-        const aNull = ae == null
-        const bNull = be == null
-        if (aNull !== bNull) return aNull ? 1 : -1
-        if (!aNull && !bNull && ae !== be) return ae - be
-        break
-      }
-      case 'dueDate':
-      default:
-        // Fall through to the due-date tiebreaker below.
-        break
-    }
-    return (a.due_date || '9999-12-31').localeCompare(
-      b.due_date || '9999-12-31'
-    )
-  }
-
-  function sortRows(rows: TaskDetail[]): TaskDetail[] {
-    return [...rows].sort(rowCompare)
-  }
+  let undated = $derived(unpinnedOpen.filter((i) => !i.due_date))
 
   function sectionEstimateLabel(items: TaskDetail[]): string {
     const sum = items.reduce((acc, t) => acc + (t.estimate_minutes ?? 0), 0)
@@ -451,7 +397,7 @@
   // byte-exact (preserves every ListView test).
   let groupedSections = $derived.by<GroupSection[]>(() => {
     if (hubGroupBy === 'dueDate' || hubGroupBy === 'none') return []
-    const sections = binByDimension(filteredOpen, hubGroupBy, {
+    const sections = binByDimension(unpinnedOpen, hubGroupBy, {
       today,
       weekStart
     })
@@ -459,7 +405,7 @@
     // buckets so the list stays compact when the data is sparse.
     return sections
       .filter((s) => s.items.length > 0)
-      .map((s) => ({ ...s, items: sortRows(s.items) }))
+      .map((s) => ({ ...s, items: sortTasks(hubSort, s.items) }))
   })
 
   // Collapsed state for the generalized sections. Tail-collapse heuristic:
@@ -566,17 +512,24 @@
   // Rendered open-task order for J/K and prev/next (matches section layout).
   let flatOpenOrder = $derived.by((): TaskDetail[] => {
     if (hubGroupBy === 'dueDate') {
-      return [...overdue, ...todayItems, ...upcoming, ...later, ...undated]
+      return [
+        ...pinnedOpen,
+        ...overdue,
+        ...todayItems,
+        ...upcoming,
+        ...later,
+        ...undated
+      ]
     }
     if (hubGroupBy === 'none') {
-      return sortRows(filteredOpen)
+      return [...pinnedOpen, ...sortTasks(hubSort, unpinnedOpen)]
     }
     const out: TaskDetail[] = []
     for (const g of groupedSections) {
       if (collapsedSections.has(g.key)) continue
       out.push(...g.items)
     }
-    return out
+    return [...pinnedOpen, ...out]
   })
 
   let selectedIndex = $derived(
@@ -1113,13 +1066,13 @@
               {/if}
             {/each}
           {:else if hubGroupBy === 'none'}
-            {#if filteredOpen.length > 0}
+            {#if unpinnedOpen.length > 0}
               <div
                 class="space-y-1 rounded-xl border border-surface-panel-border/60 bg-surface-panel/20 p-1"
                 data-group="all"
                 aria-label="All Tasks"
               >
-                {#each sortRows(filteredOpen) as item (item.id)}
+                {#each sortTasks(hubSort, unpinnedOpen) as item (item.id)}
                   <div animate:flip={{ duration: 200, easing: cubicOut }}>
                     {@render taskRow(item, 'all')}
                   </div>
