@@ -28,7 +28,7 @@
     onCardDrop: (e: DragEvent) => void
     onKeydown: (e: KeyboardEvent) => void
     onSelect: () => void
-    onPinToggle: (next: boolean) => void
+    onPinToggle: (next: boolean) => Promise<unknown> | void
     onPinError?: (message: string) => void
     selected?: boolean
   }
@@ -241,7 +241,7 @@
          ARIA nested-interactive violation. -->
     <PinToggle
       pinned={card.pinned}
-      onToggle={async (next) => onPinToggle(next)}
+      onToggle={onPinToggle}
       onError={onPinError}
       testId={`tasks-pin-${card.id}`}
       class="absolute top-2 right-2 z-10"
