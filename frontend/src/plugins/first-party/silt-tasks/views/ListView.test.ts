@@ -2070,9 +2070,11 @@ describe('ListView — shortlist badge + filter (#1092)', () => {
     expect(mocks.setTaskOrders).not.toHaveBeenCalled()
     expect(mocks.setTaskOrder).not.toHaveBeenCalled()
     expect(mocks.updateBlockState).not.toHaveBeenCalled()
-    // The announce only fires alongside a real write, so it must stay
-    // silent under the gate too.
-    expect(screen.getByTestId('tasks-live-message').textContent).toBe('')
+    // No write, but the swallowed reorder is still announced — a silent
+    // snap-back leaves screen-reader users without feedback.
+    expect(screen.getByTestId('tasks-live-message').textContent).toBe(
+      'Manual order is locked while the Shortlist lens is on.'
+    )
     expect(ids()).toEqual(['r0', 'r3'])
   })
 

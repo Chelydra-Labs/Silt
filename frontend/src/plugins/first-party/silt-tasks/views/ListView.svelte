@@ -774,7 +774,15 @@
   }
 
   function onRowDrop(e: DragEvent, target: TaskDetail, groupKey: string) {
-    if (hubSort !== 'manual' || shortlistFirst || !dragItem) return
+    if (hubSort !== 'manual' || shortlistFirst || !dragItem) {
+      // Rows are only draggable under manual sort, so a live dragItem with
+      // the lens on means a reorder attempt was just swallowed. Announce
+      // why instead of snapping back silently; cross-group drops are no-ops
+      // regardless of the lens (see onRowDragOver) and stay quiet.
+      if (shortlistFirst && dragItem && groupKey === dragGroupKey)
+        liveMessage = 'Manual order is locked while the Shortlist lens is on.'
+      return
+    }
     e.preventDefault()
     e.stopPropagation()
     const src = dragItem

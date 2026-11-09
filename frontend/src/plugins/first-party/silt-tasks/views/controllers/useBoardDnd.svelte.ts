@@ -473,7 +473,20 @@ export function createBoardDndController({
     dragOverCardId = card.id
   }
   function onCardDrop(e: DragEvent, target: TaskDetail, col: Lane) {
-    if (getSort() !== 'manual' || getShortlistFirst()) return
+    if (getSort() !== 'manual' || getShortlistFirst()) {
+      // A within-lane drop under the lens is a locked manual reorder. Say
+      // so instead of snapping back silently — same precedent as the pin
+      // partition announcement below. Cross-column drops still bubble to
+      // the lane handler and move normally; only reorder is locked.
+      if (
+        getSort() === 'manual' &&
+        getShortlistFirst() &&
+        dragCard &&
+        col.key === dragFromColKey
+      )
+        liveMessage = 'Manual order is locked while the Shortlist lens is on.'
+      return
+    }
     if (!isDndEnabled() || !dragCard) return
     if (col.key !== dragFromColKey) return
     e.preventDefault()

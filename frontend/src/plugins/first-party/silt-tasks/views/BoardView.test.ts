@@ -2097,6 +2097,10 @@ describe('BoardView — shortlist rank order (#1092)', () => {
     expect(mocks.setTaskOrder).not.toHaveBeenCalled()
     expect(mocks.updateBlockState).not.toHaveBeenCalled()
     expect(laneCardIds('To Do')).toEqual(['u0', 'p3'])
+    // The swallowed reorder is announced, not silently snapped back.
+    expect(
+      screen.getByText('Manual order is locked while the Shortlist lens is on.')
+    ).toBeTruthy()
   })
 
   it('sort=manual + lens on: tag same-column drop writes nothing (no silent re-tail)', async () => {
