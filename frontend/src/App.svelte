@@ -96,6 +96,7 @@
   import { clearSelectionFocus } from './plugins/ui-location'
   import ToastContainer from './components/ToastContainer.svelte'
   import Onboarding from './components/Onboarding.svelte'
+  import Dialog from './components/ui/Dialog.svelte'
   import ConfirmDialog from './components/ConfirmDialog.svelte'
   import ChoiceDialog from './components/ChoiceDialog.svelte'
   import NamePromptDialog from './components/NamePromptDialog.svelte'
@@ -1701,47 +1702,40 @@
          calendar + kanban surfaces) with an app-level createTask shim over
          CreateStandaloneTask — App.svelte has no plugin ctx. Default TODO,
          no due date. Click-outside / Escape dismisses. -->
-    <div
-      class="fixed inset-0 z-[200] flex items-start justify-center pt-[20vh] bg-black/40 backdrop-blur-[2px]"
-      role="presentation"
-      onclick={(e) => {
-        // Click on the backdrop itself (not a descendant) dismisses.
-        if (e.target === e.currentTarget) showQuickAdd = false
-      }}
+    <Dialog
+      open={true}
+      onClose={() => (showQuickAdd = false)}
+      placement="top"
+      zIndex="z-[200]"
+      maxWidth="max-w-md"
+      ariaLabel="New task"
+      backdropLabel="Close new task dialog"
+      surfaceClass="p-5"
     >
-      <div
-        class="w-full max-w-md glass-palette glass-palette-strong border border-surface-modal-border rounded-xl shadow-2xl p-5"
-        transition:fade={{ duration: 120 }}
-        role="dialog"
-        aria-modal="true"
-        aria-label="New task"
-        tabindex="-1"
-      >
-        <h2 class="font-headline-lg text-headline-lg text-text-primary mb-3">
-          New task
-        </h2>
-        <QuickAddTask
-          createTask={async (opts) => {
-            const id = await CreateStandaloneTask(
-              opts.title,
-              opts.dueDate ?? '',
-              opts.status ?? 'TODO'
-            )
-            // Hand the user off to the Tasks view + focus the new row,
-            // so the success of Ctrl+Shift+N is visible without manual
-            // navigation. The Tasks view's focusBlockId handles
-            // scroll+highlight.
-            showQuickAdd = false
-            openTasksView(id)
-            return id
-          }}
-          placeholder="Task title — Enter to add, Esc to close"
-          keepOpenAfterCreate={false}
-          onCreated={() => (showQuickAdd = false)}
-          onCancel={() => (showQuickAdd = false)}
-        />
-      </div>
-    </div>
+      <h2 class="font-headline-lg text-headline-lg text-text-primary mb-3">
+        New task
+      </h2>
+      <QuickAddTask
+        createTask={async (opts) => {
+          const id = await CreateStandaloneTask(
+            opts.title,
+            opts.dueDate ?? '',
+            opts.status ?? 'TODO'
+          )
+          // Hand the user off to the Tasks view + focus the new row,
+          // so the success of Ctrl+Shift+N is visible without manual
+          // navigation. The Tasks view's focusBlockId handles
+          // scroll+highlight.
+          showQuickAdd = false
+          openTasksView(id)
+          return id
+        }}
+        placeholder="Task title — Enter to add, Esc to close"
+        keepOpenAfterCreate={false}
+        onCreated={() => (showQuickAdd = false)}
+        onCancel={() => (showQuickAdd = false)}
+      />
+    </Dialog>
   {/if}
 
   {#if showTemplatePicker}

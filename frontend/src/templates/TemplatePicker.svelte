@@ -28,6 +28,7 @@
   import { coerceIPCError } from '../lib/ipcError'
   import { IPCErrorCode } from '../generated/enums'
   import { renderTemplatePreview } from './renderTemplatePreview'
+  import Dialog from '../components/ui/Dialog.svelte'
 
   interface Props {
     mode: 'new-page' | 'insert'
@@ -66,7 +67,6 @@
   let listRefs: HTMLButtonElement[] = $state([])
   let searchEl: HTMLInputElement | null = $state(null)
   let pageNameEl: HTMLInputElement | null = $state(null)
-  let previouslyFocused: HTMLElement | null = null
 
   function defaultPageName(): string {
     const d = new Date()
@@ -243,27 +243,6 @@
     }
   }
 
-  // Tab focus trap: keeps Tab/Shift+Tab cycling within the modal so focus
-  // never escapes into the background editor while the picker is open.
-  function handleTabTrap(e: KeyboardEvent): void {
-    if (e.key !== 'Tab') return
-    const modal = document.querySelector('[role="dialog"]')
-    if (!modal) return
-    const focusable = modal.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
-    )
-    if (focusable.length === 0) return
-    const first = focusable[0]
-    const last = focusable[focusable.length - 1]
-    if (e.shiftKey && document.activeElement === first) {
-      e.preventDefault()
-      last.focus()
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault()
-      first.focus()
-    }
-  }
-
   async function handleConfirm(): Promise<void> {
     if (!selectedId) return
 
@@ -368,20 +347,14 @@
     }
   }
 
-  function handleOverlayKeydown(e: KeyboardEvent): void {
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      onClose()
-    } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+  function handleDialogKeydown(e: KeyboardEvent): void {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault()
       void handleConfirm()
-    } else if (e.key === 'Tab') {
-      handleTabTrap(e)
     }
   }
 
   onMount(() => {
-    previouslyFocused = document.activeElement as HTMLElement | null
     if (templatesState.items.length === 0 && !templatesState.loading) {
       void loadTemplates()
     }
@@ -399,304 +372,299 @@
   })
 
   onDestroy(() => {
-    previouslyFocused?.focus?.()
     clearTemplateStatus()
   })
 
   const confirmLabel = $derived(mode === 'new-page' ? 'Create Page' : 'Insert')
 </script>
 
-<svelte:window on:keydown={handleOverlayKeydown} />
-
-<!-- Overlay backdrop -->
-<div
-  class="fixed inset-0 z-[180] flex items-center justify-center bg-black/50 backdrop-blur-sm"
-  role="presentation"
+<Dialog
+  open={true}
+  {onClose}
+  zIndex="z-[180]"
+  maxWidth="w-[min(900px,92vw)]"
+  ariaLabel="Template picker"
+  backdropLabel="Close template picker"
+  surfaceClass="max-h-[85vh] flex flex-col overflow-hidden"
+  initialFocus={() => (mode === 'new-page' ? pageNameEl : searchEl)}
+  onKeydown={handleDialogKeydown}
 >
-  <!-- Modal panel -->
+  <!-- Header -->
   <div
-    class="flex max-h-[85vh] w-[min(900px,92vw)] flex-col overflow-hidden rounded-xl border border-surface-modal-border bg-surface-modal shadow-2xl"
-    role="dialog"
-    aria-modal="true"
-    aria-label="Template picker"
+    class="flex items-center gap-3 border-b border-surface-modal-border px-5 py-3"
   >
-    <!-- Header -->
-    <div
-      class="flex items-center gap-3 border-b border-surface-modal-border px-5 py-3"
+    <span
+      class="material-symbols-outlined text-icon-xl text-accent-primary-start"
+      >description</span
     >
-      <span
-        class="material-symbols-outlined text-icon-xl text-accent-primary-start"
-        >description</span
-      >
-      <h2 class="flex-1 text-sm font-semibold text-text-primary">
-        {mode === 'new-page' ? 'New Page from Template' : 'Insert Template'}
-      </h2>
-      <button
-        onclick={onClose}
-        class="rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
-        aria-label="Close template picker"
-      >
-        <span class="material-symbols-outlined text-type-2xl">close</span>
-      </button>
-    </div>
+    <h2 class="flex-1 text-sm font-semibold text-text-primary">
+      {mode === 'new-page' ? 'New Page from Template' : 'Insert Template'}
+    </h2>
+    <button
+      onclick={onClose}
+      class="rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
+      aria-label="Close template picker"
+    >
+      <span class="material-symbols-outlined text-type-2xl">close</span>
+    </button>
+  </div>
 
-    <!-- Body: list (left) + preview/form (right) -->
-    <div class="flex min-h-0 flex-1">
-      <!-- Left: search + list -->
-      <div
-        class="flex w-80 shrink-0 flex-col border-r border-surface-modal-border"
-      >
-        <div class="border-b border-surface-modal-border px-4 py-3">
-          <input
-            bind:this={searchEl}
-            bind:value={searchQuery}
-            type="text"
-            placeholder="Search templates…"
-            class="w-full rounded-lg border border-surface-modal-border bg-surface-modal px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary-start focus:outline-none"
-            aria-label="Search templates"
-          />
-        </div>
-        <!-- Template list -->
-        <div class="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-          {#if templatesState.loading && templatesState.items.length === 0}
-            <div class="px-3 py-8 text-center">
-              <p class="text-sm text-text-muted">Loading templates…</p>
-            </div>
-          {:else if filtered.length === 0}
-            <div class="px-3 py-8 text-center">
-              <p class="text-sm text-text-muted">
-                {templatesState.items.length === 0
-                  ? 'No templates found. Drop a .md file into'
-                  : 'No templates match your search.'}
-              </p>
-              {#if templatesState.items.length === 0}
-                <p class="mt-1 text-xs text-text-muted">
-                  <code>&lt;vault&gt;/.system/templates/</code>
-                </p>
-                <p class="mt-2 text-xs text-accent-primary-start">
-                  See the <span class="underline">docs/TEMPLATES.md</span> authoring
-                  guide.
-                </p>
-              {/if}
-            </div>
-          {/if}
-          {#each grouped as group (group.category)}
-            <div
-              class="mb-1 px-2 pt-2 text-xs font-medium uppercase tracking-wide {group.category.startsWith(
-                'Plugins /'
-              )
-                ? 'text-accent-secondary-start'
-                : 'text-text-muted'}"
-            >
-              {group.category}
-            </div>
-            {#each group.items as t (t.id)}
-              {@const flatIdx = filtered.indexOf(t)}
-              <button
-                bind:this={listRefs[flatIdx]}
-                onclick={() => selectTemplate(t.id)}
-                onkeydown={(e) => handleListKeydown(e, flatIdx)}
-                onfocus={() => selectTemplate(t.id)}
-                role="option"
-                aria-selected={selectedId === t.id}
-                tabindex={selectedId === t.id ? 0 : -1}
-                class="flex w-full items-start gap-2 rounded-lg px-3 py-2 text-left transition-colors {selectedId ===
-                t.id
-                  ? 'bg-active'
-                  : 'hover:bg-hover'}"
-              >
-                <span
-                  class="material-symbols-outlined mt-0.5 text-icon-lg text-accent-secondary-start"
-                >
-                  {t.icon || 'description'}
-                </span>
-                <span class="min-w-0 flex-1">
-                  <span
-                    class="block truncate text-sm font-medium text-text-primary"
-                    >{t.title}</span
-                  >
-                  {#if t.description}
-                    <span class="block truncate text-xs text-text-muted"
-                      >{t.description}</span
-                    >
-                  {/if}
-                </span>
-                {#if t.source === 'builtin'}
-                  <span class="shrink-0 text-type-2xs uppercase text-text-muted"
-                    >built-in</span
-                  >
-                {/if}
-              </button>
-            {/each}
-          {/each}
-        </div>
+  <!-- Body: list (left) + preview/form (right) -->
+  <div class="flex min-h-0 flex-1">
+    <!-- Left: search + list -->
+    <div
+      class="flex w-80 shrink-0 flex-col border-r border-surface-modal-border"
+    >
+      <div class="border-b border-surface-modal-border px-4 py-3">
+        <input
+          bind:this={searchEl}
+          bind:value={searchQuery}
+          type="text"
+          placeholder="Search templates…"
+          class="w-full rounded-lg border border-surface-modal-border bg-surface-modal px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary-start focus:outline-none"
+          aria-label="Search templates"
+        />
       </div>
-
-      <!-- Right: preview + form + action -->
-      <div class="flex min-h-0 flex-1 flex-col">
-        {#if selectedSummary}
-          <!-- Preview pane -->
-          <div
-            class="min-h-0 flex-1 overflow-y-auto border-b border-surface-modal-border px-5 py-4"
-          >
-            {#if previewLoading}
-              <p class="text-sm text-text-muted">Rendering preview…</p>
-            {/if}
-            <!-- Rendered WYSIWYG preview (#663); unresolved {{tokens}} are chips. -->
-            <div
-              class="tpl-preview prose-preview text-sm leading-relaxed text-text-primary"
-              data-testid="template-preview"
-              aria-label="Template preview"
-            >
-              <!-- previewHtml is DOMPurify-sanitized in renderTemplatePreview -->
-              <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown preview -->
-              {@html previewHtml}
-            </div>
+      <!-- Template list -->
+      <div class="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+        {#if templatesState.loading && templatesState.items.length === 0}
+          <div class="px-3 py-8 text-center">
+            <p class="text-sm text-text-muted">Loading templates…</p>
           </div>
-
-          <!-- Placeholder form + page-name -->
-          <div class="shrink-0 space-y-3 px-5 py-4">
-            {#if mode === 'new-page'}
-              <div>
-                <label
-                  for="tpl-page-name"
-                  class="mb-1 block text-xs font-medium text-text-muted"
-                >
-                  Page name
-                </label>
-                <input
-                  id="tpl-page-name"
-                  bind:this={pageNameEl}
-                  bind:value={pageName}
-                  type="text"
-                  placeholder="e.g. Sprint Planning"
-                  class="w-full rounded-lg border border-surface-modal-border bg-surface-modal px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary-start focus:outline-none"
-                  onkeydown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      void handleConfirm()
-                    }
-                  }}
-                />
-              </div>
-            {/if}
-            {#if selectedSummary.placeholders && selectedSummary.placeholders.length > 0}
-              <div class="space-y-2">
-                <p class="text-xs font-medium text-text-muted">Placeholders</p>
-                {#each selectedSummary.placeholders as ph (ph.name)}
-                  <div>
-                    <label
-                      for="tpl-ph-{ph.name}"
-                      class="mb-0.5 block text-xs text-text-muted"
-                    >
-                      {ph.name}{ph.required ? ' *' : ''}
-                      {#if ph.description}<span class="opacity-70">
-                          — {ph.description}</span
-                        >{/if}
-                    </label>
-                    <input
-                      id="tpl-ph-{ph.name}"
-                      type="text"
-                      value={placeholderValues[ph.name] ?? ''}
-                      oninput={(e) => {
-                        placeholderValues[ph.name] = e.currentTarget.value
-                        if (placeholderErrors[ph.name]) {
-                          const { [ph.name]: _, ...rest } = placeholderErrors
-                          placeholderErrors = rest
-                        }
-                      }}
-                      aria-invalid={placeholderErrors[ph.name]
-                        ? 'true'
-                        : undefined}
-                      aria-describedby={placeholderErrors[ph.name]
-                        ? `tpl-ph-err-${ph.name}`
-                        : undefined}
-                      placeholder={ph.default || `{{${ph.name}}}`}
-                      class="w-full rounded-lg border bg-surface-modal px-3 py-1.5 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary-start focus:outline-none {placeholderErrors[
-                        ph.name
-                      ]
-                        ? 'border-status-danger'
-                        : 'border-surface-modal-border'}"
-                    />
-                    {#if placeholderErrors[ph.name]}
-                      <p
-                        id="tpl-ph-err-{ph.name}"
-                        class="mt-0.5 text-xs text-status-danger"
-                        role="alert"
-                      >
-                        {placeholderErrors[ph.name]}
-                      </p>
-                    {/if}
-                  </div>
-                {/each}
-              </div>
-            {/if}
-            <!-- Default placeholders note -->
-            <p class="text-xs text-text-muted">
-              <code>{'{{date}}'}</code>, <code>{'{{time}}'}</code>,
-              <code>{'{{weekday}}'}</code> auto-fill with the current date/time.
+        {:else if filtered.length === 0}
+          <div class="px-3 py-8 text-center">
+            <p class="text-sm text-text-muted">
+              {templatesState.items.length === 0
+                ? 'No templates found. Drop a .md file into'
+                : 'No templates match your search.'}
             </p>
-          </div>
-        {:else}
-          <div class="flex flex-1 items-center justify-center px-5">
-            <p class="text-sm text-text-muted">Select a template to preview.</p>
+            {#if templatesState.items.length === 0}
+              <p class="mt-1 text-xs text-text-muted">
+                <code>&lt;vault&gt;/.system/templates/</code>
+              </p>
+              <p class="mt-2 text-xs text-accent-primary-start">
+                See the <span class="underline">docs/TEMPLATES.md</span> authoring
+                guide.
+              </p>
+            {/if}
           </div>
         {/if}
-
-        <!-- Status + action bar -->
-        <div
-          class="flex items-center justify-between gap-3 border-t border-surface-modal-border px-5 py-3"
-        >
-          <div class="flex-1 text-xs" role="status" aria-live="polite">
-            {#if templateStatus.message}
-              <span
-                class={templateStatus.kind === 'error'
-                  ? 'text-status-danger'
-                  : 'text-text-muted'}
-              >
-                {templateStatus.message}
-              </span>
-            {/if}
+        {#each grouped as group (group.category)}
+          <div
+            class="mb-1 px-2 pt-2 text-xs font-medium uppercase tracking-wide {group.category.startsWith(
+              'Plugins /'
+            )
+              ? 'text-accent-secondary-start'
+              : 'text-text-muted'}"
+          >
+            {group.category}
           </div>
-          <button
-            onclick={onClose}
-            class="rounded-lg px-4 py-2 text-sm text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
-          >
-            Cancel
-          </button>
-          {#if pageExistsCollision && mode === 'new-page'}
+          {#each group.items as t (t.id)}
+            {@const flatIdx = filtered.indexOf(t)}
             <button
-              type="button"
-              onclick={() => openExistingPage()}
-              class="rounded-lg border border-surface-modal-border px-4 py-2 text-sm text-text-primary transition-colors hover:bg-hover"
+              bind:this={listRefs[flatIdx]}
+              onclick={() => selectTemplate(t.id)}
+              onkeydown={(e) => handleListKeydown(e, flatIdx)}
+              onfocus={() => selectTemplate(t.id)}
+              role="option"
+              aria-selected={selectedId === t.id}
+              tabindex={selectedId === t.id ? 0 : -1}
+              class="flex w-full items-start gap-2 rounded-lg px-3 py-2 text-left transition-colors {selectedId ===
+              t.id
+                ? 'bg-active'
+                : 'hover:bg-hover'}"
             >
-              Open existing
+              <span
+                class="material-symbols-outlined mt-0.5 text-icon-lg text-accent-secondary-start"
+              >
+                {t.icon || 'description'}
+              </span>
+              <span class="min-w-0 flex-1">
+                <span
+                  class="block truncate text-sm font-medium text-text-primary"
+                  >{t.title}</span
+                >
+                {#if t.description}
+                  <span class="block truncate text-xs text-text-muted"
+                    >{t.description}</span
+                  >
+                {/if}
+              </span>
+              {#if t.source === 'builtin'}
+                <span class="shrink-0 text-type-2xs uppercase text-text-muted"
+                  >built-in</span
+                >
+              {/if}
             </button>
+          {/each}
+        {/each}
+      </div>
+    </div>
+
+    <!-- Right: preview + form + action -->
+    <div class="flex min-h-0 flex-1 flex-col">
+      {#if selectedSummary}
+        <!-- Preview pane -->
+        <div
+          class="min-h-0 flex-1 overflow-y-auto border-b border-surface-modal-border px-5 py-4"
+        >
+          {#if previewLoading}
+            <p class="text-sm text-text-muted">Rendering preview…</p>
           {/if}
-          <button
-            onclick={() => void handleConfirm()}
-            disabled={!selectedId ||
-              creating ||
-              (mode === 'new-page' && !pageName.trim())}
-            aria-disabled={requiredBlocked ? 'true' : undefined}
-            title={requiredBlocked
-              ? 'Fill in required placeholders first'
-              : 'Confirm (Enter or Ctrl+Enter)'}
-            class="rounded-lg bg-accent-primary-start px-4 py-2 text-sm font-medium text-text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 {requiredBlocked
-              ? 'opacity-60 ring-1 ring-status-danger/50'
-              : ''}"
+          <!-- Rendered WYSIWYG preview (#663); unresolved {{tokens}} are chips. -->
+          <div
+            class="tpl-preview prose-preview text-sm leading-relaxed text-text-primary"
+            data-testid="template-preview"
+            aria-label="Template preview"
           >
-            {creating
-              ? '…'
-              : pageExistsCollision
-                ? 'Create with new name'
-                : confirmLabel}
-          </button>
+            <!-- previewHtml is DOMPurify-sanitized in renderTemplatePreview -->
+            <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown preview -->
+            {@html previewHtml}
+          </div>
         </div>
+
+        <!-- Placeholder form + page-name -->
+        <div class="shrink-0 space-y-3 px-5 py-4">
+          {#if mode === 'new-page'}
+            <div>
+              <label
+                for="tpl-page-name"
+                class="mb-1 block text-xs font-medium text-text-muted"
+              >
+                Page name
+              </label>
+              <input
+                id="tpl-page-name"
+                bind:this={pageNameEl}
+                bind:value={pageName}
+                type="text"
+                placeholder="e.g. Sprint Planning"
+                class="w-full rounded-lg border border-surface-modal-border bg-surface-modal px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary-start focus:outline-none"
+                onkeydown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void handleConfirm()
+                  }
+                }}
+              />
+            </div>
+          {/if}
+          {#if selectedSummary.placeholders && selectedSummary.placeholders.length > 0}
+            <div class="space-y-2">
+              <p class="text-xs font-medium text-text-muted">Placeholders</p>
+              {#each selectedSummary.placeholders as ph (ph.name)}
+                <div>
+                  <label
+                    for="tpl-ph-{ph.name}"
+                    class="mb-0.5 block text-xs text-text-muted"
+                  >
+                    {ph.name}{ph.required ? ' *' : ''}
+                    {#if ph.description}<span class="opacity-70">
+                        — {ph.description}</span
+                      >{/if}
+                  </label>
+                  <input
+                    id="tpl-ph-{ph.name}"
+                    type="text"
+                    value={placeholderValues[ph.name] ?? ''}
+                    oninput={(e) => {
+                      placeholderValues[ph.name] = e.currentTarget.value
+                      if (placeholderErrors[ph.name]) {
+                        const { [ph.name]: _, ...rest } = placeholderErrors
+                        placeholderErrors = rest
+                      }
+                    }}
+                    aria-invalid={placeholderErrors[ph.name]
+                      ? 'true'
+                      : undefined}
+                    aria-describedby={placeholderErrors[ph.name]
+                      ? `tpl-ph-err-${ph.name}`
+                      : undefined}
+                    placeholder={ph.default || `{{${ph.name}}}`}
+                    class="w-full rounded-lg border bg-surface-modal px-3 py-1.5 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary-start focus:outline-none {placeholderErrors[
+                      ph.name
+                    ]
+                      ? 'border-status-danger'
+                      : 'border-surface-modal-border'}"
+                  />
+                  {#if placeholderErrors[ph.name]}
+                    <p
+                      id="tpl-ph-err-{ph.name}"
+                      class="mt-0.5 text-xs text-status-danger"
+                      role="alert"
+                    >
+                      {placeholderErrors[ph.name]}
+                    </p>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
+          <!-- Default placeholders note -->
+          <p class="text-xs text-text-muted">
+            <code>{'{{date}}'}</code>, <code>{'{{time}}'}</code>,
+            <code>{'{{weekday}}'}</code> auto-fill with the current date/time.
+          </p>
+        </div>
+      {:else}
+        <div class="flex flex-1 items-center justify-center px-5">
+          <p class="text-sm text-text-muted">Select a template to preview.</p>
+        </div>
+      {/if}
+
+      <!-- Status + action bar -->
+      <div
+        class="flex items-center justify-between gap-3 border-t border-surface-modal-border px-5 py-3"
+      >
+        <div class="flex-1 text-xs" role="status" aria-live="polite">
+          {#if templateStatus.message}
+            <span
+              class={templateStatus.kind === 'error'
+                ? 'text-status-danger'
+                : 'text-text-muted'}
+            >
+              {templateStatus.message}
+            </span>
+          {/if}
+        </div>
+        <button
+          onclick={onClose}
+          class="rounded-lg px-4 py-2 text-sm text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
+        >
+          Cancel
+        </button>
+        {#if pageExistsCollision && mode === 'new-page'}
+          <button
+            type="button"
+            onclick={() => openExistingPage()}
+            class="rounded-lg border border-surface-modal-border px-4 py-2 text-sm text-text-primary transition-colors hover:bg-hover"
+          >
+            Open existing
+          </button>
+        {/if}
+        <button
+          onclick={() => void handleConfirm()}
+          disabled={!selectedId ||
+            creating ||
+            (mode === 'new-page' && !pageName.trim())}
+          aria-disabled={requiredBlocked ? 'true' : undefined}
+          title={requiredBlocked
+            ? 'Fill in required placeholders first'
+            : 'Confirm (Enter or Ctrl+Enter)'}
+          class="rounded-lg bg-accent-primary-start px-4 py-2 text-sm font-medium text-text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 {requiredBlocked
+            ? 'opacity-60 ring-1 ring-status-danger/50'
+            : ''}"
+        >
+          {creating
+            ? '…'
+            : pageExistsCollision
+              ? 'Create with new name'
+              : confirmLabel}
+        </button>
       </div>
     </div>
   </div>
-</div>
+</Dialog>
 
 <style>
   /* Rendered preview (#663): compact markdown + placeholder chips. */

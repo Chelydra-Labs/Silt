@@ -1,9 +1,7 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick, untrack } from 'svelte'
-  import { trapFocus } from '../../../../lib/focusTrap'
+  import { onMount, onDestroy, untrack } from 'svelte'
   import { createEditor, EditorContent } from 'svelte-tiptap'
   import type { Editor } from 'svelte-tiptap'
-  import { fly } from 'svelte/transition'
   import StarterKit from '@tiptap/starter-kit'
   import { Extension } from '@tiptap/core'
   import Placeholder from '@tiptap/extension-placeholder'
@@ -26,10 +24,10 @@
   import type { PluginContext } from '../../../sdk'
   import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
   import TaskMetadataSidebar from './TaskMetadataSidebar.svelte'
-  import { motionDuration } from '../motion'
   import { friendlyCaughtError } from '../errors'
   import type { TaskDetail } from '../types'
   import { fetchTaskDetail } from '../query'
+  import Dialog from '../../../../components/ui/Dialog.svelte'
 
   /**
    * Focused Task Sub-Editor Modal (#304, #780). Opens as a glassy overlay
@@ -363,13 +361,8 @@
     // Lock background scroll while the full-screen modal is open.
     const prevOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    let disposeTrap = () => {}
-    void tick().then(() => {
-      if (dialogRef) disposeTrap = trapFocus(dialogRef)
-    })
     if (!initialTask) void loadTaskDetail()
     return () => {
-      disposeTrap()
       void drainSave()
       document.body.style.overflow = prevOverflow
       if (previouslyFocused?.isConnected) previouslyFocused.focus?.()
@@ -395,202 +388,188 @@
   )
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
-
-<div
-  class="fixed inset-0 z-[180] flex items-center justify-center p-6 bg-black/40 backdrop-blur-[2px]"
-  transition:fly={{ y: -12, duration: motionDuration(150) }}
+<Dialog
+  open={true}
+  onClose={() => void attemptClose()}
+  closeOnEscape={!sidebarBusy}
+  zIndex="z-[180]"
+  maxWidth={isNarrow ? 'max-w-3xl' : 'max-w-5xl'}
+  labelledBy="sub-editor-title"
+  backdropLabel="Close sub-editor"
+  surfaceClass="h-[80vh] rounded-xl flex flex-col overflow-hidden"
+  bind:dialogRef
+  onKeydown={handleKeydown}
 >
-  <!-- Backdrop -->
-  <button
-    tabindex="-1"
-    aria-label="Close sub-editor"
-    class="absolute inset-0 cursor-default border-none bg-transparent p-0"
-    onclick={attemptClose}
-  ></button>
-  <div
-    bind:this={dialogRef}
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="sub-editor-title"
-    tabindex="-1"
-    class="relative z-10 w-full {isNarrow
-      ? 'max-w-3xl'
-      : 'max-w-5xl'} h-[80vh] rounded-xl border border-border-active shadow-2xl flex flex-col overflow-hidden"
-    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-surface-modal) 94%, transparent);"
+  <!-- Header: breadcrumbs + parent task title + status -->
+  <header
+    class="flex items-center gap-3 px-5 py-3 border-b border-surface-modal-border flex-shrink-0"
   >
-    <!-- Header: breadcrumbs + parent task title + status -->
-    <header
-      class="flex items-center gap-3 px-5 py-3 border-b border-surface-modal-border flex-shrink-0"
+    <span
+      class="material-symbols-outlined text-accent-primary-start text-type-2xl"
+      aria-hidden="true">zoom_in</span
     >
-      <span
-        class="material-symbols-outlined text-accent-primary-start text-type-2xl"
-        aria-hidden="true">zoom_in</span
-      >
-      <div class="min-w-0 flex-1">
-        {#if !isStandalone}
-          <div
-            class="text-type-2xs text-text-muted uppercase tracking-widest font-label-sm-bold truncate"
-          >
-            {notebook}<span
-              class="material-symbols-outlined text-type-2xs align-middle"
-              aria-hidden="true">chevron_right</span
-            >{section || '(none)'}<span
-              class="material-symbols-outlined text-type-2xs align-middle"
-              aria-hidden="true">chevron_right</span
-            >{page}
-          </div>
-        {/if}
-        <h2
-          id="sub-editor-title"
-          class="text-text-primary font-label-md text-base truncate"
+    <div class="min-w-0 flex-1">
+      {#if !isStandalone}
+        <div
+          class="text-type-2xs text-text-muted uppercase tracking-widest font-label-sm-bold truncate"
         >
-          {headerTitle}
-        </h2>
-      </div>
-      {#if task && !isNarrow}
+          {notebook}<span
+            class="material-symbols-outlined text-type-2xs align-middle"
+            aria-hidden="true">chevron_right</span
+          >{section || '(none)'}<span
+            class="material-symbols-outlined text-type-2xs align-middle"
+            aria-hidden="true">chevron_right</span
+          >{page}
+        </div>
+      {/if}
+      <h2
+        id="sub-editor-title"
+        class="text-text-primary font-label-md text-base truncate"
+      >
+        {headerTitle}
+      </h2>
+    </div>
+    {#if task && !isNarrow}
+      <button
+        type="button"
+        bind:this={wideDetailsBtn}
+        class="flex items-center gap-1 text-text-muted hover:text-text-primary transition-colors px-2 py-1 rounded text-type-sm font-label-sm-bold"
+        aria-expanded={sidebarOpen}
+        aria-controls={sidebarOpen ? 'sub-editor-sidebar' : undefined}
+        aria-label={sidebarOpen ? 'Hide details' : 'Show details'}
+        onclick={toggleSidebar}
+      >
+        <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+          >tune</span
+        >
+        Details
+      </button>
+    {/if}
+    <button
+      type="button"
+      onclick={attemptClose}
+      class="text-text-muted hover:text-text-primary transition-colors p-1 rounded"
+      aria-label="Close sub-editor"
+    >
+      <span class="material-symbols-outlined text-type-2xl" aria-hidden="true"
+        >close</span
+      >
+    </button>
+  </header>
+
+  <!-- Two-column body (#780) -->
+  <div class="flex-1 flex {isNarrow ? 'flex-col' : 'flex-row'} min-h-0">
+    <!-- Main: editor column -->
+    <div class="flex-1 flex flex-col min-w-0 min-h-0">
+      {#if isNarrow && task}
         <button
           type="button"
-          bind:this={wideDetailsBtn}
-          class="flex items-center gap-1 text-text-muted hover:text-text-primary transition-colors px-2 py-1 rounded text-type-sm font-label-sm-bold"
+          bind:this={narrowDetailsBtn}
+          class="flex items-center justify-between px-5 py-2 border-b border-surface-modal-border text-type-sm font-label-sm-bold text-text-primary hover:bg-hover transition-colors flex-shrink-0"
           aria-expanded={sidebarOpen}
           aria-controls={sidebarOpen ? 'sub-editor-sidebar' : undefined}
           aria-label={sidebarOpen ? 'Hide details' : 'Show details'}
           onclick={toggleSidebar}
         >
+          <span class="flex items-center gap-1.5">
+            <span
+              class="material-symbols-outlined text-icon-md"
+              aria-hidden="true">tune</span
+            >
+            Details
+          </span>
           <span
-            class="material-symbols-outlined text-icon-md"
-            aria-hidden="true">tune</span
+            class="material-symbols-outlined text-icon-sm text-text-muted"
+            aria-hidden="true"
+            >{sidebarOpen ? 'expand_less' : 'expand_more'}</span
           >
-          Details
         </button>
       {/if}
-      <button
-        type="button"
-        onclick={attemptClose}
-        class="text-text-muted hover:text-text-primary transition-colors p-1 rounded"
-        aria-label="Close sub-editor"
+
+      <!-- Editor body -->
+      <div
+        class="relative flex-1 overflow-y-auto custom-scrollbar px-5 py-4 min-h-0"
       >
-        <span class="material-symbols-outlined text-type-2xl" aria-hidden="true"
-          >close</span
-        >
-      </button>
-    </header>
-
-    <!-- Two-column body (#780) -->
-    <div class="flex-1 flex {isNarrow ? 'flex-col' : 'flex-row'} min-h-0">
-      <!-- Main: editor column -->
-      <div class="flex-1 flex flex-col min-w-0 min-h-0">
-        {#if isNarrow && task}
-          <button
-            type="button"
-            bind:this={narrowDetailsBtn}
-            class="flex items-center justify-between px-5 py-2 border-b border-surface-modal-border text-type-sm font-label-sm-bold text-text-primary hover:bg-hover transition-colors flex-shrink-0"
-            aria-expanded={sidebarOpen}
-            aria-controls={sidebarOpen ? 'sub-editor-sidebar' : undefined}
-            aria-label={sidebarOpen ? 'Hide details' : 'Show details'}
-            onclick={toggleSidebar}
+        {#if loading}
+          <div
+            class="absolute inset-0 z-10 flex items-center justify-center bg-surface-modal/80 backdrop-blur-xs"
           >
-            <span class="flex items-center gap-1.5">
-              <span
-                class="material-symbols-outlined text-icon-md"
-                aria-hidden="true">tune</span
-              >
-              Details
-            </span>
-            <span
-              class="material-symbols-outlined text-icon-sm text-text-muted"
-              aria-hidden="true"
-              >{sidebarOpen ? 'expand_less' : 'expand_more'}</span
-            >
-          </button>
-        {/if}
-
-        <!-- Editor body -->
-        <div
-          class="relative flex-1 overflow-y-auto custom-scrollbar px-5 py-4 min-h-0"
-        >
-          {#if loading}
-            <div
-              class="absolute inset-0 z-10 flex items-center justify-center bg-surface-modal/80 backdrop-blur-xs"
-            >
-              <div class="text-text-muted font-body-md">Loading sub-notes…</div>
-            </div>
-          {:else if loadError}
-            <div class="text-status-danger text-center py-10 font-body-md">
-              Load failed: {loadError}
-            </div>
-          {/if}
-          {#if $editorStore}
-            <EditorContent editor={$editorStore} />
-          {/if}
-        </div>
-
-        <!-- Status footer -->
-        <footer
-          class="flex items-center justify-between px-5 py-2 border-t border-surface-modal-border flex-shrink-0"
-        >
-          <span
-            class="text-type-xs font-label-sm {saveError
-              ? 'text-status-danger'
-              : unsavedChanges
-                ? 'text-status-warn'
-                : 'text-text-muted'}"
-            role={saveError ? 'alert' : 'status'}
-            aria-live={saveError ? 'assertive' : 'polite'}
-          >
-            {statusText}
-          </span>
-          <span class="text-type-2xs text-text-muted font-label-sm">
-            Esc to close
-          </span>
-        </footer>
-        {#if saveError}
-          <div class="flex items-center justify-end gap-2 px-5 pb-2">
-            <button
-              type="button"
-              class="text-type-xs font-label-sm text-text-muted hover:text-text-primary"
-              disabled={saving}
-              onclick={discardChanges}>Discard changes</button
-            >
-            <button
-              type="button"
-              class="text-type-xs font-label-sm text-accent-primary-start hover:text-text-primary"
-              disabled={saving}
-              onclick={retrySave}>Retry save</button
-            >
+            <div class="text-text-muted font-body-md">Loading sub-notes…</div>
           </div>
+        {:else if loadError}
+          <div class="text-status-danger text-center py-10 font-body-md">
+            Load failed: {loadError}
+          </div>
+        {/if}
+        {#if $editorStore}
+          <EditorContent editor={$editorStore} />
         {/if}
       </div>
 
-      <!-- Sidebar: metadata (#780 / #826) — gated on sidebarOpen for both layouts -->
-      {#if task && sidebarOpen && !isNarrow}
-        <aside
-          id="sub-editor-sidebar"
-          class="w-80 flex-shrink-0 border-l border-surface-modal-border overflow-y-auto custom-scrollbar"
+      <!-- Status footer -->
+      <footer
+        class="flex items-center justify-between px-5 py-2 border-t border-surface-modal-border flex-shrink-0"
+      >
+        <span
+          class="text-type-xs font-label-sm {saveError
+            ? 'text-status-danger'
+            : unsavedChanges
+              ? 'text-status-warn'
+              : 'text-text-muted'}"
+          role={saveError ? 'alert' : 'status'}
+          aria-live={saveError ? 'assertive' : 'polite'}
         >
-          <TaskMetadataSidebar
-            {task}
-            {ctx}
-            {onMetaChanged}
-            stickyPrimary
-            bind:busy={sidebarBusy}
-          />
-        </aside>
-      {:else if task && sidebarOpen && isNarrow}
-        <aside
-          id="sub-editor-sidebar"
-          class="flex-shrink-0 border-t border-surface-modal-border overflow-y-auto custom-scrollbar max-h-[40vh]"
-        >
-          <TaskMetadataSidebar
-            {task}
-            {ctx}
-            {onMetaChanged}
-            stickyPrimary
-            bind:busy={sidebarBusy}
-          />
-        </aside>
+          {statusText}
+        </span>
+        <span class="text-type-2xs text-text-muted font-label-sm">
+          Esc to close
+        </span>
+      </footer>
+      {#if saveError}
+        <div class="flex items-center justify-end gap-2 px-5 pb-2">
+          <button
+            type="button"
+            class="text-type-xs font-label-sm text-text-muted hover:text-text-primary"
+            disabled={saving}
+            onclick={discardChanges}>Discard changes</button
+          >
+          <button
+            type="button"
+            class="text-type-xs font-label-sm text-accent-primary-start hover:text-text-primary"
+            disabled={saving}
+            onclick={retrySave}>Retry save</button
+          >
+        </div>
       {/if}
     </div>
+
+    <!-- Sidebar: metadata (#780 / #826) — gated on sidebarOpen for both layouts -->
+    {#if task && sidebarOpen && !isNarrow}
+      <aside
+        id="sub-editor-sidebar"
+        class="w-80 flex-shrink-0 border-l border-surface-modal-border overflow-y-auto custom-scrollbar"
+      >
+        <TaskMetadataSidebar
+          {task}
+          {ctx}
+          {onMetaChanged}
+          stickyPrimary
+          bind:busy={sidebarBusy}
+        />
+      </aside>
+    {:else if task && sidebarOpen && isNarrow}
+      <aside
+        id="sub-editor-sidebar"
+        class="flex-shrink-0 border-t border-surface-modal-border overflow-y-auto custom-scrollbar max-h-[40vh]"
+      >
+        <TaskMetadataSidebar
+          {task}
+          {ctx}
+          {onMetaChanged}
+          stickyPrimary
+          bind:busy={sidebarBusy}
+        />
+      </aside>
+    {/if}
   </div>
-</div>
+</Dialog>

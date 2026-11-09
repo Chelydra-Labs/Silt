@@ -1412,7 +1412,6 @@
     </div>
   {/if}
   {#if popovers.showColorPicker && popovers.colorPickerCoords}
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div
       class="color-picker-popover"
       style="left:{popovers.colorPickerCoords.left}px; top:{popovers
@@ -1423,6 +1422,9 @@
         ? 'Text color'
         : 'Background color'}
       onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => {
+        if (e.key === 'Escape') popovers.dismissFloatingPopovers()
+      }}
     >
       <button
         type="button"

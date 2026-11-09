@@ -1,5 +1,4 @@
-﻿<script lang="ts">
-  import { tick } from 'svelte'
+<script lang="ts">
   import type { Snippet } from 'svelte'
   import { trapFocus } from '../../lib/focusTrap'
 
@@ -75,18 +74,14 @@
   }
 
   $effect(() => {
-    if (!open) return
+    if (!open || !dialogRef) return
 
     const capturedFocus =
       returnFocusTo ?? (document.activeElement as HTMLElement | null)
     window.addEventListener('keydown', handleKeydown, true)
+    const disposeTrap = trapFocus(dialogRef)
 
-    let disposeTrap = () => {}
-    let cancelled = false
-
-    void tick().then(() => {
-      if (cancelled || !dialogRef) return
-      disposeTrap = trapFocus(dialogRef)
+    if (!dialogRef.contains(document.activeElement)) {
       const target =
         typeof initialFocus === 'function' ? initialFocus() : initialFocus
       if (target) {
@@ -94,10 +89,9 @@
       } else {
         dialogRef.focus()
       }
-    })
+    }
 
     return () => {
-      cancelled = true
       disposeTrap()
       window.removeEventListener('keydown', handleKeydown, true)
       const restoreTarget = returnFocusTo ?? capturedFocus

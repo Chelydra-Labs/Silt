@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { fade } from 'svelte/transition'
   import type { Snippet } from 'svelte'
+  import Dialog from '../ui/Dialog.svelte'
 
   // Shared chrome for the small alert-style modals (settings mismatch,
   // grants migration, quarantined links). Owns the overlay, the glass
@@ -22,56 +22,34 @@
     $props()
 </script>
 
-{#if open}
-  <div
-    class="overlay"
-    role="alertdialog"
-    aria-modal="true"
-    aria-labelledby={titleId}
-    aria-describedby={descId}
-    tabindex="-1"
-    onkeydown={(e) => {
-      if (e.key === 'Escape') onEscape()
-    }}
-    transition:fade={{ duration: 150 }}
-  >
-    <div class="surface glass-palette-strong">
-      <h2 id={titleId}>{title}</h2>
-      <p id={descId}>{@render description()}</p>
-      <div class="actions">
-        {@render actions()}
-      </div>
+<Dialog
+  {open}
+  role="alertdialog"
+  labelledBy={titleId}
+  describedBy={descId}
+  onClose={onEscape}
+  closeOnBackdrop={false}
+  zIndex="z-[10000]"
+  maxWidth="max-w-md"
+  surfaceClass="p-7 sm:p-8 rounded-xl"
+>
+  <div class="modal-shell-content">
+    <h2 id={titleId}>{title}</h2>
+    <p id={descId}>{@render description()}</p>
+    <div class="actions">
+      {@render actions()}
     </div>
   </div>
-{/if}
+</Dialog>
 
 <style>
-  .overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 10000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.4);
-    backdrop-filter: blur(2px);
-  }
-
-  .surface {
-    max-width: 460px;
-    padding: 28px 32px;
-    border-radius: 12px;
-    border: 1px solid var(--color-surface-modal-border);
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
-  }
-
-  .surface h2 {
+  .modal-shell-content h2 {
     margin: 0 0 12px;
     font-size: 1.15rem;
     color: var(--color-text-primary);
   }
 
-  .surface p {
+  .modal-shell-content p {
     margin: 0 0 20px;
     font-size: 0.9rem;
     line-height: 1.5;
@@ -79,7 +57,7 @@
   }
 
   /* <code> appears in the settings-mismatch description snippet. */
-  .surface :global(code) {
+  .modal-shell-content :global(code) {
     padding: 1px 4px;
     border-radius: 3px;
     background: rgba(255, 255, 255, 0.08);

@@ -17,6 +17,7 @@
   import { pushNotification } from '../../notifications/store.svelte'
   import { coerceIPCError } from '../../lib/ipcError'
   import { IPCErrorCode } from '../../generated/enums'
+  import Dialog from '../ui/Dialog.svelte'
 
   interface Props {
     onClose: () => void
@@ -26,6 +27,7 @@
 
   let findText = $state(untrack(() => initialQuery))
   let replaceText = $state('')
+  let findInputEl = $state<HTMLInputElement | null>(null)
   let caseSensitive = $state(false)
   let wholeWord = $state(false)
   let regexp = $state(false)
@@ -461,204 +463,197 @@
   })
 </script>
 
-<div
-  class="fixed inset-0 bg-black/50 z-[150] flex items-start justify-center pt-20"
+<Dialog
+  open={true}
+  {onClose}
+  placement="top"
+  zIndex="z-[150]"
+  maxWidth="max-w-3xl"
+  ariaLabel="Find and replace across vault"
+  backdropLabel="Close find and replace"
+  surfaceClass="max-h-[37.5rem] flex flex-col"
+  initialFocus={() => findInputEl}
 >
-  <button
-    tabindex="-1"
-    aria-label="Close"
-    onclick={onClose}
-    class="absolute inset-0 cursor-default border-none p-0 bg-transparent"
-  ></button>
   <div
-    role="dialog"
-    aria-modal="true"
-    aria-label="Find and replace across vault"
-    tabindex="-1"
-    class="relative w-full max-w-3xl glass-palette border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[37.5rem]"
-    style="background: color-mix(in srgb, var(--color-surface-modal) 95%, transparent);"
+    class="px-4 py-3 border-b border-surface-modal-border bg-surface-modal/30 space-y-2"
   >
-    <div
-      class="px-4 py-3 border-b border-surface-modal-border bg-surface-modal/30 space-y-2"
-    >
-      <div class="flex items-center gap-2">
-        <input
-          bind:value={findText}
-          type="text"
-          placeholder="Find across vault"
-          aria-label="Find"
-          autocomplete="off"
-          spellcheck="false"
-          class="flex-1 bg-transparent border border-surface-modal-border rounded-lg px-3 py-1.5 text-text-primary text-icon-sm font-body-md focus:outline-none focus:border-accent-primary-start/60"
-        />
-        <button
-          type="button"
-          onclick={preview}
-          disabled={!canPreview || loading}
-          class="px-3 py-1.5 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start text-type-md font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          >{loading ? 'Searching…' : 'Preview'}</button
-        >
-      </div>
-      <div class="flex items-center gap-2">
-        <input
-          bind:value={replaceText}
-          type="text"
-          placeholder="Replace with"
-          aria-label="Replace with"
-          autocomplete="off"
-          spellcheck="false"
-          class="flex-1 bg-transparent border border-surface-modal-border rounded-lg px-3 py-1.5 text-text-primary text-icon-sm font-body-md focus:outline-none focus:border-accent-primary-start/60"
-        />
-        <label
-          class="flex items-center gap-1 text-type-sm text-text-muted cursor-pointer"
-          ><input
-            type="checkbox"
-            bind:checked={caseSensitive}
-            class="accent-[var(--color-accent-primary-end)]"
-          />Aa</label
-        >
-        <label
-          class="flex items-center gap-1 text-type-sm text-text-muted cursor-pointer"
-          ><input
-            type="checkbox"
-            bind:checked={wholeWord}
-            class="accent-[var(--color-accent-primary-end)]"
-          />ab</label
-        >
-        <label
-          class="flex items-center gap-1 text-type-sm text-text-muted cursor-pointer"
-          ><input
-            type="checkbox"
-            bind:checked={regexp}
-            class="accent-[var(--color-accent-primary-end)]"
-          />.*</label
-        >
-        <button
-          type="button"
-          onclick={onClose}
-          class="ml-auto text-text-muted hover:text-text-primary cursor-pointer px-2"
-          aria-label="Close">✕</button
-        >
-      </div>
-      <p class="text-type-xs text-text-muted font-body-md px-1">
-        Replaces every occurrence in accepted blocks, not just the previewed
-        snippet.
-      </p>
+    <div class="flex items-center gap-2">
+      <input
+        bind:this={findInputEl}
+        bind:value={findText}
+        type="text"
+        placeholder="Find across vault"
+        aria-label="Find"
+        autocomplete="off"
+        spellcheck="false"
+        class="flex-1 bg-transparent border border-surface-modal-border rounded-lg px-3 py-1.5 text-text-primary text-icon-sm font-body-md focus:outline-none focus:border-accent-primary-start/60"
+      />
+      <button
+        type="button"
+        onclick={preview}
+        disabled={!canPreview || loading}
+        class="px-3 py-1.5 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start text-type-md font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+        >{loading ? 'Searching…' : 'Preview'}</button
+      >
     </div>
-
-    <div class="flex-1 overflow-y-auto custom-scrollbar">
-      {#if truncatedCount > 0}
-        <div
-          class="px-4 py-2 text-type-sm text-text-muted bg-surface-modal/20 border-b border-surface-modal-border/60"
-          role="status"
-          aria-live="polite"
-        >
-          Showing first {groups.length} pages — {truncatedCount} preview rows (up
-          to 3 per page). Refine to see the rest; Apply replaces only the previewed
-          blocks.
-        </div>
-      {/if}
-      {#if groups.length === 0}
-        <div
-          class="text-text-muted text-center py-10 font-body-md select-none text-type-md"
-        >
-          {loading
-            ? 'Searching…'
-            : findText.trim()
-              ? 'Click Preview to find matches.'
-              : 'Enter text to find across the vault.'}
-        </div>
-      {:else}
-        {#each groups as grp (grp.key)}
-          <div class="border-b border-surface-modal-border/60">
-            <div class="flex items-center gap-2 px-4 py-2 bg-surface-modal/20">
-              <input
-                type="checkbox"
-                checked={grp.accepted}
-                onchange={() => togglePageAccept(grp)}
-                class="accent-[var(--color-accent-primary-end)]"
-                aria-label="Accept all on this page"
-              />
-              <span
-                class="text-type-xs uppercase tracking-widest font-label-sm-bold text-text-muted truncate"
-              >
-                {grp.notebook} › {grp.section || '—'} › {grp.page}
-              </span>
-              <span class="ml-auto text-type-xs text-text-muted"
-                >{grp.matches.length}</span
-              >
-            </div>
-            {#each grp.matches as m (m.blockId)}
-              <div class="px-4 py-1.5 flex items-start gap-2 text-type-md">
-                <input
-                  type="checkbox"
-                  bind:checked={m.accepted}
-                  class="accent-[var(--color-accent-primary-end)] mt-0.5"
-                  aria-label="Accept this match"
-                />
-                <div class="flex-1 min-w-0">
-                  <div class="text-text-muted line-through truncate">
-                    {m.snippet}
-                  </div>
-                  <div class="text-accent-primary-start truncate">
-                    {m.after}
-                  </div>
-                </div>
-              </div>
-            {/each}
-          </div>
-        {/each}
-      {/if}
+    <div class="flex items-center gap-2">
+      <input
+        bind:value={replaceText}
+        type="text"
+        placeholder="Replace with"
+        aria-label="Replace with"
+        autocomplete="off"
+        spellcheck="false"
+        class="flex-1 bg-transparent border border-surface-modal-border rounded-lg px-3 py-1.5 text-text-primary text-icon-sm font-body-md focus:outline-none focus:border-accent-primary-start/60"
+      />
+      <label
+        class="flex items-center gap-1 text-type-sm text-text-muted cursor-pointer"
+        ><input
+          type="checkbox"
+          bind:checked={caseSensitive}
+          class="accent-[var(--color-accent-primary-end)]"
+        />Aa</label
+      >
+      <label
+        class="flex items-center gap-1 text-type-sm text-text-muted cursor-pointer"
+        ><input
+          type="checkbox"
+          bind:checked={wholeWord}
+          class="accent-[var(--color-accent-primary-end)]"
+        />ab</label
+      >
+      <label
+        class="flex items-center gap-1 text-type-sm text-text-muted cursor-pointer"
+        ><input
+          type="checkbox"
+          bind:checked={regexp}
+          class="accent-[var(--color-accent-primary-end)]"
+        />.*</label
+      >
+      <button
+        type="button"
+        onclick={onClose}
+        class="ml-auto text-text-muted hover:text-text-primary cursor-pointer px-2"
+        aria-label="Close">✕</button
+      >
     </div>
+    <p class="text-type-xs text-text-muted font-body-md px-1">
+      Replaces every occurrence in accepted blocks, not just the previewed
+      snippet.
+    </p>
+  </div>
 
-    {#if statusMessage}
+  <div class="flex-1 overflow-y-auto custom-scrollbar">
+    {#if truncatedCount > 0}
       <div
-        class="px-4 py-2 text-type-sm font-body-md text-text-muted border-t border-surface-modal-border bg-surface-modal/20"
+        class="px-4 py-2 text-type-sm text-text-muted bg-surface-modal/20 border-b border-surface-modal-border/60"
         role="status"
         aria-live="polite"
       >
-        {statusMessage}
+        Showing first {groups.length} pages — {truncatedCount} preview rows (up to
+        3 per page). Refine to see the rest; Apply replaces only the previewed blocks.
       </div>
     {/if}
-
-    <div
-      class="flex items-center justify-between gap-2 px-4 py-3 border-t border-surface-modal-border bg-surface-modal/10"
-    >
-      <span class="text-type-sm text-text-muted"
-        >{totalAccepted} match{totalAccepted === 1 ? '' : 'es'} selected</span
+    {#if groups.length === 0}
+      <div
+        class="text-text-muted text-center py-10 font-body-md select-none text-type-md"
       >
-      <div class="flex items-center gap-2">
-        {#if revertLog.length > 0}
-          {@const lastBatch = revertLog[revertLog.length - 1]}
-          <button
-            type="button"
-            onclick={undo}
-            disabled={applying}
-            class="px-3 py-1.5 rounded-lg text-text-muted hover:text-text-primary text-type-md font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40"
-          >
-            Restore last apply ({lastBatch.length}
-            {lastBatch.length === 1 ? 'page' : 'pages'})
-          </button>
-        {/if}
-        {#if previewStale}
-          <span
-            class="text-type-xs text-text-muted italic"
-            role="status"
-            aria-live="polite"
-          >
-            Preview is stale — click Preview to refresh
-          </span>
-        {/if}
+        {loading
+          ? 'Searching…'
+          : findText.trim()
+            ? 'Click Preview to find matches.'
+            : 'Enter text to find across the vault.'}
+      </div>
+    {:else}
+      {#each groups as grp (grp.key)}
+        <div class="border-b border-surface-modal-border/60">
+          <div class="flex items-center gap-2 px-4 py-2 bg-surface-modal/20">
+            <input
+              type="checkbox"
+              checked={grp.accepted}
+              onchange={() => togglePageAccept(grp)}
+              class="accent-[var(--color-accent-primary-end)]"
+              aria-label="Accept all on this page"
+            />
+            <span
+              class="text-type-xs uppercase tracking-widest font-label-sm-bold text-text-muted truncate"
+            >
+              {grp.notebook} › {grp.section || '—'} › {grp.page}
+            </span>
+            <span class="ml-auto text-type-xs text-text-muted"
+              >{grp.matches.length}</span
+            >
+          </div>
+          {#each grp.matches as m (m.blockId)}
+            <div class="px-4 py-1.5 flex items-start gap-2 text-type-md">
+              <input
+                type="checkbox"
+                bind:checked={m.accepted}
+                class="accent-[var(--color-accent-primary-end)] mt-0.5"
+                aria-label="Accept this match"
+              />
+              <div class="flex-1 min-w-0">
+                <div class="text-text-muted line-through truncate">
+                  {m.snippet}
+                </div>
+                <div class="text-accent-primary-start truncate">
+                  {m.after}
+                </div>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/each}
+    {/if}
+  </div>
+
+  {#if statusMessage}
+    <div
+      class="px-4 py-2 text-type-sm font-body-md text-text-muted border-t border-surface-modal-border bg-surface-modal/20"
+      role="status"
+      aria-live="polite"
+    >
+      {statusMessage}
+    </div>
+  {/if}
+
+  <div
+    class="flex items-center justify-between gap-2 px-4 py-3 border-t border-surface-modal-border bg-surface-modal/10"
+  >
+    <span class="text-type-sm text-text-muted"
+      >{totalAccepted} match{totalAccepted === 1 ? '' : 'es'} selected</span
+    >
+    <div class="flex items-center gap-2">
+      {#if revertLog.length > 0}
+        {@const lastBatch = revertLog[revertLog.length - 1]}
         <button
           type="button"
-          onclick={apply}
-          disabled={totalAccepted === 0 || applying || previewStale}
-          class="px-4 py-1.5 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start text-type-md font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          >{applying
-            ? 'Applying…'
-            : `Replace ${totalAccepted || ''}`.trim()}</button
+          onclick={undo}
+          disabled={applying}
+          class="px-3 py-1.5 rounded-lg text-text-muted hover:text-text-primary text-type-md font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40"
         >
-      </div>
+          Restore last apply ({lastBatch.length}
+          {lastBatch.length === 1 ? 'page' : 'pages'})
+        </button>
+      {/if}
+      {#if previewStale}
+        <span
+          class="text-type-xs text-text-muted italic"
+          role="status"
+          aria-live="polite"
+        >
+          Preview is stale — click Preview to refresh
+        </span>
+      {/if}
+      <button
+        type="button"
+        onclick={apply}
+        disabled={totalAccepted === 0 || applying || previewStale}
+        class="px-4 py-1.5 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start text-type-md font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+        >{applying
+          ? 'Applying…'
+          : `Replace ${totalAccepted || ''}`.trim()}</button
+      >
     </div>
   </div>
-</div>
+</Dialog>

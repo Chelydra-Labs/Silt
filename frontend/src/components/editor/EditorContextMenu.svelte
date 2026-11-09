@@ -218,17 +218,18 @@
 
 <!-- Portaled to body so position:fixed uses viewport coords under note zoom. -->
 <div class="fixed inset-0 z-[180]" use:portal>
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="absolute inset-0 cursor-default"
+  <button
+    type="button"
+    tabindex="-1"
+    aria-label="Close menu"
+    class="absolute inset-0 cursor-default border-none p-0 bg-transparent"
     onclick={close}
     oncontextmenu={(e) => {
       e.preventDefault()
       e.stopPropagation()
       close()
     }}
-  ></div>
+  ></button>
   <div
     bind:this={menuEl}
     class="fixed context-menu-card"

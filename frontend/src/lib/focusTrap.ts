@@ -87,6 +87,7 @@ export function getFocusable(container: HTMLElement): HTMLElement[] {
  */
 export function trapFocus(container: HTMLElement): () => void {
   function onKeydown(e: KeyboardEvent): void {
+    if (e.defaultPrevented) return
     if (e.key !== 'Tab') return
     const els = getFocusable(container)
     if (els.length === 0) return
