@@ -128,6 +128,14 @@ import type {
   PluginEventName,
   PluginEventPayload
 } from '../../../sdk'
+import { sortTasks } from '../taskOrder'
+
+// Wrap (not replace) the shared comparator so the sort-only rebin test can
+// prove the client re-sort ran while the re-query was still pending.
+vi.mock('../taskOrder', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../taskOrder')>()
+  return { ...actual, sortTasks: vi.fn(actual.sortTasks) }
+})
 import { v2CtxStubs } from '../../../test-helpers'
 import {
   getTaskHubState,
@@ -221,6 +229,14 @@ function row(p: Partial<Record<string, unknown>>): Record<string, unknown> {
 async function flush() {
   await tick()
   await new Promise((r) => setTimeout(r, 0))
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((r) => {
+    resolve = r
+  })
+  return { promise, resolve }
 }
 
 // Locate a rendered card by its clean_content. Within-column manual
@@ -1551,6 +1567,13 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     await flush()
 
     expect(mocks.updateTaskMeta).toHaveBeenCalledWith('t1', { pinned: true })
+    // Pin is display ordering only: no status/group/manual-order write.
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    expect(mocks.setTaskOrder).not.toHaveBeenCalled()
+    expect(mocks.setTaskOrders).not.toHaveBeenCalled()
+    expect(screen.getByTestId('tasks-board-live-message')).toHaveTextContent(
+      'Task pinned'
+    )
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(
       document.querySelector('[data-card="t1"]')?.getAttribute('aria-current')
@@ -1629,6 +1652,19 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     expect(screen.queryByTestId('tasks-pin-d1')).toBeNull()
   })
 
+  it('a pinned completed card leads its lane but renders no pin toggle', async () => {
+    // Pin is the primary sort key in every lane, so a DONE card that was
+    // pinned before completion still leads. It keeps no control or glyph.
+    await renderBoard('status', [
+      row({ id: 'u1', status: 'DONE', clean_content: 'Unpinned done' }),
+      row({ id: 'p1', status: 'DONE', pinned: 1, clean_content: 'Pinned done' })
+    ])
+
+    expect(laneCardIds('Done')).toEqual(['p1', 'u1'])
+    expect(screen.queryByTestId('tasks-pin-p1')).toBeNull()
+    expect(screen.queryByTestId('tasks-pin-u1')).toBeNull()
+  })
+
   it('Enter/Space on the pin toggle does not select the card or open the drawer', async () => {
     await renderBoard('status', [
       row({ id: 't1', status: 'TODO', clean_content: 'A' })
@@ -1636,6 +1672,9 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     const pin = screen.getByTestId('tasks-pin-t1')
     pin.focus()
 
+    // The pin is a sibling of the card, so the card's keydown handler never
+    // sees these events; the event's outcome still matches the AC. The
+    // onCardKeydown target guard is defence-in-depth for future nesting.
     for (const key of ['Enter', ' ']) {
       await fireEvent.keyDown(pin, { key })
     }
@@ -1662,6 +1701,74 @@ describe('BoardView — dimension-aware Board (#421)', () => {
       "Couldn't update pin: lock held"
     )
     expect(pin).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('restores pin focus across two rapid toggles on the same card', async () => {
+    const originalFocus = HTMLElement.prototype.focus
+    const focusCalls: Array<{ testId: string | null; disabled: boolean }> = []
+    const focusSpy = vi
+      .spyOn(HTMLElement.prototype, 'focus')
+      .mockImplementation(function (this: HTMLElement) {
+        // Record the state at call time: jsdom's native focus() silently
+        // ignores a disabled element, so the suite would otherwise miss it.
+        focusCalls.push({
+          testId: this.getAttribute('data-testid'),
+          disabled: (this as HTMLButtonElement).disabled
+        })
+        return originalFocus.call(this)
+      })
+    try {
+      await renderBoard('status', [
+        row({ id: 't1', status: 'TODO', clean_content: 'A' })
+      ])
+      focusCalls.length = 0
+
+      const settle = async () => {
+        await flush()
+        await new Promise((r) => setTimeout(r, 20))
+        await flush()
+      }
+
+      await fireEvent.click(screen.getByTestId('tasks-pin-t1'))
+      await settle()
+      // Second toggle inside the 1.5 s expiry window — the id is unchanged,
+      // so a bare-string token would suppress the refocus.
+      await fireEvent.click(screen.getByTestId('tasks-pin-t1'))
+      await settle()
+
+      const pinFocus = focusCalls.filter((c) => c.testId === 'tasks-pin-t1')
+      expect(pinFocus).toHaveLength(2)
+      expect(pinFocus.every((c) => !c.disabled)).toBe(true)
+    } finally {
+      focusSpy.mockRestore()
+    }
+  })
+
+  it('re-sorts existing lanes on a sort-only change before the reload lands', async () => {
+    const initialRows = [
+      row({ id: 'b1', status: 'TODO', priority: 1, clean_content: 'Bravo' }),
+      row({ id: 'a1', status: 'TODO', priority: 3, clean_content: 'Alpha' })
+    ]
+    await renderBoardWithSort('status', 'title', initialRows)
+    expect(laneCardIds('To Do')).toEqual(['a1', 'b1'])
+    vi.mocked(sortTasks).mockClear()
+
+    const pending = deferred<{ rows: unknown[]; truncated: boolean }>()
+    mocks.sqliteQuery.mockReset()
+    mocks.sqliteQuery.mockReturnValue(pending.promise)
+
+    setSort('priority')
+    await flush()
+
+    // The reactive rebin re-sorted the loaded lanes even though the re-query
+    // has not landed; the reload returns the same rows, so it cannot be the
+    // source of the new order.
+    expect(sortTasks).toHaveBeenCalledWith('priority', expect.anything())
+
+    pending.resolve({ rows: initialRows, truncated: false })
+    await flush()
+
+    expect(laneCardIds('To Do')).toEqual(['b1', 'a1'])
   })
 })
 
