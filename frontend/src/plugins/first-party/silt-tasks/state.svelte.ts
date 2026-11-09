@@ -251,6 +251,17 @@ const DEFAULT_FILTERS: TaskFilters = {
   shortlist: false
 }
 
+// DEFAULT_FILTERS's array facets must never leak by reference into state —
+// one in-place push would corrupt every subsequent reset/clear.
+function cloneFilters(filters: TaskFilters): TaskFilters {
+  return {
+    ...filters,
+    owners: [...filters.owners],
+    priorities: [...filters.priorities],
+    tags: [...filters.tags]
+  }
+}
+
 function freshDefaults(): TaskHubState {
   return {
     displayMode: 'list',
@@ -258,7 +269,7 @@ function freshDefaults(): TaskHubState {
     sort: 'dueDate',
     scope: 'vault',
     scopeUserOverride: false,
-    filters: { ...DEFAULT_FILTERS },
+    filters: cloneFilters(DEFAULT_FILTERS),
     focusDate: '',
     activeFilter: 'all',
     calendarSubMode: 'month',
@@ -488,7 +499,7 @@ export function setColumns(cols: BoardColumn[]): void {
 /** Clear all active filters. */
 export function clearFilters(): void {
   clearTaskPageRoute()
-  _state.filters = { ...DEFAULT_FILTERS }
+  _state.filters = cloneFilters(DEFAULT_FILTERS)
   markDirtyIfViewActive()
 }
 
