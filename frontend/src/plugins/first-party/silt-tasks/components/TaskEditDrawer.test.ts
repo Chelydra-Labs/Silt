@@ -996,7 +996,7 @@ describe('TaskEditDrawer — priority editor (#412)', () => {
       props: { task: makeTask({ priority: 3 }), ctx, onClose: () => {} }
     })
     const rg = container.querySelector(
-      '[aria-labelledby="task-priority-label"]'
+      '[role="radiogroup"][aria-labelledby="task-priority-label"]'
     ) as HTMLElement
     await tick()
     // Start at Low (priority 3, index 2). ArrowLeft → Normal (priority 2).
@@ -1019,7 +1019,7 @@ describe('TaskEditDrawer — priority editor (#412)', () => {
       props: { task: makeTask({ priority: 2 }), ctx, onClose: () => {} }
     })
     const rg = container.querySelector(
-      '[aria-labelledby="task-priority-label"]'
+      '[role="radiogroup"][aria-labelledby="task-priority-label"]'
     ) as HTMLElement
     await tick()
     // Two quick arrows within the 200ms debounce window: Normal(2) → Low(3)
@@ -1054,7 +1054,7 @@ describe('TaskEditDrawer — priority editor (#412)', () => {
       props: { task: makeTask({ priority: 2 }), ctx, onClose: () => {} }
     })
     const rg = container.querySelector(
-      '[aria-labelledby="task-priority-label"]'
+      '[role="radiogroup"][aria-labelledby="task-priority-label"]'
     ) as HTMLElement
     await tick()
 

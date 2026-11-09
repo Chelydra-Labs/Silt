@@ -172,6 +172,10 @@ describe('TaskMetadataSidebar', () => {
     expect(
       within(header).getByRole('radiogroup', { name: 'Priority' })
     ).toBeTruthy()
+    // Priority is a named region like its header siblings.
+    expect(
+      within(header).getByRole('region', { name: 'Priority' })
+    ).toBeTruthy()
 
     // Essentials now carries only Owner + Tags as full-width rows (D2).
     const essentials = screen.getByRole('region', { name: 'Essentials' })

@@ -872,7 +872,7 @@
       </section>
     </div>
 
-    <section>
+    <section aria-labelledby="task-priority-label">
       <h3 id="task-priority-label" class="mb-1 {FIELD_LABEL}">Priority</h3>
       <div
         class="flex items-center gap-0.5 rounded-lg border border-surface-panel-border bg-surface-panel p-0.5"
