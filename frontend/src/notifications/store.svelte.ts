@@ -19,6 +19,7 @@ export interface Notification {
   /** Set to a non-zero value (ms) to auto-dismiss; 0 means sticky. */
   autoDismissMs: number
   createdAt: number
+  viewGeneration: number
 }
 
 export interface NotificationsState {
@@ -36,9 +37,28 @@ const DEFAULT_AUTO_DISMISS_MS: Record<NotificationKind, number> = {
 }
 
 let nextId = 1
+let currentViewGeneration = 1
 // Timer handles only — not read during render.
 // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive timer map
 const dismissTimers = new Map<number, ReturnType<typeof setTimeout>>()
+
+export function getCurrentViewGeneration(): number {
+  return currentViewGeneration
+}
+
+/**
+ * Advances the active view generation counter and dismisses all toasts that
+ * were created in a previous view generation (#1080).
+ */
+export function advanceViewGeneration(): void {
+  currentViewGeneration++
+  const stale = notificationsState.items.filter(
+    (n) => n.viewGeneration < currentViewGeneration
+  )
+  for (const n of stale) {
+    dismissNotification(n.id)
+  }
+}
 
 export interface PushOptions {
   kind?: NotificationKind
@@ -71,7 +91,8 @@ export function pushNotification(opts: PushOptions): number {
     message: opts.message,
     action: opts.action,
     autoDismissMs: opts.autoDismissMs ?? DEFAULT_AUTO_DISMISS_MS[kind],
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    viewGeneration: currentViewGeneration
   }
   notificationsState.items.push(n)
   while (notificationsState.items.length > MAX_NOTIFICATIONS) {
@@ -108,4 +129,5 @@ export function clearAllNotifications(): void {
 export function _resetForTests(): void {
   clearAllNotifications()
   nextId = 1
+  currentViewGeneration = 1
 }

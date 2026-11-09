@@ -28,8 +28,25 @@
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive dedupe set
   const invokedActionIds = new Set<number>()
 
+  function handleWindowKeydown(e: KeyboardEvent): void {
+    if (e.key !== 'Escape' || e.defaultPrevented) return
+    if (notificationsState.items.length === 0) return
+    // If any modal, alertdialog, menu, or listbox overlay is open, let that surface handle Escape (#1080).
+    const activeOverlay = document.querySelector(
+      '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]'
+    )
+    if (activeOverlay) return
+    e.preventDefault()
+    const latest = notificationsState.items[notificationsState.items.length - 1]
+    if (latest) {
+      dismissNotification(latest.id)
+    }
+  }
+
   onMount(() => {
+    window.addEventListener('keydown', handleWindowKeydown)
     return () => {
+      window.removeEventListener('keydown', handleWindowKeydown)
       list = null
       invokedActionIds.clear()
     }

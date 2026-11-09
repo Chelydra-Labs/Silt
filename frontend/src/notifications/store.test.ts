@@ -4,6 +4,8 @@ import {
   pushNotification,
   dismissNotification,
   clearAllNotifications,
+  advanceViewGeneration,
+  getCurrentViewGeneration,
   _resetForTests
 } from './store.svelte'
 
@@ -82,5 +84,21 @@ describe('notifications/store.svelte (#86)', () => {
     vi.advanceTimersByTime(1100)
     expect(notificationsState.items).toHaveLength(0)
     vi.useRealTimers()
+  })
+
+  it('stamps toasts with currentViewGeneration and clears stale toasts on advanceViewGeneration', () => {
+    expect(getCurrentViewGeneration()).toBe(1)
+    pushNotification({ kind: 'info', message: 'from-view-1' })
+    expect(notificationsState.items[0].viewGeneration).toBe(1)
+
+    advanceViewGeneration()
+    expect(getCurrentViewGeneration()).toBe(2)
+    // Stale toast from generation 1 should be dismissed
+    expect(notificationsState.items).toHaveLength(0)
+
+    // New toast created in generation 2
+    pushNotification({ kind: 'info', message: 'from-view-2' })
+    expect(notificationsState.items).toHaveLength(1)
+    expect(notificationsState.items[0].viewGeneration).toBe(2)
   })
 })
