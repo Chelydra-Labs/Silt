@@ -804,7 +804,7 @@
         <h1
           bind:this={hubHeading}
           tabindex="-1"
-          class="text-type-lg font-semibold text-text-primary tracking-tight truncate m-0 font-headline"
+          class="text-type-lg font-semibold text-text-primary tracking-tight truncate m-0"
         >
           {manifest?.name ?? 'Tasks'}
         </h1>

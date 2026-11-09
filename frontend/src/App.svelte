@@ -212,8 +212,7 @@
     typeof window !== 'undefined' ? window.innerWidth <= 700 : false
   )
 
-  $effect(() => {
-    if (typeof window === 'undefined') return
+  onMount(() => {
     const handleResize = () => {
       const narrow = window.innerWidth <= 700
       if (narrow && !isNarrowWindow) {
@@ -222,7 +221,7 @@
       }
       isNarrowWindow = narrow
     }
-    if (window.innerWidth <= 700 && !sidebarCollapsed) {
+    if (window.innerWidth <= 700) {
       sidebarCollapsed = true
     }
     window.addEventListener('resize', handleResize)
@@ -1278,12 +1277,13 @@
            activity bar → settings sections → editor groups. -->
       {#if !(activeView === 'settings' && themeEditorSession.open)}
         {#if isNarrowWindow && !sidebarCollapsed}
-          <div
-            role="presentation"
+          <button
+            type="button"
             tabindex="-1"
-            class="absolute inset-0 left-12 z-40 bg-black/45 backdrop-blur-[1px] transition-opacity duration-200"
+            aria-label="Dismiss sidebar"
+            class="fixed inset-0 top-12 left-12 z-40 bg-black/45 backdrop-blur-[1px] transition-opacity duration-200 cursor-default border-none p-0"
             onclick={() => (sidebarCollapsed = true)}
-          ></div>
+          ></button>
         {/if}
         <Sidebar
           bind:activeNotebook
