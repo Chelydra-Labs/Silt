@@ -252,6 +252,59 @@ func TestUndoLastTaskMutation_RestoresShortlistRankChange(t *testing.T) {
 	}
 }
 
+// Undo of a shortlist write restores the task's semantic state — the rank
+// pointer — not the bytes of a hand-authored invalid token. The stale
+// [shortlist:: 9] the setter dropped stays dropped, and the clear-only
+// variant (token present, rank already nil) journals nothing at all
+// because no tracked field changed. Pinned deliberately: byte fidelity
+// across edits is page history's job, not the undo journal's.
+func TestUndoLastTaskMutation_ShortlistStaleTokenStaysDropped(t *testing.T) {
+	app := newTestApp(t)
+	const id = "a11d0030-1111-1111-1111-111111111111"
+	content := "- [ ] ship [shortlist:: 9] <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "UndoShortStale", "2026-07-01", content)
+
+	if err := app.SetTaskShortlistRank(id, 2); err != nil {
+		t.Fatalf("SetTaskShortlistRank: %v", err)
+	}
+	if line := requireTaskLine(t, readTaskPage(t, filePath), id); !strings.Contains(line, "[shortlist:: 2]") {
+		t.Fatalf("mutation did not land on disk: %q", line)
+	}
+	result, err := app.UndoLastTaskMutation()
+	if err != nil {
+		t.Fatalf("UndoLastTaskMutation: %v", err)
+	}
+	if !result.Undone || !taskUndoContains(result.ChangedFields, "shortlist") {
+		t.Fatalf("undo result = %+v, want shortlist restored", result)
+	}
+	// Before the write the task was unranked (nil renders no token), and the
+	// invalid extra token is not resurrected: the line ends token-less.
+	line := requireTaskLine(t, readTaskPage(t, filePath), id)
+	if strings.Contains(strings.ToLower(line), "[shortlist::") {
+		t.Errorf("undo resurrected the dropped invalid shortlist token: %q", line)
+	}
+	requireTaskProjection(t, app, id, func(t *testing.T, task parser.TaskResult) {
+		if task.ShortlistRank != nil {
+			t.Errorf("index shortlist rank after undo = &%d, want nil", *task.ShortlistRank)
+		}
+	})
+
+	// Clear-only variant: rank nil → nil changes no tracked field, so the
+	// token drop is not journaled and there is nothing to undo.
+	const id2 = "a11d0031-1111-1111-1111-111111111111"
+	content2 := "- [ ] ship [Shortlist:: 9] <!-- id: " + id2 + " -->\n"
+	filePath2 := indexTestFile(t, app, "W", "S", "UndoShortStaleClear", "2026-07-01", content2)
+	if err := app.SetTaskShortlistRank(id2, -1); err != nil {
+		t.Fatalf("SetTaskShortlistRank clear: %v", err)
+	}
+	if line := requireTaskLine(t, readTaskPage(t, filePath2), id2); strings.Contains(strings.ToLower(line), "[shortlist::") {
+		t.Errorf("clear-only drop: stale token must be gone: %q", line)
+	}
+	if got := taskUndoLen(app); got != 0 {
+		t.Fatalf("clear-only stale drop journaled %d entries, want 0", got)
+	}
+}
+
 func TestSetTaskShortlistRank_SameRankIsNotJournaled(t *testing.T) {
 	// &2 → &2 changes no user-visible field, so the write never reaches the
 	// journal (recordTaskUndo drops field-identical entries). The pointer-
