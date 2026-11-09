@@ -124,7 +124,9 @@ vi.mock('@wailsio/runtime', () => ({
 }))
 
 import TaskSubEditorModal from './TaskSubEditorModal.svelte'
+import TaskEditDrawer from './TaskEditDrawer.svelte'
 import type { PluginContext } from '../../../sdk'
+import type { TaskDetail } from '../types'
 import { v2CtxStubs } from '../../../test-helpers'
 import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
 
@@ -223,7 +225,8 @@ describe('TaskSubEditorModal (#304)', () => {
 
     const dialog = screen.getByRole('dialog')
     expect(dialog).toHaveAttribute('aria-modal', 'true')
-    // The title is the parent task text.
+    // The accessible name comes from the sr-only header heading (the visible
+    // title lives in the sidebar's editable input).
     expect(dialog).toHaveTextContent('Ship the feature')
     // The breadcrumb carries notebook › section › page.
     expect(dialog).toHaveTextContent('Work')
@@ -248,7 +251,7 @@ describe('TaskSubEditorModal (#304)', () => {
     expect(dialog).not.toHaveTextContent('Standalone task')
     expect(dialog).not.toHaveTextContent('.silt')
     expect(dialog).not.toHaveTextContent('tasks.md')
-    // Header still shows the parent task title.
+    // Header still carries the parent task title in its sr-only heading.
     expect(dialog).toHaveTextContent('Ship the feature')
   })
 
@@ -665,7 +668,9 @@ describe('TaskSubEditorModal — metadata sidebar (#780 / #826)', () => {
     await flush()
 
     await fireEvent.click(
-      document.getElementById('task-start-date-trigger') as HTMLElement
+      document.getElementById(
+        'sub-editor-task-start-date-trigger'
+      ) as HTMLElement
     )
     await fireEvent.click(screen.getByText('Today'))
     await flush()
@@ -883,5 +888,325 @@ describe('TaskSubEditorModal — writing-surface focus indicator (#1095)', () =>
 
     await fireFocusEvent(pm, 'focusout', nested)
     expect(focusState()).toBe('true')
+  })
+})
+
+describe('TaskSubEditorModal — pop-up single title (#1096)', () => {
+  beforeEach(() => {
+    mocks.fetchSubtree.mockReset().mockResolvedValue([])
+    mocks.saveSubtreeBlocks.mockReset().mockResolvedValue(true)
+    mocks.sqliteQuery
+      .mockReset()
+      .mockResolvedValue({ rows: [makeTaskRow()], truncated: false })
+    mql.matches = false
+    mqlListeners.length = 0
+  })
+
+  afterEach(() => cleanup())
+
+  async function mountWithSidebar() {
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => expect(mocks.sqliteQuery).toHaveBeenCalled())
+    await flush()
+  }
+
+  function heading(): HTMLElement {
+    const el = document.getElementById('sub-editor-title')
+    expect(el, 'dialog heading must always render').not.toBeNull()
+    return el as HTMLElement
+  }
+
+  it('shows exactly one editable title — the sidebar input — with the sidebar open', async () => {
+    await mountWithSidebar()
+
+    const titles = screen.getAllByLabelText('Task title')
+    expect(titles).toHaveLength(1)
+    expect(titles[0]).toHaveValue('Ship the feature')
+    expect(document.getElementById('sub-editor-sidebar')).toContainElement(
+      titles[0]
+    )
+
+    // The header copy is visually hidden, not deleted: it is the dialog name.
+    expect(heading()).toHaveClass('sr-only')
+    expect(heading()).toHaveTextContent('Ship the feature')
+    expect(
+      screen.getByRole('dialog', { name: 'Ship the feature' })
+    ).toBeInTheDocument()
+  })
+
+  it('keeps the dialog named and the Details toggle usable with the sidebar shut', async () => {
+    await mountWithSidebar()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Hide details' }))
+    await tick()
+    expect(screen.queryAllByLabelText('Task title')).toHaveLength(0)
+    expect(heading()).toHaveTextContent('Ship the feature')
+    expect(
+      screen.getByRole('dialog', { name: 'Ship the feature' })
+    ).toBeInTheDocument()
+
+    // The toggle still reopens the sidebar after a shut.
+    await fireEvent.click(screen.getByRole('button', { name: 'Show details' }))
+    await tick()
+    expect(screen.getAllByLabelText('Task title')).toHaveLength(1)
+  })
+
+  it('names the dialog from the sr-only heading while the narrow sidebar is shut', async () => {
+    mql.matches = true
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => expect(mocks.sqliteQuery).toHaveBeenCalled())
+    await flush()
+
+    // Narrow defaults to the collapsed disclosure.
+    expect(
+      screen.getByRole('button', { name: 'Show details' })
+    ).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryAllByLabelText('Task title')).toHaveLength(0)
+    expect(heading()).toHaveTextContent('Ship the feature')
+    expect(
+      screen.getByRole('dialog', { name: 'Ship the feature' })
+    ).toBeInTheDocument()
+  })
+})
+
+describe('TaskSubEditorModal — cross-surface sidebar parity (D7)', () => {
+  beforeEach(() => {
+    mocks.fetchSubtree.mockReset().mockResolvedValue([])
+    mocks.saveSubtreeBlocks.mockReset().mockResolvedValue(true)
+    mocks.sqliteQuery
+      .mockReset()
+      .mockResolvedValue({ rows: [makeTaskRow()], truncated: false })
+    mql.matches = false
+    mqlListeners.length = 0
+  })
+
+  afterEach(() => cleanup())
+
+  function textOf(el: Element | null): string {
+    return (el?.textContent ?? '').replace(/\s+/g, ' ').trim()
+  }
+
+  // The sidebar is shared, so its DOM order is the parity contract both hosts
+  // render; reading it per host catches any prop that changes layout.
+  function readSidebarLayout(root: Element) {
+    const labels = (scope: Element | null, selector: string) =>
+      scope
+        ? Array.from(scope.querySelectorAll(selector)).map((el) => textOf(el))
+        : []
+    return {
+      primary: labels(
+        root.querySelector('[data-testid="task-primary-header"]'),
+        'h3'
+      ),
+      essentials: labels(
+        root.querySelector(
+          'section[aria-labelledby$="task-essentials-heading"]'
+        ),
+        'dt'
+      ),
+      planning: labels(
+        root.querySelector('[data-testid="task-planning-section"]'),
+        'h3, label[for$="task-estimate-input"]'
+      ),
+      activity: labels(
+        root.querySelector('[data-testid="task-activity-section"]'),
+        'h3'
+      )
+    }
+  }
+
+  // The modal opens over the still-mounted drawer, so both sidebars sit in the
+  // document at once. Each id must belong to a single instance, and every
+  // label/ARIA reference must resolve inside the sidebar that owns it.
+  function expectScopedIds(...roots: Element[]) {
+    const idsOf = (root: Element) =>
+      Array.from(root.querySelectorAll('[id]'), (el) => el.id)
+    const idSets = roots.map(idsOf)
+    for (const ids of idSets) {
+      expect(new Set(ids).size, 'ids must be unique within a sidebar').toBe(
+        ids.length
+      )
+    }
+    for (const ids of idSets.slice(1)) {
+      expect(ids.filter((id) => idSets[0].includes(id))).toEqual([])
+    }
+
+    // aria-controls and aria-activedescendant name popover content that only
+    // renders while open, so they must resolve only when the target is already
+    // in the document.
+    const required = ['for', 'aria-labelledby', 'aria-describedby']
+    const optional = ['aria-controls', 'aria-activedescendant']
+    const attrs = [...required, ...optional]
+    for (const root of roots) {
+      const selector = attrs.map((a) => `[${a}]`).join(',')
+      for (const el of Array.from(root.querySelectorAll(selector))) {
+        for (const attr of attrs) {
+          const value = el.getAttribute(attr)
+          if (!value) continue
+          for (const id of value.split(/\s+/).filter(Boolean)) {
+            const target = document.getElementById(id)
+            if (!target) {
+              expect(optional.includes(attr), `${attr}="${id}" resolves`).toBe(
+                true
+              )
+              continue
+            }
+            // Popover bodies are portaled to <body>, so they resolve outside
+            // every sidebar; the invariant is that they never land in a
+            // *different* one.
+            expect(
+              roots.some((other) => other !== root && other.contains(target)),
+              `${attr}="${id}" must not resolve inside another sidebar`
+            ).toBe(false)
+          }
+        }
+      }
+    }
+  }
+
+  // The typeahead debounces its search; wait on the observable wiring (an
+  // active option mounted in the portaled listbox) rather than on a constant
+  // copied from the component's debounce, so a retune can't leave this
+  // passing/failing for a timing reason unrelated to id scoping.
+  async function openDependencyPopover(
+    root: Element
+  ): Promise<HTMLInputElement> {
+    const input = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Search tasks to add as dependencies"]'
+    )
+    expect(input, 'dependency combobox must render').not.toBeNull()
+    await fireEvent.input(input!, { target: { value: 'found' } })
+    await vi.waitFor(() => {
+      const optionId = input!.getAttribute('aria-activedescendant')
+      expect(optionId, 'dependency popover must open').toBeTruthy()
+      expect(
+        document.getElementById(optionId!),
+        'active option must be mounted'
+      ).not.toBeNull()
+    })
+    await flush()
+    return input!
+  }
+
+  function makeDetail(): TaskDetail {
+    return {
+      id: 'task-1',
+      source: 'vault',
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      file_date: '2026-07-01',
+      clean_content: 'Ship the feature',
+      status: 'TODO',
+      owner: '',
+      start_date: '',
+      due_date: '2026-07-15',
+      priority: 2,
+      pinned: false,
+      progress: 0,
+      recurrence: '',
+      comments_count: 0,
+      links_count: 0,
+      created_at: '',
+      completed_at: '',
+      manual_order: 0,
+      modified_at: '',
+      estimate_minutes: null,
+      subtask_total: 0,
+      subtask_done: 0,
+      shortlist_rank: null
+    }
+  }
+
+  it('renders the same sidebar field order, grouping, and labels as the drawer', async () => {
+    const searchTasks = async () => [
+      {
+        id: 'dep-found',
+        clean_content: 'Found task',
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily'
+      }
+    ]
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx({ searchTasks }),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => expect(mocks.sqliteQuery).toHaveBeenCalled())
+    await flush()
+    const modalSidebar = document.querySelector(
+      '#sub-editor-sidebar .task-metadata-sidebar'
+    )
+    expect(modalSidebar, 'modal sidebar must render').not.toBeNull()
+
+    render(TaskEditDrawer, {
+      props: {
+        task: makeDetail(),
+        ctx: makeCtx({ searchTasks }),
+        onClose: () => {}
+      }
+    })
+    const drawerSidebar = screen
+      .getByTestId('task-edit-drawer')
+      .querySelector('.task-metadata-sidebar')
+    expect(drawerSidebar, 'drawer sidebar must render').not.toBeNull()
+
+    const expected = {
+      primary: ['Status', 'Due date', 'Start day', 'Priority'],
+      essentials: ['Owner', 'Tags'],
+      planning: [
+        'Planning & tracking',
+        'Progress',
+        'Estimate',
+        'Recurrence',
+        'Dependencies'
+      ],
+      activity: ['Activity', 'Comments']
+    }
+    expect(readSidebarLayout(modalSidebar!)).toEqual(expected)
+    expect(readSidebarLayout(drawerSidebar!)).toEqual(expected)
+    expect(readSidebarLayout(modalSidebar!)).toEqual(
+      readSidebarLayout(drawerSidebar!)
+    )
+
+    // Open both dependency popovers so their combobox wiring is on screen
+    // while both sidebars share one document; "Open sub-editor" leaves the
+    // drawer mounted, so coexistence is where a shared id can cross-wire.
+    const modalCombobox = await openDependencyPopover(modalSidebar!)
+    const drawerCombobox = await openDependencyPopover(drawerSidebar!)
+    expectScopedIds(modalSidebar!, drawerSidebar!)
+
+    // The popover body is portaled out of the sidebar, so assert the wiring
+    // directly: each combobox must control the listbox that holds its own
+    // active descendant, and those ids must be unique across both hosts.
+    const modalOptionId = modalCombobox.getAttribute('aria-activedescendant')
+    const drawerOptionId = drawerCombobox.getAttribute('aria-activedescendant')
+    expect(modalOptionId).toBeTruthy()
+    expect(drawerOptionId).toBeTruthy()
+    expect(modalOptionId).not.toBe(drawerOptionId)
+    for (const [combobox, optionId] of [
+      [modalCombobox, modalOptionId],
+      [drawerCombobox, drawerOptionId]
+    ] as const) {
+      const listboxId = combobox.getAttribute('aria-controls')
+      const listbox = listboxId ? document.getElementById(listboxId) : null
+      const option = optionId ? document.getElementById(optionId) : null
+      expect(listboxId, 'combobox must control its listbox').toBeTruthy()
+      expect(listbox?.getAttribute('role')).toBe('listbox')
+      expect(option?.getAttribute('role')).toBe('option')
+      expect(listbox?.contains(option), 'option must be in its listbox').toBe(
+        true
+      )
+      expect(document.querySelectorAll(`[id="${optionId}"]`)).toHaveLength(1)
+    }
   })
 })

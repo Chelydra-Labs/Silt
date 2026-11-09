@@ -527,6 +527,45 @@ describe('TaskEditDrawer — source awareness + affordances', () => {
     })
     expect(screen.queryByText('Open sub-editor')).toBeNull()
   })
+
+  it('keeps the footer actions and breadcrumb in order and functional (D8)', async () => {
+    const onOpenSubEditor = vi.fn()
+    const handler = vi.fn()
+    window.addEventListener('navigate-to-block', handler)
+    render(TaskEditDrawer, {
+      props: {
+        task: makeTask(),
+        ctx: makeCtx(),
+        onClose: () => {},
+        onOpenSubEditor
+      }
+    })
+
+    const footer = screen.getByTestId('task-edit-drawer-footer')
+    const undo = screen.getByTestId('tasks-undo-drawer')
+    const subEditor = screen.getByText('Open sub-editor')
+    const source = screen.getByText('Open source page')
+    const breadcrumb = footer.querySelector('p')
+
+    for (const el of [undo, subEditor, source, breadcrumb]) {
+      expect(footer).toContainElement(el)
+    }
+    // DOM order is the footer's visual order: undo → sub-editor → source → crumb.
+    const ordered = [undo, subEditor, source, breadcrumb as HTMLElement]
+    for (let i = 1; i < ordered.length; i++) {
+      expect(
+        ordered[i - 1].compareDocumentPosition(ordered[i]) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy()
+    }
+    expect(breadcrumb).toHaveTextContent('Work › Journal › Daily')
+
+    await fireEvent.click(subEditor)
+    expect(onOpenSubEditor).toHaveBeenCalledTimes(1)
+    await fireEvent.click(source)
+    expect(handler).toHaveBeenCalledTimes(1)
+    window.removeEventListener('navigate-to-block', handler)
+  })
 })
 
 describe('TaskEditDrawer — information architecture and keyboard flow', () => {
