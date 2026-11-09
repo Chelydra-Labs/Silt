@@ -16,7 +16,7 @@ state/query module per mode.
 | `state.svelte.ts` | The unified reactive hub state (`TaskHubState`) — display mode, grouping, sort, scope, filters, focus date, smart-list filter, calendar sub-mode, status columns, saved views, and the active-view + dirty flags. Svelte 5 `$state`. |
 | `query.ts` | Pure SQL builder (`buildQuery`) consuming hub state → `{ sql, params }`. Scope + filter WHERE clauses, groupBy/sort ORDER BY, optional due-date window. All values flow through `?` placeholders. |
 | `grouping.ts` | Pure client-side binning (`binByDimension`) — assigns rows to ordered `GroupSection`s for the 9 grouping dimensions. |
-| `savedViews.ts` | The three code-defined `SYSTEM_VIEWS` + the `fingerprintOf` / `fingerprintOfState` helpers that power the "is the live state the same as this saved view?" check. |
+| `savedViews.ts` | The three code-defined `SYSTEM_VIEWS` + the `viewMatchesState` / `filtersEqual` helpers that power the "is the live state the same as this saved view?" check. |
 | `settings.ts` | YAML pref I/O for everything under `plugins.plugin_settings.silt-tasks`. Reads come from the synchronous settings snapshot; writes go through the atomic `updatePluginSetting`. |
 | `lib/taskWeekStart.svelte.ts` | Reactive active-vault projection of the persisted Tasks week-start preference for global calendar surfaces. |
 | `TasksHub.svelte` | The workspace shell — consolidated `<header data-testid="tasks-hub-header">` housing the primary title/count/active-view bar, segmented mode switcher, grouped utility cluster (saved-view bookmark + preferences), compact routed page-context strip, and subordinate `FilterBar`, followed by the shared content shell (`data-testid="tasks-hub-content-shell"`). |
@@ -25,7 +25,7 @@ state/query module per mode.
 | `views/CalendarView.svelte` | Calendar renderer — compact single-row navigation bar + full-height month/week grids over a windowed due-date query. |
 | `Sidebar.svelte` | The unified sidebar — smart lists, saved views, mini-calendar, and filter controls. Reads + writes the same hub state as the shell. |
 | `components/FilterBar.svelte` | Subordinate toolbar control row grouped into two flex-wrapping clusters: Organize (`Scope: <Crumb>` + `Follow`, `Group`, `Sort`) and Facets (`Owner`, `Priority`, `Due date`, `Shortlist`, `Stale (30d)`, `Tags`, `Clear all`). |
-| `components/TaskEditDrawer.svelte` | Shared non-blocking inspector drawer (pin, progress, recurrence, due date, status, owner, priority, tags). |
+| `components/TaskEditDrawer.svelte` | Shared non-blocking inspector drawer (pin, status, due date, start day, priority, shortlist, owner, tags, dependencies, progress, recurrence, estimate). |
 | `components/CommentThread.svelte` | Comment thread over a task's NOTE-block children (`FetchSubtree` + `block_meta` attribution); one-level replies. |
 | `components/TasksCommandPalette.svelte` | Hub-scoped Ctrl+K command palette (mode / group / sort / views / find / add). |
 | `columns.ts` | `BoardColumn` model + `normalizeColumns` (legacy `string[]` + WIP limits). |

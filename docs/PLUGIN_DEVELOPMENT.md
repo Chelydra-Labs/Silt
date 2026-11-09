@@ -57,10 +57,11 @@ interface PluginContext {
   updateBlockState: (id: string, status: 'TODO' | 'DOING' | 'DONE') => Promise<boolean>
 
   // Update per-task metadata (pin, progress). Both fields are optional;
-  // pass undefined to skip. Pin and progress are file-resident user
+  // pass undefined to skip. Pin is tri-state: null clears the [pin::]
+  // token entirely. Pin and progress are file-resident user
   // intent — the call round-trips through the markdown file, writing
   // [pin:: true] / [progress:: N] tokens via the parser + renderer.
-  updateTaskMeta: (id: string, meta: { pinned?: boolean; progress?: number }) => Promise<boolean>
+  updateTaskMeta: (id: string, meta: { pinned?: boolean | null; progress?: number }) => Promise<boolean>
 }
 ```
 
@@ -95,7 +96,7 @@ Beyond `updateTaskMeta` (pin/progress), the SDK exposes dedicated setters that e
 
 - **`setTaskOwner(id, owner)`** — rewrites `[owner:: NAME]`. Pass `''` to clear.
 - **`setTaskPriority(id, priority)`** — rewrites `[priority:: N]` (1=High, 2=Normal, 3=Low). Pass `0` to clear.
-- **`setTaskShortlistRank(id, rank)`** — rewrites `[shortlist:: N]` (0=top focus … 3). Pass `null` to clear; `0` is a real rank, never "unranked". Note the clear convention differs from `updateTaskMeta`'s integer sentinels: the SDK takes an explicit `null` here because `0` is a meaningful value.
+- **`setTaskShortlistRank(id, rank)`** — rewrites `[shortlist:: N]` (0=top focus … 3). Pass `null` to clear; `0` is a real rank, never "unranked". Note the clear convention differs from `setTaskPriority` (`0` clears) and `setTaskOwner` / `setTaskEstimate` (`''` clears): the SDK takes an explicit `null` here because `0` is a meaningful value — the same tri-state shape as `updateTaskMeta`'s `pinned`.
 - **`setTaskTags(id, tags)`** — rewrites the task's `#hashtag` set. Pass the **full new tag set** (an empty array clears all); the backend performs the surgical add/remove on the prose, preserving `((uuid))` refs and inline `[key:: value]` tokens.
 - **`setTaskTitle(id, title)`** — rewrites the prose portion of the task line. The backend preserves `#tags`, `((uuid))` references, and every inline `[key:: value]` token during the rewrite — callers edit only the prose.
 - **`setTaskEstimate(id, estimate)`** — rewrites `[estimate:: DURATION]` (`30m` / `2h` / `1d`; 1d = 8h). Pass `''` to clear. Invalid durations are rejected.
