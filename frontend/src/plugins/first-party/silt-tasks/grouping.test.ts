@@ -29,6 +29,7 @@ function row(overrides: Partial<TaskDetail> & { id: string }): TaskDetail {
     manual_order: overrides.manual_order ?? 0,
     modified_at: overrides.modified_at ?? '',
     estimate_minutes: overrides.estimate_minutes ?? null,
+    shortlist_rank: overrides.shortlist_rank ?? null,
     subtask_total: overrides.subtask_total ?? 0,
     subtask_done: overrides.subtask_done ?? 0,
     tags: overrides.tags,
