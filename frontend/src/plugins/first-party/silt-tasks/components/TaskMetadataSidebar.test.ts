@@ -814,6 +814,124 @@ describe('TaskMetadataSidebar', () => {
       )
     })
 
+    it('lands a pointer cancel back to the unranked state during the pre-commit window', async () => {
+      const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
+      let releaseLookup: (v: {
+        rows: unknown[]
+        truncated: boolean
+      }) => void = () => {}
+      const sqliteQuery = vi
+        .fn()
+        .mockImplementationOnce(() => new Promise((r) => (releaseLookup = r)))
+        .mockResolvedValue({ rows: [], truncated: false })
+      render(TaskMetadataSidebar, {
+        props: {
+          task: makeTask(),
+          ctx: makeCtx({ setTaskShortlistRank, sqliteQuery })
+        }
+      })
+      const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
+      const rank2 = within(group).getByRole('radio', {
+        name: '2'
+      }) as HTMLButtonElement
+      rank2.click()
+      // Click None while the lookup holds the chain open: the control still
+      // displays the committed anchor, so the equality guards used to eat
+      // this cancel and silently keep rank 2.
+      ;(
+        within(group).getByRole('radio', { name: 'None' }) as HTMLButtonElement
+      ).click()
+      releaseLookup({ rows: [], truncated: false })
+      await flush()
+      await new Promise((r) => setTimeout(r, 230))
+      await flush()
+
+      // Rank 2 landed, then the cancel re-committed the previous state —
+      // the user's last word wins.
+      expect(setTaskShortlistRank).toHaveBeenNthCalledWith(1, 'task-1', 2)
+      expect(setTaskShortlistRank).toHaveBeenLastCalledWith('task-1', null)
+      expect(
+        within(group).getByRole('radio', { name: 'None' })
+      ).toHaveAttribute('aria-checked', 'true')
+    })
+
+    it('lands a pointer cancel back to the previous rank during the pre-commit window', async () => {
+      const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
+      let releaseLookup: (v: {
+        rows: unknown[]
+        truncated: boolean
+      }) => void = () => {}
+      const sqliteQuery = vi
+        .fn()
+        .mockImplementationOnce(() => new Promise((r) => (releaseLookup = r)))
+        .mockResolvedValue({ rows: [], truncated: false })
+      render(TaskMetadataSidebar, {
+        props: {
+          task: makeTask({ shortlist_rank: 2 }),
+          ctx: makeCtx({ setTaskShortlistRank, sqliteQuery })
+        }
+      })
+      const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
+      ;(
+        within(group).getByRole('radio', { name: '0' }) as HTMLButtonElement
+      ).click()
+      // Click the old rank 2 while the lookup for rank 0 holds the chain
+      // open — a cancel back to the committed anchor, which value-drift
+      // inference cannot distinguish from "no change".
+      ;(
+        within(group).getByRole('radio', { name: '2' }) as HTMLButtonElement
+      ).click()
+      releaseLookup({ rows: [], truncated: false })
+      await flush()
+      await new Promise((r) => setTimeout(r, 230))
+      await flush()
+
+      expect(setTaskShortlistRank).toHaveBeenNthCalledWith(1, 'task-1', 0)
+      expect(setTaskShortlistRank).toHaveBeenLastCalledWith('task-1', 2)
+      expect(within(group).getByRole('radio', { name: '2' })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    })
+
+    it('keeps the newest keyboard intent when a key cancels back during the holder lookup', async () => {
+      const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
+      let releaseLookup: (v: {
+        rows: unknown[]
+        truncated: boolean
+      }) => void = () => {}
+      const sqliteQuery = vi
+        .fn()
+        .mockImplementationOnce(() => new Promise((r) => (releaseLookup = r)))
+        .mockResolvedValue({ rows: [], truncated: false })
+      render(TaskMetadataSidebar, {
+        props: {
+          task: makeTask(),
+          ctx: makeCtx({ setTaskShortlistRank, sqliteQuery })
+        }
+      })
+      const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
+
+      // Rove None -> 0 optimistically; the debounced flush enters the lookup.
+      await fireEvent.keyDown(group, { key: 'ArrowRight' })
+      await new Promise((r) => setTimeout(r, 230))
+
+      // Rove back to None while the lookup is pending — the keyboard
+      // equivalent of the pointer cancel-back.
+      await fireEvent.keyDown(group, { key: 'ArrowLeft' })
+      releaseLookup({ rows: [], truncated: false })
+      await flush()
+      await new Promise((r) => setTimeout(r, 230))
+      await flush()
+
+      // Rank 0 landed first, then the cancel re-committed None.
+      expect(setTaskShortlistRank).toHaveBeenNthCalledWith(1, 'task-1', 0)
+      expect(setTaskShortlistRank).toHaveBeenLastCalledWith('task-1', null)
+      expect(
+        within(group).getByRole('radio', { name: 'None' })
+      ).toHaveAttribute('aria-checked', 'true')
+    })
+
     it('commits exactly once when a second activation lands while the holder lookup is pending', async () => {
       const setTaskShortlistRank = vi.fn().mockResolvedValue(true)
       // First lookup stays pending until released, so the second click hits

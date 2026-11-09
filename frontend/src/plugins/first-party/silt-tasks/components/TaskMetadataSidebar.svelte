@@ -593,27 +593,32 @@
   // reverts mid-chain.
   let shortlistCommitInFlight = $state(false)
 
+  // Newest intent expressed while a chain is in flight. Recorded explicitly
+  // at every activation — pointer clicks and keyboard flushes when they enter
+  // commitShortlist, keystrokes in onShortlistKeydown (whose flush may not
+  // fire until after the chain settles). The value cannot carry this signal:
+  // a cancel back to the committed anchor leaves it unchanged, which is
+  // exactly how a queued cancel used to be dropped. `undefined` = nothing
+  // newer than the in-flight target.
+  let shortlistNewestIntent: number | null | undefined
+
   async function commitShortlist(r: number | null) {
-    if (!task || r === shortlistCommitted) return
+    if (!task) return
     if (shortlistCommitInFlight || shortlistField.pending) {
-      // A pointer activation landing in the pre-commit window carries the
-      // same intent as the keystroke the newest-intent path already keeps:
-      // record it and let the armed flush land it once the in-flight chain
-      // settles, instead of dropping it. (flush reads the live value, so a
-      // failed chain reverts this to the committed anchor and the flush
-      // no-ops — a failed write never auto-retries.)
-      if (r !== shortlistField.value) {
-        shortlistField.value = r
-        shortlistDebouncer.trigger()
-      }
+      // Record before any equality guard: an activation on the value the
+      // control still shows (the committed anchor) is a cancel-back, not a
+      // no-op. The value mirrors the intent for display; the chain's tail
+      // re-arms the flush to land it.
+      shortlistNewestIntent = r
+      shortlistField.value = r
       return
     }
-    // Value at entry. The keyboard flush passes value as r, so a change by
-    // the time commit() runs is a keystroke that landed during the pre-commit
-    // awaits (holder lookup / demotion run while the radios are still
-    // enabled); pointer clicks pass r directly and never touch value, so
-    // entry/latest stay equal and nothing is restored for them.
-    const entryValue = shortlistField.value
+    if (r === shortlistCommitted) return
+    shortlistNewestIntent = undefined
+    // Pointer activations set the display optimistically (a keyboard flush
+    // already carries r in the value); the awaits below would otherwise
+    // leave the clicked radio unchecked until the whole chain settles.
+    shortlistField.value = r
     shortlistCommitInFlight = true
     // Holder freed by a successful demote, if one ran — needed to compensate
     // when the assign itself fails.
@@ -630,6 +635,7 @@
           // Lookup failed: whether R is occupied is unknown, so assigning it
           // could duplicate the rank. Abort like a failed demotion.
           shortlistField.value = shortlistCommitted
+          shortlistNewestIntent = undefined
           setMetaError(friendlyCaughtError(e))
           return
         }
@@ -641,23 +647,19 @@
             // Demotion failed: R is still occupied, so assigning it would
             // duplicate the rank. Abort without implying a clean swap.
             shortlistField.value = shortlistCommitted
+            shortlistNewestIntent = undefined
             setMetaError(friendlyCaughtError(e))
             return
           }
         }
       }
-      // Newest intent wins: commit() resets value to its own argument, which
-      // would clobber a keystroke from the lookup window (the armed flush
-      // would then re-read the clobbered value and guard-swallows). Put the
-      // user's last word back so the display stays truthful AND the trailing
-      // re-check re-arms, mirroring commitPriority. On failure the
-      // revert-to-anchor stands: the error banner speaks and a failed write
-      // never auto-retries.
-      const latest = shortlistField.value
+      // commit() resets the value to its own argument, so any newer intent
+      // recorded during the awaits above is restored by the tail below —
+      // not inferred from value drift, which cannot see a cancel back to
+      // the committed anchor.
       const ok = await shortlistField.commit(r)
       if (ok) {
         shortlistCommitted = r
-        if (latest !== entryValue) shortlistField.value = latest
       } else {
         shortlistField.value = shortlistCommitted
         // The demote above already freed rank r on its previous holder, so
@@ -677,6 +679,20 @@
           }
         }
       }
+      // Land the recorded newest intent: put it back into the value (commit
+      // above reset it to r) so the display tells the truth and the re-arm
+      // below flushes it as a fresh chain. On a failed chain the record is
+      // dropped — the value already reverted to the anchor and a failed
+      // write never auto-retries.
+      const queuedIntent = shortlistNewestIntent
+      shortlistNewestIntent = undefined
+      if (
+        ok &&
+        queuedIntent !== undefined &&
+        queuedIntent !== shortlistCommitted
+      ) {
+        shortlistField.value = queuedIntent
+      }
       if (shortlistField.value !== shortlistCommitted)
         shortlistDebouncer.trigger()
     } finally {
@@ -689,12 +705,16 @@
     const idx = nextRadiogroupIndex(e.key, curIdx, SHORTLIST_OPTIONS.length)
     if (idx === null) return
     e.preventDefault()
-    shortlistField.value = SHORTLIST_OPTIONS[idx]
+    const next = SHORTLIST_OPTIONS[idx]
+    // A keystroke inside the pre-commit window is newest intent; record it
+    // directly because its debounced flush may not enter commitShortlist
+    // until after the chain settles.
+    if (shortlistCommitInFlight || shortlistField.pending)
+      shortlistNewestIntent = next
+    shortlistField.value = next
     shortlistDebouncer.trigger()
     ;(e.currentTarget as HTMLElement)
-      .querySelector<HTMLElement>(
-        `[data-shortlist="${shortlistAttr(SHORTLIST_OPTIONS[idx])}"]`
-      )
+      .querySelector<HTMLElement>(`[data-shortlist="${shortlistAttr(next)}"]`)
       ?.focus()
   }
 
