@@ -17,6 +17,7 @@
   import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
   import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
   import QuickAddTask from '../components/QuickAddTask.svelte'
+  import PinToggle from '../components/PinToggle.svelte'
   import { friendlyCaughtError } from '../errors'
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
@@ -86,6 +87,8 @@
   let errorMsg = $state('')
   let markDownError = $state('')
   let markDownTimer: ReturnType<typeof setTimeout> | null = null
+  let pinError = $state('')
+  let pinErrorTimer: ReturnType<typeof setTimeout> | null = null
   let openTruncated = $state(false)
   let doneTruncated = $state(false)
   let showCompleted = $state(false)
@@ -457,6 +460,19 @@
     target?.focus()
   }
 
+  // Pin failures auto-dismiss like markDownError; a new commit clears the
+  // previous message (optimisticField calls onError('') up front).
+  function setPinError(message: string) {
+    pinError = message
+    if (pinErrorTimer) clearTimeout(pinErrorTimer)
+    pinErrorTimer = null
+    if (!message) return
+    pinErrorTimer = setTimeout(() => {
+      pinError = ''
+      pinErrorTimer = null
+    }, 8_000)
+  }
+
   async function commitMarkDown(item: TaskDetail) {
     markDownError = ''
     if (markDownTimer) clearTimeout(markDownTimer)
@@ -512,24 +528,17 @@
   // Rendered open-task order for J/K and prev/next (matches section layout).
   let flatOpenOrder = $derived.by((): TaskDetail[] => {
     if (hubGroupBy === 'dueDate') {
-      return [
-        ...pinnedOpen,
-        ...overdue,
-        ...todayItems,
-        ...upcoming,
-        ...later,
-        ...undated
-      ]
+      return [...overdue, ...todayItems, ...upcoming, ...later, ...undated]
     }
     if (hubGroupBy === 'none') {
-      return [...pinnedOpen, ...sortTasks(hubSort, unpinnedOpen)]
+      return sortTasks(hubSort, unpinnedOpen)
     }
     const out: TaskDetail[] = []
     for (const g of groupedSections) {
       if (collapsedSections.has(g.key)) continue
       out.push(...g.items)
     }
-    return [...pinnedOpen, ...out]
+    return out
   })
 
   let selectedIndex = $derived(
@@ -630,9 +639,9 @@
   }
 
   // Read the live ordered id sequence for a group from the DOM. The rows
-  // are already rendered in their sorted order (filteredOpen + sortRows /
-  // binByDimension), so the DOM is the source of truth for "what the user
-  // sees right now" — including any optimistic in-place reorder.
+  // are already rendered in their sorted order (sortTasks / binByDimension),
+  // so the DOM is the source of truth for "what the user sees right now" —
+  // including any optimistic in-place reorder.
   function groupItemIds(groupKey: string): string[] {
     const section = document.querySelector(
       `[data-group="${CSS.escape(groupKey)}"]`
@@ -768,6 +777,7 @@
   onDestroy(() => {
     if (nowInterval) clearInterval(nowInterval)
     if (markDownTimer) clearTimeout(markDownTimer)
+    if (pinErrorTimer) clearTimeout(pinErrorTimer)
     if (highlightTimer) clearTimeout(highlightTimer)
     if (orderErrorTimer) clearTimeout(orderErrorTimer)
   })
@@ -838,6 +848,12 @@
         </div>
       {/if}
     </button>
+    <PinToggle
+      pinned={item.pinned}
+      onToggle={(next) => ctx.updateTaskMeta(item.id, { pinned: next })}
+      onError={setPinError}
+      testId={`tasks-pin-${item.id}`}
+    />
     <button
       type="button"
       title="Open sub-editor (Shift+Enter)"
@@ -934,6 +950,14 @@
     />
   {/if}
 
+  {#if pinError}
+    <ErrorBanner
+      message={`Couldn't update pin: ${pinError}`}
+      dataTestId="tasks-pin-error"
+      onDismiss={() => setPinError('')}
+    />
+  {/if}
+
   <!-- aria-live region for manual-order drag announcements (#426) -->
   <div class="sr-only" aria-live="polite">{liveMessage}</div>
 
@@ -1023,6 +1047,46 @@
                   > to capture a new task.
                 </p>
               </div>
+            {/if}
+          {/if}
+
+          {#if pinnedOpen.length > 0}
+            <section aria-label="Pinned" data-group="pinned">
+              <h2
+                class="font-label-sm-bold uppercase tracking-widest text-type-xs mb-2 flex items-center gap-2 text-text-muted"
+              >
+                Pinned
+                <span
+                  class="text-text-muted/60"
+                  aria-live="polite"
+                  data-testid="tasks-group-count"
+                >
+                  {pinnedOpen.length}
+                </span>
+                {#if sectionEstimateLabel(pinnedOpen)}
+                  <span
+                    class="text-text-muted/60 normal-case tracking-normal font-label-sm"
+                    data-testid="tasks-group-estimate"
+                  >
+                    · {sectionEstimateLabel(pinnedOpen)}
+                  </span>
+                {/if}
+              </h2>
+              <div
+                class="space-y-1 rounded-xl border border-surface-panel-border/60 bg-surface-panel/20 p-1"
+              >
+                {#each pinnedOpen as item (item.id)}
+                  <div animate:flip={{ duration: 200, easing: cubicOut }}>
+                    {@render taskRow(item, 'pinned')}
+                  </div>
+                {/each}
+              </div>
+            </section>
+            {#if unpinnedOpen.length > 0}
+              <hr
+                data-testid="tasks-pinned-divider"
+                class="border-surface-panel-border"
+              />
             {/if}
           {/if}
 
