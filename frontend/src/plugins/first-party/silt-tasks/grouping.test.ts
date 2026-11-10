@@ -102,6 +102,42 @@ describe('binByDimension — dueDate', () => {
     const totalAssigned = sections.reduce((n, s) => n + s.items.length, 0)
     expect(totalAssigned).toBe(rows.length)
   })
+
+  it('never buckets a DONE row, even with a past due date', () => {
+    const rows = [
+      row({ id: 'done-overdue', status: 'DONE', due_date: '2026-07-05' }),
+      row({ id: 'done-today', status: 'DONE', due_date: '2026-07-06' }),
+      row({ id: 'done-undated', status: 'DONE', due_date: '' }),
+      row({ id: 'open-overdue', due_date: '2026-07-05' })
+    ]
+    const sections = binByDimension(rows, 'dueDate', GROUP_CTX)
+    const assigned = sections.flatMap((s) => s.items.map((i) => i.id))
+    expect(assigned).toEqual(['open-overdue'])
+  })
+
+  it('routes open overdue rows to Overdue and keeps the 5-bucket shape', () => {
+    const rows = [
+      row({ id: 'todo-overdue', status: 'TODO', due_date: '2026-07-05' }),
+      row({ id: 'doing-overdue', status: 'DOING', due_date: '2026-07-01' })
+    ]
+    const sections = binByDimension(rows, 'dueDate', GROUP_CTX)
+    expect(sections.map((s) => s.key)).toEqual([
+      'overdue',
+      'today',
+      'upcoming',
+      'later',
+      'undated'
+    ])
+    expect(sections.map((s) => s.label)).toEqual([
+      'Overdue',
+      'Today',
+      'Upcoming',
+      'Later',
+      'No Date'
+    ])
+    const overdue = sections[0].items.map((i) => i.id)
+    expect(overdue).toEqual(['todo-overdue', 'doing-overdue'])
+  })
 })
 
 describe('binByDimension — status', () => {
