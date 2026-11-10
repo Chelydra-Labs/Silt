@@ -62,6 +62,9 @@ function binByDueDate(
     undated: []
   }
   for (const r of rows) {
+    // Defensive: the board query already excludes DONE, but a completed task
+    // must never blemish a due-date lane even if a caller passes one through.
+    if (r.status === 'DONE') continue
     buckets[dueDateBucket(r.due_date, today, weekStart)].push(r)
   }
   return [

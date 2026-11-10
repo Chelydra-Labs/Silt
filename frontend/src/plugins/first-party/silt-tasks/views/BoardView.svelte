@@ -367,7 +367,14 @@
           activePage: ctx.activePage,
           today
         }),
-        { groupBy, sort, activeFilter: getTaskHubViewState().activeFilter }
+        {
+          groupBy,
+          sort,
+          activeFilter: getTaskHubViewState().activeFilter,
+          // Due-date lanes show work that still needs attention — completed
+          // tasks must never land in Overdue/Today/… (matches smart lists).
+          ...(groupBy === 'dueDate' ? { status: 'open' as const } : {})
+        }
       )
       const { rows: raw, truncated } = await ctx.sqliteQuery(sql, params)
       if (my !== loadSeq) return
