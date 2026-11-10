@@ -736,9 +736,14 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
   })
 
   it('parses open-attr variants and canonicalizes on save (#1123)', () => {
-    // HTML boolean attrs are case-insensitive and valueless; `open=""` and
-    // `open` among other attrs are all expanded per HTML semantics.
-    for (const opener of ['<details OPEN="">', '<details class="x" open>']) {
+    // HTML boolean attrs are case-insensitive and valueless; any `open=…`
+    // form — presence, not value — is expanded per HTML semantics.
+    for (const opener of [
+      '<details OPEN="">',
+      "<details open=''>",
+      '<details open="false">',
+      '<details class="x" open>'
+    ]) {
       const doc = blocksToDoc([
         mkBlock('DETAILS', {
           clean_text: `${opener}\n<summary>T</summary>\nbody\n</details>`
@@ -748,6 +753,19 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
       // Silt's canonical form is the bare `open` attr.
       expect(docToBlocks(doc)[0].clean_text).toContain('<details open>\n')
     }
+  })
+
+  it('does not read `open` inside another attribute value (#1123)', () => {
+    // Hand-authored files may carry `open` as a word inside a quoted attr
+    // value; only a real `open` attribute expands the section.
+    const doc = blocksToDoc([
+      mkBlock('DETAILS', {
+        clean_text:
+          '<details class="my open thing">\n<summary>T</summary>\nbody\n</details>'
+      })
+    ])
+    expect(doc.content[0]?.attrs?.open).toBe(false)
+    expect(docToBlocks(doc)[0].clean_text).toContain('<details>\n')
   })
 
   it('round-trips nested details with independent open state (#1123)', () => {

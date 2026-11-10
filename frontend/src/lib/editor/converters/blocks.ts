@@ -457,14 +457,16 @@ function emitGfmSeparator(width: number, align: string): string {
 const DETAILS_OPEN_RE = /^<details(?:\s+[^>]*)?>$/i
 const DETAILS_CLOSE_RE = /^<\/details>$/i
 
-// The HTML boolean `open` attribute on the opener line (#1123): bare `open`
-// or `open=""`, any case, possibly among other attributes. Presence, not
-// value, marks an expanded section (HTML semantics).
-const DETAILS_OPEN_ATTR_RE = /(?:^|\s)open(?:=""|\s|$)/i
-
+// The HTML boolean `open` attribute on the opener line (#1123): presence,
+// not value, marks expansion (HTML semantics). Quoted values are dropped
+// first so `open` inside another attribute's value can't false-match.
 function detailsOpenerIsOpen(line: string): boolean {
   const attrs = line.trim().match(/^<details\s+([^>]*)>$/i)
-  return attrs !== null && DETAILS_OPEN_ATTR_RE.test(attrs[1])
+  if (attrs === null) return false
+  return attrs[1]
+    .replace(/=\s*"[^"]*"|=\s*'[^']*'/gi, ' ')
+    .split(/\s+/)
+    .some((token) => /^open$/i.test(token))
 }
 const DETAILS_SUMMARY_RE = /^<summary(?:\s[^>]*)?>([\s\S]*?)<\/summary>$/i
 
