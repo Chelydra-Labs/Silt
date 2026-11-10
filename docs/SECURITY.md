@@ -112,8 +112,10 @@ capability is deferred until the signing/trust model matures.
 
 ### 4.4 First-party ID reservation (F5)
 
-The ids `silt-tasks`, `silt-attachments` are reserved for the bundled
-first-party plugins. A third-party archive claiming one is rejected at
+The ids in `plugins.FirstPartyPluginIDs` (see
+`backend/plugins/first_party.go` for the authoritative set; e.g.
+`silt-tasks`, `silt-meeting`) are reserved for the bundled first-party
+plugins. A third-party archive claiming one is rejected at
 install time (`plugins.Validate`) with a clear error, and re-checked in
 `plugins.Install` as defense in depth. The match is exact — near-collision
 ids like `silt-tasks2` are accepted.
