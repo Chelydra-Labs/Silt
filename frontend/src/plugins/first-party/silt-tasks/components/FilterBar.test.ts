@@ -569,6 +569,44 @@ describe('FilterBar "Clear all" and the transient search', () => {
       text: ''
     })
   })
+
+  it('clears a shortlist-only bag through the facet gate', async () => {
+    // The gate's minimal case: shortlist is the only active facet. The
+    // multi-facet test above can't distinguish a facet-agnostic gate from
+    // one that merely enumerates today's facets — shortlist-only can.
+    const onFiltersChange = vi.fn()
+    render(FilterBar, {
+      props: makeProps({
+        onFiltersChange,
+        filters: {
+          owners: [],
+          priorities: [],
+          dueDate: '',
+          tags: [],
+          shortlist: true
+        }
+      })
+    })
+    await fireEvent.click(screen.getByRole('button', { name: /Clear all/ }))
+    expect(onFiltersChange).toHaveBeenCalledTimes(1)
+    const cleared = onFiltersChange.mock.calls[0][0] as TaskFilters
+    expect(Object.keys(cleared).sort()).toEqual([
+      'dueDate',
+      'owners',
+      'priorities',
+      'shortlist',
+      'tags',
+      'text'
+    ])
+    expect(cleared).toEqual({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: false,
+      text: ''
+    })
+  })
 })
 
 function emptyTextFilters(text: string): TaskFilters {

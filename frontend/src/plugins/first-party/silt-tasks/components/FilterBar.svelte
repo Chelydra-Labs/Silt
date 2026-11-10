@@ -232,10 +232,7 @@
     // Facet-agnostic: any non-text facet with an active value keeps the
     // Clear-all affordance visible — a hand-enumerated list here would
     // hide the button for a future facet it forgot.
-    const hadFacets = Object.entries(filters).some(([key, value]) => {
-      if (key === 'text') return false
-      return Array.isArray(value) ? value.length > 0 : !!value
-    })
+    const hadFacets = countActiveFacets(filters) > 0
     if (hadFacets) {
       // Route the reset through the state-level default clone shape so a
       // future facet is cleared with the rest instead of surviving via a
@@ -300,19 +297,28 @@
     first.focus()
   }
 
+  // One facet-activeness walk for both the badge count and Clear-all's
+  // gate, so a future facet can't be counted in one and missed in the
+  // other. Text is excluded here: Clear-all routes it through the
+  // transient onTextChange path, and the badge counts it via
+  // buildFtsMatch below.
+  function countActiveFacets(f: TaskFilters): number {
+    let n = 0
+    for (const [key, value] of Object.entries(f)) {
+      if (key === 'text') continue
+      const active = Array.isArray(value) ? value.length > 0 : !!value
+      if (active) n++
+    }
+    return n
+  }
+
   // A chip counts as "active" if it has at least one selection; the Clear-all
   // affordance appears once any chip is active. The free-text search counts
   // too — but only when it produces a usable MATCH term, since text that
   // normalizes away ("a", "((*") changes no SQL and would otherwise show a
   // filter badge with zero effect.
   let activeCount = $derived(
-    (filters.owners.length ? 1 : 0) +
-      (filters.priorities.length ? 1 : 0) +
-      (filters.dueDate ? 1 : 0) +
-      (filters.tags.length ? 1 : 0) +
-      (filters.stale ? 1 : 0) +
-      (filters.shortlist ? 1 : 0) +
-      (buildFtsMatch(filters.text ?? '') ? 1 : 0)
+    countActiveFacets(filters) + (buildFtsMatch(filters.text ?? '') ? 1 : 0)
   )
 
   // aria-live announcer for active-filter changes. The unified sidebar used to
