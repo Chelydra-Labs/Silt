@@ -34,14 +34,17 @@ export function focusableTaskControl(
 /**
  * Task surfaces in display order, deduped to one entry per task. Board
  * cards emit a nested marker pair (TaskCard wrapper + card), and
- * Calendar overflow controls ("+N more", `aria-haspopup`) are not tasks;
- * indexing raw markers made a removed card's own wrapper — or an
- * overflow button that vanishes when the count drops — the "neighbor".
+ * Calendar overflow controls ("+N more") carry `data-task-hit="overflow"`
+ * to opt out — they are controls, not tasks, and indexing raw markers
+ * made a removed card's own wrapper — or an overflow button that
+ * vanishes when the count drops — the "neighbor". Excluding by marker
+ * value (not an ARIA state attribute) keeps future task surfaces that
+ * legitimately open a popover countable.
  */
 function taskSurfaces(): HTMLElement[] {
   return Array.from(
     document.querySelectorAll<HTMLElement>(
-      '[data-task-hit]:not([aria-haspopup])'
+      '[data-task-hit]:not([data-task-hit="overflow"])'
     )
   ).filter((el) => !el.parentElement?.closest('[data-task-hit]'))
 }

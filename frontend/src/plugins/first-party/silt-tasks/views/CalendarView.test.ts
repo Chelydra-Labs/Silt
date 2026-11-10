@@ -1109,9 +1109,10 @@ describe('CalendarView — task context menu (#1116)', () => {
 
   it('menu Delete on the 3rd chip keeps focus when "+N more" vanishes', async () => {
     // A 4-task day renders 3 chips plus a "+1 more" overflow control that
-    // also carries data-task-hit; deleting the third chip used to capture
-    // that button as the neighbor, and it unmounts once the count drops
-    // to 3 — leaving the rescue focusing a detached node (<body>).
+    // also carries data-task-hit="overflow"; deleting the third chip used
+    // to capture that button as the neighbor, and it unmounts once the
+    // count drops to 3 — leaving the rescue focusing a detached node
+    // (<body>).
     let deleted = false
     const deleteBlock = vi.fn(async () => {
       deleted = true
@@ -1152,7 +1153,11 @@ describe('CalendarView — task context menu (#1116)', () => {
     const ctx = makeCtx({ deleteBlock })
     await renderCalendar({ ctx })
 
-    expect(screen.getByTestId(`calendar-more-${TODAY}`)).toBeInTheDocument()
+    const more = screen.getByTestId(`calendar-more-${TODAY}`)
+    expect(more).toBeInTheDocument()
+    // The exclusion is the explicit overflow marker — not the button's
+    // aria-haspopup, which a future task surface may legitimately carry.
+    expect(more.getAttribute('data-task-hit')).toBe('overflow')
     await fireEvent.contextMenu(screen.getByText('Menu chip'), {
       clientX: 5,
       clientY: 5

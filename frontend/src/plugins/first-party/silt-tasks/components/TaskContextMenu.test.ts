@@ -15,6 +15,7 @@ import {
 
 import TaskContextMenu from './TaskContextMenu.svelte'
 import type { TaskContextMenuState } from './useTaskContextMenu.svelte'
+import { neighborTaskHit } from './useTaskContextMenu.svelte'
 import { buildDueDatePresets } from './dueDatePresets'
 import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
 import type { PluginContext } from '../../../sdk'
@@ -322,5 +323,30 @@ describe('TaskContextMenu (#1116)', () => {
       expect.stringContaining("Couldn't update task")
     )
     expect(screen.queryByTestId('task-menu-error')).toBeNull()
+  })
+
+  it('neighbor indexing excludes only overflow-marked hits, not aria-haspopup', () => {
+    // The exclusion must key on the explicit `data-task-hit="overflow"`
+    // marker, never on aria-haspopup: a future task surface that opens
+    // its own popover stays countable, or its removals would silently
+    // degrade focus rescue to the heading fallback.
+    const fixture = document.createElement('div')
+    fixture.innerHTML = [
+      '<button data-task-hit id="hit-a"></button>',
+      '<button data-task-hit aria-haspopup="dialog" id="hit-b"></button>',
+      '<button data-task-hit="overflow" aria-haspopup="dialog" id="hit-c"></button>'
+    ].join('')
+    document.body.appendChild(fixture)
+    try {
+      const a = fixture.querySelector<HTMLElement>('#hit-a')!
+      const b = fixture.querySelector<HTMLElement>('#hit-b')!
+      // "b" is indexed despite aria-haspopup: it is "a"'s next neighbor.
+      expect(neighborTaskHit(a)).toEqual({ pos: 0, dir: 1 })
+      // and occupies index 1 itself (previous neighbor "a"), while the
+      // overflow button is not in the surface list at all.
+      expect(neighborTaskHit(b)).toEqual({ pos: 1, dir: -1 })
+    } finally {
+      fixture.remove()
+    }
   })
 })
