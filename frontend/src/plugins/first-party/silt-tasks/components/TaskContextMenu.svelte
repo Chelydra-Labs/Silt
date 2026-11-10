@@ -71,6 +71,40 @@
     runWrite(() => ctx.updateBlockState(task.id, next))
   }
 
+  // Item handlers take the task as a parameter: reading the template's
+  // {@const task} after onClose() nulls `menu` would re-evaluate menu.task
+  // on a closed menu — capturing by value keeps every activation safe.
+
+  function togglePin(task: TaskDetail): void {
+    onClose()
+    runWrite(() => ctx.updateTaskMeta(task.id, { pinned: !task.pinned }))
+  }
+
+  function setDueDate(task: TaskDetail, ymd: string): void {
+    onClose()
+    runWrite(() => ctx.setTaskDueDate(task.id, ymd))
+  }
+
+  function setPriority(task: TaskDetail, p: number): void {
+    onClose()
+    runWrite(() => ctx.setTaskPriority(task.id, p))
+  }
+
+  function openSubEditorFor(task: TaskDetail): void {
+    onClose()
+    onOpenSubEditor(task)
+  }
+
+  function editTask(task: TaskDetail): void {
+    onClose()
+    onEditTask(task)
+  }
+
+  function requestDelete(task: TaskDetail): void {
+    onClose()
+    deleteTarget = task
+  }
+
   function confirmBlockedDone(): void {
     const pending = blockedGuard.pending
     blockedGuard.dismiss()
@@ -117,10 +151,7 @@
       <button
         type="button"
         role="menuitem"
-        onclick={() => {
-          onClose()
-          runWrite(() => ctx.updateTaskMeta(task.id, { pinned: !task.pinned }))
-        }}
+        onclick={() => togglePin(task)}
         data-testid="task-menu-pin"
       >
         <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
@@ -145,10 +176,7 @@
         <button
           type="button"
           role="menuitem"
-          onclick={() => {
-            onClose()
-            runWrite(() => ctx.setTaskDueDate(task.id, preset.value))
-          }}
+          onclick={() => setDueDate(task, preset.value)}
           data-testid={`task-menu-due-${preset.value}`}
         >
           <span class="w-4 shrink-0" aria-hidden="true"
@@ -169,10 +197,7 @@
         <button
           type="button"
           role="menuitem"
-          onclick={() => {
-            onClose()
-            runWrite(() => ctx.setTaskDueDate(task.id, ''))
-          }}
+          onclick={() => setDueDate(task, '')}
           data-testid="task-menu-due-clear"
         >
           <span class="w-4 shrink-0" aria-hidden="true"></span>
@@ -196,10 +221,7 @@
         <button
           type="button"
           role="menuitem"
-          onclick={() => {
-            onClose()
-            runWrite(() => ctx.setTaskPriority(task.id, p))
-          }}
+          onclick={() => setPriority(task, p)}
           data-testid={`task-menu-priority-${p}`}
         >
           <span class="w-4 shrink-0" aria-hidden="true"
@@ -218,10 +240,7 @@
     <button
       type="button"
       role="menuitem"
-      onclick={() => {
-        onClose()
-        onOpenSubEditor(task)
-      }}
+      onclick={() => openSubEditorFor(task)}
       data-testid="task-menu-sub-editor"
     >
       <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
@@ -232,10 +251,7 @@
     <button
       type="button"
       role="menuitem"
-      onclick={() => {
-        onClose()
-        onEditTask(task)
-      }}
+      onclick={() => editTask(task)}
       data-testid="task-menu-edit"
     >
       <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
@@ -247,10 +263,7 @@
       type="button"
       role="menuitem"
       class="text-status-danger"
-      onclick={() => {
-        onClose()
-        deleteTarget = task
-      }}
+      onclick={() => requestDelete(task)}
       data-testid="task-menu-delete"
     >
       <span class="material-symbols-outlined text-icon-md" aria-hidden="true"

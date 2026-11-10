@@ -3042,3 +3042,192 @@ describe('Tasks view — pinned block (#1091)', () => {
     expect(document.activeElement).toBe(screen.getByTestId('tasks-pin-p1'))
   })
 })
+
+// --- Task context menu (#1116) -------------------------------------------
+// Wiring-level coverage: dual-trigger open, host state delegation, SDK
+// dispatch, delete confirm, dismissal. The item matrix itself (state-aware
+// labels, submenus, journal wrapping) lives in TaskContextMenu.test.ts.
+
+describe('ListView — task context menu (#1116)', () => {
+  beforeEach(() => {
+    resetTaskHubState()
+    mocks.sqliteQuery.mockReset()
+    mocks.updateBlockState.mockReset().mockResolvedValue({ ok: true })
+    mocks.updateTaskMeta.mockReset().mockResolvedValue(true)
+    mocks.blockChangedCallbacks.length = 0
+  })
+
+  afterEach(() => {
+    cleanup()
+    clearTaskPageRoute()
+  })
+
+  // Fresh per-test ctx with menu-write spies (the shared mocks above cover
+  // status/pin; due/priority/delete need their own handles here).
+  function menuCtx(overrides: Record<string, unknown> = {}): PluginContext {
+    return {
+      ...makeCtx(),
+      setTaskDueDate: vi.fn().mockResolvedValue(true),
+      setTaskPriority: vi.fn().mockResolvedValue(true),
+      deleteBlock: vi.fn().mockResolvedValue(true),
+      ...overrides
+    } as unknown as PluginContext
+  }
+
+  async function renderWithMenuTask(overrides: Partial<TaskRow> = {}) {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql))
+        return { rows: [task('m1', 'Menu task', overrides)], truncated: false }
+      return { rows: [], truncated: false }
+    })
+    const ctx = menuCtx()
+    render(Tasks, { ctx, manifest: MANIFEST })
+    await flush()
+    return ctx
+  }
+
+  function rootItemLabels(): string[] {
+    return Array.from(
+      screen
+        .getByTestId('task-context-menu')
+        .querySelectorAll<HTMLElement>(':scope > [role="menuitem"]')
+    ).map((el) => {
+      const span = el.querySelector<HTMLSpanElement>('span:not([aria-hidden])')
+      return (span ?? el).textContent?.trim() ?? ''
+    })
+  }
+
+  it('right-click on a row opens the seven-item menu anchored to the row', async () => {
+    await renderWithMenuTask()
+    const row = document.querySelector('[data-block-id="m1"]') as HTMLElement
+    await fireEvent.contextMenu(row, { clientX: 40, clientY: 40 })
+    expect(screen.getByTestId('task-context-menu')).toBeInTheDocument()
+    expect(rootItemLabels()).toEqual([
+      'Mark done',
+      'Pin',
+      'Due date',
+      'Priority',
+      'Open in sub-editor',
+      'Edit task',
+      'Delete task'
+    ])
+  })
+
+  it('Shift+F10 on the row content button opens the menu (keyboard parity)', async () => {
+    await renderWithMenuTask()
+    const bodyBtn = document.querySelector(
+      '[data-block-id="m1"] button[aria-label^="Edit metadata for"]'
+    ) as HTMLElement
+    bodyBtn.focus()
+    await fireEvent.keyDown(bodyBtn, { key: 'F10', shiftKey: true })
+    expect(screen.getByTestId('task-context-menu')).toBeInTheDocument()
+  })
+
+  it('Mark done / Pin dispatch the journaled SDK writes', async () => {
+    const ctx = await renderWithMenuTask()
+    await fireEvent.contextMenu(
+      document.querySelector('[data-block-id="m1"]') as HTMLElement,
+      { clientX: 5, clientY: 5 }
+    )
+    await fireEvent.click(screen.getByTestId('task-menu-toggle-status'))
+    expect(ctx.updateBlockState).toHaveBeenCalledWith('m1', 'DONE')
+
+    await fireEvent.contextMenu(
+      document.querySelector('[data-block-id="m1"]') as HTMLElement,
+      { clientX: 5, clientY: 5 }
+    )
+    await fireEvent.click(screen.getByTestId('task-menu-pin'))
+    expect(ctx.updateTaskMeta).toHaveBeenCalledWith('m1', { pinned: true })
+  })
+
+  it('due preset writes the YMD; a set due date offers Clear', async () => {
+    const today = todayStr()
+    const ctx = await renderWithMenuTask({ due_date: today })
+    const row = document.querySelector('[data-block-id="m1"]') as HTMLElement
+    await fireEvent.contextMenu(row, { clientX: 5, clientY: 5 })
+
+    await fireEvent.click(screen.getByTestId(`task-menu-due-${today}`))
+    expect(ctx.setTaskDueDate).toHaveBeenCalledWith('m1', today)
+
+    await fireEvent.contextMenu(row, { clientX: 5, clientY: 5 })
+    await fireEvent.click(screen.getByTestId('task-menu-due-clear'))
+    expect(ctx.setTaskDueDate).toHaveBeenCalledWith('m1', '')
+  })
+
+  it('priority submenu marks the current value and writes the selection', async () => {
+    const ctx = await renderWithMenuTask({ priority: 2 })
+    await fireEvent.contextMenu(
+      document.querySelector('[data-block-id="m1"]') as HTMLElement,
+      { clientX: 5, clientY: 5 }
+    )
+    expect(screen.getByTestId('task-menu-priority-2').textContent).toContain(
+      '(current)'
+    )
+    await fireEvent.click(screen.getByTestId('task-menu-priority-1'))
+    expect(ctx.setTaskPriority).toHaveBeenCalledWith('m1', 1)
+  })
+
+  it('Open in sub-editor and Edit task reuse the row affordance state', async () => {
+    await renderWithMenuTask()
+    const row = document.querySelector('[data-block-id="m1"]') as HTMLElement
+
+    await fireEvent.contextMenu(row, { clientX: 5, clientY: 5 })
+    await fireEvent.click(screen.getByTestId('task-menu-sub-editor'))
+    expect(
+      document.querySelector('[aria-labelledby="sub-editor-title"]')
+    ).toBeInTheDocument()
+
+    await fireEvent.contextMenu(row, { clientX: 5, clientY: 5 })
+    await fireEvent.click(screen.getByTestId('task-menu-edit'))
+    // Drawer parity: the metadata sidebar header surfaces for the task.
+    expect(screen.getByTestId('task-primary-header')).toBeInTheDocument()
+  })
+
+  it('delete confirms first; cancel leaves the task untouched', async () => {
+    const ctx = await renderWithMenuTask()
+    await fireEvent.contextMenu(
+      document.querySelector('[data-block-id="m1"]') as HTMLElement,
+      { clientX: 5, clientY: 5 }
+    )
+    await fireEvent.click(screen.getByTestId('task-menu-delete'))
+    expect(ctx.deleteBlock).not.toHaveBeenCalled()
+    await fireEvent.click(screen.getByTestId('task-menu-delete-confirm-cancel'))
+    expect(ctx.deleteBlock).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('task-menu-delete-confirm')).toBeNull()
+
+    await fireEvent.contextMenu(
+      document.querySelector('[data-block-id="m1"]') as HTMLElement,
+      { clientX: 5, clientY: 5 }
+    )
+    await fireEvent.click(screen.getByTestId('task-menu-delete'))
+    await fireEvent.click(
+      screen.getByTestId('task-menu-delete-confirm-confirm')
+    )
+    expect(ctx.deleteBlock).toHaveBeenCalledWith('m1')
+  })
+
+  it('dismisses on Escape and backdrop click without disturbing row handlers', async () => {
+    await renderWithMenuTask()
+    const bodyBtn = document.querySelector(
+      '[data-block-id="m1"] button[aria-label^="Edit metadata for"]'
+    ) as HTMLElement
+    bodyBtn.focus()
+    await fireEvent.keyDown(bodyBtn, { key: 'F10', shiftKey: true })
+    expect(screen.getByTestId('task-context-menu')).toBeInTheDocument()
+
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByTestId('task-context-menu')).toBeNull()
+
+    await fireEvent.contextMenu(
+      document.querySelector('[data-block-id="m1"]') as HTMLElement,
+      { clientX: 5, clientY: 5 }
+    )
+    await fireEvent.click(screen.getByTestId('task-menu-backdrop'))
+    expect(screen.queryByTestId('task-context-menu')).toBeNull()
+
+    // No-regression: the row's own click affordance still selects the task.
+    await fireEvent.click(bodyBtn)
+    await flush()
+    expect(screen.getByTestId('task-primary-header')).toBeInTheDocument()
+  })
+})

@@ -2236,3 +2236,177 @@ describe('BoardView — shortlist rank order (#1092)', () => {
     expect(laneCardIds('alpha')).toEqual(['g0', 'g3'])
   })
 })
+
+// --- Task context menu (#1116) -------------------------------------------
+// Wiring-level coverage for board cards; the item matrix (state-aware
+// labels, submenus, journal wrapping) lives in TaskContextMenu.test.ts.
+
+describe('BoardView — task context menu (#1116)', () => {
+  beforeEach(async () => {
+    mocks.tasksSettings = {}
+    mocks.updateBlockState.mockReset().mockResolvedValue({ ok: true })
+    mocks.updateTaskMeta.mockReset().mockResolvedValue(true)
+    mocks.setTaskPriority.mockReset().mockResolvedValue(true)
+    mocks.setTaskDueDate.mockReset().mockResolvedValue(true)
+    mocks.blockChangedCallbacks.length = 0
+    await initTasksSettings(makeCtx())
+  })
+
+  afterEach(() => {
+    cleanup()
+    clearTaskPageRoute()
+  })
+
+  async function renderBoardWithMenu(rows: Record<string, unknown>[]) {
+    resetTaskHubState()
+    setGroupBy('status')
+    mocks.sqliteQuery.mockReset().mockResolvedValue({ rows, truncated: false })
+    const ctx = makeCtx({ deleteBlock: vi.fn().mockResolvedValue(true) })
+    render(BoardView, { ctx, onCountChange: vi.fn() })
+    await flush()
+    return ctx
+  }
+
+  function rootItemLabels(): string[] {
+    return Array.from(
+      screen
+        .getByTestId('task-context-menu')
+        .querySelectorAll<HTMLElement>(':scope > [role="menuitem"]')
+    ).map((el) => {
+      const span = el.querySelector<HTMLSpanElement>('span:not([aria-hidden])')
+      return (span ?? el).textContent?.trim() ?? ''
+    })
+  }
+
+  it('right-click on a card opens the seven-item menu', async () => {
+    await renderBoardWithMenu([
+      row({ id: 'm1', clean_content: 'Menu card', priority: 2 })
+    ])
+    await fireEvent.contextMenu(cardByText('Menu card'), {
+      clientX: 60,
+      clientY: 60
+    })
+    expect(screen.getByTestId('task-context-menu')).toBeInTheDocument()
+    expect(rootItemLabels()).toEqual([
+      'Mark done',
+      'Pin',
+      'Due date',
+      'Priority',
+      'Open in sub-editor',
+      'Edit task',
+      'Delete task'
+    ])
+  })
+
+  it('is state-aware on DONE cards: Reopen label, no Pin (PinToggle parity)', async () => {
+    await renderBoardWithMenu([
+      row({ id: 'd1', clean_content: 'Done card', status: 'DONE', pinned: 1 })
+    ])
+    await fireEvent.contextMenu(cardByText('Done card'), {
+      clientX: 60,
+      clientY: 60
+    })
+    const labels = rootItemLabels()
+    expect(labels[0]).toBe('Reopen')
+    expect(labels).not.toContain('Pin')
+    expect(labels).not.toContain('Unpin')
+  })
+
+  it('Shift+F10 on the focused card opens the menu (keyboard parity)', async () => {
+    await renderBoardWithMenu([row({ id: 'm1', clean_content: 'Menu card' })])
+    const card = cardByText('Menu card')
+    card.focus()
+    await fireEvent.keyDown(card, { key: 'F10', shiftKey: true })
+    expect(screen.getByTestId('task-context-menu')).toBeInTheDocument()
+  })
+
+  it('menu actions dispatch the SDK writes: status, pin, due, priority', async () => {
+    await renderBoardWithMenu([
+      row({
+        id: 'm1',
+        clean_content: 'Menu card',
+        due_date: '2026-07-06',
+        priority: 2
+      })
+    ])
+    const card = cardByText('Menu card')
+
+    await fireEvent.contextMenu(card, { clientX: 5, clientY: 5 })
+    await fireEvent.click(screen.getByTestId('task-menu-toggle-status'))
+    expect(mocks.updateBlockState).toHaveBeenCalledWith('m1', 'DONE')
+
+    await fireEvent.contextMenu(card, { clientX: 5, clientY: 5 })
+    await fireEvent.click(screen.getByTestId('task-menu-pin'))
+    expect(mocks.updateTaskMeta).toHaveBeenCalledWith('m1', { pinned: true })
+
+    await fireEvent.contextMenu(card, { clientX: 5, clientY: 5 })
+    await fireEvent.click(screen.getByTestId('task-menu-due-2026-07-11'))
+    expect(mocks.setTaskDueDate).toHaveBeenCalledWith('m1', '2026-07-11')
+
+    await fireEvent.contextMenu(card, { clientX: 5, clientY: 5 })
+    expect(screen.getByTestId('task-menu-priority-2').textContent).toContain(
+      '(current)'
+    )
+    await fireEvent.click(screen.getByTestId('task-menu-priority-1'))
+    expect(mocks.setTaskPriority).toHaveBeenCalledWith('m1', 1)
+  })
+
+  it('Open in sub-editor and Edit task reuse the card affordance state', async () => {
+    await renderBoardWithMenu([row({ id: 'm1', clean_content: 'Menu card' })])
+    const card = cardByText('Menu card')
+
+    await fireEvent.contextMenu(card, { clientX: 5, clientY: 5 })
+    await fireEvent.click(screen.getByTestId('task-menu-edit'))
+    expect(screen.getByTestId('task-primary-header')).toBeInTheDocument()
+
+    await fireEvent.contextMenu(card, { clientX: 5, clientY: 5 })
+    await fireEvent.click(screen.getByTestId('task-menu-sub-editor'))
+    expect(
+      document.querySelector('[aria-labelledby="sub-editor-title"]')
+    ).toBeInTheDocument()
+  })
+
+  it('delete confirms first; cancel leaves the card untouched', async () => {
+    const ctx = await renderBoardWithMenu([
+      row({ id: 'm1', clean_content: 'Menu card' })
+    ])
+    await fireEvent.contextMenu(cardByText('Menu card'), {
+      clientX: 5,
+      clientY: 5
+    })
+    await fireEvent.click(screen.getByTestId('task-menu-delete'))
+    expect(ctx.deleteBlock).not.toHaveBeenCalled()
+    await fireEvent.click(screen.getByTestId('task-menu-delete-confirm-cancel'))
+    expect(ctx.deleteBlock).not.toHaveBeenCalled()
+
+    await fireEvent.contextMenu(cardByText('Menu card'), {
+      clientX: 5,
+      clientY: 5
+    })
+    await fireEvent.click(screen.getByTestId('task-menu-delete'))
+    await fireEvent.click(
+      screen.getByTestId('task-menu-delete-confirm-confirm')
+    )
+    expect(ctx.deleteBlock).toHaveBeenCalledWith('m1')
+  })
+
+  it('Escape dismisses; Enter / Shift+Enter on the card still work', async () => {
+    await renderBoardWithMenu([row({ id: 'm1', clean_content: 'Menu card' })])
+    const card = cardByText('Menu card')
+    card.focus()
+    await fireEvent.keyDown(card, { key: 'F10', shiftKey: true })
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByTestId('task-context-menu')).toBeNull()
+
+    // No-regression: the card's own keyboard affordances are untouched.
+    await fireEvent.keyDown(card, { key: 'Enter' })
+    await flush()
+    expect(screen.getByTestId('task-primary-header')).toBeInTheDocument()
+
+    await fireEvent.keyDown(card, { key: 'Enter', shiftKey: true })
+    await flush()
+    expect(
+      document.querySelector('[aria-labelledby="sub-editor-title"]')
+    ).toBeInTheDocument()
+  })
+})
