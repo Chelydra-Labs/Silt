@@ -19,6 +19,7 @@
   // Calendar mode with a non-'none'/non-'dueDate' groupBy active.
   import { onMount, onDestroy, tick } from 'svelte'
   import Popover from '../../../../components/Popover.svelte'
+  import ContextMenu from '../../../../components/ContextMenu.svelte'
   import { plusDaysISO } from '../../../sdk'
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import ErrorBanner from '../components/ErrorBanner.svelte'
@@ -107,6 +108,17 @@
   let subEditorTask = $state<TaskDetail | null>(null)
   // Right-click / Shift+F10 task menu (#1116), hosted once for every chip.
   const taskMenu = useTaskContextMenu()
+  // Right-click / Shift+F10 day-cell menu (#1119), hosted once for every
+  // gridcell. The anchor cell doubles as the close-time focus-restore target
+  // — gridcells are focusable through the roving tabindex — and scopes the
+  // primitive's scroll-dismissal to the calendar's scroll container.
+  interface DayCellMenuState {
+    day: Date
+    x: number
+    y: number
+    anchorEl: HTMLElement | null
+  }
+  let dayMenu = $state<DayCellMenuState | null>(null)
   // null = closed; '' = open undated; YYYY-MM-DD = open for that day.
   let quickAddDate = $state<string | null>(null)
 
@@ -249,8 +261,16 @@
   let agendaHeading = $derived.by(() => {
     if (!agendaDate) return ''
     const [year, month, day] = agendaDate.split('-').map(Number)
-    return `${MONTHS[(month ?? 1) - 1]} ${day}, ${year}`
+    return dayHeading(new Date(year ?? 1970, (month ?? 1) - 1, day ?? 1))
   })
+
+  /**
+   * Human label for a calendar day, shared by the agenda heading and the
+   * day-cell menu copy (#1119) so both read the exact same date format.
+   */
+  function dayHeading(day: Date): string {
+    return `${MONTHS[day.getMonth()]} ${day.getDate()}, ${day.getFullYear()}`
+  }
 
   function focusAgendaItem(index: number): void {
     agendaFocusIdx = index
@@ -263,7 +283,13 @@
 
   function openDayAgenda(e: MouseEvent, date: string): void {
     e.stopPropagation()
-    agendaAnchor = e.currentTarget as HTMLElement
+    openAgendaForDate(date, e.currentTarget as HTMLElement)
+  }
+
+  // Shared open path for both agenda triggers — the "+N more" affordance and
+  // the day-cell menu (#1119) — so anchoring and focus land identically.
+  function openAgendaForDate(date: string, anchor: HTMLElement | null): void {
+    agendaAnchor = anchor
     agendaDate = date
     focusAgendaItem(0)
   }
@@ -553,6 +579,37 @@
     quickAddDate = null
   }
 
+  // --- Day-cell menu (#1119) -------------------------------------------
+  // Right-click on a day cell opens a two-item menu (add task / agenda) on
+  // the shared ContextMenu primitive. Chips, the + button, "+N more", and
+  // the quick-add input keep their own context behavior — the task menu and
+  // the native text menu — so only events on the cell surface itself open
+  // the day menu (the event still bubbles here from those children).
+  function onCellContextMenu(e: MouseEvent, day: Date): void {
+    const t = e.target as HTMLElement
+    if (t.closest('button,input')) return
+    e.preventDefault()
+    dayMenu = {
+      day,
+      x: e.clientX,
+      y: e.clientY,
+      anchorEl: e.currentTarget as HTMLElement
+    }
+  }
+
+  // Item handlers capture the menu state by value: reading `dayMenu` after
+  // nulling it would re-evaluate a closed menu (same lesson as the task
+  // menu's item handlers).
+  function addTaskFromDayMenu(m: DayCellMenuState): void {
+    dayMenu = null
+    openQuickAddForDay(m.day)
+  }
+
+  function openAgendaFromDayMenu(m: DayCellMenuState): void {
+    dayMenu = null
+    openAgendaForDate(ymd(m.day), m.anchorEl)
+  }
+
   // --- Drag-and-drop reschedule (lifted from silt-calendar, #292/#293/#294)
   // A chip is draggable onto any day cell OR the "No Date" strip. Drop on a
   // day rewrites [due:: YYYY-MM-DD]; drop on the strip clears the due date.
@@ -690,9 +747,27 @@
   // (monthWeeks is [] in week view, weekDays is [] in month view).
   function onCellKeydown(e: KeyboardEvent, day: Date) {
     if (e.altKey) return
+    const t = e.target as HTMLElement
+    // The quick-add input owns all of its keys: arrows must move its caret,
+    // not the roving focus (a focus jump would blur-cancel an empty draft).
+    if (t.closest('input')) return
+    // Interactive button children (chips, +, "+N more") own their Enter and
+    // context-menu keys: swallowing Enter would kill the chip's native
+    // click → drawer, and re-dispatching here would stack the day menu on
+    // top of the chip's own menu. Returning before preventDefault lets
+    // those defaults run, matching the onclick/oncontextmenu guards below.
+    if (t.closest('button') && (e.key === 'Enter' || isContextMenuKey(e)))
+      return
     if (e.key === 'Enter') {
       e.preventDefault()
       openQuickAddForDay(day)
+      return
+    }
+    if (isContextMenuKey(e)) {
+      // Same per-cell handler as a right-click: dispatch a synthetic
+      // contextmenu on the focused cell (#1119 keyboard parity).
+      e.preventDefault()
+      openContextMenuFromKeyboard(e.currentTarget as HTMLElement)
       return
     }
     const map: Record<string, number> = {
@@ -972,7 +1047,9 @@
                       (items.length + overdueHere.length === 1 ? '' : 's')
                     : ''
                 }`}
+                aria-keyshortcuts="Enter Shift+F10"
                 onkeydown={(e) => onCellKeydown(e, day)}
+                oncontextmenu={(e) => onCellContextMenu(e, day)}
                 ondragover={(e) => onCellDragOver(e, day)}
                 ondragleave={(e) => onCellDragLeave(e, day)}
                 ondrop={(e) => onCellDrop(e, day)}
@@ -1143,6 +1220,7 @@
                     (items.length + overdueHere.length === 1 ? '' : 's')
                   : ''
               }`}
+              aria-keyshortcuts="Enter Shift+F10"
               ondragover={(e) => onCellDragOver(e, day)}
               ondragleave={(e) => onCellDragLeave(e, day)}
               ondrop={(e) => onCellDrop(e, day)}
@@ -1152,6 +1230,7 @@
                 openQuickAddForDay(day)
               }}
               onkeydown={(e) => onCellKeydown(e, day)}
+              oncontextmenu={(e) => onCellContextMenu(e, day)}
             >
               <div
                 class="flex items-center justify-between pb-2 border-b border-surface-panel-border"
@@ -1440,6 +1519,45 @@
   onOpenSubEditor={(task) => (subEditorTask = task)}
   onError={(message) => (menuError = message)}
 />
+
+{#if dayMenu}
+  {@const m = dayMenu}
+  <!-- Day-cell menu (#1119): two items over the existing quick-add and
+       agenda paths. m is captured at render so the item handlers never
+       re-read a closed menu. -->
+  <ContextMenu
+    open={true}
+    anchor={{ x: m.x, y: m.y }}
+    anchorEl={m.anchorEl}
+    onClose={() => (dayMenu = null)}
+    ariaLabel={`Day actions for ${dayHeading(m.day)}`}
+    backdropTestId="day-menu-backdrop"
+    menuTestId="calendar-day-menu"
+  >
+    <button
+      type="button"
+      role="menuitem"
+      onclick={() => addTaskFromDayMenu(m)}
+      data-testid="calendar-day-menu-add"
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >add</span
+      >
+      <span>Add task for {dayHeading(m.day)}</span>
+    </button>
+    <button
+      type="button"
+      role="menuitem"
+      onclick={() => openAgendaFromDayMenu(m)}
+      data-testid="calendar-day-menu-agenda"
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >event_note</span
+      >
+      <span>Open agenda</span>
+    </button>
+  </ContextMenu>
+{/if}
 
 {#if subEditorTask}
   <TaskSubEditorModal
