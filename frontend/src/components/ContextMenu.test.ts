@@ -152,6 +152,54 @@ describe('ContextMenu', () => {
     document.body.removeChild(trigger)
   })
 
+  it('does not restore focus to the trigger when closed via Tab', async () => {
+    const onClose = vi.fn()
+    const trigger = document.createElement('button')
+    trigger.textContent = 'Trigger'
+    document.body.appendChild(trigger)
+    trigger.focus()
+    const focusSpy = vi.spyOn(trigger, 'focus')
+
+    const { rerender } = render(ContextMenu, {
+      props: {
+        open: true,
+        anchor: { x: 100, y: 100 },
+        anchorEl: trigger,
+        onClose
+      }
+    })
+    await tick()
+    // Focus moved into the menu by the open effect.
+    const menu = document.activeElement as HTMLElement
+    expect(menu).not.toBe(trigger)
+
+    // Tab closes the menu; the default Tab action must carry focus out,
+    // so the teardown may not pull focus back to the trigger.
+    await fireEvent.keyDown(menu, { key: 'Tab' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+    await rerender({ open: false, anchor: null, anchorEl: null, onClose })
+    await tick()
+    expect(focusSpy).not.toHaveBeenCalled()
+
+    // The suppression is per-presentation: a subsequent open must restore
+    // focus on close again (the flag must not leak into later closes).
+    await rerender({
+      open: true,
+      anchor: { x: 100, y: 100 },
+      anchorEl: trigger,
+      onClose
+    })
+    await tick()
+    await fireEvent.keyDown(document.activeElement as HTMLElement, {
+      key: 'Escape'
+    })
+    await rerender({ open: false, anchor: null, anchorEl: null, onClose })
+    await tick()
+    expect(focusSpy).toHaveBeenCalledTimes(1)
+
+    document.body.removeChild(trigger)
+  })
+
   // --- positioning ---------------------------------------------------------
 
   it('calls clampToViewport with measured dimensions', async () => {

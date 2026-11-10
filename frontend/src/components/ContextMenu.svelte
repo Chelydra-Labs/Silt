@@ -287,15 +287,21 @@
 
   // Capture the trigger element at open so we can restore focus on close.
   let triggerEl: HTMLElement | null = null
+  // Tab-dismissed closes must not restore focus: the APG menu pattern has
+  // Tab carry focus out of the widget via native navigation.
+  let tabDismissed = false
   $effect(() => {
     if (open && anchorEl) {
       triggerEl = anchorEl
+      // Fresh presentation — a stale flag must not suppress a later
+      // Escape/outside-click restore for this menu.
+      tabDismissed = false
     }
     return () => {
-      if (triggerEl) {
+      if (triggerEl && !tabDismissed) {
         triggerEl.focus()
-        triggerEl = null
       }
+      triggerEl = null
     }
   })
 
@@ -332,9 +338,10 @@
     }
 
     if (e.key === 'Tab') {
-      // Never cycle within the menu: close up. The trigger-restore teardown
-      // then pulls focus back to the invoking element (same as Escape) —
-      // the conventional menu-button outcome.
+      // Never cycle within the menu: close up and let the default Tab
+      // action carry focus out of the widget (APG menu pattern) —
+      // tabDismissed keeps the close from snapping focus back first.
+      tabDismissed = true
       closeAllSubmenus()
       onClose()
       return
