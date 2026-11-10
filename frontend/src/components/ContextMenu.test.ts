@@ -407,6 +407,64 @@ describe('ContextMenu', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  // --- Escape isolation (#1142 harden) -------------------------------------
+  //
+  // App-level Escape listeners (e.g. sidebar drawer dismissal) register at
+  // app mount — before the menu's own listener. Dismissing a menu must never
+  // close the surface behind it.
+
+  it('swallows Escape for app-level listeners when focus is outside the menu', async () => {
+    const onClose = vi.fn()
+    // Registered before the menu opens, like a drawer Escape handler.
+    const appListener = vi.fn()
+    window.addEventListener('keydown', appListener)
+    try {
+      render(ContextMenu, {
+        props: { open: true, anchor: { x: 100, y: 100 }, onClose }
+      })
+      await tick()
+      // Focus stays on an element outside the menu — the fallback path the
+      // window listener exists for.
+      const outside = document.createElement('button')
+      document.body.appendChild(outside)
+      outside.focus()
+      await fireEvent.keyDown(outside, { key: 'Escape' })
+
+      expect(onClose).toHaveBeenCalledTimes(1)
+      expect(appListener).not.toHaveBeenCalled()
+      document.body.removeChild(outside)
+    } finally {
+      window.removeEventListener('keydown', appListener)
+    }
+  })
+
+  it('keeps in-menu Escape away from app-level listeners too', async () => {
+    const onClose = vi.fn()
+    const appListener = vi.fn()
+    window.addEventListener('keydown', appListener)
+    try {
+      render(ContextMenu, {
+        props: { open: true, anchor: { x: 100, y: 100 }, onClose }
+      })
+      await tick()
+      const menu = document.querySelector('[role="menu"]')!
+      menu.innerHTML = [
+        '<button type="button" role="menuitem" data-testid="item-0">A</button>'
+      ].join('')
+      await tick()
+      ;(menu.querySelector('[role="menuitem"]') as HTMLElement).focus()
+
+      await fireEvent.keyDown(menu.querySelector('[role="menuitem"]')!, {
+        key: 'Escape'
+      })
+
+      expect(onClose).toHaveBeenCalledTimes(1)
+      expect(appListener).not.toHaveBeenCalled()
+    } finally {
+      window.removeEventListener('keydown', appListener)
+    }
+  })
+
   // --- cleanup ------------------------------------------------------------
 
   it('removes listeners when menu closes', async () => {

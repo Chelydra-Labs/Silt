@@ -62,6 +62,8 @@
       // menu, a sub-dialog), suppressing propagation here would strand the
       // key: the nested surface's own Escape listeners live deeper in the
       // path and would never see it in a real browser.
+      // Note: busy or opted-out dialogs no longer shield their content —
+      // element-level Escape handlers inside will now receive the key.
       if (busy || !closeOnEscape) return
       e.preventDefault()
       e.stopPropagation()
