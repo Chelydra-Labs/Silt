@@ -747,6 +747,59 @@ describe('SearchModal — result-row context menu (#1120)', () => {
     expect(screen.queryByTestId('search-locator-menu')).toBeNull()
   })
 
+  it('Shift+F10 on a .silt row keeps native-menu parity with right-click', async () => {
+    // Suppressed rows swallow neither trigger: the browser's own menu
+    // stays available on Shift+F10 exactly as it is on right-click.
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: 'st-2',
+          source: 'vault',
+          notebook: '.silt',
+          section: '',
+          page: 'tasks.md',
+          file_date: '2026-07-23',
+          clean_content: 'Another standalone task'
+        }
+      ],
+      total: 1,
+      offset: 0,
+      limit: 20,
+      has_more: false
+    })
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn(), onReplaceInVault: vi.fn() }
+    })
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'standalone' } })
+    const standalone = await screen.findByRole('button', {
+      name: /Another standalone task/i
+    })
+    standalone.focus()
+
+    const keydown = new KeyboardEvent('keydown', {
+      key: 'F10',
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    standalone.dispatchEvent(keydown)
+    await tick()
+    expect(keydown.defaultPrevented).toBe(false)
+    expect(screen.queryByTestId('search-locator-menu')).toBeNull()
+
+    const contextMenu = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true
+    })
+    standalone.dispatchEvent(contextMenu)
+    await tick()
+    expect(contextMenu.defaultPrevented).toBe(false)
+    expect(screen.queryByTestId('search-locator-menu')).toBeNull()
+  })
+
   it('copy page reference resolves the shortest form and writes it', async () => {
     const row = await searchAndRow(/Roadmap 2027/i)
     await fireEvent.contextMenu(row, { clientX: 5, clientY: 5 })

@@ -421,8 +421,11 @@
     onReveal: (res) => selectResult(res)
   })
 
-  function onRowKeydown(e: KeyboardEvent): void {
+  function onRowKeydown(e: KeyboardEvent, res: SearchModalResult): void {
     if (!isContextMenuKey(e)) return
+    // Suppressed rows keep the browser's native menu: right-click on a
+    // `.silt` row shows it, so Shift+F10 must too.
+    if (!locatorMenuApplies(res)) return
     e.preventDefault()
     openContextMenuFromKeyboard(e.currentTarget as HTMLElement)
   }
@@ -982,7 +985,7 @@
           data-idx={idx}
           aria-keyshortcuts={locatorMenuApplies(res) ? 'Shift+F10' : undefined}
           onclick={() => selectResult(res)}
-          onkeydown={onRowKeydown}
+          onkeydown={(e) => onRowKeydown(e, res)}
           oncontextmenu={(e) => {
             if (locatorMenuApplies(res)) locatorMenu.openFromEvent(e, res)
           }}
