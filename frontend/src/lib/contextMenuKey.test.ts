@@ -3,22 +3,30 @@ import { isContextMenuKey, openContextMenuFromKeyboard } from './contextMenuKey'
 
 describe('isContextMenuKey', () => {
   it('matches the Menu key', () => {
-    expect(isContextMenuKey(new KeyboardEvent('keydown', { key: 'ContextMenu' }))).toBe(true)
+    expect(
+      isContextMenuKey(new KeyboardEvent('keydown', { key: 'ContextMenu' }))
+    ).toBe(true)
   })
 
   it('matches Shift+F10', () => {
     expect(
-      isContextMenuKey(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true }))
+      isContextMenuKey(
+        new KeyboardEvent('keydown', { key: 'F10', shiftKey: true })
+      )
     ).toBe(true)
   })
 
   it('does not match F10 without Shift', () => {
-    expect(isContextMenuKey(new KeyboardEvent('keydown', { key: 'F10' }))).toBe(false)
+    expect(isContextMenuKey(new KeyboardEvent('keydown', { key: 'F10' }))).toBe(
+      false
+    )
   })
 
   it('does not match other keys', () => {
     for (const key of ['Enter', ' ', 'ArrowDown', 'c']) {
-      expect(isContextMenuKey(new KeyboardEvent('keydown', { key }))).toBe(false)
+      expect(isContextMenuKey(new KeyboardEvent('keydown', { key }))).toBe(
+        false
+      )
     }
   })
 })

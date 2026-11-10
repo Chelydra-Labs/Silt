@@ -6,9 +6,7 @@
 
 /** True for the Menu key and for Shift+F10 — the two standard "open context menu" keys. */
 export function isContextMenuKey(event: KeyboardEvent): boolean {
-  return (
-    event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')
-  )
+  return event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')
 }
 
 /**
