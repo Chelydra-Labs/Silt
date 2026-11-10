@@ -871,17 +871,25 @@ describe('TaskMetadataSidebar', () => {
         }
       })
       const group = screen.getByRole('radiogroup', { name: 'Shortlist rank' })
-      ;(
-        within(group).getByRole('radio', { name: '2' }) as HTMLButtonElement
-      ).click()
+      const radio2 = within(group).getByRole('radio', {
+        name: '2'
+      }) as HTMLButtonElement
+      radio2.click()
+      // jsdom's click() doesn't model focus-on-activation; a keyboard/AT
+      // activation leaves focus on the radio, so set it explicitly before
+      // the pending window opens.
+      radio2.focus()
       // Empty lookup resolves → assign held pending: the chain sits inside
       // the field.commit await with field.pending true — the exact window
       // that used to disable (and un-focus) the radios.
       await flush()
       await flush()
-      expect(within(group).getByRole('radio', { name: '2' })).toBeEnabled()
+      expect(radio2).toBeEnabled()
       expect(within(group).getByRole('radio', { name: 'None' })).toBeEnabled()
       expect(group).toHaveAttribute('aria-busy', 'true')
+      // The user-visible half of the regression: focus must still sit on
+      // the radio mid-chain, not drop to <body> as the disabled binding did.
+      expect(document.activeElement).toBe(radio2)
 
       releaseAssign(true)
       await flush()
@@ -889,6 +897,8 @@ describe('TaskMetadataSidebar', () => {
       await flush()
       expect(setTaskShortlistRank).toHaveBeenCalledWith('task-1', 2)
       expect(group).toHaveAttribute('aria-busy', 'false')
+      // Focus survives the chain settling (roving-tabindex recompute too).
+      expect(document.activeElement).toBe(radio2)
     })
 
     it('queues a pointer click that lands during the pre-commit lookup window', async () => {

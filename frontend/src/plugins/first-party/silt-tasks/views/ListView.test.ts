@@ -2089,6 +2089,71 @@ describe('ListView — shortlist badge + filter (#1092)', () => {
     expect(ids()).toEqual(['r0', 'r3'])
   })
 
+  it('sort=manual + lens on: cross-group dragover stays uncanceled', async () => {
+    // onRowDragOver returns at the groupKey check BEFORE preventDefault():
+    // canceling a cross-group dragover would make the other group's rows
+    // valid drop targets in a real browser (drop only fires on canceled
+    // dragover), re-enabling exactly the cross-group drop this no-op
+    // exists to suppress. jsdom can't model that precondition, so pin the
+    // cancel decision itself — the same-group test above pins the opposite.
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [
+            task('p', 'pat task', {
+              owner: 'Pat',
+              shortlist_rank: 0,
+              manual_order: 1,
+              due_date: ''
+            }),
+            task('s', 'sam task', {
+              owner: 'Sam',
+              shortlist_rank: 1,
+              manual_order: 1,
+              due_date: ''
+            })
+          ]
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    setGroupBy('owner')
+    setSort('manual')
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const handleP = document.querySelector(
+      '[data-testid="tasks-row-drag-handle-p"]'
+    ) as HTMLElement
+    const rowS = document.querySelector('[data-block-id="s"]') as HTMLElement
+    expect(handleP).toBeTruthy()
+    expect(rowS).toBeTruthy()
+
+    await fireEvent.dragStart(handleP)
+    let dragOverEvent: Event | undefined
+    rowS.addEventListener('dragover', (e) => (dragOverEvent = e))
+    await fireEvent.dragOver(rowS)
+    expect(dragOverEvent?.defaultPrevented).toBe(false)
+
+    // jsdom fires drop regardless; pin the handler side too — the
+    // cross-group branch returns before the lens announcement and every
+    // write path, so the drop is quiet and inert.
+    await fireEvent.drop(rowS)
+    await flush()
+    expect(mocks.setTaskOrders).not.toHaveBeenCalled()
+    expect(mocks.setTaskOrder).not.toHaveBeenCalled()
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    expect(screen.getByTestId('tasks-live-message').textContent).toBe('')
+  })
+
   it('row edit-button label announces the shortlist rank (Board parity)', async () => {
     // The Board card's accessible name carries `, shortlist rank {n}`
     // (rank 0 included, silent when unranked) — the List row button must
