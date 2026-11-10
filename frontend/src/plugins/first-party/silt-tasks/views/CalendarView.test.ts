@@ -7,6 +7,7 @@ import {
   fireEvent,
   within
 } from '@testing-library/svelte'
+import userEvent from '@testing-library/user-event'
 
 // jsdom polyfills — CalendarView pulls in TaskEditDrawer/TaskSubEditorModal
 // (transition:fly + TipTap), which need the Web Animations API + caret rects.
@@ -1428,6 +1429,57 @@ describe('CalendarView — day-cell context menu (#1119)', () => {
     })
     expect(screen.queryByTestId('calendar-day-menu')).toBeNull()
     expect(screen.queryByTestId('task-context-menu')).toBeNull()
+  })
+
+  it('Shift+F10 on a focused chip opens only the task menu, never the day menu too', async () => {
+    await mockQueries([
+      row({ id: 'k1', clean_content: 'Kbd chip', due_date: TODAY })
+    ])
+    await renderCalendar()
+
+    // Regression: the chip's keydown branch dispatches its own task menu,
+    // but the same keydown also bubbles to the cell, whose branch used to
+    // open the day menu on top of it — two stacked modals. Exactly one menu
+    // may open.
+    const chip = screen.getByText('Kbd chip')
+    chip.focus()
+    await fireEvent.keyDown(chip, { key: 'F10', shiftKey: true })
+    expect(screen.getByTestId('task-context-menu')).toBeInTheDocument()
+    expect(screen.queryByTestId('calendar-day-menu')).toBeNull()
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByTestId('task-context-menu')).toBeNull()
+
+    // Inside the cell's inline quick-add the Menu key keeps the input's
+    // native text menu; the day menu must not pile on top of it.
+    const cell = document.querySelector(
+      `[data-celldate="${TODAY}"]`
+    ) as HTMLElement
+    await fireEvent.click(cell)
+    const input = screen.getByTestId('quick-add-task-input')
+    await fireEvent.keyDown(input, { key: 'ContextMenu' })
+    expect(screen.queryByTestId('calendar-day-menu')).toBeNull()
+  })
+
+  it('Enter on a focused chip opens the drawer, not the cell quick-add', async () => {
+    await mockQueries([
+      row({ id: 'e1', clean_content: 'Enter chip', due_date: TODAY })
+    ])
+    await renderCalendar()
+
+    // The cell's Enter branch used to preventDefault the bubbled chip
+    // keydown and open quick-add instead, contradicting the chip's
+    // advertised aria-keyshortcuts. user-event synthesizes the focused
+    // button's click the way a real browser does; plain fireEvent.keyDown
+    // would not.
+    const user = userEvent.setup()
+    const chip = screen.getByText('Enter chip')
+    chip.focus()
+    await user.keyboard('{Enter}')
+    await flush()
+
+    const dialog = screen.getByRole('dialog')
+    expect(dialog.textContent).toContain('Enter chip')
+    expect(screen.queryByTestId('quick-add-task-input')).toBeNull()
   })
 
   it('week-view cells expose the same menu', async () => {

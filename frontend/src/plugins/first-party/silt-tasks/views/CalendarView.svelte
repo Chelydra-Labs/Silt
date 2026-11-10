@@ -747,6 +747,15 @@
   // (monthWeeks is [] in week view, weekDays is [] in month view).
   function onCellKeydown(e: KeyboardEvent, day: Date) {
     if (e.altKey) return
+    // Interactive children (chips, +, "+N more", the quick-add input) own
+    // their Enter and context-menu keys: swallowing Enter would kill the
+    // chip's native click → drawer, and re-dispatching here would stack the
+    // day menu on top of the chip's own menu (or the input's native one).
+    // Returning before preventDefault lets those defaults run, matching the
+    // onclick/oncontextmenu guards below.
+    const t = e.target as HTMLElement
+    if (t.closest('button,input') && (e.key === 'Enter' || isContextMenuKey(e)))
+      return
     if (e.key === 'Enter') {
       e.preventDefault()
       openQuickAddForDay(day)
