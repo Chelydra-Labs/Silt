@@ -1097,6 +1097,32 @@ export function dispatchFoldToggle(
     ...node.attrs,
     open: !node.attrs.open
   })
+  // Collapsing hides detailsContent: a caret left inside would edit
+  // invisible text, and detailsSelection cannot self-heal it (its guard
+  // requires a selection-setting tr). Move the caret to the always-visible
+  // summary on the same tagged tr, as the stock NodeView toggle does.
+  if (node.attrs.open) {
+    let summaryStart = -1
+    let contentStart = -1
+    let contentEnd = -1
+    node.forEach((child, offset) => {
+      const start = pos + 1 + offset
+      if (child.type.name === 'detailsSummary') summaryStart = start + 1
+      else if (child.type.name === 'detailsContent') {
+        contentStart = start + 1
+        contentEnd = contentStart + child.content.size
+      }
+    })
+    const { from, to } = view.state.selection
+    if (
+      summaryStart >= 0 &&
+      contentStart >= 0 &&
+      from >= contentStart &&
+      to <= contentEnd
+    ) {
+      tr.setSelection(TextSelection.create(tr.doc, summaryStart))
+    }
+  }
   tr.setMeta('addToHistory', false)
   tr.setMeta(detailsFoldToggleKey, true)
   view.dispatch(tr)

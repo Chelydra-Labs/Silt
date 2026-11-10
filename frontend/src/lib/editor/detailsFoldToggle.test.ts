@@ -107,6 +107,19 @@ function toggleButton(editor: Editor): {
   }
 }
 
+// Place the caret on the first text inside detailsContent, mirroring a
+// user editing a field line when they hit the toggle binding.
+function caretInsideDetailsContent(editor: Editor): void {
+  let pos = -1
+  editor.state.doc.descendants((node, p) => {
+    if (pos < 0 && node.type.name === 'noteBlock' && node.content.size > 0) {
+      pos = p + 1
+    }
+  })
+  expect(pos).toBeGreaterThanOrEqual(0)
+  editor.commands.setTextSelection(pos)
+}
+
 describe('details fold toggle interception (persist: true)', () => {
   it('a toggle click flips `open` without entering undo history', async () => {
     const seen: boolean[] = []
@@ -200,19 +213,6 @@ describe('stock details plugins survive the fold-interception override', () => {
 })
 
 describe('details fold toggle via keyboard (Mod-Shift-.)', () => {
-  // Place the caret on the first text inside detailsContent, mirroring a
-  // user editing a field line when they hit the toggle binding.
-  function caretInsideDetailsContent(editor: Editor): void {
-    let pos = -1
-    editor.state.doc.descendants((node, p) => {
-      if (pos < 0 && node.type.name === 'noteBlock' && node.content.size > 0) {
-        pos = p + 1
-      }
-    })
-    expect(pos).toBeGreaterThanOrEqual(0)
-    editor.commands.setTextSelection(pos)
-  }
-
   it('toggleDetails flips `open` tagged, with no history entry', () => {
     const seen: boolean[] = []
     const editor = makeEditor((tr) => seen.push(isDetailsFoldToggle(tr)))
@@ -256,5 +256,50 @@ describe('details fold toggle via keyboard (Mod-Shift-.)', () => {
     expect(editor.state.doc.textContent).not.toContain('hello')
     expect(editor.state.doc.child(0).attrs.open).toBe(false)
     expect(editor.can().undo()).toBe(false)
+  })
+})
+
+describe('collapsing relocates a caret stranded in detailsContent', () => {
+  it('a keyboard collapse moves the caret into the (visible) summary', () => {
+    const editor = makeEditor(() => {})
+    caretInsideDetailsContent(editor)
+    expect(editor.state.selection.$from.parent.type.name).toBe('noteBlock')
+
+    toggleDetails(editor)
+
+    // The caret must land in the summary: typing right after a collapse
+    // edits visible text, not hidden detailsContent.
+    expect(editor.state.doc.child(0).attrs.open).toBe(false)
+    expect(editor.state.selection.$from.parent.type.name).toBe('detailsSummary')
+    editor.commands.insertContent('X')
+    const summary = editor.state.doc.child(0).child(0)
+    expect(summary.type.name).toBe('detailsSummary')
+    expect(summary.textContent).toBe('XMeeting information')
+  })
+
+  it('a click collapse with the caret inside detailsContent relocates it too', async () => {
+    const editor = makeEditor(() => {})
+    const { toggle } = toggleButton(editor)
+    await settleInitialExpansion()
+    caretInsideDetailsContent(editor)
+
+    toggle.click()
+
+    expect(editor.state.doc.child(0).attrs.open).toBe(false)
+    expect(editor.state.selection.$from.parent.type.name).toBe('detailsSummary')
+  })
+
+  it('collapsing leaves a caret outside detailsContent untouched', () => {
+    const editor = makeEditor(() => {})
+    // The initial selection sits in the summary text (start of doc).
+    const before = editor.state.selection.from
+    expect(editor.state.selection.$from.parent.type.name).toBe('detailsSummary')
+
+    toggleDetails(editor)
+
+    // The summary caret was not relocated (still before contentStart);
+    // the toggle remains a pure attr flip for it.
+    expect(editor.state.doc.child(0).attrs.open).toBe(false)
+    expect(editor.state.selection.from).toBe(before)
   })
 })
