@@ -1,7 +1,17 @@
 <script lang="ts">
   // Presentational board column header. Lifted out of BoardView to slim the
   // parent; the board still owns all menu/rename/WIP-edit state and passes
-  // pre-bound callbacks + bindable inputs (rename value, WIP draft).
+  // pre-bound callbacks + bindable inputs (rename value, WIP draft). The
+  // action menu renders through the shared ContextMenu primitive (#1121):
+  // the ⋯ button, right-click, and the context-menu key all open the same
+  // items; the primitive owns positioning, dismissal, roving focus, and
+  // focus return to the ⋯ button.
+  import { tick } from 'svelte'
+  import ContextMenu from '../../../../components/ContextMenu.svelte'
+  import {
+    isContextMenuKey,
+    openContextMenuFromKeyboard
+  } from '../../../../lib/contextMenuKey'
   import { formatEstimateSum } from '../types'
 
   interface Props {
@@ -15,12 +25,14 @@
     overWip: boolean
     dndEnabled: boolean
     renaming: boolean
-    menuOpen: boolean
+    /** Open-menu anchor (pointer/button coords); null = closed. */
+    menu: { x: number; y: number } | null
     wipEditing: boolean
     wipEditError: string
     renameValue: string
     wipDraft: string
-    onToggleMenu: () => void
+    onOpenMenu: (x: number, y: number) => void
+    onCloseMenu: () => void
     onStartRename: () => void
     onCommitRename: () => void
     onCancelRename: () => void
@@ -28,7 +40,6 @@
     onStartWipEdit: () => void
     onApplyWipLimit: () => void
     onClearWipLimit: () => void
-    onMenuEscape: () => void
     onWipEscape: () => void
     onColDragStart: (e: DragEvent) => void
     onColDragOver: (e: DragEvent) => void
@@ -47,12 +58,13 @@
     overWip,
     dndEnabled,
     renaming,
-    menuOpen,
+    menu,
     wipEditing,
     wipEditError,
     renameValue = $bindable(),
     wipDraft = $bindable(),
-    onToggleMenu,
+    onOpenMenu,
+    onCloseMenu,
     onStartRename,
     onCommitRename,
     onCancelRename,
@@ -60,13 +72,60 @@
     onStartWipEdit,
     onApplyWipLimit,
     onClearWipLimit,
-    onMenuEscape,
     onWipEscape,
     onColDragStart,
     onColDragOver,
     onColDrop,
     onColDragEnd
   }: Props = $props()
+
+  // The ⋯ button doubles as the menu's anchorEl: focus returns to it on
+  // dismiss and scroll-dismissal scopes to its scrollable ancestor.
+  let menuBtnEl = $state<HTMLButtonElement | null>(null)
+  let renameInputEl = $state<HTMLInputElement | null>(null)
+  let wipInputEl = $state<HTMLInputElement | null>(null)
+  let wipItemEl = $state<HTMLButtonElement | null>(null)
+
+  function onMenuButtonClick(e: MouseEvent) {
+    // Button-as-toggle (SavedViews shape): clicking while this column's menu
+    // is open closes it instead of re-anchoring.
+    if (menu) {
+      onCloseMenu()
+      return
+    }
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    onOpenMenu(rect.left, rect.bottom + 2)
+  }
+
+  function onHeaderContextMenu(e: MouseEvent) {
+    e.preventDefault()
+    onOpenMenu(e.clientX, e.clientY)
+  }
+
+  function onMenuButtonKeydown(e: KeyboardEvent) {
+    if (!isContextMenuKey(e)) return
+    // Synthesized contextmenu on the ⋯ button bubbles to the header's own
+    // handler, so mouse and keyboard share one open path.
+    e.preventDefault()
+    openContextMenuFromKeyboard(e.currentTarget as HTMLElement)
+  }
+
+  // Both inline editors replace an element that held focus (the menu items
+  // or the label), so focus is steered explicitly; without this it falls to
+  // <body> and keyboard users lose the editor.
+  $effect(() => {
+    if (renaming) {
+      void tick().then(() => {
+        renameInputEl?.focus()
+        renameInputEl?.select()
+      })
+    }
+  })
+  $effect(() => {
+    if (wipEditing && menu) {
+      void tick().then(() => wipInputEl?.focus())
+    }
+  })
 </script>
 
 <div
@@ -78,6 +137,7 @@
   ondragover={canManage ? (e) => onColDragOver(e) : undefined}
   ondrop={canManage ? (e) => onColDrop(e) : undefined}
   ondragend={canManage ? onColDragEnd : undefined}
+  oncontextmenu={canManage ? onHeaderContextMenu : undefined}
   title={!dndEnabled ? `Task location can't be changed by dragging` : undefined}
 >
   <div class="flex items-center gap-2 min-w-0">
@@ -97,6 +157,7 @@
     {#if renaming}
       <input
         type="text"
+        bind:this={renameInputEl}
         bind:value={renameValue}
         onkeydown={(e) => {
           if (e.key === 'Enter') onCommitRename()
@@ -144,114 +205,138 @@
       </span>
     {/if}
   </div>
-  <div class="relative shrink-0 flex items-center">
+  <div class="shrink-0 flex items-center">
     {#if canManage}
       <button
         type="button"
-        onclick={onToggleMenu}
+        bind:this={menuBtnEl}
+        onclick={onMenuButtonClick}
+        onkeydown={onMenuButtonKeydown}
         aria-label="Column actions"
-        aria-expanded={menuOpen}
+        aria-expanded={menu !== null}
         aria-haspopup="menu"
+        aria-keyshortcuts="Shift+F10"
         class="flex h-7 w-7 items-center justify-center rounded-md border border-transparent text-text-muted hover:border-surface-panel-border hover:bg-hover hover:text-text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
       >
         <span class="material-symbols-outlined text-icon-md">more_horiz</span>
       </button>
-      {#if menuOpen}
-        <div
-          class="absolute right-0 top-full mt-1 z-50 min-w-35 bg-surface-popover border border-surface-popover-border rounded-lg shadow-lg py-1"
-          role="menu"
-          tabindex="-1"
-          onkeydown={(e) => {
-            if (e.key === 'Escape') onMenuEscape()
-          }}
+      <ContextMenu
+        open={menu !== null}
+        anchor={menu}
+        anchorEl={menuBtnEl}
+        onClose={onCloseMenu}
+        ariaLabel={`Actions for ${colLabel} column`}
+        backdropTestId={`board-col-menu-backdrop-${colKey}`}
+        menuTestId={`board-col-menu-${colKey}`}
+      >
+        <button
+          type="button"
+          role="menuitem"
+          onclick={onStartRename}
+          data-testid={`board-rename-menu-${colKey}`}
         >
-          <button
-            type="button"
-            onclick={onStartRename}
-            class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-text-primary"
-            role="menuitem"
+          <span
+            class="material-symbols-outlined text-icon-md"
+            aria-hidden="true">edit</span
           >
-            <span class="material-symbols-outlined text-icon-sm">edit</span>
-            Rename
-          </button>
-          {#if wipEditing}
-            <div
-              class="px-3 py-2 space-y-1.5 border-t border-b border-surface-popover-border"
-              data-testid={`board-wip-edit-${colKey}`}
+          <span>Rename</span>
+        </button>
+        {#if wipEditing}
+          <div
+            class="px-2.5 py-2 space-y-1.5"
+            data-testid={`board-wip-edit-${colKey}`}
+          >
+            <label
+              class="block text-type-2xs font-label-sm text-text-muted"
+              for={`wip-input-${colKey}`}
             >
-              <label
-                class="block text-type-2xs font-label-sm text-text-muted"
-                for={`wip-input-${colKey}`}
+              WIP limit (empty = unlimited)
+            </label>
+            <input
+              id={`wip-input-${colKey}`}
+              bind:this={wipInputEl}
+              type="number"
+              min="1"
+              step="1"
+              class="w-full rounded border border-surface-card-border bg-surface-card px-2 py-1 text-type-sm text-text-primary"
+              bind:value={wipDraft}
+              aria-invalid={wipEditError ? 'true' : undefined}
+              data-testid={`board-wip-input-${colKey}`}
+              onkeydown={(e) => {
+                // The input owns its keys: stopPropagation keeps the
+                // primitive's menu roving (arrows/Home/End) from stealing
+                // focus and Escape from closing the whole menu.
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onApplyWipLimit()
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onWipEscape()
+                  void tick().then(() => wipItemEl?.focus())
+                } else if (
+                  e.key.startsWith('Arrow') ||
+                  e.key === 'Home' ||
+                  e.key === 'End'
+                ) {
+                  e.stopPropagation()
+                }
+              }}
+            />
+            {#if wipEditError}
+              <p class="text-type-2xs text-error m-0" role="alert">
+                {wipEditError}
+              </p>
+            {/if}
+            <div class="flex gap-1 pt-0.5">
+              <button
+                type="button"
+                class="flex-1 px-2 py-1 rounded bg-accent-primary-start/15 text-accent-primary-start text-type-2xs font-label-sm"
+                data-testid={`board-wip-apply-${colKey}`}
+                onclick={onApplyWipLimit}
               >
-                WIP limit (empty = unlimited)
-              </label>
-              <input
-                id={`wip-input-${colKey}`}
-                type="number"
-                min="1"
-                step="1"
-                class="w-full rounded border border-surface-card-border bg-surface-card px-2 py-1 text-type-sm text-text-primary"
-                bind:value={wipDraft}
-                aria-invalid={wipEditError ? 'true' : undefined}
-                data-testid={`board-wip-input-${colKey}`}
-                onkeydown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    onApplyWipLimit()
-                  } else if (e.key === 'Escape') {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    onWipEscape()
-                  }
-                }}
-              />
-              {#if wipEditError}
-                <p class="text-type-2xs text-error" role="alert">
-                  {wipEditError}
-                </p>
-              {/if}
-              <div class="flex gap-1 pt-0.5">
-                <button
-                  type="button"
-                  class="flex-1 px-2 py-1 rounded bg-accent-primary-start/15 text-accent-primary-start text-type-2xs font-label-sm"
-                  data-testid={`board-wip-apply-${colKey}`}
-                  onclick={onApplyWipLimit}
-                >
-                  Apply
-                </button>
-                <button
-                  type="button"
-                  class="flex-1 px-2 py-1 rounded hover:bg-hover text-type-2xs font-label-sm text-text-muted"
-                  data-testid={`board-wip-clear-${colKey}`}
-                  onclick={onClearWipLimit}
-                >
-                  Clear
-                </button>
-              </div>
+                Apply
+              </button>
+              <button
+                type="button"
+                class="flex-1 px-2 py-1 rounded hover:bg-hover text-type-2xs font-label-sm text-text-muted"
+                data-testid={`board-wip-clear-${colKey}`}
+                onclick={onClearWipLimit}
+              >
+                Clear
+              </button>
             </div>
-          {:else}
-            <button
-              type="button"
-              onclick={onStartWipEdit}
-              class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-text-primary"
-              role="menuitem"
-              data-testid={`board-wip-menu-${colKey}`}
-            >
-              <span class="material-symbols-outlined text-icon-sm">speed</span>
-              WIP limit…
-            </button>
-          {/if}
+          </div>
+        {:else}
           <button
             type="button"
-            onclick={onRemoveColumn}
-            class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-error"
             role="menuitem"
+            bind:this={wipItemEl}
+            onclick={onStartWipEdit}
+            data-testid={`board-wip-menu-${colKey}`}
           >
-            <span class="material-symbols-outlined text-icon-sm">delete</span>
-            Remove
+            <span
+              class="material-symbols-outlined text-icon-md"
+              aria-hidden="true">speed</span
+            >
+            <span>WIP limit…</span>
           </button>
-        </div>
-      {/if}
+        {/if}
+        <button
+          type="button"
+          role="menuitem"
+          class="text-status-danger"
+          onclick={onRemoveColumn}
+          data-testid={`board-remove-menu-${colKey}`}
+        >
+          <span
+            class="material-symbols-outlined text-icon-md"
+            aria-hidden="true">delete</span
+          >
+          <span>Remove</span>
+        </button>
+      </ContextMenu>
     {/if}
   </div>
 </div>
