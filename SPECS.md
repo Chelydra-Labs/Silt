@@ -431,6 +431,8 @@ Metadata Tokens (Dataview `[key:: value]` format):
 
 `modified` is stamped on every successful task-line rewrite (metadata setters, status change, title/body mutate) so the hub can sort by “Recently Modified” and filter stale open work (open + missing/older-than-30-days `modified`). Comment-only appends do not stamp it. `estimate` stores a raw duration string; the index projects whole minutes (`estimate_minutes`) for sort/rollup arithmetic — empty/absent is NULL (never shown as 0).
 
+**Progress and DONE.** Marking a task DONE normalizes `progress` to 100 regardless of the partial value it carried — including re-marking an already-DONE task, and minting the token on tasks that never had one — because DONE means complete. Reopening (DONE → TODO or DOING) leaves `progress` untouched, so the task keeps its last value.
+
 **Comment attribution (NOTE-block tokens).** A child NOTE block indented under a TASK is that task's **comment** — the same parent/child hierarchy that powers the `comments_count` cache. Two Dataview-style tokens attribute the comment, distinct from every TASK token above:
 
 | Key | Format | Example |
