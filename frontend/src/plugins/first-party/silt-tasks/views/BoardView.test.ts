@@ -149,6 +149,10 @@ import {
   setWeekStart
 } from '../state.svelte'
 import { initTasksSettings } from '../settings'
+import {
+  notificationsState,
+  _resetForTests as resetNotifications
+} from '../../../../notifications/store.svelte'
 
 const TODAY = '2026-07-06'
 
@@ -1769,6 +1773,36 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     expect(
       document.querySelector('[data-card="t1"]')?.getAttribute('aria-current')
     ).toBeNull()
+  })
+
+  it('cycling priority from the card pill writes via setTaskPriority and offers undo', async () => {
+    resetNotifications()
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', priority: 3, clean_content: 'Cycle me' })
+    ])
+
+    await fireEvent.click(screen.getByTestId('tasks-priority-t1'))
+    await flush()
+
+    expect(mocks.setTaskPriority).toHaveBeenCalledWith('t1', 2)
+    // The pill click must not open the task.
+    expect(screen.queryByRole('dialog')).toBeNull()
+    const toast = notificationsState.items.find((n) => n.kind === 'success')
+    expect(toast?.message).toBe('Task priority set to Normal')
+    expect(toast?.action?.label).toBe('Undo')
+  })
+
+  it('the ghost pill on an unprioritized card bootstraps to Low', async () => {
+    resetNotifications()
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', priority: 0, clean_content: 'Ghost' })
+    ])
+
+    await fireEvent.click(screen.getByTestId('tasks-priority-t1'))
+    await flush()
+
+    expect(mocks.setTaskPriority).toHaveBeenCalledWith('t1', 3)
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('renders pinned cards before unpinned cards within their column', async () => {

@@ -40,8 +40,6 @@
   import {
     coerceTaskRow,
     formatEstimateSum,
-    PRIORITY_LABELS,
-    priorityClass,
     type TaskDetail,
     type TaskViewProps
   } from '../types'
@@ -53,6 +51,8 @@
   import { useBlockChangedReload, useBlockedDoneGuard } from '../shared.svelte'
   import { compareTasks, sortTasks } from '../taskOrder'
   import { trackTaskUndoWrite } from '../undo.svelte'
+  import { applyPriorityCycle } from '../priorityCycle'
+  import PriorityPill from '../components/PriorityPill.svelte'
 
   interface Props extends TaskViewProps {
     /** Unused now (title lives in the hub); kept for direct-render compat. */
@@ -1003,15 +1003,12 @@
         Shortlist {item.shortlist_rank}
       </span>
     {/if}
-    {#if item.priority && item.priority <= 3}
-      <span
-        class="hidden rounded-full border px-1.5 py-0.5 text-type-3xs font-label-sm uppercase tracking-wide md:inline-flex {priorityClass(
-          item.priority
-        )}"
-      >
-        {PRIORITY_LABELS[item.priority] ?? 'Normal'}
-      </span>
-    {/if}
+    <PriorityPill
+      priority={item.priority}
+      onCycle={(next) => applyPriorityCycle(ctx, item, next)}
+      testId={`tasks-priority-${item.id}`}
+      class="hidden md:inline-flex"
+    />
     {#if taskTags(item).length > 0}
       <span
         class="hidden max-w-24 truncate rounded-full border border-surface-card-border bg-surface-panel px-1.5 py-0.5 text-type-3xs font-label-sm text-text-muted lg:inline-flex"
