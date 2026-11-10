@@ -12,6 +12,7 @@
   // overlay has no plugin ctx, so it passes `createTask` directly — a thin
   // shim over the app-level CreateStandaloneTask binding. One component, one
   // source of truth for the Enter/Escape/busy/error behavior.
+  import { tick } from 'svelte'
   import type { PluginContext, TaskStatus } from '../../../sdk'
   import { friendlyCaughtError } from '../errors'
   import ErrorBanner from './ErrorBanner.svelte'
@@ -82,6 +83,9 @@
   let busy = $state(false)
   let errorMsg = $state('')
   let inputEl = $state<HTMLInputElement | null>(null)
+  // Set between a successful create and its scheduled refocus so the blur
+  // handler can tell a programmatic focus race from a real click-away.
+  let refocusPending = false
 
   // Autofocus on mount so the user can type immediately from any entry point.
   // Gated on the autofocus prop so persistent instances don't steal focus.
@@ -114,8 +118,14 @@
       onCreated?.(id)
       if (keepOpenAfterCreate) {
         title = ''
-        // block:changed listener on each view repaints; keep focus for rapid entry.
-        inputEl?.focus()
+        // The view repaint (debounced block:changed) can land after the create
+        // settles and steal focus; reclaim it once the DOM flushes so chained
+        // quick entry works without a re-click.
+        refocusPending = true
+        void tick().then(() => {
+          refocusPending = false
+          inputEl?.focus()
+        })
       }
     } catch (err) {
       // Surface the failure inline so the user knows the create did not land
@@ -147,6 +157,9 @@
   function onBlur() {
     // If the input is empty on blur, treat as cancel so a stray click-away
     // dismisses the affordance. A non-empty draft stays for the user to resume.
+    // Skip while a create is pending or its refocus is still scheduled: an
+    // empty title then means we cleared it, not that the user walked away.
+    if (busy || refocusPending) return
     if (!title.trim()) onCancel?.()
   }
 </script>
@@ -164,14 +177,13 @@
     type="text"
     {placeholder}
     maxlength={500}
-    disabled={busy}
     onkeydown={onKeydown}
     onblur={onBlur}
     aria-label={placeholder}
     aria-invalid={!!errorMsg}
     aria-busy={busy}
     data-testid="quick-add-task-input"
-    class="h-10 w-full rounded-lg border border-surface-panel-border bg-surface-card pl-9 pr-11 text-type-md font-body-md text-text-primary shadow-sm placeholder:text-text-muted transition-all hover:border-border-active focus:border-accent-primary-start focus:outline-none focus:ring-2 focus:ring-accent-primary-start/20 disabled:opacity-60"
+    class="h-10 w-full rounded-lg border border-surface-panel-border bg-surface-card pl-9 pr-11 text-type-md font-body-md text-text-primary shadow-sm placeholder:text-text-muted transition-all hover:border-border-active focus:border-accent-primary-start focus:outline-none focus:ring-2 focus:ring-accent-primary-start/20"
   />
   <button
     type="button"
