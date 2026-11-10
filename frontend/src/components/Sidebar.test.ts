@@ -2393,6 +2393,33 @@ describe('Sidebar', () => {
     expect(document.activeElement).toBe(section)
   })
 
+  it('opens the tree context menu via the Menu key on a page node', async () => {
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => true,
+        onSelectSection: () => {},
+        onSelectPage: () => true,
+        onPinPage: () => true,
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    const page = screen.getByRole('treeitem', { name: /Daily/ })
+    page.focus()
+    await fireEvent.keyDown(page, { key: 'ContextMenu' })
+    // The synthetic contextmenu lands at the page row and opens the shared menu.
+    expect(screen.getByRole('menu', { name: 'Actions' })).toBeInTheDocument()
+    await fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+    await flush()
+    expect(screen.queryByRole('menu', { name: 'Actions' })).toBeNull()
+    expect(document.activeElement).toBe(page)
+  })
+
   it('shows Inspect on tree context menu when Dev Mode is on (#683)', async () => {
     settingsMock.config = { ui: { open_devtools_on_startup: true } }
     mocks.getNavigationPreferences.mockResolvedValue({
