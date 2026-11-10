@@ -235,10 +235,17 @@
     }
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        onClose()
-      }
+      if (e.key !== 'Escape') return
+      // Escape with focus inside the menu is owned by the card's own keydown
+      // handler (per-level flyout close + its own stopPropagation). Window
+      // itself can be the target (window-dispatched keydown) and is not a Node.
+      if (e.target instanceof Node && menuEl?.contains(e.target)) return
+      // Fallback path (focus outside the menu): swallow in the capture phase
+      // so app-level listeners registered before the menu opened (drawer
+      // dismissal etc.) never see the key that is closing the menu.
+      e.preventDefault()
+      e.stopPropagation()
+      onClose()
     }
 
     // Parent items toggle their flyout on mouse click (keyboard uses
@@ -273,13 +280,13 @@
     root?.addEventListener('click', onRootClick)
 
     window.addEventListener('resize', dismiss, { passive: true })
-    window.addEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
 
     return () => {
       scrollRoot.removeEventListener('scroll', dismiss, { capture: true })
       root?.removeEventListener('click', onRootClick)
       window.removeEventListener('resize', dismiss)
-      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keydown', onKey, true)
     }
   })
 

@@ -1,6 +1,19 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte'
+import { tick } from 'svelte'
 import SidebarQuickAccess from './SidebarQuickAccess.svelte'
+
+// copyPageReference resolves the [[shortest]] form through ResolvePageLink
+// (pageActions → bindings module, aliased as $silt-app — one mock covers it).
+const mocks = vi.hoisted(() => ({
+  resolvePageLink: vi.fn()
+}))
+
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    ResolvePageLink: mocks.resolvePageLink
+  })
+)
 
 const baseProps = {
   favorites: [],
@@ -11,6 +24,7 @@ const baseProps = {
   error: '',
   onOpen: vi.fn(),
   onToggleFavorite: vi.fn(),
+  onOpenInNewTab: vi.fn().mockReturnValue(true),
   onRetry: vi.fn()
 }
 
@@ -195,5 +209,211 @@ describe('SidebarQuickAccess', () => {
       name: 'Work / Projects / Sprint'
     })
     expect(pageBtn).toHaveClass('active')
+  })
+})
+
+describe('SidebarQuickAccess — page-locator context menu (#1120)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.resolvePageLink.mockReset()
+    mocks.resolvePageLink.mockResolvedValue({
+      exists: true,
+      shortest: 'Daily'
+    })
+    Object.assign(navigator, {
+      clipboard: { writeText: vi.fn().mockResolvedValue(undefined) }
+    })
+  })
+
+  const menu = () => screen.getByTestId('quick-access-locator-menu')
+
+  function menuLabels(): string[] {
+    return Array.from(
+      menu().querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).map((el) => {
+      const span = el.querySelector<HTMLSpanElement>('span:not([aria-hidden])')
+      return (span ?? el).textContent?.trim() ?? ''
+    })
+  }
+
+  it('right-click a pinned row opens the locator menu with the pinned subset', async () => {
+    const ref = { notebook: 'Work', section: 'Journal', page: 'Daily' }
+    render(SidebarQuickAccess, {
+      props: { ...baseProps, favorites: [ref] }
+    })
+    expect(screen.queryByTestId('quick-access-locator-menu')).toBeNull()
+
+    const row = screen.getByRole('button', { name: 'Work / Journal / Daily' })
+    expect(row).toHaveAttribute('aria-keyshortcuts', 'Shift+F10')
+    const e = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 40,
+      clientY: 50
+    })
+    row.dispatchEvent(e)
+    await tick()
+
+    expect(e.defaultPrevented).toBe(true)
+    expect(menu()).toHaveAttribute('role', 'menu')
+    expect(menuLabels()).toEqual([
+      'Open in new tab',
+      'Copy page reference',
+      'Unpin'
+    ])
+    expect(menu().getAttribute('style')).toContain('left: 40px')
+    expect(menu().getAttribute('style')).toContain('top: 50px')
+  })
+
+  it('right-click a recent row shows Pin to Quick Access when unpinned', async () => {
+    const recent = {
+      notebook: 'Work',
+      section: '',
+      page: 'Inbox',
+      opened_at: 10
+    }
+    render(SidebarQuickAccess, {
+      props: { ...baseProps, recents: [recent] }
+    })
+    const row = screen.getByRole('button', { name: 'Work / Inbox' })
+    await fireEvent.contextMenu(row, { clientX: 5, clientY: 5 })
+    await tick()
+    expect(menuLabels()).toEqual([
+      'Open in new tab',
+      'Copy page reference',
+      'Pin to Quick Access'
+    ])
+  })
+
+  it('hides the open-in-new-tab item when the host does not provide it', async () => {
+    const recent = {
+      notebook: 'Work',
+      section: '',
+      page: 'Inbox',
+      opened_at: 10
+    }
+    const { onOpenInNewTab, ...withoutPin } = baseProps
+    expect(onOpenInNewTab).toBeTruthy()
+    render(SidebarQuickAccess, {
+      props: { ...withoutPin, recents: [recent] }
+    })
+    const row = screen.getByRole('button', { name: 'Work / Inbox' })
+    await fireEvent.contextMenu(row, { clientX: 5, clientY: 5 })
+    await tick()
+    expect(menuLabels()).toEqual(['Copy page reference', 'Pin to Quick Access'])
+  })
+
+  it('menu items invoke the host handlers with the row locator', async () => {
+    const onToggleFavorite = vi.fn()
+    const onOpenInNewTab = vi.fn().mockReturnValue(true)
+    const ref = { notebook: 'Work', section: 'Journal', page: 'Daily' }
+    render(SidebarQuickAccess, {
+      props: {
+        ...baseProps,
+        favorites: [ref],
+        onToggleFavorite,
+        onOpenInNewTab
+      }
+    })
+    const row = screen.getByRole('button', { name: 'Work / Journal / Daily' })
+    await fireEvent.contextMenu(row, { clientX: 5, clientY: 5 })
+    await tick()
+
+    await fireEvent.click(
+      screen.getByTestId('quick-access-menu-open-in-new-tab')
+    )
+    expect(onOpenInNewTab).toHaveBeenCalledWith(ref)
+    expect(screen.queryByTestId('quick-access-locator-menu')).toBeNull()
+
+    await fireEvent.contextMenu(row, { clientX: 5, clientY: 5 })
+    await tick()
+    await fireEvent.click(
+      screen.getByTestId('quick-access-menu-toggle-favorite')
+    )
+    expect(onToggleFavorite).toHaveBeenCalledWith(ref)
+  })
+
+  it('copy page reference resolves the shortest form and writes it', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+    const ref = { notebook: 'Work', section: 'Journal', page: 'Daily' }
+    render(SidebarQuickAccess, {
+      props: { ...baseProps, favorites: [ref] }
+    })
+    const row = screen.getByRole('button', { name: 'Work / Journal / Daily' })
+    await fireEvent.contextMenu(row, { clientX: 5, clientY: 5 })
+    await tick()
+
+    await fireEvent.click(
+      screen.getByTestId('quick-access-menu-copy-page-reference')
+    )
+    await vi.waitFor(() =>
+      expect(mocks.resolvePageLink).toHaveBeenCalledWith('Work/Journal/Daily')
+    )
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('[[Daily]]'))
+  })
+
+  it('Shift+F10 on a focused row opens the menu; Escape returns focus', async () => {
+    const ref = { notebook: 'Work', section: 'Journal', page: 'Daily' }
+    render(SidebarQuickAccess, {
+      props: { ...baseProps, favorites: [ref] }
+    })
+    const row = screen.getByRole('button', { name: 'Work / Journal / Daily' })
+    row.focus()
+    expect(document.activeElement).toBe(row)
+
+    await fireEvent.keyDown(row, { key: 'F10', shiftKey: true })
+    await tick()
+    expect(menu()).toBeInTheDocument()
+    // The primitive focuses the first item on open.
+    expect(menu().contains(document.activeElement)).toBe(true)
+
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await tick()
+    expect(screen.queryByTestId('quick-access-locator-menu')).toBeNull()
+    expect(document.activeElement).toBe(row)
+  })
+
+  it('backdrop click dismisses without touching the row', async () => {
+    const onOpen = vi.fn()
+    const ref = { notebook: 'Work', section: 'Journal', page: 'Daily' }
+    render(SidebarQuickAccess, {
+      props: { ...baseProps, favorites: [ref], onOpen }
+    })
+    const row = screen.getByRole('button', { name: 'Work / Journal / Daily' })
+    await fireEvent.contextMenu(row, { clientX: 5, clientY: 5 })
+    await tick()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Close context menu' })
+    )
+    expect(screen.queryByTestId('quick-access-locator-menu')).toBeNull()
+    expect(onOpen).not.toHaveBeenCalled()
+  })
+
+  it('unavailable rows do not open the menu', async () => {
+    const ref = { notebook: 'Gone', section: '', page: 'Deleted' }
+    render(SidebarQuickAccess, {
+      props: {
+        ...baseProps,
+        favorites: [ref],
+        staleKeys: new Set(['Gone\u0000\u0000Deleted'])
+      }
+    })
+    const row = screen.getByRole('button', {
+      name: 'Gone / Deleted — Unavailable'
+    })
+    expect(row).toBeDisabled()
+    const e = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 5,
+      clientY: 5
+    })
+    row.dispatchEvent(e)
+    await tick()
+    // The guard leaves the event alone — the native menu (or nothing, on a
+    // disabled control in a real browser) — and no locator menu appears.
+    expect(screen.queryByTestId('quick-access-locator-menu')).toBeNull()
   })
 })

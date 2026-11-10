@@ -8,6 +8,12 @@
     locatorKey,
     pagePathLabel
   } from '../lib/sidebar/navigationPreferences'
+  import ContextMenu from './ContextMenu.svelte'
+  import {
+    isContextMenuKey,
+    openContextMenuFromKeyboard
+  } from '../lib/contextMenuKey'
+  import { usePageLocatorMenu } from '../lib/pageLocatorMenu.svelte'
 
   interface Props {
     favorites: NavigationPageRef[]
@@ -21,6 +27,8 @@
     error: string
     onOpen: (ref: NavigationPageRef) => void
     onToggleFavorite: (ref: NavigationPageRef) => void
+    /** Open in a pinned tab; omitted hosts hide the "Open in new tab" item. */
+    onOpenInNewTab?: (ref: NavigationPageRef) => boolean
     onRetry: () => void
   }
 
@@ -36,10 +44,36 @@
     error,
     onOpen,
     onToggleFavorite,
+    onOpenInNewTab,
     onRetry
   }: Props = $props()
 
   let pinnedKeys = $derived(new Set(favorites.map((ref) => locatorKey(ref))))
+
+  // Shared page-locator menu (#1120): one instance for both row kinds. The
+  // host passes only the actions that apply here — toggle favorite (existing
+  // prop), open in new tab (host), and copy reference (owned by the helper).
+  // The pin handler is injected only when the host provides it so the item
+  // subset reflects the prop, not an always-present wrapper.
+  // svelte-ignore state_referenced_locally
+  // The host (SidebarNavTree) passes onOpenInNewTab statically at mount; the
+  // one-time capture is the intent, same as TaskContextMenu's stable ctx.
+  const locatorMenu = usePageLocatorMenu<NavigationPageRef>({
+    onOpenInNewTab: onOpenInNewTab
+      ? (ref) => void onOpenInNewTab(ref)
+      : undefined,
+    onToggleFavorite: (ref) => onToggleFavorite(ref),
+    isFavorite: (ref) => pinnedKeys.has(locatorKey(ref))
+  })
+
+  // Rows are native buttons (keyboard-focusable), so the context-menu key
+  // dispatches a synthetic contextmenu at the focused button — the exact same
+  // per-row handler runs for keyboard and mouse.
+  function onRowKeydown(e: KeyboardEvent): void {
+    if (!isContextMenuKey(e)) return
+    e.preventDefault()
+    openContextMenuFromKeyboard(e.currentTarget as HTMLElement)
+  }
 
   function pageState(ref: NavigationPageRef) {
     const notebook = notebooks.find((item) => item.name === ref.notebook)
@@ -128,7 +162,14 @@
                 aria-label={itemState.label
                   ? pagePathLabel(ref) + ' — ' + itemState.label
                   : pagePathLabel(ref)}
+                aria-keyshortcuts="Shift+F10"
                 onclick={() => onOpen(ref)}
+                onkeydown={onRowKeydown}
+                oncontextmenu={(e) => {
+                  // Unavailable rows keep the native menu — the locator
+                  // actions target a page that can't be opened.
+                  if (!itemState.unavailable) locatorMenu.openFromEvent(e, ref)
+                }}
               >
                 <span
                   class="material-symbols-outlined text-icon-xs text-surface-sidebar-text-muted flex-shrink-0"
@@ -192,7 +233,12 @@
                 aria-label={itemState.label
                   ? pagePathLabel(ref) + ' — ' + itemState.label
                   : pagePathLabel(ref)}
+                aria-keyshortcuts="Shift+F10"
                 onclick={() => onOpen(ref)}
+                onkeydown={onRowKeydown}
+                oncontextmenu={(e) => {
+                  if (!itemState.unavailable) locatorMenu.openFromEvent(e, ref)
+                }}
               >
                 <span
                   class="material-symbols-outlined text-icon-xs text-surface-sidebar-text-muted flex-shrink-0"
@@ -227,6 +273,32 @@
         </div>
       {/if}
     </div>
+  {/if}
+
+  {#if locatorMenu.menu}
+    <ContextMenu
+      open={true}
+      anchor={{ x: locatorMenu.menu.x, y: locatorMenu.menu.y }}
+      anchorEl={locatorMenu.menu.anchorEl}
+      onClose={locatorMenu.close}
+      ariaLabel={`Actions for ${locatorMenu.menu.locator.page}`}
+      menuTestId="quick-access-locator-menu"
+    >
+      {#each locatorMenu.items as item (item.id)}
+        <button
+          type="button"
+          role="menuitem"
+          data-testid={`quick-access-menu-${item.id}`}
+          onclick={item.run}
+        >
+          <span
+            class="material-symbols-outlined text-icon-md"
+            aria-hidden="true">{item.icon}</span
+          >
+          <span>{item.label}</span>
+        </button>
+      {/each}
+    </ContextMenu>
   {/if}
 </div>
 

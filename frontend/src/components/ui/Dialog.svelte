@@ -57,11 +57,21 @@
   function handleKeydown(e: KeyboardEvent) {
     if (!open) return
     if (e.key === 'Escape') {
+      // Swallow Escape only when this dialog actually closes on it. When a
+      // nested surface opted out via closeOnEscape={false} (a hosted context
+      // menu, a sub-dialog), suppressing propagation here would strand the
+      // key: the nested surface's own Escape listeners live deeper in the
+      // path and would never see it in a real browser.
+      // Note: busy or opted-out dialogs no longer shield their content —
+      // element-level Escape handlers inside will now receive the key.
+      // The outward half of that contract: background bubble-phase window
+      // listeners also see the key, so a drawer behind a busy dialog
+      // closes on Escape unless it guards itself (ToastContainer-style
+      // overlay check). Pinned in Dialog.test.ts.
+      if (busy || !closeOnEscape) return
       e.preventDefault()
       e.stopPropagation()
-      if (!busy && closeOnEscape) {
-        onClose?.()
-      }
+      onClose?.()
       return
     }
     onKeydown?.(e)
