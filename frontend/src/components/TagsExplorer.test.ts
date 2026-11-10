@@ -233,9 +233,7 @@ describe('TagsExplorer — block context menu (#1120)', () => {
 
     contextMenuOn(screen.getByRole('button', { name: /Ship v2 features/i }))
     await tick()
-    await fireEvent.click(
-      screen.getByTestId('tags-menu-copy-block-reference')
-    )
+    await fireEvent.click(screen.getByTestId('tags-menu-copy-block-reference'))
 
     await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('((blk-1))'))
   })

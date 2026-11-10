@@ -1817,10 +1817,7 @@ describe('BacklinksSidebarPanel — row context menu (#1120)', () => {
       name: /Open page link in page Launch plan/
     })
     await openMenuOn(row)
-    expect(menuLabels()).toEqual([
-      'Open source page',
-      'Copy page reference'
-    ])
+    expect(menuLabels()).toEqual(['Open source page', 'Copy page reference'])
   })
 
   it('group headers show the page-level subset', async () => {
@@ -1853,9 +1850,7 @@ describe('BacklinksSidebarPanel — row context menu (#1120)', () => {
     expect(screen.queryByTestId('backlinks-locator-menu')).toBeNull()
 
     await openMenuOn(row)
-    await fireEvent.click(
-      screen.getByTestId('backlinks-menu-open-exact-block')
-    )
+    await fireEvent.click(screen.getByTestId('backlinks-menu-open-exact-block'))
     expect((onBlock.mock.calls[0][0] as CustomEvent).detail).toEqual({
       notebook: 'Work',
       section: 'Projects',
@@ -1934,9 +1929,7 @@ describe('BacklinksSidebarPanel — row context menu (#1120)', () => {
       'Copy page reference'
     ])
 
-    await fireEvent.click(
-      screen.getByTestId('backlinks-menu-promote-to-link')
-    )
+    await fireEvent.click(screen.getByTestId('backlinks-menu-promote-to-link'))
     await waitFor(() =>
       expect(mocks.promoteUnlinkedMention).toHaveBeenCalledWith(
         'block-42',
@@ -1983,9 +1976,7 @@ describe('BacklinksSidebarPanel — row context menu (#1120)', () => {
     header.dispatchEvent(e)
     await tick()
     expect(menuLabels()).toEqual(['Open source page', 'Copy page reference'])
-    expect(
-      screen.queryByTestId('backlinks-menu-promote-to-link')
-    ).toBeNull()
+    expect(screen.queryByTestId('backlinks-menu-promote-to-link')).toBeNull()
   })
 
   it('Shift+F10 on a focused row opens the menu; Escape returns focus', async () => {

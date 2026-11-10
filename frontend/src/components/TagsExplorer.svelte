@@ -183,7 +183,8 @@
           aria-keyshortcuts={locatorMenuApplies(res) ? 'Shift+F10' : undefined}
           onkeydown={(e) => onRowKeydown(e, res)}
           oncontextmenu={(e) => {
-            if (locatorMenuApplies(res)) locatorMenu.openFromEvent(e, blockLocatorOf(res))
+            if (locatorMenuApplies(res))
+              locatorMenu.openFromEvent(e, blockLocatorOf(res))
           }}
           class="w-full text-left px-6 py-3 border-b border-surface-panel-border/50 hover:bg-hover transition-colors border-none bg-transparent cursor-pointer flex flex-col gap-1"
         >

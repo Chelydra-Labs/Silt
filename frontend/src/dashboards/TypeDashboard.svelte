@@ -386,7 +386,10 @@
     // dashboard pins never disagree.
     void loadFavorites()
     const onFavoritesChanged = () => void loadFavorites()
-    window.addEventListener('navigation-preferences-changed', onFavoritesChanged)
+    window.addEventListener(
+      'navigation-preferences-changed',
+      onFavoritesChanged
+    )
     const offConfigChanged = Events.On(EventName.EventConfigChanged, () => {
       void loadFavorites()
     })

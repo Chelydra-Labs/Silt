@@ -344,7 +344,11 @@ describe('TypeDashboardBoard — page-locator context menu (#1120)', () => {
 
   it('Shift+F10 on a focused card opens the menu; Escape returns focus; Enter still opens', async () => {
     const onOpenPage = vi.fn()
-    renderBoard({ onOpenPage, onToggleFavorite: vi.fn(), isFavorite: () => false })
+    renderBoard({
+      onOpenPage,
+      onToggleFavorite: vi.fn(),
+      isFavorite: () => false
+    })
     const el = card()
     el.focus()
 

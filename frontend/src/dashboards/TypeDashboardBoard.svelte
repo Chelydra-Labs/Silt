@@ -157,8 +157,9 @@
           data-testid={`dash-board-menu-${item.id}`}
           onclick={item.run}
         >
-          <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
-            >{item.icon}</span
+          <span
+            class="material-symbols-outlined text-icon-md"
+            aria-hidden="true">{item.icon}</span
           >
           <span>{item.label}</span>
         </button>

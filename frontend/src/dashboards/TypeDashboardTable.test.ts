@@ -1,5 +1,11 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/svelte'
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  waitFor
+} from '@testing-library/svelte'
 import { tick } from 'svelte'
 
 // copyPageReference (helper-owned menu item) resolves the [[shortest]] form
@@ -242,9 +248,7 @@ describe('TypeDashboardTable — page-locator context menu (#1120)', () => {
     expect(screen.queryByTestId('dash-table-locator-menu')).toBeNull()
 
     await openMenuOnRow()
-    await fireEvent.click(
-      screen.getByTestId('dash-table-menu-toggle-favorite')
-    )
+    await fireEvent.click(screen.getByTestId('dash-table-menu-toggle-favorite'))
     // The helper hands back the surface's full locator shape.
     expect(onToggleFavorite).toHaveBeenCalledWith({
       source: 'vault',

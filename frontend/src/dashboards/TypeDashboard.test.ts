@@ -81,7 +81,9 @@ const appMocks = vi.hoisted(() =>
     // mirror; SetFavoritePage is the shared service's write.
     GetNavigationPreferences: vi.fn(),
     SetFavoritePage: vi.fn(),
-    ResolvePageLink: vi.fn().mockResolvedValue({ exists: true, shortest: 'Dune' })
+    ResolvePageLink: vi
+      .fn()
+      .mockResolvedValue({ exists: true, shortest: 'Dune' })
   })
 )
 vi.mock('$silt-app', () => appMocks)
@@ -567,11 +569,13 @@ describe('TypeDashboard — row menus + favorites wiring (#1120)', () => {
       const span = el.querySelector<HTMLSpanElement>('span:not([aria-hidden])')
       return (span ?? el).textContent?.trim() ?? ''
     })
-    expect(labels).toEqual(['Open', 'Copy page reference', 'Pin to Quick Access'])
+    expect(labels).toEqual([
+      'Open',
+      'Copy page reference',
+      'Pin to Quick Access'
+    ])
 
-    await fireEvent.click(
-      screen.getByTestId('dash-table-menu-toggle-favorite')
-    )
+    await fireEvent.click(screen.getByTestId('dash-table-menu-toggle-favorite'))
 
     await waitFor(() =>
       expect(appMocks.SetFavoritePage).toHaveBeenCalledWith(
@@ -584,7 +588,9 @@ describe('TypeDashboard — row menus + favorites wiring (#1120)', () => {
     // The service's broadcast is what reloads both this mirror and the
     // sidebar's Quick Access list.
     await waitFor(() =>
-      expect(appMocks.GetNavigationPreferences.mock.calls.length).toBeGreaterThan(1)
+      expect(
+        appMocks.GetNavigationPreferences.mock.calls.length
+      ).toBeGreaterThan(1)
     )
 
     // The reloaded mirror relabels the item on the next open.
@@ -626,13 +632,9 @@ describe('TypeDashboard — row menus + favorites wiring (#1120)', () => {
       })
     )
     await tick()
-    await fireEvent.click(
-      screen.getByTestId('dash-table-menu-toggle-favorite')
-    )
+    await fireEvent.click(screen.getByTestId('dash-table-menu-toggle-favorite'))
 
-    await waitFor(() =>
-      expect(appMocks.SetFavoritePage).toHaveBeenCalled()
-    )
+    await waitFor(() => expect(appMocks.SetFavoritePage).toHaveBeenCalled())
     // The rejection was contained by the toggle wrapper — the dashboard
     // stays rendered and functional.
     expect(screen.getByTestId('type-dashboard-header')).toBeInTheDocument()
