@@ -935,6 +935,9 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     // The inline rename input replaces the header label (a11y-friendly
     // alternative to window.prompt for the rename affordance).
     const input = screen.getByLabelText('Rename column')
+    // Pins the focus handoff between the menu's focus-return and the
+    // editor's tick()-deferred focus: the input must win the race.
+    expect(input).toHaveFocus()
     await fireEvent.input(input, { target: { value: 'Backlog' } })
     await fireEvent.keyDown(input, { key: 'Enter' })
     await flush()
