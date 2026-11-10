@@ -2102,6 +2102,94 @@ func TestPluginUpdateTaskMeta(t *testing.T) {
 	})
 }
 
+// TestPluginUpdateTaskMeta_DoneForcesProgress100 pins the DONE progress
+// invariant at the plugin SDK write surface: any progress write onto a DONE
+// task (the clear sentinel included) is normalized to 100 and still succeeds,
+// while non-DONE writes land verbatim. tasks.progress is asserted via raw SQL
+// because QueryTasksWithFilters does not select that column.
+func TestPluginUpdateTaskMeta_DoneForcesProgress100(t *testing.T) {
+	const pluginID = "test-plugin"
+	requireProgress := func(t *testing.T, app *App, filePath, taskID string, want int) {
+		t.Helper()
+		got, err := os.ReadFile(filePath)
+		if err != nil {
+			t.Fatalf("read file: %v", err)
+		}
+		line := taskLineForID(string(got), taskID)
+		if line == "" {
+			t.Fatalf("task line not found in:\n%s", got)
+		}
+		if n := strings.Count(line, "[progress::"); n != 1 {
+			t.Errorf("expected exactly one [progress::] token, got %d in: %q", n, line)
+		}
+		if !strings.Contains(line, fmt.Sprintf("[progress:: %d]", want)) {
+			t.Errorf("line missing [progress:: %d]: %q", want, line)
+		}
+		var progress int
+		if err := app.db.SQLDB().QueryRow("SELECT progress FROM tasks WHERE block_id = ?", taskID).Scan(&progress); err != nil {
+			t.Fatalf("read tasks.progress: %v", err)
+		}
+		if progress != want {
+			t.Errorf("tasks.progress = %d, want %d", progress, want)
+		}
+	}
+	// seedWithState indexes a fresh task file, grants CapContentMutate, and
+	// moves the task to the requested status via the real write chain.
+	seedWithState := func(t *testing.T, status string) (*App, string, string, string) {
+		t.Helper()
+		app := newTestApp(t)
+		filePath, taskID, _ := seedTaskFile(t, app)
+		tok := registerTestSession(t, app, pluginID)
+		if err := app.RequestCapability(pluginID, string(plugins.CapContentMutate), ""); err != nil {
+			t.Fatalf("grant: %v", err)
+		}
+		if _, err := app.UpdateBlockState(taskID, status); err != nil {
+			t.Fatalf("UpdateBlockState %s: %v", status, err)
+		}
+		return app, filePath, taskID, tok
+	}
+
+	t.Run("progress write on DONE coerces to 100", func(t *testing.T) {
+		app, filePath, taskID, tok := seedWithState(t, "DONE")
+		ok, err := app.PluginUpdateTaskMeta(pluginID, tok, taskID, -1, 40)
+		if err != nil || !ok {
+			t.Fatalf("PluginUpdateTaskMeta progress=40 on DONE: ok=%v err=%v", ok, err)
+		}
+		requireProgress(t, app, filePath, taskID, 100)
+	})
+
+	t.Run("clear sentinel on DONE is suppressed", func(t *testing.T) {
+		app, filePath, taskID, tok := seedWithState(t, "DONE")
+		ok, err := app.PluginUpdateTaskMeta(pluginID, tok, taskID, -1, 0)
+		if err != nil || !ok {
+			t.Fatalf("PluginUpdateTaskMeta progress=0 on DONE: ok=%v err=%v", ok, err)
+		}
+		requireProgress(t, app, filePath, taskID, 100)
+	})
+
+	t.Run("progress write on DOING lands verbatim", func(t *testing.T) {
+		app, filePath, taskID, tok := seedWithState(t, "DOING")
+		ok, err := app.PluginUpdateTaskMeta(pluginID, tok, taskID, -1, 40)
+		if err != nil || !ok {
+			t.Fatalf("PluginUpdateTaskMeta progress=40 on DOING: ok=%v err=%v", ok, err)
+		}
+		requireProgress(t, app, filePath, taskID, 40)
+	})
+
+	t.Run("pin-only write leaves DONE progress untouched", func(t *testing.T) {
+		app, filePath, taskID, tok := seedWithState(t, "DONE")
+		ok, err := app.PluginUpdateTaskMeta(pluginID, tok, taskID, 1, -1)
+		if err != nil || !ok {
+			t.Fatalf("PluginUpdateTaskMeta pin-only on DONE: ok=%v err=%v", ok, err)
+		}
+		got, _ := os.ReadFile(filePath)
+		if !strings.Contains(taskLineForID(string(got), taskID), "[pin:: true]") {
+			t.Errorf("pin-only write did not stamp [pin:: true]:\n%s", got)
+		}
+		requireProgress(t, app, filePath, taskID, 100)
+	})
+}
+
 // TestPluginUpdateTaskMeta_RequiresCapability pins the content-mutate gate on
 // PluginUpdateTaskMeta (mirrors TestPluginAppendTaskComment_GatedByCapability).
 // A plugin with a valid session but no CapContentMutate grant must not toggle

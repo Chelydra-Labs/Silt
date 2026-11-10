@@ -219,6 +219,55 @@ func TestUndoLastTaskMutation_DoneTransitionRestoresProgress(t *testing.T) {
 	}
 }
 
+// Undo of a progress write must not replay the recorded partial value onto a
+// finished task: the DONE ⇒ 100 invariant outranks the snapshot, so a
+// DONE task can never lose its [progress:: 100] token to a stale 40.
+func TestUndoLastTaskMutation_ProgressReplayOnDoneStaysAt100(t *testing.T) {
+	app := newTestApp(t)
+	const id = "a11d0035-1111-1111-1111-111111111111"
+	// A DONE task still carrying a stale partial value (hand edit, older file
+	// version) — the state the write surface must normalize away.
+	content := "- [x] ship [progress:: 40] <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "UndoDoneReplay", "2026-07-01", content)
+
+	const pluginID = "progress-plugin"
+	token := registerTestSession(t, app, pluginID)
+	if err := app.RequestCapability(pluginID, string(plugins.CapContentMutate), ""); err != nil {
+		t.Fatalf("RequestCapability: %v", err)
+	}
+	if _, err := app.PluginUpdateTaskMeta(pluginID, token, id, -1, 50); err != nil {
+		t.Fatalf("PluginUpdateTaskMeta progress: %v", err)
+	}
+	if line := requireTaskLine(t, readTaskPage(t, filePath), id); !strings.Contains(line, "[progress:: 100]") {
+		t.Fatalf("progress write on DONE was not normalized: %q", line)
+	}
+
+	result, err := app.UndoLastTaskMutation()
+	if err != nil {
+		t.Fatalf("UndoLastTaskMutation: %v", err)
+	}
+	if !result.Undone {
+		t.Fatalf("undo result = %+v, want Undone", result)
+	}
+	if !reflect.DeepEqual(result.ChangedFields, []string{"progress"}) {
+		t.Errorf("undo changed fields = %v, want [progress]", result.ChangedFields)
+	}
+	line := requireTaskLine(t, readTaskPage(t, filePath), id)
+	if n := strings.Count(line, "[progress::"); n != 1 {
+		t.Errorf("expected exactly one [progress::] token after undo, got %d in: %q", n, line)
+	}
+	if strings.Contains(line, "[progress:: 40]") || !strings.Contains(line, "[progress:: 100]") {
+		t.Errorf("undo replayed partial progress onto a DONE task: %q", line)
+	}
+	var progress int
+	if err := app.db.SQLDB().QueryRow("SELECT progress FROM tasks WHERE block_id = ?", id).Scan(&progress); err != nil {
+		t.Fatalf("read tasks.progress: %v", err)
+	}
+	if progress != 100 {
+		t.Errorf("tasks.progress after undo = %d, want 100", progress)
+	}
+}
+
 // A focus-lock refusal during the undo itself must leave the entry journaled
 // so a retry after the editor blurs still reverses the mutation.
 func TestUndoLastTaskMutation_FocusLockRefusalRetainsEntry(t *testing.T) {
