@@ -174,6 +174,45 @@ func TestPluginCreateTask_FileContentHasGFMSyntax(t *testing.T) {
 	}
 }
 
+// TestPluginCreateTask_DoneForcesProgress100 pins the DONE progress invariant
+// on the create path: a task created already-DONE lands with exactly one
+// [progress:: 100] token and tasks.progress = 100. The raw-SQL assertion is
+// required because QueryTasksWithFilters does not select that column.
+func TestPluginCreateTask_DoneForcesProgress100(t *testing.T) {
+	app := newTestApp(t)
+	resetStandaloneTasks(t, app)
+	tok := registerTestSession(t, app, "silt-tasks")
+
+	id, err := app.PluginCreateTask("silt-tasks", tok, "Log a finished item", "", "DONE")
+	if err != nil {
+		t.Fatalf("create as DONE: %v", err)
+	}
+	tasksFile := filepath.Join(app.vaultPath, ".silt", "tasks.md")
+	content, err := os.ReadFile(tasksFile)
+	if err != nil {
+		t.Fatalf("read tasks file: %v", err)
+	}
+	line := taskLineForID(string(content), id)
+	if line == "" {
+		t.Fatalf("task line not found in:\n%s", content)
+	}
+	if n := strings.Count(line, "[progress::"); n != 1 {
+		t.Errorf("expected exactly one [progress::] token, got %d in: %q", n, line)
+	}
+	if !strings.Contains(line, "[progress:: 100]") {
+		t.Errorf("line missing [progress:: 100]: %q", line)
+	}
+	var progress int
+	if err := app.db.SQLDB().QueryRow(
+		"SELECT progress FROM tasks WHERE block_id = ?", id,
+	).Scan(&progress); err != nil {
+		t.Fatalf("read tasks.progress: %v", err)
+	}
+	if progress != 100 {
+		t.Errorf("tasks.progress = %d, want 100", progress)
+	}
+}
+
 // TestScanStandaloneTasks_IndexesExistingFile verifies the targeted scan picks
 // up the standalone-tasks file (which WalkMarkdown skips as a dot-dir) and
 // indexes it under the synthetic notebook. Simulates a cold-start re-index.
