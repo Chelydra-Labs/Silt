@@ -60,6 +60,28 @@ describe('Dialog Escape contract', () => {
     }
   })
 
+  it('busy=true: pre-registered app-level bubble listeners see the key (outward pass-through)', async () => {
+    // Pins the outward half of the busy/opted-out contract: long-lived
+    // window Escape handlers registered before this dialog mounted (e.g.
+    // a drawer close handler) receive the key while it is busy. Surfaces
+    // that must stay stable behind a modal guard themselves with an
+    // overlay-visibility check (see ToastContainer).
+    const appListener = vi.fn()
+    window.addEventListener('keydown', appListener)
+    const onClose = vi.fn()
+    try {
+      render(Dialog, { props: { busy: true, onClose } })
+      await tick()
+      const event = await escapeOnFocusedContent()
+      expect(onClose).not.toHaveBeenCalled()
+      expect(event.defaultPrevented).toBe(false)
+      expect(appListener).toHaveBeenCalledTimes(1)
+      expect(appListener.mock.calls[0][0].key).toBe('Escape')
+    } finally {
+      window.removeEventListener('keydown', appListener)
+    }
+  })
+
   it('default: closes, prevents default, and stops propagation', async () => {
     const onClose = vi.fn()
     render(Dialog, { props: { onClose } })

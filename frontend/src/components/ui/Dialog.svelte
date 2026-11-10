@@ -64,6 +64,10 @@
       // path and would never see it in a real browser.
       // Note: busy or opted-out dialogs no longer shield their content —
       // element-level Escape handlers inside will now receive the key.
+      // The outward half of that contract: background bubble-phase window
+      // listeners also see the key, so a drawer behind a busy dialog
+      // closes on Escape unless it guards itself (ToastContainer-style
+      // overlay check). Pinned in Dialog.test.ts.
       if (busy || !closeOnEscape) return
       e.preventDefault()
       e.stopPropagation()
