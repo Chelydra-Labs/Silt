@@ -4,9 +4,9 @@ import {
   GetNavigationPreferences,
   ListNavigation,
   SetNavigationSectionExpanded,
-  SetSidebarView,
-  SetFavoritePage
+  SetSidebarView
 } from '../../../bindings/silt/app.js'
+import { persistFavorite } from './favorites'
 import { NavOrderManager } from './navOrder'
 import { normalizeNavigationTree, reconcileActive } from './navTree'
 import {
@@ -227,7 +227,10 @@ export function useNavLoader(deps: UseNavLoaderDeps) {
   }) {
     const wasFavorite = favoriteKeys.has(locatorKey(ref))
     try {
-      await SetFavoritePage(ref.notebook, ref.section, ref.page, !wasFavorite)
+      // Shared write path (lib/sidebar/favorites.ts) — also used by the
+      // page-locator menus, whose toggles resync this loader via the
+      // navigation-preferences-changed broadcast the service dispatches.
+      await persistFavorite(ref, !wasFavorite)
       preferences = {
         ...preferences,
         favorites: wasFavorite
