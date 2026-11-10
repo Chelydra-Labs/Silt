@@ -716,6 +716,17 @@ describe('ContextMenu', () => {
       y: 200,
       toJSON: () => ({})
     } as DOMRect)
+    // Rendered where intended (viewport containing block): the correction
+    // pass must be a no-op.
+    vi.spyOn(sub, 'getBoundingClientRect').mockReturnValue({
+      left: 300,
+      top: 200,
+      width: 0,
+      height: 0,
+      x: 300,
+      y: 200,
+      toJSON: () => ({})
+    } as DOMRect)
     parent.focus()
     await fireEvent.keyDown(menu, { key: 'ArrowRight' })
     // Right side has room: flyout's left edge at the item right edge, top
@@ -738,11 +749,54 @@ describe('ContextMenu', () => {
       y: 100,
       toJSON: () => ({})
     } as DOMRect)
+    vi.spyOn(sub, 'getBoundingClientRect').mockReturnValue({
+      left: 1400,
+      top: 100,
+      width: 300,
+      height: 80,
+      x: 1400,
+      y: 100,
+      toJSON: () => ({})
+    } as DOMRect)
     parent.focus()
     await fireEvent.keyDown(menu, { key: 'ArrowRight' })
     // 1900 + 300 > 1920 - 8 → flip: left edge = 1700 - 300 = 1400.
     expect(sub.style.left).toBe('1400px')
     expect(sub.style.top).toBe('100px')
+  })
+
+  it('corrects flyout coords for a backdrop-filtered containing block', async () => {
+    // jsdom has no layout, so the gBCR chain is mocked to model a real
+    // browser: the card sits at (400, 320) and, because of its
+    // backdrop-filter, is the flyout's containing block — provisional
+    // viewport coords render offset by the card's origin.
+    const { menu, parent, sub } = await setupSubmenuMenu()
+    vi.spyOn(parent, 'getBoundingClientRect').mockReturnValue({
+      left: 100,
+      right: 300,
+      top: 200,
+      width: 200,
+      height: 28,
+      x: 100,
+      y: 200,
+      toJSON: () => ({})
+    } as DOMRect)
+    vi.spyOn(sub, 'getBoundingClientRect').mockReturnValue({
+      left: 300 + 400,
+      top: 200 + 320,
+      width: 0,
+      height: 0,
+      x: 700,
+      y: 520,
+      toJSON: () => ({})
+    } as DOMRect)
+    parent.focus()
+    await fireEvent.keyDown(menu, { key: 'ArrowRight' })
+    // Intended viewport pos (300, 200) rendered at (700, 520): the fixed
+    // coords shift by the delta into containing-block space, so the flyout
+    // lands at (300, 200) on screen again.
+    expect(sub.style.left).toBe('-100px')
+    expect(sub.style.top).toBe('-120px')
   })
 
   it('initial focus stays on root items when a nested menu has no parent item', async () => {

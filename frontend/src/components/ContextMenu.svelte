@@ -132,8 +132,22 @@
       { width: sub.offsetWidth, height: sub.offsetHeight },
       { width: window.innerWidth, height: window.innerHeight }
     )
-    sub.style.left = `${pos.left}px`
-    sub.style.top = `${pos.top}px`
+    let left = pos.left
+    let top = pos.top
+    sub.style.left = `${left}px`
+    sub.style.top = `${top}px`
+
+    // Filter Effects L2: a non-none backdrop-filter makes the card — and each
+    // open flyout, for deeper nesting — the containing block for fixed-position
+    // descendants, so viewport-space coords above would render offset by that
+    // ancestor's origin. Correct by the delta between the intended viewport
+    // position and where it actually rendered (exact for translated containing
+    // blocks; self-correcting for any filtered ancestor).
+    const actual = sub.getBoundingClientRect()
+    left += pos.left - actual.left
+    top += pos.top - actual.top
+    sub.style.left = `${left}px`
+    sub.style.top = `${top}px`
     sub.style.visibility = ''
 
     openLevels.push({ parent, menu: sub })
