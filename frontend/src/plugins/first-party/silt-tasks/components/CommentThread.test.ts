@@ -1,15 +1,14 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 
-// CommentThread reads the local_author pref via the settings module
-// (loadLocalAuthor, seeded by initTasksSettings) and persists via the SDK's
-// ctx.updatePluginSetting (wrapped by persistLocalAuthor's saveFn). The
-// component doesn't self-init the module, so each test seeds the slice via
-// initTasksSettings(ctx) before mount.
+// CommentThread attributes comments from the configured local_author pref
+// (#1125): a fresh ctx.getPluginSettings() read at mount (Settings writes
+// emit no config:changed, so the hub's cached slice can be stale) with no
+// per-comment Author input. The test ctx's getPluginSettings resolves
+// `mocks.tasksSettings`, so each test seeds the slice before mount.
 const mocks = vi.hoisted(() => ({
   updatePluginSetting: vi.fn().mockResolvedValue(true),
-  tasksSettings: {} as Record<string, unknown>,
-  persistLocalAuthor: vi.fn().mockResolvedValue(true)
+  tasksSettings: {} as Record<string, unknown>
 }))
 
 vi.mock('@wailsio/runtime', () => ({
@@ -84,7 +83,6 @@ if (
 import CommentThread from './CommentThread.svelte'
 import type { PluginContext, SubtreeBlock } from '../../../sdk'
 import { v2CtxStubs } from '../../../test-helpers'
-import { initTasksSettings } from '../settings'
 
 interface CommentThreadProps {
   taskId: string
@@ -108,7 +106,6 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     fetchSubtree: vi.fn().mockResolvedValue([]),
     addTaskComment: vi.fn().mockResolvedValue('new-uuid'),
     deleteBlock: vi.fn().mockResolvedValue(true),
-    getLocalAuthor: vi.fn().mockResolvedValue('osuser'),
     getPluginSettings: vi.fn(() => Promise.resolve(mocks.tasksSettings)),
     updatePluginSetting: mocks.updatePluginSetting,
     on: vi.fn(() => () => {}),
@@ -116,12 +113,9 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
   } as unknown as PluginContext
 }
 
-// Seed the settings module's slice + wire saveFn to mocks.updatePluginSetting.
-// CommentThread reads loadLocalAuthor() in onMount, so this must resolve
-// before mount().
-async function seedSettings(slice: Record<string, unknown> = {}) {
+// Control what the component's fresh ctx.getPluginSettings() read resolves.
+function seedSettings(slice: Record<string, unknown> = {}) {
   mocks.tasksSettings = slice
-  await initTasksSettings(makeCtx())
 }
 
 function makeBlock(o: Partial<SubtreeBlock> & { id: string }): SubtreeBlock {
@@ -155,11 +149,11 @@ async function flush() {
 
 describe('CommentThread', () => {
   beforeEach(async () => {
-    // Reset the persisted local_author between tests so the seed-vs-skip
-    // branches are deterministic.
+    // Reset the resolved local_author between tests so the configured-vs-
+    // empty attribution branches are deterministic.
     mocks.updatePluginSetting.mockClear()
     mocks.updatePluginSetting.mockResolvedValue(true)
-    await seedSettings({})
+    seedSettings({})
   })
   afterEach(() => cleanup())
 
@@ -311,7 +305,7 @@ describe('CommentThread', () => {
     expect(addTaskComment).toHaveBeenCalledWith(
       'task-1',
       'hello world',
-      'osuser'
+      undefined
     )
   })
 
@@ -342,7 +336,7 @@ describe('CommentThread', () => {
     expect(addTaskComment).toHaveBeenLastCalledWith(
       'task-1',
       'please retry me',
-      'osuser'
+      undefined
     )
     // Banner cleared after the successful retry.
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
@@ -414,49 +408,64 @@ describe('CommentThread', () => {
     expect(screen.getByRole('alert')).toBeInTheDocument()
   })
 
-  it('seeds composerAuthor from ctx.getLocalAuthor when the pref is empty, and persists it', async () => {
-    await seedSettings({}) // pref unset
-    const getLocalAuthor = vi.fn().mockResolvedValue('osuser')
-    const ctx = makeCtx({ getLocalAuthor })
-    mount({ ctx })
-    await flush()
-    expect(getLocalAuthor).toHaveBeenCalled()
-    const authorInput = screen.getByLabelText(
-      'Default comment author'
-    ) as HTMLInputElement
-    expect(authorInput.value).toBe('osuser')
-    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
-      'local_author',
-      'osuser'
-    )
-  })
-
-  it('does NOT call ctx.getLocalAuthor when the local_author pref is already set', async () => {
-    await seedSettings({ local_author: 'saved-name' })
-    const getLocalAuthor = vi.fn()
-    const ctx = makeCtx({ getLocalAuthor })
-    mount({ ctx })
-    await flush()
-    expect(getLocalAuthor).not.toHaveBeenCalled()
-    const authorInput = screen.getByLabelText(
-      'Default comment author'
-    ) as HTMLInputElement
-    expect(authorInput.value).toBe('saved-name')
-  })
-
-  it('changing the author input + blur calls persistLocalAuthor (updatePluginSetting)', async () => {
+  it('renders no per-comment Author input (configured in Settings, #1125)', async () => {
     mount()
     await flush()
-    const authorInput = screen.getByLabelText(
-      'Default comment author'
-    ) as HTMLInputElement
-    mocks.updatePluginSetting.mockClear()
-    await fireEvent.input(authorInput, { target: { value: 'renamed' } })
-    await fireEvent.blur(authorInput)
-    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
-      'local_author',
-      'renamed'
+    expect(screen.queryByLabelText('Default comment author')).toBeNull()
+  })
+
+  it('attributes top-level comments AND replies with the configured author', async () => {
+    seedSettings({ local_author: 'Dana' })
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const ctx = makeCtx({
+      addTaskComment,
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: 'parent comment',
+          author: 'alice',
+          timestamp: '2026-07-01T09:00:00',
+          parent_id: 'task-1'
+        })
+      ])
+    })
+    mount({ ctx })
+    await flush()
+
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'top-level' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    await flush()
+    expect(addTaskComment).toHaveBeenCalledWith('task-1', 'top-level', 'Dana')
+
+    // Two comments now (seeded parent + the just-posted top-level); reply
+    // to the seeded one.
+    const replyBtn = screen.getAllByLabelText('Reply to comment')[0]!
+    await fireEvent.click(replyBtn)
+    await flush()
+    const replyTa = screen.getByLabelText('Reply text') as HTMLTextAreaElement
+    await fireEvent.input(replyTa, { target: { value: 'a reply' } })
+    await fireEvent.keyDown(replyTa, { key: 'Enter' })
+    await flush()
+    expect(addTaskComment).toHaveBeenLastCalledWith(
+      'task-1',
+      'a reply',
+      'Dana',
+      'c1'
     )
+  })
+
+  it('empty pref → author is undefined (no [author::] token, "Unknown" fallback)', async () => {
+    seedSettings({})
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const ctx = makeCtx({ addTaskComment })
+    mount({ ctx })
+    await flush()
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'anon' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    await flush()
+    expect(addTaskComment).toHaveBeenCalledWith('task-1', 'anon', undefined)
   })
 
   it('block:changed event triggers a reload of the thread', async () => {
@@ -633,7 +642,7 @@ describe('CommentThread', () => {
     expect(addTaskComment).toHaveBeenCalledWith(
       'task-1',
       'my reply',
-      'osuser',
+      undefined,
       'c1'
     )
     expect(screen.getByText('my reply')).toBeInTheDocument()

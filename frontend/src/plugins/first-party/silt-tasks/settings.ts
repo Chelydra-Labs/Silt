@@ -344,22 +344,16 @@ export function persistWeekStart(value: WeekStart): Promise<boolean> {
 }
 
 /**
- * Persisted local author for the comment composer (#430). Distinguishes
- * "never set" (undefined) from "explicitly cleared" (''): a cleared pref
- * must be respected, not re-seeded from the OS username on every mount.
- * Returns `undefined` when the key is absent, `''` when the user cleared
- * the input, or the saved name otherwise.
+ * Persisted local author for task comments (#430, moved to Settings #1125).
+ * Returns the saved name, `''` when the user explicitly cleared it, or
+ * `undefined` when the key has never been written. Callers treat both empty
+ * forms as "unresolved" (the OS-account prefill / "Unknown" fallback).
  */
 export function loadLocalAuthor(): string | undefined {
   const slice = tasksSettings()
   if (!('local_author' in slice)) return undefined
   const v = slice['local_author']
   return typeof v === 'string' ? v : ''
-}
-
-/** Atomically write the local author pref to the vault config. */
-export function persistLocalAuthor(author: string): Promise<boolean> {
-  return saveFn ? saveFn('local_author', author) : Promise.resolve(false)
 }
 
 /**

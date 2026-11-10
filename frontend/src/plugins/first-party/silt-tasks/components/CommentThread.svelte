@@ -4,7 +4,6 @@
   import type { PluginContext, SubtreeBlock } from '../../../sdk'
   import RichText from '../../../../components/RichText.svelte'
   import { motionDuration } from '../motion'
-  import { loadLocalAuthor, persistLocalAuthor } from '../settings'
   import ErrorBanner from './ErrorBanner.svelte'
   import { friendlyCaughtError } from '../errors'
 
@@ -80,7 +79,9 @@
   // have no clean retry path from the banner.
   let errorRetryable = $state(false)
   let composerText = $state('')
-  let composerAuthor = $state('')
+  // Configured in Settings → General (#1125); "" means no author token
+  // (renderer shows "Unknown").
+  let commentAuthor = $state('')
   let composerPending = $state(false)
   let liveMessage = $state('')
   // Inline reply composer: which comment is being replied to, plus its draft.
@@ -218,23 +219,18 @@
     }
   }
 
+  // Read the author pref fresh from the SDK rather than the hub's cached
+  // settings slice: Settings saves go through UpdatePluginSetting, which
+  // emits no config:changed, so a write while the hub is open would leave
+  // the cached slice stale until re-mount.
   async function loadAuthor() {
-    const saved = loadLocalAuthor()
-    if (saved !== undefined) {
-      // Respect both a saved name AND an explicit clear (''); only re-seed
-      // from the OS username when the key is absent (never set).
-      composerAuthor = saved
-      return
-    }
-    // Seed from the OS user once, then persist so later opens skip the IPC
-    // and the user keeps a stable identity across task switches.
     try {
-      const who = await ctx.getLocalAuthor()
-      composerAuthor = who || ''
-      if (who) await persistLocalAuthor(who)
+      const slice = (await ctx.getPluginSettings()) ?? {}
+      const v = slice['local_author']
+      commentAuthor = typeof v === 'string' ? v : ''
     } catch {
-      // Non-fatal: composerAuthor stays '' and the comment posts with no
-      // author token (renderer shows "Unknown").
+      // Non-fatal: posts carry no author token (renderer shows "Unknown").
+      commentAuthor = ''
     }
   }
 
@@ -272,7 +268,7 @@
   async function submit() {
     const text = composerText.trim()
     if (!text || composerPending) return
-    const author = composerAuthor.trim()
+    const author = commentAuthor.trim()
     const now = new Date().toISOString().slice(0, 19)
     const optimisticKey = nextKey()
     // Optimistic push so the user sees the comment immediately; the
@@ -332,7 +328,7 @@
     const text = replyText.trim()
     const parentId = replyToId
     if (!text || !parentId || replyPending) return
-    const author = composerAuthor.trim()
+    const author = commentAuthor.trim()
     const now = new Date().toISOString().slice(0, 19)
     const optimisticKey = nextKey()
     const optimistic: Comment = {
@@ -437,12 +433,6 @@
       errorRetryable = false
       liveMessage = 'Comment failed to delete'
     }
-  }
-
-  function onAuthorBlur() {
-    // Persist on blur so the pref sticks across opens; empty is valid (clears
-    // the override and the OS-user fallback re-applies on next load).
-    void persistLocalAuthor(composerAuthor.trim())
   }
 
   // Split a comment body into bold / non-bold runs so **bold** renders as
@@ -660,20 +650,7 @@
     <p id={id(`comment-composer-help-${taskId}`)} class="sr-only">
       Press Enter to post, Shift+Enter for a new line.
     </p>
-    <div class="flex items-center gap-2">
-      <label
-        for={id(`comment-author-${taskId}`)}
-        class="text-type-2xs font-label-sm text-text-muted"
-      >
-        Author
-      </label>
-      <input
-        id={id(`comment-author-${taskId}`)}
-        bind:value={composerAuthor}
-        onblur={onAuthorBlur}
-        aria-label="Default comment author"
-        class="flex-1 rounded border border-surface-card-border bg-surface-card px-2 py-0.5 text-type-xs text-text-primary focus:outline-none focus:border-accent-primary-start"
-      />
+    <div class="flex items-center justify-end gap-2">
       <button
         type="button"
         onclick={() => void submit()}
