@@ -3264,4 +3264,66 @@ describe('ListView — task context menu (#1116)', () => {
     expect(document.activeElement).not.toBe(document.body)
     expect(row.contains(document.activeElement)).toBe(true)
   })
+
+  // Removal-triggering menu writes must land focus on the neighbor row's
+  // primary control (the row that slides into the removed one's place) —
+  // the hub-heading fallback would strand keyboard users at the list top.
+  async function renderTwoMenuRows() {
+    let done = false
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql))
+        return {
+          rows: done
+            ? [task('m2', 'Neighbor task')]
+            : [task('m1', 'Menu target'), task('m2', 'Neighbor task')],
+          truncated: false
+        }
+      return { rows: [], truncated: false }
+    })
+    mocks.updateBlockState.mockImplementation(async () => {
+      done = true
+      return { ok: true, spawnedId: '' }
+    })
+    const ctx = menuCtx()
+    render(Tasks, { ctx, manifest: MANIFEST })
+    await flush()
+    return ctx
+  }
+
+  async function markDoneViaMenu() {
+    await fireEvent.click(screen.getByTestId('task-menu-toggle-status'))
+    // Production removal: the write emits block:changed, the debounced
+    // reload drops the row, the rescue polls past it to focus the neighbor.
+    mocks.blockChangedCallbacks.forEach((cb) => cb())
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await flush()
+
+    const neighborRow = document.querySelector('[data-block-id="m2"]')!
+    expect(neighborRow).toBeInTheDocument()
+    expect(document.activeElement).toBe(
+      neighborRow.querySelector('button[data-task-primary]')
+    )
+  }
+
+  it('menu Mark done rescues focus onto the neighbor row (mouse trigger)', async () => {
+    const ctx = await renderTwoMenuRows()
+    await fireEvent.contextMenu(
+      document.querySelector('[data-block-id="m1"]') as HTMLElement,
+      { clientX: 5, clientY: 5 }
+    )
+    await markDoneViaMenu()
+    expect(ctx.updateBlockState).toHaveBeenCalledWith('m1', 'DONE')
+  })
+
+  it('menu Mark done rescues focus onto the neighbor row (Shift+F10 trigger)', async () => {
+    const ctx = await renderTwoMenuRows()
+    const bodyBtn = document.querySelector(
+      '[data-block-id="m1"] button[data-task-primary]'
+    ) as HTMLElement
+    bodyBtn.focus()
+    await fireEvent.keyDown(bodyBtn, { key: 'F10', shiftKey: true })
+    expect(screen.getByTestId('task-context-menu')).toBeInTheDocument()
+    await markDoneViaMenu()
+    expect(ctx.updateBlockState).toHaveBeenCalledWith('m1', 'DONE')
+  })
 })

@@ -38,10 +38,15 @@ export function focusableTaskControl(
  * write knows where keyboard focus should land.
  */
 export function neighborTaskHit(anchor: HTMLElement): HTMLElement | null {
+  // The anchor is a focusable control (focusableTaskControl) for the
+  // primitive's close-time restore — on the List that is a button inside
+  // the row, not the hit element itself — so climb back to the task
+  // surface before indexing neighbors.
+  const hit = anchor.closest<HTMLElement>('[data-task-hit]') ?? anchor
   const hits = Array.from(
     document.querySelectorAll<HTMLElement>('[data-task-hit]')
   )
-  const idx = hits.indexOf(anchor)
+  const idx = hits.indexOf(hit)
   if (idx < 0) return null
   return hits[idx + 1] ?? hits[idx - 1] ?? null
 }
@@ -67,7 +72,13 @@ export function rescueFocusAfterWrite(
   const check = (attempt: number) => {
     if (!anchor.isConnected) {
       if (document.activeElement === document.body) {
+        // Container surfaces (List rows) resolve to their first focusable
+        // control — the mark-done checkbox; `data-task-primary` marks the
+        // labeled content control, the same landing the row checkbox's own
+        // removal path uses (focusAfterRowRemoval). Self-focusable surfaces
+        // (Board card, Calendar chip) have no marker and focus as themselves.
         const target =
+          neighbor?.querySelector<HTMLElement>('[data-task-primary]') ??
           focusableTaskControl(neighbor) ??
           document.querySelector<HTMLElement>('[data-tasks-hub] h1')
         target?.focus()

@@ -2122,10 +2122,16 @@ describe('Tasks hub undo (#1011)', () => {
     await new Promise((resolve) => setTimeout(resolve, 300))
     await flush()
 
-    // Focus was rescued onto the neighbor — <body> would fail the hub's
-    // Ctrl+Z containment check.
+    // Focus was rescued onto the neighbor row's primary control — <body>
+    // would fail the hub's Ctrl+Z containment check, and the hub-heading
+    // fallback would strand keyboard users at the top of the list.
     const active = document.activeElement as HTMLElement
     expect(active).not.toBe(document.body)
+    expect(active).toBe(
+      document
+        .querySelector('[data-block-id="t2"]')
+        ?.querySelector('button[data-task-primary]')
+    )
     expect(active.closest('[data-tasks-hub]')).toBeTruthy()
 
     const undoKey = new KeyboardEvent('keydown', {

@@ -499,10 +499,11 @@
           document.querySelectorAll<HTMLElement>('[data-block-id]')
         ).find((el) => el.dataset.blockId === nextId)
       : null
+    // [data-task-primary] = the row's labeled content control, the shared
+    // focus landing for removal rescues (see useTaskContextMenu).
     const target =
-      row?.querySelector<HTMLElement>(
-        'button[aria-label^="Edit metadata for"]'
-      ) ?? document.querySelector<HTMLElement>('[data-tasks-hub] h1')
+      row?.querySelector<HTMLElement>('[data-task-primary]') ??
+      document.querySelector<HTMLElement>('[data-tasks-hub] h1')
     target?.focus()
   }
 
@@ -971,6 +972,7 @@
       }}
       class="flex-1 min-w-0 rounded text-left bg-transparent border-none p-0 cursor-pointer focus-visible:outline-none"
       aria-keyshortcuts="Enter Shift+Enter Shift+F10"
+      data-task-primary
       aria-label={`Edit metadata for ${item.clean_content}${item.notebook === STANDALONE_TASKS_NOTEBOOK ? ', standalone task' : ''}${item.due_date ? `, due ${item.due_date}` : ', no due date'}${item.subtask_total > 0 ? `, ${item.subtask_done} of ${item.subtask_total} subtasks done` : ''}${item.shortlist_rank != null ? `, shortlist rank ${item.shortlist_rank}` : ''}`}
     >
       <div
