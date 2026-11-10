@@ -21,7 +21,9 @@
  * additionally excludes DONE tasks (`status != 'DONE'`) because a completed
  * task is no longer "on fire". Callers that color a DONE task's date should
  * suppress the overdue/today tones (render muted) to match that semantics —
- * see the ListView/BoardView call sites in #457.
+ * see the ListView/BoardView call sites in #457. The due-date board agrees at
+ * the set level: its lanes hold only open tasks, so completed work never
+ * appears in Overdue/Today/Upcoming/Later/No Date.
  */
 export type DueDateClass = 'overdue' | 'today' | 'upcoming' | 'none'
 
