@@ -146,3 +146,24 @@ export function flipOrClamp(
     opts?.horizontal
   )
 }
+
+/**
+ * Position a submenu flyout beside its parent menuitem: pinned to the item's
+ * right edge, flipping to hang off the item's left edge only when there is no
+ * room on the right, then viewport-clamped vertically (and as a last resort
+ * horizontally). Pure: takes anchor rect + sizes from the args.
+ */
+export function submenuPosition(
+  anchor: { left: number; right: number; top: number },
+  size: { width: number; height: number },
+  viewport: Viewport
+): { left: number; top: number } {
+  const x =
+    anchor.right + size.width > viewport.width - POPOVER_MARGIN
+      ? anchor.left - size.width
+      : anchor.right
+  return clampToViewport(
+    { x, y: anchor.top, width: size.width, height: size.height },
+    viewport
+  )
+}
