@@ -12,6 +12,13 @@
     type SortState,
     type TypeDashboardRow
   } from './dashboards'
+  import ContextMenu from '../components/ContextMenu.svelte'
+  import {
+    isContextMenuKey,
+    openContextMenuFromKeyboard
+  } from '../lib/contextMenuKey'
+  import { usePageLocatorMenu } from '../lib/pageLocatorMenu.svelte'
+  import type { PageActionRef } from '../lib/pageActions'
 
   interface Props {
     columns: DashboardColumn[]
@@ -29,6 +36,10 @@
       section: string
       page: string
     }) => void
+    /** Toggle the Quick Access favorite; omitted hosts hide the Pin item. */
+    onToggleFavorite?: (locator: PageActionRef) => void
+    /** Favorite state, read once at menu open for the Pin/Unpin label. */
+    isFavorite?: (locator: PageActionRef) => boolean
   }
 
   let {
@@ -40,8 +51,49 @@
     collapsed,
     onSort,
     onToggleGroup,
-    onOpenPage
+    onOpenPage,
+    onToggleFavorite,
+    isFavorite
   }: Props = $props()
+
+  /** Row locator: the page triple the shared helper requires plus source. */
+  interface DashboardPageLocator {
+    source: string
+    notebook: string
+    section: string
+    page: string
+  }
+
+  function locatorOf(row: TypeDashboardRow): DashboardPageLocator {
+    return {
+      source: row.source,
+      notebook: row.notebook,
+      section: row.section,
+      page: row.page
+    }
+  }
+
+  // Shared page-locator menu (#1120): standard vocabulary only — Open rides
+  // the existing onOpenPage prop, Copy page reference is helper-owned, and
+  // the Pin item appears only when the dashboard host wires favorites.
+  // svelte-ignore state_referenced_locally
+  // Presence is captured once at mount (the host passes static handlers);
+  // the wrappers read the live prop values per invocation.
+  const locatorMenu = usePageLocatorMenu<DashboardPageLocator>({
+    onOpen: (loc) => onOpenPage(loc),
+    onToggleFavorite: onToggleFavorite
+      ? (loc) => onToggleFavorite(loc)
+      : undefined,
+    isFavorite: isFavorite ? (loc) => isFavorite(loc) : undefined
+  })
+
+  // Rows are native buttons, so the context-menu key dispatches a synthetic
+  // contextmenu at the focused row button — the same handler as mouse.
+  function onRowKeydown(e: KeyboardEvent): void {
+    if (!isContextMenuKey(e)) return
+    e.preventDefault()
+    openContextMenuFromKeyboard(e.currentTarget as HTMLElement)
+  }
 
   function ariaSort(key: string): 'ascending' | 'descending' | 'none' {
     if (sort.property !== key) return 'none'
@@ -132,13 +184,11 @@
                 <button
                   type="button"
                   class="page-link"
-                  onclick={() =>
-                    onOpenPage({
-                      source: row.source,
-                      notebook: row.notebook,
-                      section: row.section,
-                      page: row.page
-                    })}
+                  onclick={() => onOpenPage(locatorOf(row))}
+                  aria-keyshortcuts="Shift+F10"
+                  onkeydown={onRowKeydown}
+                  oncontextmenu={(e) =>
+                    locatorMenu.openFromEvent(e, locatorOf(row))}
                   aria-label={pageCellLabel(row)}
                 >
                   <span class="page-name">{row.page}</span>
@@ -164,6 +214,31 @@
     </tbody>
   </table>
 </div>
+
+{#if locatorMenu.menu}
+  <ContextMenu
+    open={true}
+    anchor={{ x: locatorMenu.menu.x, y: locatorMenu.menu.y }}
+    anchorEl={locatorMenu.menu.anchorEl}
+    onClose={locatorMenu.close}
+    ariaLabel={`Actions for ${locatorMenu.menu.locator.page}`}
+    menuTestId="dash-table-locator-menu"
+  >
+    {#each locatorMenu.items as item (item.id)}
+      <button
+        type="button"
+        role="menuitem"
+        data-testid={`dash-table-menu-${item.id}`}
+        onclick={item.run}
+      >
+        <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+          >{item.icon}</span
+        >
+        <span>{item.label}</span>
+      </button>
+    {/each}
+  </ContextMenu>
+{/if}
 
 {#snippet cell(row: TypeDashboardRow, col: DashboardColumn)}
   {@const value =

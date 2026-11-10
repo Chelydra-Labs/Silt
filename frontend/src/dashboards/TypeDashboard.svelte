@@ -24,6 +24,9 @@
   } from '../properties/types'
   import ReservedPropRenameNotice from '../properties/ReservedPropRenameNotice.svelte'
   import { settings, appendDismissedTip } from '../settings/store.svelte'
+  import { pushNotification } from '../notifications/store.svelte'
+  import { fetchFavoritePages, persistFavorite } from '../lib/sidebar/favorites'
+  import { locatorKey } from '../lib/sidebar/navigationPreferences'
   import TypeDashboardFilters from './TypeDashboardFilters.svelte'
   import TypeDashboardTable from './TypeDashboardTable.svelte'
   import TypeDashboardBoard from './TypeDashboardBoard.svelte'
@@ -377,6 +380,16 @@
 
   onMount(() => {
     void loadTypes()
+    // Quick Access favorites feed the Pin/Unpin item on row menus (#1120).
+    // The set resyncs on the same broadcast the shared favorites write path
+    // dispatches (and on external config edits), so sidebar pins and
+    // dashboard pins never disagree.
+    void loadFavorites()
+    const onFavoritesChanged = () => void loadFavorites()
+    window.addEventListener('navigation-preferences-changed', onFavoritesChanged)
+    const offConfigChanged = Events.On(EventName.EventConfigChanged, () => {
+      void loadFavorites()
+    })
     // The type set can change while the dashboard is mounted (a type file is
     // edited/added/deleted externally). Re-fetch the list + refresh the query
     // so the picker, columns, and rows don't go stale. Mirrors pageTypeState's
@@ -388,6 +401,11 @@
     const detachReprojection = reprojection.attach()
     return () => {
       offTypesChanged()
+      offConfigChanged()
+      window.removeEventListener(
+        'navigation-preferences-changed',
+        onFavoritesChanged
+      )
       detachReprojection()
     }
   })
@@ -531,6 +549,47 @@
     queueMicrotask(() => {
       group.querySelector<HTMLElement>(`[data-mode="${next}"]`)?.focus()
     })
+  }
+
+  // --- Quick Access favorites (#1120) --------------------------------------
+  //
+  // Light mirror of the pinned set for the row menus' Pin/Unpin label. The
+  // WRITE goes through the shared favorites service (the nav loader's own
+  // path), whose broadcast reloads both this set and the sidebar's list.
+  let favoriteKeys = $state<Set<string>>(new Set())
+
+  async function loadFavorites(): Promise<void> {
+    try {
+      const favorites = await fetchFavoritePages()
+      favoriteKeys = new Set(favorites.map((ref) => locatorKey(ref)))
+    } catch {
+      // Keep the last-known set — a failed read only risks a stale label.
+    }
+  }
+
+  function isFavorite(loc: {
+    notebook: string
+    section: string
+    page: string
+  }): boolean {
+    return favoriteKeys.has(locatorKey(loc))
+  }
+
+  function toggleFavorite(loc: {
+    notebook: string
+    section: string
+    page: string
+  }): void {
+    void (async () => {
+      try {
+        await persistFavorite(loc, !isFavorite(loc))
+      } catch {
+        pushNotification({
+          kind: 'error',
+          message: 'Favorite could not be updated.'
+        })
+      }
+    })()
   }
 </script>
 
@@ -855,6 +914,8 @@
           grouped={groupBy !== ''}
           heroField={currentType?.heroField ?? ''}
           {onOpenPage}
+          onToggleFavorite={toggleFavorite}
+          {isFavorite}
         />
       {:else}
         <TypeDashboardTable
@@ -867,6 +928,8 @@
           {onSort}
           onToggleGroup={toggleGroup}
           {onOpenPage}
+          onToggleFavorite={toggleFavorite}
+          {isFavorite}
         />
       {/if}
     {/if}

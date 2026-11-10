@@ -12,6 +12,13 @@
     type TypeDashboardProp,
     type TypeDashboardRow
   } from './dashboards'
+  import ContextMenu from '../components/ContextMenu.svelte'
+  import {
+    isContextMenuKey,
+    openContextMenuFromKeyboard
+  } from '../lib/contextMenuKey'
+  import { usePageLocatorMenu } from '../lib/pageLocatorMenu.svelte'
+  import type { PageActionRef } from '../lib/pageActions'
 
   interface Props {
     sections: GroupSection[]
@@ -24,6 +31,10 @@
       section: string
       page: string
     }) => void
+    /** Toggle the Quick Access favorite; omitted hosts hide the Pin item. */
+    onToggleFavorite?: (locator: PageActionRef) => void
+    /** Favorite state, read once at menu open for the Pin/Unpin label. */
+    isFavorite?: (locator: PageActionRef) => boolean
   }
 
   let {
@@ -31,8 +42,40 @@
     columns,
     grouped,
     heroField = '',
-    onOpenPage
+    onOpenPage,
+    onToggleFavorite,
+    isFavorite
   }: Props = $props()
+
+  /** Row locator: the page triple the shared helper requires plus source. */
+  interface DashboardPageLocator {
+    source: string
+    notebook: string
+    section: string
+    page: string
+  }
+
+  function locatorOf(row: TypeDashboardRow): DashboardPageLocator {
+    return {
+      source: row.source,
+      notebook: row.notebook,
+      section: row.section,
+      page: row.page
+    }
+  }
+
+  // Shared page-locator menu (#1120), standard vocabulary only — mirrors
+  // TypeDashboardTable's wiring so both view modes offer identical items.
+  // svelte-ignore state_referenced_locally
+  // Presence is captured once at mount (the host passes static handlers);
+  // the wrappers read the live prop values per invocation.
+  const locatorMenu = usePageLocatorMenu<DashboardPageLocator>({
+    onOpen: (loc) => onOpenPage(loc),
+    onToggleFavorite: onToggleFavorite
+      ? (loc) => onToggleFavorite(loc)
+      : undefined,
+    isFavorite: isFavorite ? (loc) => isFavorite(loc) : undefined
+  })
 
   // Chip up to two non-page, non-hero properties so cards stay scannable.
   // Page-name is the title, hero is the subtitle — chips surface the next
@@ -63,8 +106,15 @@
     })
   }
 
-  // Enter / Space activate the focused card (role=button convention).
+  // Enter / Space activate the focused card (role=button convention); the
+  // context-menu keys open the locator menu through the card's own
+  // oncontextmenu (synthesized event, same as mouse).
   function onCardKeydown(e: KeyboardEvent, row: TypeDashboardRow): void {
+    if (isContextMenuKey(e)) {
+      e.preventDefault()
+      openContextMenuFromKeyboard(e.currentTarget as HTMLElement)
+      return
+    }
     if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return
     e.preventDefault()
     open(row)
@@ -89,6 +139,31 @@
     {#each sections as section (section.key)}
       {@render lane(section)}
     {/each}
+  {/if}
+
+  {#if locatorMenu.menu}
+    <ContextMenu
+      open={true}
+      anchor={{ x: locatorMenu.menu.x, y: locatorMenu.menu.y }}
+      anchorEl={locatorMenu.menu.anchorEl}
+      onClose={locatorMenu.close}
+      ariaLabel={`Actions for ${locatorMenu.menu.locator.page}`}
+      menuTestId="dash-board-locator-menu"
+    >
+      {#each locatorMenu.items as item (item.id)}
+        <button
+          type="button"
+          role="menuitem"
+          data-testid={`dash-board-menu-${item.id}`}
+          onclick={item.run}
+        >
+          <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+            >{item.icon}</span
+          >
+          <span>{item.label}</span>
+        </button>
+      {/each}
+    </ContextMenu>
   {/if}
 </div>
 
@@ -121,6 +196,7 @@
     .slice(0, 2)
     .map((c) => ({ col: c, prop: propOf(row, c.key) }))
     .filter((c) => c.prop && c.prop.valueText !== '')}
+  {@const rowLocator = locatorOf(row)}
   <div
     class="card"
     role="button"
@@ -128,8 +204,10 @@
     aria-label="{row.page}{hero ? ', ' + hero : ''}{row.notebook
       ? ', ' + row.notebook
       : ''}{row.section ? ' › ' + row.section : ''}"
+    aria-keyshortcuts="Shift+F10"
     onclick={() => open(row)}
     onkeydown={(e) => onCardKeydown(e, row)}
+    oncontextmenu={(e) => locatorMenu.openFromEvent(e, rowLocator)}
   >
     <span class="card-name">{row.page}</span>
     {#if hero}
