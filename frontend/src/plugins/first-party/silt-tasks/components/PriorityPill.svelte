@@ -9,7 +9,9 @@
 </script>
 
 <script lang="ts">
-  import { untrack } from 'svelte'
+  import { tick, untrack } from 'svelte'
+  import { portal } from '../../../../lib/portal'
+  import { flipOrClamp } from '../../../../lib/editor/popoverPositioning'
   import { nextPriority } from '../../../../lib/taskPriority'
   import { optimisticField } from '../optimisticField.svelte'
   import { priorityClass, priorityLabel } from '../types'
@@ -50,6 +52,48 @@
     `Priority: ${label} — click to set ${priorityLabel(next)}`
   )
   let tipOpen = $state(false)
+  let buttonEl = $state<HTMLButtonElement | null>(null)
+  let tipEl = $state<HTMLElement | null>(null)
+  // Start off-screen so the first paint never flashes at the viewport origin;
+  // placeTip() pins the layer to the button before the browser paints (same
+  // trick as <Popover>).
+  let tipLeft = $state(-9999)
+  let tipTop = $state(-9999)
+
+  function placeTip() {
+    const btn = buttonEl
+    const tip = tipEl
+    if (!btn || !tip) return
+    const r = btn.getBoundingClientRect()
+    // Right-aligned to the button (the old right-0 look), flipped above when
+    // the bottom would clip, then clamped to the viewport.
+    const placed = flipOrClamp(
+      { top: r.top, bottom: r.bottom, left: r.right - tip.offsetWidth },
+      { width: tip.offsetWidth, height: tip.offsetHeight },
+      { width: window.innerWidth, height: window.innerHeight }
+    )
+    tipLeft = placed.left
+    tipTop = placed.top
+  }
+
+  // Reposition — never strand — across ancestor scroll and viewport resize:
+  // keyboard focus scrolls the row into view, so a hide-on-scroll tooltip
+  // would close on the very users it exists for.
+  $effect(() => {
+    if (!tipOpen) return
+    placeTip()
+    void tick().then(placeTip)
+    const reposition = () => placeTip()
+    document.addEventListener('scroll', reposition, {
+      capture: true,
+      passive: true
+    })
+    window.addEventListener('resize', reposition, { passive: true })
+    return () => {
+      document.removeEventListener('scroll', reposition, { capture: true })
+      window.removeEventListener('resize', reposition)
+    }
+  })
 
   function cycle(e: MouseEvent) {
     e.stopPropagation()
@@ -71,6 +115,7 @@
 <span class={className}>
   <span class="relative inline-flex">
     <button
+      bind:this={buttonEl}
       type="button"
       data-testid={testId}
       aria-label={announce}
@@ -93,14 +138,24 @@
         {label}
       </span>
     </button>
-    {#if tipOpen}
-      <span
-        id={tipId}
-        role="tooltip"
-        class="pointer-events-none absolute right-0 top-full z-50 mt-1 w-max max-w-52 rounded-lg border border-surface-panel-border bg-surface-panel px-2.5 py-1.5 text-type-xs font-label-sm text-text-primary shadow-lg"
-      >
-        {announce}
-      </span>
-    {/if}
   </span>
 </span>
+{#if tipOpen}
+  <!-- The List row clips with overflow-hidden (ListView .tasks-list-row) and
+       cards clip their content too: an in-flow tooltip anchored to the pill is
+       cut to a sliver. Portaled fixed layer measured against the button —
+       escapes every ancestor overflow/transform (same convention as
+       <Popover>). jsdom can't prove the escape; PriorityPill.test.ts pins the
+       structural contract instead. -->
+  <span
+    use:portal
+    bind:this={tipEl}
+    id={tipId}
+    role="tooltip"
+    class="pointer-events-none fixed z-50 w-max max-w-52 rounded-lg border border-surface-panel-border bg-surface-panel px-2.5 py-1.5 text-type-xs font-label-sm text-text-primary shadow-lg"
+    style:left="{tipLeft}px"
+    style:top="{tipTop}px"
+  >
+    {announce}
+  </span>
+{/if}

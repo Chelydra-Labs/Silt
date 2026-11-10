@@ -54,6 +54,23 @@ describe('PriorityPill', () => {
     )
   })
 
+  it('renders the tooltip as a body-level fixed layer outside any row clip', async () => {
+    render(PriorityPill, { priority: 3, onCycle: () => {} })
+    const pill = screen.getByRole('button')
+    await fireEvent.mouseEnter(pill)
+    const tip = screen.getByRole('tooltip')
+    // The List row clips descendants with overflow-hidden (ListView
+    // .tasks-list-row), which cuts an in-flow tooltip to a sliver. jsdom has
+    // no layout, so pin the structural contract the escape depends on: the
+    // tip is portaled to body (not under the pill wrapper) and positioned
+    // fixed against measured button coordinates.
+    expect(tip.parentElement).toBe(document.body)
+    expect(tip.className).toContain('fixed')
+    expect(tip.className).not.toContain('absolute')
+    // aria wiring must survive the portal.
+    expect(pill.getAttribute('aria-describedby')).toBe(tip.id)
+  })
+
   it('clicking cycles to the next level and does not bubble to the host', async () => {
     const onCycle = vi.fn()
     const onHostClick = vi.fn()

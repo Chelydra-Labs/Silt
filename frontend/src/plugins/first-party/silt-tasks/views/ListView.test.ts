@@ -33,7 +33,7 @@ import {
   setSort,
   setWeekStart
 } from '../state.svelte'
-import { initTasksUndo } from '../undo.svelte'
+import { initTasksUndo, resetTasksUndo } from '../undo.svelte'
 import {
   notificationsState,
   _resetForTests as resetNotifications
@@ -3055,6 +3055,9 @@ describe('ListView — priority pill cycling', () => {
     mocks.sqliteQuery.mockReset()
     mocks.blockChangedCallbacks.length = 0
     resetNotifications()
+    // Hermetic against the module-singleton undo mirror (initTasksUndo leaks
+    // its ctx across tests in a file otherwise).
+    resetTasksUndo()
   })
   afterEach(cleanup)
 
@@ -3098,5 +3101,54 @@ describe('ListView — priority pill cycling', () => {
     await fireEvent.click(pill)
     await flush()
     expect(mocks.setTaskPriority).toHaveBeenCalledWith('t1', 3)
+  })
+
+  it('toast Undo reverses the write while it is still the journal head', async () => {
+    const journal = {
+      canUndo: true,
+      remaining: 1,
+      changedFields: ['priority'],
+      blockIds: ['t1'],
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      source: 'vault'
+    }
+    const getTaskUndoState = vi.fn(async () => ({ ...journal }))
+    const undoLastTaskMutation = vi.fn(async () => ({
+      undone: true,
+      skipped: false,
+      blockIds: ['t1'],
+      skippedBlockIds: [],
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      removedSpawnedId: '',
+      changedFields: ['priority'],
+      remaining: 0
+    }))
+    initTasksUndo({
+      ...makeCtx(),
+      getTaskUndoState,
+      undoLastTaskMutation
+    } as unknown as PluginContext)
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [task('t1', 'Cycle me', { priority: 3 })],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('tasks-priority-t1'))
+    await flush()
+    const toast = notificationsState.items.find((n) => n.kind === 'success')
+    await toast?.action?.run()
+
+    expect(undoLastTaskMutation).toHaveBeenCalledTimes(1)
   })
 })

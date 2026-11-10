@@ -149,6 +149,7 @@ import {
   setWeekStart
 } from '../state.svelte'
 import { initTasksSettings } from '../settings'
+import { initTasksUndo, resetTasksUndo } from '../undo.svelte'
 import {
   notificationsState,
   _resetForTests as resetNotifications
@@ -326,6 +327,7 @@ describe('BoardView — dimension-aware Board (#421)', () => {
   afterEach(() => {
     cleanup()
     clearTaskPageRoute()
+    resetTasksUndo()
   })
 
   it('queries the explicit page route instead of ambient navigation', async () => {
@@ -1803,6 +1805,120 @@ describe('BoardView — dimension-aware Board (#421)', () => {
 
     expect(mocks.setTaskPriority).toHaveBeenCalledWith('t1', 3)
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('toast Undo reverses the write while it is still the journal head', async () => {
+    resetNotifications()
+    const journal = {
+      canUndo: true,
+      remaining: 1,
+      changedFields: ['priority'],
+      blockIds: ['t1'],
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      source: 'vault'
+    }
+    const getTaskUndoState = vi.fn(async () => ({ ...journal }))
+    const undoLastTaskMutation = vi.fn(async () => ({
+      undone: true,
+      skipped: false,
+      blockIds: ['t1'],
+      skippedBlockIds: [],
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      removedSpawnedId: '',
+      changedFields: ['priority'],
+      remaining: 0
+    }))
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', priority: 3, clean_content: 'Cycle me' })
+    ])
+    initTasksUndo({
+      ...makeCtx(),
+      getTaskUndoState,
+      undoLastTaskMutation
+    } as unknown as PluginContext)
+
+    await fireEvent.click(screen.getByTestId('tasks-priority-t1'))
+    await flush()
+    const toast = notificationsState.items.find((n) => n.kind === 'success')
+    await toast?.action?.run()
+
+    expect(undoLastTaskMutation).toHaveBeenCalledTimes(1)
+  })
+
+  it('toast Undo refuses when a newer mutation took the journal head', async () => {
+    resetNotifications()
+    // Journal head is a different write (task t2's pin) by click time.
+    const getTaskUndoState = vi.fn(async () => ({
+      canUndo: true,
+      remaining: 2,
+      changedFields: ['pinned'],
+      blockIds: ['t2'],
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      source: 'vault'
+    }))
+    const undoLastTaskMutation = vi.fn()
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', priority: 3, clean_content: 'Cycle me' })
+    ])
+    initTasksUndo({
+      ...makeCtx(),
+      getTaskUndoState,
+      undoLastTaskMutation
+    } as unknown as PluginContext)
+
+    await fireEvent.click(screen.getByTestId('tasks-priority-t1'))
+    await flush()
+    const toast = notificationsState.items.find((n) => n.kind === 'success')
+    await toast?.action?.run()
+
+    expect(undoLastTaskMutation).not.toHaveBeenCalled()
+    expect(
+      notificationsState.items.some(
+        (n) =>
+          n.kind === 'info' &&
+          n.message === 'Undo skipped — a newer change was made'
+      )
+    ).toBe(true)
+  })
+
+  it('toast Undo refuses when a newer cycle of the same task stacked above it', async () => {
+    resetNotifications()
+    // Same task and field as this toast's write, but a deeper journal: only
+    // the captured depth seal can tell a stacked re-cycle apart from it.
+    let journal = {
+      canUndo: true,
+      remaining: 1,
+      changedFields: ['priority'],
+      blockIds: ['t1'],
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      source: 'vault'
+    }
+    const getTaskUndoState = vi.fn(async () => ({ ...journal }))
+    const undoLastTaskMutation = vi.fn()
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', priority: 3, clean_content: 'Cycle me' })
+    ])
+    initTasksUndo({
+      ...makeCtx(),
+      getTaskUndoState,
+      undoLastTaskMutation
+    } as unknown as PluginContext)
+
+    await fireEvent.click(screen.getByTestId('tasks-priority-t1'))
+    await flush()
+    journal = { ...journal, remaining: 2 }
+    const toast = notificationsState.items.find((n) => n.kind === 'success')
+    await toast?.action?.run()
+
+    expect(undoLastTaskMutation).not.toHaveBeenCalled()
   })
 
   it('renders pinned cards before unpinned cards within their column', async () => {
