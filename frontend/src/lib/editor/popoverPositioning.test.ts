@@ -3,7 +3,8 @@ import {
   clampToViewport,
   findScrollableAncestor,
   flipOrClamp,
-  POPOVER_MARGIN
+  POPOVER_MARGIN,
+  submenuPosition
 } from './popoverPositioning'
 
 describe('clampToViewport', () => {
@@ -268,5 +269,47 @@ describe('flipOrClamp', () => {
       { horizontal: { left: 400, right: 900 } }
     )
     expect(result.left).toBe(400 + POPOVER_MARGIN)
+  })
+})
+
+describe('submenuPosition', () => {
+  it('places the flyout at the parent item right edge, top aligned', () => {
+    const result = submenuPosition(
+      { left: 100, right: 200, top: 50 },
+      { width: 120, height: 60 },
+      { width: 1000, height: 800 }
+    )
+    expect(result).toEqual({ left: 200, top: 50 })
+  })
+
+  it('flips to the item left edge when there is no room on the right', () => {
+    // right(950) + width(120) > 1000 - 8 → flip: left(900) - 120 = 780
+    const result = submenuPosition(
+      { left: 900, right: 950, top: 50 },
+      { width: 120, height: 60 },
+      { width: 1000, height: 800 }
+    )
+    expect(result.left).toBe(780)
+    expect(result.top).toBe(50)
+  })
+
+  it('clamps vertically when the flyout would overflow the bottom', () => {
+    const result = submenuPosition(
+      { left: 100, right: 200, top: 770 },
+      { width: 120, height: 60 },
+      { width: 1000, height: 800 }
+    )
+    expect(result.left).toBe(200)
+    expect(result.top).toBe(800 - 60 - POPOVER_MARGIN)
+  })
+
+  it('still floors at the margin after a flip that lands off-screen left', () => {
+    // Item at the far left with a wide flyout: flip lands negative → margin.
+    const result = submenuPosition(
+      { left: 20, right: 960, top: 50 },
+      { width: 500, height: 60 },
+      { width: 1000, height: 800 }
+    )
+    expect(result.left).toBe(POPOVER_MARGIN)
   })
 })
