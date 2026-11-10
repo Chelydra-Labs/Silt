@@ -24,6 +24,8 @@
   import ErrorBanner from '../components/ErrorBanner.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
   import QuickAddTask from '../components/QuickAddTask.svelte'
+  import TaskContextMenu from '../components/TaskContextMenu.svelte'
+  import { useTaskContextMenu } from '../components/useTaskContextMenu.svelte'
   import {
     coerceTaskRow,
     laneLabel,
@@ -51,6 +53,10 @@
     monthWeeks as computeMonthWeeks
   } from '../../../../lib/dateGrid'
   import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
+  import {
+    isContextMenuKey,
+    openContextMenuFromKeyboard
+  } from '../../../../lib/contextMenuKey'
 
   type Props = TaskViewProps
 
@@ -96,6 +102,8 @@
     selectedFilteredOut = false
   }
   let subEditorTask = $state<TaskDetail | null>(null)
+  // Right-click / Shift+F10 task menu (#1116), hosted once for every chip.
+  const taskMenu = useTaskContextMenu()
   // null = closed; '' = open undated; YYYY-MM-DD = open for that day.
   let quickAddDate = $state<string | null>(null)
 
@@ -663,6 +671,11 @@
       e.preventDefault()
       e.stopPropagation()
       subEditorTask = item
+    } else if (isContextMenuKey(e)) {
+      // Same per-chip handler as a right-click: dispatch a synthetic
+      // contextmenu on the focused chip (#1116 keyboard parity).
+      e.preventDefault()
+      openContextMenuFromKeyboard(e.currentTarget as HTMLElement)
     }
   }
 
@@ -1001,6 +1014,7 @@
                     aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
                     ondragstart={(e) => onCardDragStart(e, item)}
                     ondragend={onCardDragEnd}
+                    oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
                     onkeydown={(e) => onCardKeydown(e, item)}
                     onclick={() => selectTask(item)}
                     data-status={item.status}
@@ -1042,6 +1056,7 @@
                     aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
                     ondragstart={(e) => onCardDragStart(e, item)}
                     ondragend={onCardDragEnd}
+                    oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
                     onkeydown={(e) => onCardKeydown(e, item)}
                     onclick={() => selectTask(item)}
                     data-task-hit
@@ -1161,6 +1176,7 @@
                   aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
                   ondragstart={(e) => onCardDragStart(e, item)}
                   ondragend={onCardDragEnd}
+                  oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
                   onkeydown={(e) => onCardKeydown(e, item)}
                   onclick={() => selectTask(item)}
                   data-status={item.status}
@@ -1185,6 +1201,7 @@
                   aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
                   ondragstart={(e) => onCardDragStart(e, item)}
                   ondragend={onCardDragEnd}
+                  oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
                   onkeydown={(e) => onCardKeydown(e, item)}
                   onclick={() => selectTask(item)}
                   data-task-hit
@@ -1254,6 +1271,7 @@
                 aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
                 ondragstart={(e) => onCardDragStart(e, item)}
                 ondragend={onCardDragEnd}
+                oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
                 onkeydown={(e) => onCardKeydown(e, item)}
                 onclick={() => selectTask(item)}
                 data-task-hit
@@ -1399,6 +1417,13 @@
   }}
   onMetaChanged={reload}
   onOpenSubEditor={() => selectedTask && (subEditorTask = selectedTask)}
+/>
+<TaskContextMenu
+  {ctx}
+  menu={taskMenu.menu}
+  onClose={taskMenu.close}
+  onEditTask={selectTask}
+  onOpenSubEditor={(task) => (subEditorTask = task)}
 />
 
 {#if subEditorTask}

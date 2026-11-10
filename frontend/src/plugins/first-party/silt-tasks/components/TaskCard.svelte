@@ -30,6 +30,8 @@
     onSelect: () => void
     onPinToggle: (next: boolean) => Promise<unknown> | void
     onPinError?: (message: string) => void
+    /** Right-click host hook-in (#1116); board passes a pre-bound callback. */
+    onContextMenu: (e: MouseEvent) => void
     selected?: boolean
   }
 
@@ -51,6 +53,7 @@
     onSelect,
     onPinToggle,
     onPinError,
+    onContextMenu,
     selected = false
   }: Props = $props()
 
@@ -84,6 +87,7 @@
     ondragover={(e) => onCardDragOver(e)}
     ondragleave={onCardDragLeave}
     ondrop={(e) => onCardDrop(e)}
+    oncontextmenu={(e) => onContextMenu(e)}
     onkeydown={(e) => onKeydown(e)}
     onclick={onSelect}
   >

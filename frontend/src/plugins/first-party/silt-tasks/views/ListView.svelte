@@ -18,6 +18,8 @@
   import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
   import QuickAddTask from '../components/QuickAddTask.svelte'
   import PinToggle from '../components/PinToggle.svelte'
+  import TaskContextMenu from '../components/TaskContextMenu.svelte'
+  import { useTaskContextMenu } from '../components/useTaskContextMenu.svelte'
   import { friendlyCaughtError } from '../errors'
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
@@ -46,6 +48,10 @@
     type TaskViewProps
   } from '../types'
   import { dueDateClass, dueDateTextClass } from '../dueDate'
+  import {
+    isContextMenuKey,
+    openContextMenuFromKeyboard
+  } from '../../../../lib/contextMenuKey'
   import ErrorBanner from '../components/ErrorBanner.svelte'
   import { getTaskHubQueryContext, getTaskHubViewState } from '../state.svelte'
   import { binByDimension, type GroupSection } from '../grouping'
@@ -104,6 +110,8 @@
   let selectedTask = $state<TaskDetail | null>(null)
   let selectedFilteredOut = $state(false)
   let subEditorTask = $state<TaskDetail | null>(null)
+  // Right-click / Shift+F10 task menu (#1116), hosted once for every row.
+  const taskMenu = useTaskContextMenu()
   let hostEl = $state<HTMLDivElement | null>(null)
   let hostWidth = $state(0)
   /** False until the host has a measured width — avoids overlay→pane flash. */
@@ -915,6 +923,7 @@
     data-task-hit
     aria-current={selectedTask?.id === item.id ? 'true' : undefined}
     role="listitem"
+    oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
     ondragover={(e) => onRowDragOver(e, item, groupKey)}
     ondrop={(e) => onRowDrop(e, item, groupKey)}
     ondragleave={() => {
@@ -950,6 +959,11 @@
           e.preventDefault()
           e.stopPropagation()
           openSubEditor(item)
+        } else if (isContextMenuKey(e)) {
+          // Same per-node handler as a right-click: dispatch a synthetic
+          // contextmenu that bubbles to the row's oncontextmenu.
+          e.preventDefault()
+          openContextMenuFromKeyboard(e.currentTarget as HTMLElement)
         }
       }}
       class="flex-1 min-w-0 rounded text-left bg-transparent border-none p-0 cursor-pointer focus-visible:outline-none"
@@ -1486,6 +1500,13 @@
   cardText={blockedGuard.pending?.context.clean_content}
   onConfirm={confirmBlockedDone}
   onCancel={cancelBlockedDone}
+/>
+<TaskContextMenu
+  {ctx}
+  menu={taskMenu.menu}
+  onClose={taskMenu.close}
+  onEditTask={selectTask}
+  onOpenSubEditor={openSubEditor}
 />
 
 <style>
