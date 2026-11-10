@@ -26,6 +26,12 @@
   import { STANDALONE_TASKS_NOTEBOOK } from '../lib/standaloneTasksNav'
   import Dialog from './ui/Dialog.svelte'
   import ViewState from './ui/ViewState.svelte'
+  import ContextMenu from './ContextMenu.svelte'
+  import {
+    isContextMenuKey,
+    openContextMenuFromKeyboard
+  } from '../lib/contextMenuKey'
+  import { usePageLocatorMenu } from '../lib/pageLocatorMenu.svelte'
 
   interface SearchResult {
     results: SearchModalResult[]
@@ -341,6 +347,10 @@
   }
 
   function handleKeyDown(e: KeyboardEvent) {
+    // The locator menu owns the keyboard while it is open: its roving arrows
+    // would otherwise fight this handler's result selection, and Escape must
+    // dismiss the menu before it ever closes the modal.
+    if (locatorMenu.menu) return
     // Cycle type chips with ArrowLeft/Right only when focus is already on the
     // chip group.
     if (
@@ -393,6 +403,30 @@
     onClose()
   }
 
+  // --- page-locator context menu (#1120) --------------------------------
+  //
+  // Result rows host the shared page-locator menu. Any row whose locator
+  // names a real notes page gets it — page-title hits AND block/task hits
+  // (the locator is valid; Reveal rides the same onJump navigate path the
+  // click uses). Standalone `.silt` rows are suppressed: their click target
+  // is the Tasks view, not a notes page, and a `[[.silt/…]]` reference
+  // would not round-trip.
+  function locatorMenuApplies(res: SearchModalResult): boolean {
+    return (
+      !!res.notebook && !!res.page && res.notebook !== STANDALONE_TASKS_NOTEBOOK
+    )
+  }
+
+  const locatorMenu = usePageLocatorMenu<SearchModalResult>({
+    onReveal: (res) => selectResult(res)
+  })
+
+  function onRowKeydown(e: KeyboardEvent): void {
+    if (!isContextMenuKey(e)) return
+    e.preventDefault()
+    openContextMenuFromKeyboard(e.currentTarget as HTMLElement)
+  }
+
   function sourceLabel(source: string): 'Linked' | 'Vault' {
     return source.startsWith('linked:') ? 'Linked' : 'Vault'
   }
@@ -443,6 +477,7 @@
 <Dialog
   open={true}
   {onClose}
+  closeOnEscape={!locatorMenu.menu}
   placement="top"
   zIndex="z-[150]"
   maxWidth="max-w-2xl"
@@ -945,7 +980,12 @@
       {#each results as res, idx (res.id + idx)}
         <button
           data-idx={idx}
+          aria-keyshortcuts={locatorMenuApplies(res) ? 'Shift+F10' : undefined}
           onclick={() => selectResult(res)}
+          onkeydown={onRowKeydown}
+          oncontextmenu={(e) => {
+            if (locatorMenuApplies(res)) locatorMenu.openFromEvent(e, res)
+          }}
           class="w-full px-5 py-3 border-none flex flex-col gap-1 text-left cursor-pointer transition-colors focus:outline-none hover:bg-hover/50"
           class:bg-accent-primary-glow={idx === selectedIdx}
           class:border-l-2={idx === selectedIdx}
@@ -1082,6 +1122,53 @@
     </div>
   {/if}
 </Dialog>
+
+{#if locatorMenu.menu}
+  <!-- Hosted OUTSIDE the Dialog: the dialog surface's backdrop-filter would
+       become the containing block for this fixed-position menu and offset its
+       viewport coordinates (the Filter Effects hazard the menu primitive
+       corrects for flyouts). Sibling placement keeps fixed = viewport. -->
+  <ContextMenu
+    open={true}
+    anchor={{ x: locatorMenu.menu.x, y: locatorMenu.menu.y }}
+    anchorEl={locatorMenu.menu.anchorEl}
+    onClose={locatorMenu.close}
+    ariaLabel={`Actions for ${locatorMenu.menu.locator.page}`}
+    menuTestId="search-locator-menu"
+  >
+    {#each locatorMenu.items as item (item.id)}
+      <button
+        type="button"
+        role="menuitem"
+        data-testid={`search-menu-${item.id}`}
+        onclick={item.run}
+      >
+        <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+          >{item.icon}</span
+        >
+        <span>{item.label}</span>
+      </button>
+    {/each}
+    {#if onReplaceInVault}
+      <!-- Search-surface extra (not part of the page-locator vocabulary):
+           same handler and live query as the toolbar button. -->
+      <button
+        type="button"
+        role="menuitem"
+        data-testid="search-menu-replace-in-vault"
+        onclick={() => {
+          locatorMenu.close()
+          onReplaceInVault(query.trim())
+        }}
+      >
+        <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+          >find_replace</span
+        >
+        <span>Replace in vault…</span>
+      </button>
+    {/if}
+  </ContextMenu>
+{/if}
 
 <style>
   :global(mark) {

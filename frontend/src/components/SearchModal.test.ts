@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
+import { tick } from 'svelte'
 
 const mocks = vi.hoisted(() => ({
   SearchBlocksPaged: vi.fn(),
   ListNavigation: vi.fn(),
   QueryTagHierarchy: vi.fn(),
-  DistinctOwners: vi.fn()
+  DistinctOwners: vi.fn(),
+  ResolvePageLink: vi.fn()
 }))
 
 vi.mock('$silt-app', () =>
@@ -13,7 +15,8 @@ vi.mock('$silt-app', () =>
     SearchBlocksPaged: mocks.SearchBlocksPaged,
     ListNavigation: mocks.ListNavigation,
     QueryTagHierarchy: mocks.QueryTagHierarchy,
-    DistinctOwners: mocks.DistinctOwners
+    DistinctOwners: mocks.DistinctOwners,
+    ResolvePageLink: mocks.ResolvePageLink
   })
 )
 
@@ -42,6 +45,14 @@ describe('SearchModal', () => {
       { name: 'project', path: 'project', count: 2, children: [] }
     ])
     mocks.DistinctOwners.mockResolvedValue(['Alice', 'Bob'])
+    mocks.ResolvePageLink.mockReset()
+    mocks.ResolvePageLink.mockResolvedValue({
+      exists: true,
+      shortest: 'Roadmap 2027'
+    })
+    Object.assign(navigator, {
+      clipboard: { writeText: vi.fn().mockResolvedValue(undefined) }
+    })
   })
   afterEach(() => cleanup())
 
@@ -606,5 +617,257 @@ describe('SearchModal', () => {
     expect(meta).toHaveTextContent('alice')
     expect(meta).toHaveTextContent('2026-08-01')
     expect(meta).toHaveTextContent('P1')
+  })
+})
+
+// Page-locator context menu on result rows (#1120): page-title hits AND
+// block/task hits (their locator names a real notes page); standalone `.silt`
+// rows are suppressed — their click target is the Tasks view, not a page.
+describe('SearchModal — result-row context menu (#1120)', () => {
+  const pageRow = {
+    id: '',
+    source: 'vault',
+    notebook: 'Work',
+    section: 'Plans',
+    page: 'Roadmap 2027',
+    file_date: '',
+    clean_content: 'Roadmap 2027',
+    snippet: '<mark>Roadmap</mark> 2027'
+  }
+  const taskRow = {
+    id: 'block-9',
+    source: 'vault',
+    notebook: 'Work',
+    section: 'Sprint',
+    page: 'Sprint 41',
+    file_date: '2026-07-20',
+    clean_content: 'Ship the locator menu'
+  }
+
+  beforeEach(() => {
+    mocks.SearchBlocksPaged.mockReset()
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [pageRow, taskRow],
+      total: 2,
+      offset: 0,
+      limit: 20,
+      has_more: false
+    })
+  })
+
+  async function searchAndRow(name: RegExp): Promise<HTMLElement> {
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn(), onReplaceInVault: vi.fn() }
+    })
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'roadmap' } })
+    const row = await screen.findByRole('button', { name })
+    expect(row).toHaveAttribute('aria-keyshortcuts', 'Shift+F10')
+    return row
+  }
+
+  function menuLabels(): string[] {
+    return Array.from(
+      screen
+        .getByTestId('search-locator-menu')
+        .querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).map((el) => {
+      const span = el.querySelector<HTMLSpanElement>('span:not([aria-hidden])')
+      return (span ?? el).textContent?.trim() ?? ''
+    })
+  }
+
+  it('right-click a page result opens the locator menu', async () => {
+    const row = await searchAndRow(/Roadmap 2027/i)
+    const e = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 120,
+      clientY: 90
+    })
+    row.dispatchEvent(e)
+    await tick()
+    expect(e.defaultPrevented).toBe(true)
+    const menu = screen.getByTestId('search-locator-menu')
+    expect(menu).toHaveAttribute('role', 'menu')
+    expect(menu.getAttribute('style')).toContain('left: 120px')
+    expect(menu.getAttribute('style')).toContain('top: 90px')
+    expect(menuLabels()).toEqual([
+      'Copy page reference',
+      'Reveal in sidebar',
+      'Replace in vault…'
+    ])
+  })
+
+  it('block/task results share the menu; standalone .silt rows get none', async () => {
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        taskRow,
+        {
+          id: 'st-1',
+          source: 'vault',
+          notebook: '.silt',
+          section: '',
+          page: 'tasks.md',
+          file_date: '2026-07-23',
+          clean_content: 'Standalone task from quick-add'
+        }
+      ],
+      total: 2,
+      offset: 0,
+      limit: 20,
+      has_more: false
+    })
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn(), onReplaceInVault: vi.fn() }
+    })
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'task' } })
+
+    const taskResult = await screen.findByRole('button', {
+      name: /Ship the locator menu/i
+    })
+    await fireEvent.contextMenu(taskResult, { clientX: 5, clientY: 5 })
+    await tick()
+    expect(screen.getByTestId('search-locator-menu')).toBeInTheDocument()
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Close context menu' })
+    )
+
+    const standalone = screen.getByRole('button', {
+      name: /Standalone task from quick-add/i
+    })
+    expect(standalone).not.toHaveAttribute('aria-keyshortcuts')
+    await fireEvent.contextMenu(standalone, { clientX: 5, clientY: 5 })
+    await tick()
+    expect(screen.queryByTestId('search-locator-menu')).toBeNull()
+  })
+
+  it('copy page reference resolves the shortest form and writes it', async () => {
+    const row = await searchAndRow(/Roadmap 2027/i)
+    await fireEvent.contextMenu(row, { clientX: 5, clientY: 5 })
+    await tick()
+    await fireEvent.click(screen.getByTestId('search-menu-copy-page-reference'))
+    expect(screen.queryByTestId('search-locator-menu')).toBeNull()
+    await vi.waitFor(() =>
+      expect(mocks.ResolvePageLink).toHaveBeenCalledWith(
+        'Work/Plans/Roadmap 2027'
+      )
+    )
+    await vi.waitFor(() =>
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+        '[[Roadmap 2027]]'
+      )
+    )
+  })
+
+  it('reveal jumps to the result and closes the modal', async () => {
+    const onJump = vi.fn()
+    const onClose = vi.fn()
+    render(SearchModal, {
+      props: { onClose, onJump, onReplaceInVault: vi.fn() }
+    })
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'roadmap' } })
+    const row = await screen.findByRole('button', { name: /Roadmap 2027/i })
+    await fireEvent.contextMenu(row, { clientX: 5, clientY: 5 })
+    await tick()
+    await fireEvent.click(screen.getByTestId('search-menu-reveal-in-sidebar'))
+    expect(onJump).toHaveBeenCalledWith(pageRow)
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('replace in vault uses the toolbar handler with the live query', async () => {
+    const onReplaceInVault = vi.fn()
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn(), onReplaceInVault }
+    })
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'roadmap' } })
+    const row = await screen.findByRole('button', { name: /Roadmap 2027/i })
+    await fireEvent.contextMenu(row, { clientX: 5, clientY: 5 })
+    await tick()
+    await fireEvent.click(screen.getByTestId('search-menu-replace-in-vault'))
+    expect(screen.queryByTestId('search-locator-menu')).toBeNull()
+    expect(onReplaceInVault).toHaveBeenCalledWith('roadmap')
+  })
+
+  it('omits the replace-in-vault item when the host does not provide it', async () => {
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn() }
+    })
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'roadmap' } })
+    const row = await screen.findByRole('button', { name: /Roadmap 2027/i })
+    await fireEvent.contextMenu(row, { clientX: 5, clientY: 5 })
+    await tick()
+    expect(menuLabels()).toEqual(['Copy page reference', 'Reveal in sidebar'])
+  })
+
+  it('Shift+F10 opens the menu; Escape dismisses the menu but not the modal', async () => {
+    const onClose = vi.fn()
+    render(SearchModal, {
+      props: { onClose, onJump: vi.fn(), onReplaceInVault: vi.fn() }
+    })
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'roadmap' } })
+    const row = await screen.findByRole('button', { name: /Roadmap 2027/i })
+    row.focus()
+
+    await fireEvent.keyDown(row, { key: 'F10', shiftKey: true })
+    await tick()
+    const menu = screen.getByTestId('search-locator-menu')
+    expect(menu.contains(document.activeElement)).toBe(true)
+
+    // Dispatch on the focused menu item (production path): the Dialog's
+    // capture handler must stand down so the menu's own Escape dismissal —
+    // and only that — runs.
+    await fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    await tick()
+    expect(screen.queryByTestId('search-locator-menu')).toBeNull()
+    expect(document.activeElement).toBe(row)
+    expect(onClose).not.toHaveBeenCalled()
+    expect(input).toBeInTheDocument()
+
+    // Escape with no menu open closes the modal as before.
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await tick()
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('arrow keys rove inside the open menu without moving the modal selection', async () => {
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn(), onReplaceInVault: vi.fn() }
+    })
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'roadmap' } })
+    const first = await screen.findByRole('button', { name: /Roadmap 2027/i })
+    await fireEvent.contextMenu(first, { clientX: 5, clientY: 5 })
+    await tick()
+
+    // Both rows rendered; selection starts at 0 (Roadmap). Roving Down inside
+    // the menu must not advance the modal's highlighted result.
+    const before = first.className
+    await fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' })
+    await tick()
+    const items = screen
+      .getByTestId('search-locator-menu')
+      .querySelectorAll('[role="menuitem"]')
+    expect(document.activeElement).toBe(items[1])
+    expect(first.className).toBe(before)
   })
 })
