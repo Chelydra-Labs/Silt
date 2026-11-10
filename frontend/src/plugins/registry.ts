@@ -7,6 +7,7 @@ import AISummaryPlugin from './first-party/silt-ai-summary'
 import AIQAPlugin from './first-party/silt-ai-qa'
 import AIAssistantPlugin from './first-party/silt-ai-assistant'
 import AIAgentPlugin from './first-party/silt-ai-agent'
+import MeetingPlugin from './first-party/silt-meeting'
 
 // First-party plugin registry: bundled Svelte components that ship with the
 // app. Third-party plugins live in .system/plugins/ and are loaded by the
@@ -94,6 +95,14 @@ registerPlugin({
   onVaultOpen: (ctx) => AIAgentPlugin.onVaultOpen(ctx),
   onVaultClose: () => AIAgentPlugin.onVaultClose(),
   onShutdown: () => AIAgentPlugin.onShutdown(),
+  source: 'first-party'
+})
+// silt-meeting (#1105): prepends a collapsible Meeting information details
+// section to the top of the current note via /meeting. Headless — the slash
+// command is the whole surface; no view component.
+registerPlugin({
+  manifest: MeetingPlugin.manifest,
+  onVaultOpen: (ctx) => MeetingPlugin.onVaultOpen(ctx),
   source: 'first-party'
 })
 

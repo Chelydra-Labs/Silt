@@ -34,6 +34,7 @@ import {
   serializeInlineContent
 } from './converters/serialize'
 import type { ParsedBlock, DocJSON } from './types'
+import { insertMeetingSection } from '../../plugins/first-party/silt-meeting'
 
 // Helper: build a ParsedBlock with sensible defaults for a given type.
 function mkBlock(
@@ -2318,5 +2319,126 @@ describe('region-block depth round-trip (#1003)', () => {
     ])
     // Header depth 0 falls back to level 1 at emit ('#'.repeat(0 || 1)).
     expect(back[2]!.raw_text).toBe('# head')
+  })
+})
+
+describe('/meeting section round-trip (#1105)', () => {
+  const FIELD_LABELS = [
+    'Subject:',
+    'When:',
+    'Location:',
+    'Organizer:',
+    'Attendees:',
+    'Join link:',
+    'Notes:'
+  ]
+
+  it('prepends to a populated doc and survives save + reopen', () => {
+    const editor = makeEditorWithNewBlocks()
+    const bodyId = '11111111-1111-1111-1111-111111111111'
+    const taskId = '22222222-2222-2222-2222-222222222222'
+    editor.commands.setContent(
+      blocksToDoc([
+        mkBlock('NOTE', { id: bodyId, clean_text: 'existing body' }),
+        mkBlock('TASK', { id: taskId, clean_text: 'follow-up', status: 'TODO' })
+      ])
+    )
+    // The production insert path — same call the /meeting command makes.
+    expect(insertMeetingSection(editor)).toBe(true)
+
+    // First block is the section; existing blocks are untouched. The schema
+    // declares `open` (persist: true), so the `open: true` build attr
+    // survives into the doc model and the NodeView auto-expands on insert.
+    const doc = editor.state.doc
+    expect(doc.child(0).attrs.open).toBe(true)
+    expect(doc.child(0).type.name).toBe('details')
+    expect(doc.childCount).toBe(3)
+    expect(doc.child(1).attrs.id).toBe(bodyId)
+    expect(doc.child(1).textContent).toBe('existing body')
+    expect(doc.child(2).attrs.id).toBe(taskId)
+    expect(doc.child(2).type.name).toBe('taskBlock')
+
+    // Caret sits inside the first field line so typing/pasting land there.
+    const $from = editor.state.selection.$from
+    const chain: string[] = []
+    for (let d = 1; d <= $from.depth; d++) chain.push($from.node(d).type.name)
+    expect(chain).toEqual(['details', 'detailsContent', 'noteBlock'])
+
+    // Save: one leading DETAILS block carrying the summary + every label.
+    const saved = docToBlocks(editor.getJSON() as DocJSON)
+    expect(saved[0].type).toBe('DETAILS')
+    expect(saved[0].clean_text).toContain(
+      '<summary>Meeting information</summary>'
+    )
+    for (const label of FIELD_LABELS) {
+      expect(saved[0].clean_text).toContain(label)
+    }
+    // No-disk-change invariant: the serializer never writes the `open` attr.
+    expect(saved[0].clean_text).not.toContain('open=')
+    expect(saved[1]).toMatchObject({
+      type: 'NOTE',
+      id: bodyId,
+      clean_text: 'existing body'
+    })
+    expect(saved[2]).toMatchObject({
+      type: 'TASK',
+      id: taskId,
+      clean_text: 'follow-up'
+    })
+
+    // Reopen: reparse keeps the section first with the summary intact, and
+    // collapses it — the parser hardcodes `open: false` (file-is-truth).
+    const reopened = blocksToDoc(saved)
+    expect(reopened.content?.[0]?.type).toBe('details')
+    expect(reopened.content?.[0]?.attrs?.open).toBe(false)
+    const summary = reopened.content?.[0]?.content?.find(
+      (c) => c.type === 'detailsSummary'
+    )
+    expect(summary?.content).toEqual([
+      { type: 'text', text: 'Meeting information' }
+    ])
+    editor.destroy()
+  })
+
+  it('replaces the emptied trigger block so a brand-new note holds only the section', () => {
+    const editor = makeEditorWithNewBlocks()
+    // The post-trigger-deletion state of a brand-new note: one empty block.
+    editor.commands.setContent(
+      blocksToDoc([mkBlock('NOTE', { clean_text: '' })])
+    )
+    expect(insertMeetingSection(editor)).toBe(true)
+    const doc = editor.state.doc
+    expect(doc.child(0).type.name).toBe('details')
+    // Same expanded-at-insert contract on the replace path.
+    expect(doc.child(0).attrs.open).toBe(true)
+    // TrailingNode seeds an empty noteBlock after a cursor-trapping details
+    // last child (notAfter covers prose types) — expected editor behavior:
+    // the section is the only authored block, with a click-below target.
+    expect(doc.childCount).toBe(2)
+    expect(doc.child(1).type.name).toBe('noteBlock')
+    expect(doc.child(1).textContent).toBe('')
+    const saved = docToBlocks(editor.getJSON() as DocJSON)
+    expect(saved[0].type).toBe('DETAILS')
+    expect(saved[0].clean_text).toContain(
+      '<summary>Meeting information</summary>'
+    )
+    editor.destroy()
+  })
+
+  it('a second invocation inserts a second section (no dedupe)', () => {
+    const editor = makeEditorWithNewBlocks()
+    editor.commands.setContent(
+      blocksToDoc([mkBlock('NOTE', { clean_text: 'body' })])
+    )
+    expect(insertMeetingSection(editor)).toBe(true)
+    expect(insertMeetingSection(editor)).toBe(true)
+    const doc = editor.state.doc
+    expect(doc.childCount).toBe(3)
+    expect(doc.child(0).type.name).toBe('details')
+    expect(doc.child(1).type.name).toBe('details')
+    expect(doc.child(2).textContent).toBe('body')
+    const saved = docToBlocks(editor.getJSON() as DocJSON)
+    expect(saved.filter((b) => b.type === 'DETAILS')).toHaveLength(2)
+    editor.destroy()
   })
 })

@@ -32,7 +32,8 @@ import {
 import { newlineInCode } from '@tiptap/pm/commands'
 import { Slice, Fragment } from '@tiptap/pm/model'
 import type { Node as PMNode, ResolvedPos } from '@tiptap/pm/model'
-import { TextSelection } from '@tiptap/pm/state'
+import { TextSelection, Plugin, PluginKey } from '@tiptap/pm/state'
+import type { Transaction } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import { DEFAULT_TASK_PRIORITY } from './types'
 import {
@@ -1054,13 +1055,82 @@ export const CodeBlock = Node.create({
 // itself, preserved line-by-line as opaque NOTE blocks by the Go parser (HTML
 // passes through clean_text verbatim). The converter groups a `<details>` run
 // into this node tree on load and re-emits the run on save. Collapse state is
-// ephemeral in v1 (never written as `<details open>`).
+// not persisted to disk (never written as `<details open>`).
 //
 // `open: false` default keeps sections collapsed on load (the outliner's "the
-// file is the truth" model — collapse is a view concern, not persisted).
+// file is the truth" model — collapse is a view concern, not disk state).
+// `persist: true` declares the `open` attr in the doc model so insertion-time
+// `open: true` (insertDetails, /meeting) survives and the extension's NodeView
+// auto-expands the section. Silt's serializer never writes `open` to disk
+// (blocks.ts emits a bare `<details>`; the parser hardcodes `open: false`), so
+// the on-disk format and the collapsed-on-reload model are unchanged.
 // The extensions are wrapped with `.extend()` to add `id` and `file_date`
 // attributes — without these, ProseMirror silently drops the attrs on
 // node creation, causing identity instability across save cycles (#310).
+
+// With `persist: true`, the stock NodeView toggle dispatches a plain
+// setNodeMarkup transaction per fold click. That transaction would dirty the
+// autosave cycle, arm the task sub-editor's unsaved-changes prompt, land in
+// undo history, and (setNodeMarkup replaces attrs wholesale) reset the
+// node's `id`/`file_date`. Silt re-dispatches the toggle itself via the
+// capture-phase plugin on SiltDetailsExtensions' Details below, tagged with
+// this key and `addToHistory: false` (mirroring siltInlineDragHandle);
+// onUpdate consumers (TipTapEditor autosave, TaskSubEditorModal dirty flag)
+// skip transactions carrying it via isDetailsFoldToggle().
+export const detailsFoldToggleKey = new PluginKey('siltDetailsFoldToggle')
+
+export function isDetailsFoldToggle(tr: Transaction): boolean {
+  return tr.getMeta(detailsFoldToggleKey) === true
+}
+
+// Single dispatch path for every fold-toggle entry point (the capture-phase
+// click plugin below and the Mod-Shift-. command in keymaps.ts): tagged,
+// excluded from history, and identity-preserving (stock setNodeMarkup with a
+// partial attrs object would reset id/file_date). Route any new entry point
+// through here so it cannot drift back onto an untagged content edit.
+export function dispatchFoldToggle(
+  view: EditorView,
+  pos: number,
+  node: PMNode
+): void {
+  const tr = view.state.tr.setNodeMarkup(pos, undefined, {
+    ...node.attrs,
+    open: !node.attrs.open
+  })
+  // Collapsing hides detailsContent: a caret left inside would edit
+  // invisible text, and detailsSelection cannot self-heal it (its guard
+  // requires a selection-setting tr). Move the caret to the always-visible
+  // summary on the same tagged tr, as the stock NodeView toggle does.
+  if (node.attrs.open) {
+    let summaryStart = -1
+    let contentStart = -1
+    let contentEnd = -1
+    node.forEach((child, offset) => {
+      const start = pos + 1 + offset
+      if (child.type.name === 'detailsSummary') summaryStart = start + 1
+      else if (child.type.name === 'detailsContent') {
+        contentStart = start + 1
+        contentEnd = contentStart + child.content.size
+      }
+    })
+    const { from, to } = view.state.selection
+    // Only fully-contained ranges move: a partially-overlapping selection
+    // keeps its visible half live (no silent invisible-only edits), and
+    // stock's detailsSelection skips non-empty selections too.
+    if (
+      summaryStart >= 0 &&
+      contentStart >= 0 &&
+      from >= contentStart &&
+      to <= contentEnd
+    ) {
+      tr.setSelection(TextSelection.create(tr.doc, summaryStart))
+    }
+  }
+  tr.setMeta('addToHistory', false)
+  tr.setMeta(detailsFoldToggleKey, true)
+  view.dispatch(tr)
+}
+
 export const SiltDetailsExtensions = [
   Details.extend({
     addAttributes() {
@@ -1079,8 +1149,79 @@ export const SiltDetailsExtensions = [
             attrs.file_date ? { 'data-file-date': attrs.file_date } : {}
         }
       }
+    },
+    addProseMirrorPlugins() {
+      // Spread the parent plugins: the stock Details extension registers the
+      // detailsSelection appendTransaction that relocates the caret out of
+      // hidden (collapsed) detailsContent. Returning only our plugin would
+      // silently drop that correction for every Silt details section.
+      return [
+        ...(this.parent?.() ?? []),
+        new Plugin({
+          key: detailsFoldToggleKey,
+          view: (view) => {
+            // Capture phase beats the NodeView's own click listener on the
+            // toggle button, so this REPLACES the stock toggle dispatch
+            // instead of doubling it. The propagation stop keeps the click
+            // from reaching that listener; ancestors above the editor root
+            // (outside-click dismissal) miss this click — an acceptable
+            // trade for keeping the toggle out of save/undo state.
+            const onToggleClick = (event: MouseEvent): void => {
+              if (!view.editable) return
+              const target = event.target
+              if (!(target instanceof Element)) return
+              const wrapper = target.closest('[data-type="details"]')
+              if (!(wrapper instanceof HTMLElement)) return
+              // The NodeView appends the toggle button as the wrapper's
+              // first child (extension-details NodeView); anything else
+              // clicked inside the section falls through untouched.
+              const toggle = wrapper.firstElementChild
+              if (
+                !(toggle instanceof HTMLButtonElement) ||
+                !toggle.contains(target)
+              ) {
+                return
+              }
+              event.preventDefault()
+              event.stopPropagation()
+              // posAtDOM may resolve to the details node itself or just
+              // inside its content; accept either.
+              const at = view.posAtDOM(wrapper, 0)
+              const doc = view.state.doc
+              let node = doc.nodeAt(at)
+              let pos = -1
+              if (node?.type.name === 'details') {
+                pos = at
+              } else {
+                const $pos = doc.resolve(at)
+                for (let depth = $pos.depth; depth >= 1; depth--) {
+                  if ($pos.node(depth).type.name === 'details') {
+                    node = $pos.node(depth)
+                    pos = $pos.before(depth)
+                    break
+                  }
+                }
+              }
+              if (!node || pos < 0) return
+              dispatchFoldToggle(view, pos, node)
+              // The button natively took focus; hand it back so keyboard
+              // shortcuts keep working, as the stock handler does.
+              view.focus()
+            }
+            view.dom.addEventListener('click', onToggleClick, true)
+            return {
+              destroy() {
+                view.dom.removeEventListener('click', onToggleClick, true)
+              }
+            }
+          }
+        })
+      ]
     }
-  }).configure({ HTMLAttributes: { 'data-type': 'details' } }),
+  }).configure({
+    persist: true,
+    HTMLAttributes: { 'data-type': 'details' }
+  }),
   DetailsSummary,
   DetailsContent
 ]

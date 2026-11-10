@@ -30,6 +30,7 @@ func TestFirstPartyPluginIDs_ExactSet(t *testing.T) {
 		"silt-ai-qa",
 		"silt-ai-assistant",
 		"silt-ai-agent",
+		"silt-meeting",
 	}
 	got := make([]string, 0, len(FirstPartyPluginIDs))
 	for id := range FirstPartyPluginIDs {

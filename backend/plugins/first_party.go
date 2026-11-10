@@ -40,6 +40,11 @@ var FirstPartyPluginIDs = map[string]bool{
 	// and organize notes. Uses ctx.ai.complete (with tools), content-mutate,
 	// plugin-db (staging tokens), and read-files.
 	"silt-ai-agent": true,
+	// silt-meeting (#1105): prepends a Meeting information details section via
+	// /meeting. The command itself is not capability-gated, but the manifest
+	// declares editor-schema and first-party grants are seeded as a set — and
+	// the reservation still rejects a third-party archive claiming the id.
+	"silt-meeting": true,
 }
 
 // IsFirstPartyID reports whether pluginID is a reserved (bundled) plugin id.

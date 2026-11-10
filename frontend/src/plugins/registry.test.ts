@@ -18,7 +18,8 @@ describe('first-party registry parity with Go FirstPartyPluginIDs (#407)', () =>
     'silt-ai-summary',
     'silt-ai-qa',
     'silt-ai-assistant',
-    'silt-ai-agent'
+    'silt-ai-agent',
+    'silt-meeting'
   ]
 
   it('frontend registry ids match the Go FirstPartyPluginIDs roster', () => {
@@ -48,6 +49,20 @@ describe('first-party registry parity with Go FirstPartyPluginIDs (#407)', () =>
         `${id} must declare content-mutate`
       ).toBe(true)
     }
+  })
+
+  it('silt-meeting is registered headless and declares editor-schema', () => {
+    // Documentation parity for the implicit first-party grant set — mirrors
+    // the content-mutate need-check above.
+    const meeting = firstPartyPlugins().find(
+      (p) => p.manifest.id === 'silt-meeting'
+    )
+    expect(meeting).toBeDefined()
+    expect(
+      meeting?.component,
+      'silt-meeting should be headless'
+    ).toBeUndefined()
+    expect(meeting?.manifest.capabilities?.['editor-schema']).toBe(true)
   })
 
   it('registers the unified AI providers without standalone view components', () => {
