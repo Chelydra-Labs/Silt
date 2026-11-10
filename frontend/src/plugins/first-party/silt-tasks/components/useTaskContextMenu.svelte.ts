@@ -32,23 +32,60 @@ export function focusableTaskControl(
 }
 
 /**
- * The neighboring task-surface element (row / card / chip — all carry
- * `data-task-hit`) after `anchor` in display order, falling back to the one
- * before it. Captured while the anchor still exists so a removal-triggering
- * write knows where keyboard focus should land.
+ * Task surfaces in display order, deduped to one entry per task. Board
+ * cards emit a nested marker pair (TaskCard wrapper + card), and
+ * Calendar overflow controls ("+N more", `aria-haspopup`) are not tasks;
+ * indexing raw markers made a removed card's own wrapper — or an
+ * overflow button that vanishes when the count drops — the "neighbor".
  */
-export function neighborTaskHit(anchor: HTMLElement): HTMLElement | null {
+function taskSurfaces(): HTMLElement[] {
+  return Array.from(
+    document.querySelectorAll<HTMLElement>(
+      '[data-task-hit]:not([aria-haspopup])'
+    )
+  ).filter((el) => !el.parentElement?.closest('[data-task-hit]'))
+}
+
+/**
+ * Positional handle on the neighbor to rescue focus onto after a
+ * removal-triggering write. The neighbor's DOM node is not stable across
+ * the debounced reload — Board cards and Calendar chips remount when the
+ * data re-bins — so the rescue re-resolves by position against the live
+ * surface list rather than holding a node that may be detached by then.
+ */
+export interface NeighborTaskHit {
+  /** Index of the anchored surface in the hit list at capture time. */
+  pos: number
+  /** Which side the neighbor was on: +1 next, -1 previous. */
+  dir: 1 | -1
+}
+
+/**
+ * Locate the neighboring task surface (row / card / chip) after `anchor`
+ * in display order, falling back to the one before it. Captured while
+ * the anchor still exists so a removal-triggering write knows where
+ * keyboard focus should land.
+ */
+export function neighborTaskHit(anchor: HTMLElement): NeighborTaskHit | null {
   // The anchor is a focusable control (focusableTaskControl) for the
   // primitive's close-time restore — on the List that is a button inside
   // the row, not the hit element itself — so climb back to the task
-  // surface before indexing neighbors.
-  const hit = anchor.closest<HTMLElement>('[data-task-hit]') ?? anchor
-  const hits = Array.from(
-    document.querySelectorAll<HTMLElement>('[data-task-hit]')
-  )
+  // surface before indexing neighbors. Climb to the OUTERMOST marker:
+  // TaskCard marks both its wrapper and the card itself.
+  let hit = anchor.closest<HTMLElement>('[data-task-hit]') ?? anchor
+  for (
+    let outer = hit.parentElement?.closest<HTMLElement>('[data-task-hit]');
+    outer;
+    outer = hit.parentElement?.closest<HTMLElement>('[data-task-hit]')
+  ) {
+    hit = outer
+  }
+  const hits = taskSurfaces()
   const idx = hits.indexOf(hit)
   if (idx < 0) return null
-  return hits[idx + 1] ?? hits[idx - 1] ?? null
+  if (idx + 1 < hits.length) return { pos: idx, dir: 1 }
+  if (idx > 0) return { pos: idx, dir: -1 }
+  return null
 }
 
 // Removals land after the write resolves + block:changed's debounced reload,
@@ -67,19 +104,31 @@ const REMOVAL_POLL_MAX = 40 // ~1s: write round-trip + 80ms reload debounce
  */
 export function rescueFocusAfterWrite(
   anchor: HTMLElement,
-  neighbor: HTMLElement | null
+  neighbor: NeighborTaskHit | null
 ): void {
   const check = (attempt: number) => {
     if (!anchor.isConnected) {
       if (document.activeElement === document.body) {
+        // Re-resolve against the live surface list: the removal freed the
+        // anchored slot, so what was "next" now sits at the captured pos
+        // and "previous" one slot earlier — a re-binned remount that
+        // swapped every node under us still yields a connected landing.
+        const live = taskSurfaces()
+        const neighborEl = neighbor
+          ? ((neighbor.dir === 1
+              ? live[neighbor.pos]
+              : live[neighbor.pos - 1]) ?? null)
+          : null
         // Container surfaces (List rows) resolve to their first focusable
         // control — the mark-done checkbox; `data-task-primary` marks the
         // labeled content control, the same landing the row checkbox's own
         // removal path uses (focusAfterRowRemoval). Self-focusable surfaces
-        // (Board card, Calendar chip) have no marker and focus as themselves.
+        // (Board card, Calendar chip) have no marker and focus as
+        // themselves. An emptied surface falls through to the hub heading,
+        // keeping the Ctrl+Z scope alive instead of stranding <body>.
         const target =
-          neighbor?.querySelector<HTMLElement>('[data-task-primary]') ??
-          focusableTaskControl(neighbor) ??
+          neighborEl?.querySelector<HTMLElement>('[data-task-primary]') ??
+          focusableTaskControl(neighborEl) ??
           document.querySelector<HTMLElement>('[data-tasks-hub] h1')
         target?.focus()
       }

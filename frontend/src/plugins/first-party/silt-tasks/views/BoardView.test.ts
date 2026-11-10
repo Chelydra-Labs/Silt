@@ -2390,6 +2390,56 @@ describe('BoardView — task context menu (#1116)', () => {
     expect(ctx.deleteBlock).toHaveBeenCalledWith('m1')
   })
 
+  it('menu Delete on the last card rescues focus onto the neighbor card', async () => {
+    // TaskCard emits two nested data-task-hit nodes (wrapper + card), so
+    // the last card in hit order used to capture its own wrapper as the
+    // neighbor; that wrapper unmounts with the card, so the rescue
+    // focused a detached node and focus stayed on <body>.
+    let deleted = false
+    const deleteBlock = vi.fn(async () => {
+      deleted = true
+      return true
+    })
+    mocks.sqliteQuery.mockReset()
+    mocks.sqliteQuery.mockImplementation(async () => ({
+      rows: deleted
+        ? [row({ id: 'm1', clean_content: 'Neighbor card' })]
+        : [
+            row({ id: 'm1', clean_content: 'Neighbor card' }),
+            row({ id: 'm2', clean_content: 'Menu card' })
+          ],
+      truncated: false
+    }))
+    resetTaskHubState()
+    setGroupBy('status')
+    const ctx = makeCtx({ deleteBlock })
+    render(BoardView, { ctx, onCountChange: vi.fn() })
+    await flush()
+
+    await fireEvent.contextMenu(cardByText('Menu card'), {
+      clientX: 5,
+      clientY: 5
+    })
+    await fireEvent.click(screen.getByTestId('task-menu-delete'))
+    await fireEvent.click(
+      screen.getByTestId('task-menu-delete-confirm-confirm')
+    )
+    expect(ctx.deleteBlock).toHaveBeenCalledWith('m2')
+
+    // Production removal: the write emits block:changed, the debounced
+    // reload drops the card, the rescue polls past it.
+    mocks.blockChangedCallbacks.forEach((cb) => cb())
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await flush()
+
+    const neighbor = document.querySelector<HTMLElement>('[data-card="m1"]')!
+    expect(neighbor).toBeInTheDocument()
+    const active = document.activeElement as HTMLElement
+    expect(active).not.toBe(document.body)
+    expect(active).toBe(neighbor)
+    expect(active.isConnected).toBe(true)
+  })
+
   it('Escape dismisses; Enter / Shift+Enter on the card still work', async () => {
     await renderBoardWithMenu([row({ id: 'm1', clean_content: 'Menu card' })])
     const card = cardByText('Menu card')

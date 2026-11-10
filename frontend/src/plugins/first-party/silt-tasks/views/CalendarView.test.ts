@@ -1107,6 +1107,77 @@ describe('CalendarView — task context menu (#1116)', () => {
     expect(ctx.deleteBlock).not.toHaveBeenCalled()
   })
 
+  it('menu Delete on the 3rd chip keeps focus when "+N more" vanishes', async () => {
+    // A 4-task day renders 3 chips plus a "+1 more" overflow control that
+    // also carries data-task-hit; deleting the third chip used to capture
+    // that button as the neighbor, and it unmounts once the count drops
+    // to 3 — leaving the rescue focusing a detached node (<body>).
+    let deleted = false
+    const deleteBlock = vi.fn(async () => {
+      deleted = true
+      return true
+    })
+    mocks.sqliteQuery.mockReset()
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('due_date IS NULL')) {
+        return { rows: [], truncated: false }
+      }
+      if (sql.includes("status != 'DONE'") && !sql.includes('due_date >=')) {
+        return { rows: [], truncated: false }
+      }
+      return {
+        rows: deleted
+          ? [
+              row({ id: 'c1', clean_content: 'First chip', due_date: TODAY }),
+              row({
+                id: 'c2',
+                clean_content: 'Neighbor chip',
+                due_date: TODAY
+              }),
+              row({ id: 'c4', clean_content: 'Hidden chip', due_date: TODAY })
+            ]
+          : [
+              row({ id: 'c1', clean_content: 'First chip', due_date: TODAY }),
+              row({
+                id: 'c2',
+                clean_content: 'Neighbor chip',
+                due_date: TODAY
+              }),
+              row({ id: 'c3', clean_content: 'Menu chip', due_date: TODAY }),
+              row({ id: 'c4', clean_content: 'Hidden chip', due_date: TODAY })
+            ],
+        truncated: false
+      }
+    })
+    const ctx = makeCtx({ deleteBlock })
+    await renderCalendar({ ctx })
+
+    expect(screen.getByTestId(`calendar-more-${TODAY}`)).toBeInTheDocument()
+    await fireEvent.contextMenu(screen.getByText('Menu chip'), {
+      clientX: 5,
+      clientY: 5
+    })
+    await fireEvent.click(screen.getByTestId('task-menu-delete'))
+    await fireEvent.click(
+      screen.getByTestId('task-menu-delete-confirm-confirm')
+    )
+    expect(ctx.deleteBlock).toHaveBeenCalledWith('c3')
+
+    // Production removal: the write emits block:changed, the debounced
+    // reload re-buckets the day (now 3 tasks, no overflow), the rescue
+    // polls past it.
+    mocks.blockChangedCallbacks.forEach((cb) => cb())
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await flush()
+
+    expect(screen.queryByTestId(`calendar-more-${TODAY}`)).toBeNull()
+    const neighbor = screen.getByText('Neighbor chip').closest('button')!
+    const active = document.activeElement as HTMLElement
+    expect(active).not.toBe(document.body)
+    expect(active).toBe(neighbor)
+    expect(active.isConnected).toBe(true)
+  })
+
   it('Open in sub-editor and Edit task reuse the chip affordance state', async () => {
     await renderCalendarWithMenu([
       row({ id: 'm1', clean_content: 'Menu chip', due_date: TODAY })
