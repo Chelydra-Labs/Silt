@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,6 +88,84 @@ func extractToken(s, prefix string) string {
 		return ""
 	}
 	return rest[:end+1]
+}
+
+// TestUpdateBlockState_DoneProgressKeepsLifecycleStamps is a regression
+// companion to the DONE progress invariant: normalizing [progress::] on DONE
+// must not disturb the lifecycle stamps. [completed::]/[modified::] land as
+// before, completed_at is set, and DONE→DONE leaves the original
+// [completed::] untouched.
+func TestUpdateBlockState_DoneProgressKeepsLifecycleStamps(t *testing.T) {
+	app := newTestApp(t)
+	const (
+		notebook = "Work"
+		section  = "Journal"
+		page     = "ProgressStamps"
+		fileDate = "2026-07-06"
+		taskID   = "beefbeef-2222-2222-2222-222222222222"
+	)
+	content := "- [/] ship [progress:: 40] <!-- id: " + taskID + " -->\n"
+	filePath := indexTestFile(t, app, notebook, section, page, fileDate, content)
+
+	// DOING → DONE: progress normalizes while the usual stamps land.
+	if _, err := app.UpdateBlockState(taskID, "DONE"); err != nil {
+		t.Fatalf("DOING→DONE: %v", err)
+	}
+	updated, _ := os.ReadFile(filePath)
+	firstDone := string(updated)
+	firstLine := taskLineForID(firstDone, taskID)
+	for _, token := range []string{"[completed:: ", "[modified:: "} {
+		if !strings.Contains(firstLine, token) {
+			t.Errorf("expected %s...] on DONE line, got: %q", token, firstLine)
+		}
+	}
+	firstCompleted := extractToken(firstDone, "[completed:: ")
+	var completedAt sql.NullString
+	if err := app.db.SQLDB().QueryRow("SELECT completed_at FROM tasks WHERE block_id = ?", taskID).Scan(&completedAt); err != nil {
+		t.Fatalf("read completed_at: %v", err)
+	}
+	if !completedAt.Valid || completedAt.String == "" {
+		t.Fatalf("completed_at not set after DONE, got %q", completedAt.String)
+	}
+
+	// DONE → DONE: [completed::] still carries the first DONE transition.
+	// Sleep so an accidental overwrite (second-granularity clock) is visible.
+	time.Sleep(1100 * time.Millisecond)
+	if _, err := app.UpdateBlockState(taskID, "DONE"); err != nil {
+		t.Fatalf("DONE→DONE: %v", err)
+	}
+	updated, _ = os.ReadFile(filePath)
+	reDone := string(updated)
+	if got := extractToken(reDone, "[completed:: "); got != firstCompleted {
+		t.Errorf("[completed::] changed on DONE→DONE: was %q, now %q", firstCompleted, got)
+	}
+	if !strings.Contains(taskLineForID(reDone, taskID), "[modified:: ") {
+		t.Errorf("expected [modified:: ...] still present after re-mark, got:\n%s", reDone)
+	}
+	var reAt sql.NullString
+	if err := app.db.SQLDB().QueryRow("SELECT completed_at FROM tasks WHERE block_id = ?", taskID).Scan(&reAt); err != nil {
+		t.Fatalf("read completed_at after re-mark: %v", err)
+	}
+	if reAt.String != completedAt.String {
+		t.Errorf("completed_at changed on DONE→DONE: was %q, now %q", completedAt.String, reAt.String)
+	}
+
+	// DONE → TODO (reopen): stamps clear exactly as before.
+	if _, err := app.UpdateBlockState(taskID, "TODO"); err != nil {
+		t.Fatalf("DONE→TODO: %v", err)
+	}
+	updated, _ = os.ReadFile(filePath)
+	reopened := string(updated)
+	if strings.Contains(reopened, "[completed::") {
+		t.Errorf("expected [completed::] cleared after reopen, got:\n%s", reopened)
+	}
+	var cleared sql.NullString
+	if err := app.db.SQLDB().QueryRow("SELECT completed_at FROM tasks WHERE block_id = ?", taskID).Scan(&cleared); err != nil {
+		t.Fatalf("read completed_at after reopen: %v", err)
+	}
+	if cleared.Valid {
+		t.Errorf("completed_at = %q after reopen, want NULL", cleared.String)
+	}
 }
 
 // TestUpdateBlockState_RecurrenceSpawnHasCreatedAt verifies the spawned
