@@ -1221,3 +1221,292 @@ describe('CalendarView — task context menu (#1116)', () => {
     expect(mocks.setTaskDueDate).toHaveBeenCalledWith('m1', '2026-07-07')
   })
 })
+
+// --- Day-cell context menu (#1119) ----------------------------------------
+// The two-item day menu (add task / open agenda) over the existing quick-add
+// and agenda paths; chip menus (#1116) and cell click/DnD/keyboard must be
+// untouched.
+
+describe('CalendarView — day-cell context menu (#1119)', () => {
+  beforeEach(async () => {
+    mocks.tasksSettings = {}
+    mocks.setTaskDueDate.mockReset().mockResolvedValue(true)
+    mocks.createTask.mockReset().mockResolvedValue('new-task-id')
+    mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
+    mocks.blockChangedCallbacks.length = 0
+    await initTasksSettings(makeCtx())
+  })
+
+  afterEach(() => {
+    cleanup()
+    clearTaskPageRoute()
+  })
+
+  function dayMenuLabels(): string[] {
+    return Array.from(
+      screen
+        .getByTestId('calendar-day-menu')
+        .querySelectorAll<HTMLElement>(':scope > [role="menuitem"]')
+    ).map((el) => {
+      const span = el.querySelector<HTMLSpanElement>('span:not([aria-hidden])')
+      return (span ?? el).textContent?.trim() ?? ''
+    })
+  }
+
+  async function openDayMenuOn(dateKey: string, x = 300, y = 300) {
+    const cell = document.querySelector(
+      `[data-celldate="${dateKey}"]`
+    ) as HTMLElement
+    expect(cell).toBeTruthy()
+    await fireEvent.contextMenu(cell, { clientX: x, clientY: y })
+    return cell
+  }
+
+  it('right-click a day cell opens the two-item menu at the pointer', async () => {
+    await mockQueries([])
+    await renderCalendar()
+    expect(screen.queryByTestId('calendar-day-menu')).toBeNull()
+
+    // 2026-07-15 within the default 1024×768 jsdom viewport: the primitive
+    // measures the menu at 0×0 there, so clamping is identity and the menu
+    // lands exactly at the dispatched pointer coordinates.
+    await openDayMenuOn(ymdForCell(15))
+
+    const menu = screen.getByTestId('calendar-day-menu')
+    expect(menu).toHaveAttribute('role', 'menu')
+    expect(menu.getAttribute('style')).toContain('left: 300px')
+    expect(menu.getAttribute('style')).toContain('top: 300px')
+    expect(dayMenuLabels()).toEqual([
+      'Add task for July 15, 2026',
+      'Open agenda'
+    ])
+
+    // A right-click is not a click: the cell's click-to-quick-add stays put.
+    expect(screen.queryByTestId('quick-add-task-input')).toBeNull()
+  })
+
+  it('"Add task for <day>" opens quick-add prefilled with that day', async () => {
+    await mockQueries([])
+    await renderCalendar()
+    const dateKey = ymdForCell(15)
+    await openDayMenuOn(dateKey)
+
+    await fireEvent.click(screen.getByTestId('calendar-day-menu-add'))
+
+    expect(screen.queryByTestId('calendar-day-menu')).toBeNull()
+    const input = screen.getByTestId('quick-add-task-input')
+    // The quick-add lives inside the menu's day cell, exactly like the
+    // calendar-day-add button's instance.
+    expect(
+      input.closest('[data-celldate]')?.getAttribute('data-celldate')
+    ).toBe(dateKey)
+    await fireEvent.input(input, { target: { value: 'From day menu' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await flush()
+
+    expect(mocks.createTask).toHaveBeenCalledTimes(1)
+    expect(mocks.createTask.mock.calls[0][0]).toMatchObject({
+      title: 'From day menu',
+      dueDate: dateKey
+    })
+  })
+
+  it('"Open agenda" opens the day agenda and returns focus to the cell', async () => {
+    // Four tasks on TODAY: 3 chips + "+1 more" — the agenda is the only way
+    // to see the fourth.
+    await mockQueries(
+      Array.from({ length: 4 }, (_, i) =>
+        row({
+          id: `a${i + 1}`,
+          clean_content: `Agenda task ${i + 1}`,
+          due_date: TODAY
+        })
+      )
+    )
+    await renderCalendar()
+    await openDayMenuOn(TODAY)
+
+    await fireEvent.click(screen.getByTestId('calendar-day-menu-agenda'))
+
+    const agenda = screen.getByTestId('calendar-day-agenda')
+    expect(agenda).toBeInTheDocument()
+    for (let i = 1; i <= 4; i++) {
+      expect(agenda.textContent).toContain(`Agenda task ${i}`)
+    }
+    // The agenda opens with its first entry focused (shared open path with
+    // the "+N more" affordance).
+    await flush()
+    expect(document.activeElement?.textContent).toContain('Agenda task 1')
+
+    // Escape closes the agenda and restores focus to the anchor — the day
+    // cell that opened the menu, not a vanished "+N more" button.
+    await fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    await flush()
+    expect(screen.queryByTestId('calendar-day-agenda')).toBeNull()
+    const cell = document.querySelector(`[data-celldate="${TODAY}"]`)!
+    expect(document.activeElement).toBe(cell)
+  })
+
+  it('Shift+F10 and Menu key open the menu from a focused cell; focus returns on close', async () => {
+    await mockQueries([])
+    await renderCalendar()
+    const cell = document.querySelector(
+      `[data-celldate="${TODAY}"]`
+    ) as HTMLElement
+    cell.focus()
+
+    await fireEvent.keyDown(cell, { key: 'F10', shiftKey: true })
+    expect(screen.getByTestId('calendar-day-menu')).toBeInTheDocument()
+    // The primitive focuses the first item on open.
+    expect(document.activeElement).toBe(
+      screen.getByTestId('calendar-day-menu-add')
+    )
+
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await flush()
+    expect(screen.queryByTestId('calendar-day-menu')).toBeNull()
+    expect(document.activeElement).toBe(cell)
+
+    // The Menu key takes the same branch.
+    await fireEvent.keyDown(cell, { key: 'ContextMenu' })
+    expect(screen.getByTestId('calendar-day-menu')).toBeInTheDocument()
+  })
+
+  it('dismisses on Escape, backdrop click, calendar scroll, and resize', async () => {
+    await mockQueries([])
+    await renderCalendar()
+    await openDayMenuOn(TODAY)
+
+    // jsdom computes no Tailwind overflow on the calendar's scroll container,
+    // so the primitive's scoped scroll listener falls back to document.
+    document.dispatchEvent(new Event('scroll', { bubbles: true }))
+    await flush()
+    expect(screen.queryByTestId('calendar-day-menu')).toBeNull()
+
+    await openDayMenuOn(TODAY)
+    window.dispatchEvent(new Event('resize'))
+    await flush()
+    expect(screen.queryByTestId('calendar-day-menu')).toBeNull()
+
+    await openDayMenuOn(TODAY)
+    await fireEvent.click(screen.getByTestId('day-menu-backdrop'))
+    await flush()
+    expect(screen.queryByTestId('calendar-day-menu')).toBeNull()
+
+    await openDayMenuOn(TODAY)
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await flush()
+    expect(screen.queryByTestId('calendar-day-menu')).toBeNull()
+  })
+
+  it('right-click on a chip or "+N more" keeps their own context behavior, not the day menu', async () => {
+    await mockQueries(
+      Array.from({ length: 4 }, (_, i) =>
+        row({
+          id: `c${i + 1}`,
+          clean_content: `Chip task ${i + 1}`,
+          due_date: TODAY
+        })
+      )
+    )
+    await renderCalendar()
+
+    // The event bubbles from the chip to the cell — the cell handler must
+    // yield to the chip's task menu (#1116).
+    await fireEvent.contextMenu(screen.getByText('Chip task 1'), {
+      clientX: 5,
+      clientY: 5
+    })
+    expect(screen.getByTestId('task-context-menu')).toBeInTheDocument()
+    expect(screen.queryByTestId('calendar-day-menu')).toBeNull()
+    await fireEvent.keyDown(window, { key: 'Escape' })
+
+    // Same guard for the overflow control (a control, not the cell surface).
+    await fireEvent.contextMenu(screen.getByTestId(`calendar-more-${TODAY}`), {
+      clientX: 5,
+      clientY: 5
+    })
+    expect(screen.queryByTestId('calendar-day-menu')).toBeNull()
+    expect(screen.queryByTestId('task-context-menu')).toBeNull()
+  })
+
+  it('week-view cells expose the same menu', async () => {
+    await mockQueries([])
+    await renderCalendar()
+    await fireEvent.click(screen.getByTestId('calendar-submode-week'))
+    await flush()
+
+    await openDayMenuOn(TODAY)
+    expect(dayMenuLabels()).toEqual([
+      'Add task for July 6, 2026',
+      'Open agenda'
+    ])
+    await fireEvent.click(screen.getByTestId('calendar-day-menu-add'))
+
+    const input = screen.getByTestId('quick-add-task-input')
+    expect(
+      input.closest('[data-celldate]')?.getAttribute('data-celldate')
+    ).toBe(TODAY)
+  })
+
+  it('no-regression: cell click quick-add, Enter quick-add, arrows, drop reschedule', async () => {
+    await mockQueries([
+      row({ id: 'd1', clean_content: 'Drag me', due_date: TODAY })
+    ])
+    await renderCalendar()
+
+    // Plain click on a cell still opens quick-add for that day.
+    const clickCell = document.querySelector(
+      `[data-celldate="${ymdForCell(10)}"]`
+    ) as HTMLElement
+    await fireEvent.click(clickCell)
+    expect(
+      screen
+        .getByTestId('quick-add-task-input')
+        .closest('[data-celldate]')
+        ?.getAttribute('data-celldate')
+    ).toBe(ymdForCell(10))
+    await fireEvent.keyDown(screen.getByTestId('quick-add-task-input'), {
+      key: 'Escape'
+    })
+    await flush()
+    expect(screen.queryByTestId('quick-add-task-input')).toBeNull()
+
+    // Enter on a focused cell still opens quick-add (same path the menu
+    // item takes).
+    const enterCell = document.querySelector(
+      `[data-celldate="${ymdForCell(11)}"]`
+    ) as HTMLElement
+    enterCell.focus()
+    await fireEvent.keyDown(enterCell, { key: 'Enter' })
+    expect(
+      screen
+        .getByTestId('quick-add-task-input')
+        .closest('[data-celldate]')
+        ?.getAttribute('data-celldate')
+    ).toBe(ymdForCell(11))
+
+    // Arrow navigation still moves cell focus (Enter left focus on the cell;
+    // ArrowDown targets the cell one week below).
+    const fromCell = document.querySelector(
+      `[data-celldate="${ymdForCell(12)}"]`
+    ) as HTMLElement
+    fromCell.focus()
+    await fireEvent.keyDown(fromCell, { key: 'ArrowDown' })
+    await flush()
+    expect(document.activeElement?.getAttribute('data-celldate')).toBe(
+      ymdForCell(19)
+    )
+
+    // Drag-to-reschedule onto a day cell still writes the due date.
+    const chip = screen.getByText('Drag me')
+    await fireEvent.dragStart(chip)
+    const target = document.querySelector(
+      `[data-celldate="${ymdForCell(20)}"]`
+    )!
+    await fireEvent.dragOver(target)
+    await fireEvent.drop(target)
+    await flush()
+    expect(mocks.setTaskDueDate).toHaveBeenCalledWith('d1', ymdForCell(20))
+  })
+})
