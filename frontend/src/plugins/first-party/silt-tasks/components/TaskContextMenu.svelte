@@ -77,7 +77,13 @@
   })
 
   let weekStart = $derived(getTaskWeekStart())
-  let duePresets = $derived(buildDueDatePresets(ctx.today, weekStart))
+  // ctx.today is a plain-object getter — untracked inside $derived — and the
+  // view hosts mount this component once for their lifetime, unlike the
+  // drawer which remounts per open. Keying on `menu` rebuilds the presets on
+  // every open so crossing local midnight never offers yesterday as "Today".
+  let duePresets = $derived(
+    menu ? buildDueDatePresets(ctx.today, weekStart) : []
+  )
 
   const PRIORITIES = [1, 2, 3]
 

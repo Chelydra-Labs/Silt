@@ -3154,6 +3154,27 @@ describe('ListView — task context menu (#1116)', () => {
     expect(ctx.setTaskDueDate).toHaveBeenCalledWith('m1', '')
   })
 
+  it('due presets re-resolve on every open — "Today" follows local midnight', async () => {
+    // The menu host stays mounted for the view's lifetime and ctx.today is
+    // an untracked getter, so the presets must rebuild per open: a reopen
+    // after midnight has to offer the fresh local day, not the first open's
+    // cached YMDs.
+    const today = todayStr()
+    const nextDay = dateOffsetStr(1)
+    const ctx = await renderWithMenuTask()
+    const row = document.querySelector('[data-block-id="m1"]') as HTMLElement
+
+    await fireEvent.contextMenu(row, { clientX: 5, clientY: 5 })
+    expect(screen.getByTestId(`task-menu-due-${today}`)).toBeInTheDocument()
+
+    // Midnight passes while the host stays mounted; reopen the menu.
+    ;(ctx as { today: string }).today = nextDay
+    await fireEvent.contextMenu(row, { clientX: 5, clientY: 5 })
+    expect(screen.queryByTestId(`task-menu-due-${today}`)).toBeNull()
+    await fireEvent.click(screen.getByTestId(`task-menu-due-${nextDay}`))
+    expect(ctx.setTaskDueDate).toHaveBeenCalledWith('m1', nextDay)
+  })
+
   it('priority submenu marks the current value and writes the selection', async () => {
     const ctx = await renderWithMenuTask({ priority: 2 })
     await fireEvent.contextMenu(
