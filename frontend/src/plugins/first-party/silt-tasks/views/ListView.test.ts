@@ -2184,6 +2184,125 @@ describe('ListView — shortlist badge + filter (#1092)', () => {
   })
 })
 
+// --- Shortlist lens rank vs pin hoist (#1114) -------------------------------
+
+describe('ListView — lens rank hoist vs pin block (#1114)', () => {
+  beforeEach(() => {
+    resetTaskHubState()
+    mocks.sqliteQuery.mockReset()
+    mocks.blockChangedCallbacks.length = 0
+  })
+  afterEach(cleanup)
+
+  function mockOpenRows(rows: TaskRow[]) {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) return { rows, truncated: false }
+      return { rows: [], truncated: false }
+    })
+  }
+
+  it("lens on, groupBy='none': pinned rank-3 sorts after unpinned rank-0, no Pinned section", async () => {
+    // Under the lens the curated rank order is the hoist, so the structural
+    // pinned partition dissolves (#1114) — the inverse of the default-lens
+    // pin hoist guarded below.
+    setGroupBy('none')
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    mockOpenRows([
+      task('p3', 'pinned rank 3', {
+        pinned: true,
+        shortlist_rank: 3,
+        due_date: ''
+      }),
+      task('r0', 'unpinned rank 0', { shortlist_rank: 0, due_date: '' })
+    ])
+
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const flatIds = Array.from(
+      document.querySelectorAll('[data-group="all"] [data-block-id]')
+    ).map((el) => el.getAttribute('data-block-id'))
+    expect(flatIds).toEqual(['r0', 'p3'])
+
+    // The pin hoist is lens-off behavior only: no hoisted block, no divider.
+    expect(document.querySelector('[data-group="pinned"]')).toBeNull()
+    expect(screen.queryByTestId('tasks-pinned-divider')).toBeNull()
+  })
+
+  it("lens on, groupBy='owner': pinned ranked row lands in its normal section in rank position", async () => {
+    setGroupBy('owner')
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    mockOpenRows([
+      task('p3', 'pinned rank 3', {
+        pinned: true,
+        owner: 'Alice',
+        shortlist_rank: 3,
+        due_date: ''
+      }),
+      task('r0', 'unpinned rank 0', {
+        owner: 'Alice',
+        shortlist_rank: 0,
+        due_date: ''
+      })
+    ])
+
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    // Both rows bin into the same owner section, rank-led, no hoist.
+    const sectionIds = Array.from(
+      document.querySelectorAll('section[data-group] [data-block-id]')
+    ).map((el) => el.getAttribute('data-block-id'))
+    expect(sectionIds).toEqual(['r0', 'p3'])
+    expect(
+      document.querySelector('[data-block-id="p3"]')?.closest('[data-group]')
+    ).toHaveAttribute('data-group', 'owner-Alice')
+
+    expect(document.querySelector('[data-group="pinned"]')).toBeNull()
+    expect(screen.queryByTestId('tasks-pinned-divider')).toBeNull()
+  })
+
+  it('lens off: pinned rank-3 still hoists above unpinned rank-0 (#1091 regression guard)', async () => {
+    setGroupBy('none')
+    mockOpenRows([
+      task('p3', 'pinned rank 3', {
+        pinned: true,
+        shortlist_rank: 3,
+        due_date: ''
+      }),
+      task('r0', 'unpinned rank 0', { shortlist_rank: 0, due_date: '' })
+    ])
+
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    // Default lens keeps the structural pin block above every grouping
+    // branch — ranks only reorder rows inside their partition.
+    const pinnedIds = Array.from(
+      document.querySelectorAll('[data-group="pinned"] [data-block-id]')
+    ).map((el) => el.getAttribute('data-block-id'))
+    expect(pinnedIds).toEqual(['p3'])
+    expect(screen.getByTestId('tasks-pinned-divider')).toBeInTheDocument()
+
+    const flatIds = Array.from(
+      document.querySelectorAll('[data-group="all"] [data-block-id]')
+    ).map((el) => el.getAttribute('data-block-id'))
+    expect(flatIds).toEqual(['r0'])
+  })
+})
+
 describe('ListView — server-side filtering via buildQuery (#526)', () => {
   beforeEach(() => {
     resetTaskHubState()

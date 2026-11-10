@@ -374,15 +374,24 @@
 
   // Pinned open tasks render in their own block above every grouping branch,
   // so the group derivations below read `unpinnedOpen` and never duplicate a
-  // pinned row (#1091).
+  // pinned row (#1091). Under the shortlist lens the partition dissolves and
+  // the curated 0..3 rank order is the hoist instead — matching the SQL
+  // ordering contract in query.ts and Board's mixed lanes (#1114) — so all
+  // rows bin + sort together through the {shortlistFirst} comparators below.
   let pinnedOpen = $derived(
-    sortTasks(
-      hubSort,
-      filteredOpen.filter((i) => i.pinned),
-      { shortlistFirst }
-    )
+    shortlistFirst
+      ? []
+      : sortTasks(
+          hubSort,
+          filteredOpen.filter((i) => i.pinned),
+          {
+            shortlistFirst
+          }
+        )
   )
-  let unpinnedOpen = $derived(filteredOpen.filter((i) => !i.pinned))
+  let unpinnedOpen = $derived(
+    shortlistFirst ? filteredOpen : filteredOpen.filter((i) => !i.pinned)
+  )
 
   let overdue = $derived(
     unpinnedOpen.filter((i) => !!i.due_date && i.due_date < today)
