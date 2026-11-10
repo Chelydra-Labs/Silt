@@ -144,7 +144,9 @@ export function createStatusColumnsController({
   }
 
   function applyWipLimit(statusName: string) {
-    const trimmed = wipDraft.trim()
+    // bind:value on a type=number input yields a number (or null when
+    // cleared), not the seeded string — normalize so both validate the same.
+    const trimmed = String(wipDraft ?? '').trim()
     let wipLimit: number | null
     if (trimmed === '') {
       wipLimit = null
