@@ -9,6 +9,13 @@
   } from '../../bindings/silt/app.js'
   import { pushNotification } from '../notifications/store.svelte'
   import { coerceIPCError } from '../lib/ipcError'
+  import ContextMenu from './ContextMenu.svelte'
+  import {
+    isContextMenuKey,
+    openContextMenuFromKeyboard
+  } from '../lib/contextMenuKey'
+  import { usePageLocatorMenu } from '../lib/pageLocatorMenu.svelte'
+  import { copyPageReference } from '../lib/pageActions'
 
   export type Backlink = {
     linkKind: 'page' | 'block-ref' | 'embed'
@@ -775,30 +782,176 @@
   }
 
   function openPage(link: Backlink): void {
-    window.dispatchEvent(
-      new CustomEvent('navigate-to-page', {
-        detail: {
-          notebook: link.sourceNotebook,
-          section: link.sourceSection,
-          page: link.sourcePage,
-          source: link.source ?? 'vault'
-        }
-      })
+    dispatchOpenPage(
+      link.sourceNotebook,
+      link.sourceSection,
+      link.sourcePage,
+      link.source ?? 'vault'
     )
   }
 
   function openExactBlock(link: Backlink): void {
+    dispatchOpenBlock(
+      link.sourceNotebook,
+      link.sourceSection,
+      link.sourcePage,
+      link.sourceBlockId,
+      link.source ?? 'vault'
+    )
+  }
+
+  // --- row context menu (#1120) --------------------------------------------
+  //
+  // One shared-helper controller for every row kind; the items are surface
+  // wording (Open source page / Open exact block / Promote to link), so the
+  // standard vocabulary is not injected — the helper still owns the menu
+  // state, anchor resolution, dismissal, and focus return.
+
+  /** Locator for one row: the SOURCE page triple plus routing fields. */
+  interface BacklinkRowLocator {
+    notebook: string
+    section: string
+    page: string
+    source: string
+    /** Exact block id ('' on page-level rows: group + mention headers). */
+    blockId: string
+    /** Set on unlinked-mention block rows — drives Promote to link. */
+    mention?: UnlinkedMention
+  }
+
+  // Backlink and UnlinkedMention share their source* field names, so one
+  // builder covers both wire shapes.
+  function pageRowLocator(
+    row: {
+      sourceNotebook: string
+      sourceSection: string
+      sourcePage: string
+      source?: string
+    },
+    blockId = ''
+  ): BacklinkRowLocator {
+    return {
+      notebook: row.sourceNotebook,
+      section: row.sourceSection,
+      page: row.sourcePage,
+      source: row.source ?? 'vault',
+      blockId
+    }
+  }
+
+  function mentionBlockLocator(
+    mention: UnlinkedMention,
+    blockId: string
+  ): BacklinkRowLocator {
+    return { ...pageRowLocator(mention, blockId), mention }
+  }
+
+  function dispatchOpenPage(
+    notebook: string,
+    section: string,
+    page: string,
+    source: string
+  ): void {
     window.dispatchEvent(
-      new CustomEvent('navigate-to-block', {
-        detail: {
-          notebook: link.sourceNotebook,
-          section: link.sourceSection,
-          page: link.sourcePage,
-          blockId: link.sourceBlockId,
-          source: link.source ?? 'vault'
-        }
+      new CustomEvent('navigate-to-page', {
+        detail: { notebook, section, page, source }
       })
     )
+  }
+
+  function dispatchOpenBlock(
+    notebook: string,
+    section: string,
+    page: string,
+    blockId: string,
+    source: string
+  ): void {
+    window.dispatchEvent(
+      new CustomEvent('navigate-to-block', {
+        detail: { notebook, section, page, blockId, source }
+      })
+    )
+  }
+
+  function openSourcePage(loc: BacklinkRowLocator): void {
+    dispatchOpenPage(loc.notebook, loc.section, loc.page, loc.source)
+  }
+
+  function openExactBlockAt(loc: BacklinkRowLocator): void {
+    dispatchOpenBlock(
+      loc.notebook,
+      loc.section,
+      loc.page,
+      loc.blockId,
+      loc.source
+    )
+  }
+
+  // Empty deps by design (surface-owned items); see the block comment above.
+  const rowMenu = usePageLocatorMenu<BacklinkRowLocator>({})
+
+  function runRowItem(action: (loc: BacklinkRowLocator) => void): void {
+    const loc = rowMenu.menu?.locator
+    rowMenu.close()
+    if (loc) action(loc)
+  }
+
+  interface BacklinkMenuItem {
+    id: string
+    icon: string
+    label: string
+    run: () => void
+  }
+
+  const rowMenuItems = $derived.by((): BacklinkMenuItem[] => {
+    const open = rowMenu.menu
+    if (!open) return []
+    const loc = open.locator
+    const items: BacklinkMenuItem[] = []
+    // Promote only where a target is unambiguous: ambiguous rows keep the
+    // candidate chips as THE disambiguation affordance — a bare item can't
+    // pick a target. Busy rows drop it while the inline promote is in flight.
+    if (
+      loc.mention &&
+      !loc.mention.ambiguous &&
+      !unlinkedBusy.has(loc.blockId)
+    ) {
+      items.push({
+        id: 'promote-to-link',
+        icon: 'add_link',
+        label: 'Promote to link',
+        run: () => runRowItem((l) => void promoteMention(l.mention!, l.blockId))
+      })
+    }
+    items.push({
+      id: 'open-source-page',
+      icon: 'description',
+      label: 'Open source page',
+      run: () => runRowItem(openSourcePage)
+    })
+    if (!loc.mention && loc.blockId) {
+      items.push({
+        id: 'open-exact-block',
+        icon: 'my_location',
+        label: 'Open exact block',
+        run: () => runRowItem(openExactBlockAt)
+      })
+    }
+    items.push({
+      id: 'copy-page-reference',
+      icon: 'link',
+      label: 'Copy page reference',
+      run: () => runRowItem((l) => void copyPageReference(l))
+    })
+    return items
+  })
+
+  /** Shift+F10 / Menu key on a row's focusable control: synthesize the
+   *  contextmenu at the control so the row's own oncontextmenu runs. */
+  function onRowMenuKeydown(e: KeyboardEvent): void {
+    if (!isContextMenuKey(e)) return
+    e.preventDefault()
+    openContextMenuFromKeyboard(e.currentTarget as HTMLElement)
   }
 
   function kindLabel(kind: Backlink['linkKind']): string {
@@ -959,6 +1112,10 @@
                   type="button"
                   class="w-full px-2.5 py-2 border-none bg-transparent text-left flex items-center gap-2 text-surface-sidebar-text hover:bg-hover cursor-pointer transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-primary-start"
                   onclick={() => openPage(source)}
+                  aria-keyshortcuts="Shift+F10"
+                  onkeydown={onRowMenuKeydown}
+                  oncontextmenu={(e) =>
+                    rowMenu.openFromEvent(e, pageRowLocator(source))}
                   aria-label={`Open page ${source.sourcePage}`}
                 >
                   <span
@@ -1001,6 +1158,13 @@
                       type="button"
                       class="group min-w-0 flex-1 px-2.5 py-2 border-none bg-transparent text-left flex items-start gap-2 cursor-pointer focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-primary-start"
                       onclick={() => openPage(link)}
+                      aria-keyshortcuts="Shift+F10"
+                      onkeydown={onRowMenuKeydown}
+                      oncontextmenu={(e) =>
+                        rowMenu.openFromEvent(
+                          e,
+                          pageRowLocator(link, link.sourceBlockId)
+                        )}
                       aria-label={`Open ${kindLabel(link.linkKind).toLowerCase()} in page ${link.sourcePage}: ${link.snippet}`}
                     >
                       <span
@@ -1032,6 +1196,13 @@
                         type="button"
                         class="self-stretch w-9 flex-shrink-0 border-none border-l border-surface-sidebar-border/70 bg-transparent text-surface-sidebar-text-muted hover:bg-accent-primary-start/10 hover:text-accent-primary-start cursor-pointer transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-primary-start"
                         onclick={() => openExactBlock(link)}
+                        aria-keyshortcuts="Shift+F10"
+                        onkeydown={onRowMenuKeydown}
+                        oncontextmenu={(e) =>
+                          rowMenu.openFromEvent(
+                            e,
+                            pageRowLocator(link, link.sourceBlockId)
+                          )}
                         aria-label={`Jump to exact block for ${kindLabel(link.linkKind).toLowerCase()} in ${link.sourcePage}: ${link.snippet}`}
                         title="Jump to exact block"
                       >
@@ -1207,6 +1378,10 @@
                             sourcePage: mention.sourcePage,
                             source: mention.source ?? 'vault'
                           } as Backlink)}
+                        aria-keyshortcuts="Shift+F10"
+                        onkeydown={onRowMenuKeydown}
+                        oncontextmenu={(e) =>
+                          rowMenu.openFromEvent(e, pageRowLocator(mention))}
                         aria-label={`Open page ${mention.sourcePage}`}
                       >
                         <span class="flex items-center gap-1.5 min-w-0">
@@ -1316,6 +1491,13 @@
                               class="flex-shrink-0 self-end sm:self-auto rounded border border-surface-sidebar-border bg-transparent px-2 py-0.5 text-type-3xs text-accent-primary-start hover:bg-accent-primary-start/10 cursor-pointer transition-colors disabled:cursor-wait disabled:opacity-65 focus-visible:ring-2 focus-visible:ring-accent-primary-start"
                               disabled={unlinkedBusy.has(blockId)}
                               aria-label={`Link mention of ${mention.title} in block ${blockId.slice(0, 8)} on page ${mention.sourcePage}`}
+                              aria-keyshortcuts="Shift+F10"
+                              onkeydown={onRowMenuKeydown}
+                              oncontextmenu={(e) =>
+                                rowMenu.openFromEvent(
+                                  e,
+                                  mentionBlockLocator(mention, blockId)
+                                )}
                               onclick={() => promoteMention(mention, blockId)}
                             >
                               {unlinkedBusy.has(blockId) ? 'Linking…' : 'Link'}
@@ -1348,4 +1530,29 @@
       {/if}
     {/if}
   </div>
+
+  {#if rowMenu.menu}
+    <ContextMenu
+      open={true}
+      anchor={{ x: rowMenu.menu.x, y: rowMenu.menu.y }}
+      anchorEl={rowMenu.menu.anchorEl}
+      onClose={rowMenu.close}
+      ariaLabel={`Actions for ${rowMenu.menu.locator.page}`}
+      menuTestId="backlinks-locator-menu"
+    >
+      {#each rowMenuItems as item (item.id)}
+        <button
+          type="button"
+          role="menuitem"
+          data-testid={`backlinks-menu-${item.id}`}
+          onclick={item.run}
+        >
+          <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+            >{item.icon}</span
+          >
+          <span>{item.label}</span>
+        </button>
+      {/each}
+    </ContextMenu>
+  {/if}
 </nav>
