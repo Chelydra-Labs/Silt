@@ -1054,29 +1054,29 @@ export const CodeBlock = Node.create({
 // operability, and an implicit aria-expanded. The on-disk form is the HTML
 // itself, preserved line-by-line as opaque NOTE blocks by the Go parser (HTML
 // passes through clean_text verbatim). The converter groups a `<details>` run
-// into this node tree on load and re-emits the run on save. Collapse state is
-// not persisted to disk (never written as `<details open>`).
+// into this node tree on load and re-emits the run on save.
 //
-// `open: false` default keeps sections collapsed on load (the outliner's "the
-// file is the truth" model — collapse is a view concern, not disk state).
-// `persist: true` declares the `open` attr in the doc model so insertion-time
-// `open: true` (insertDetails, /meeting) survives and the extension's NodeView
-// auto-expands the section. Silt's serializer never writes `open` to disk
-// (blocks.ts emits a bare `<details>`; the parser hardcodes `open: false`), so
-// the on-disk format and the collapsed-on-reload model are unchanged.
+// Collapse state is disk state (#1123): `persist: true` declares the `open`
+// attr in the doc model, blocks.ts serializes it as `<details open>` and
+// parses it back, so a section reopens in the state the user left it and
+// insertion-time `open: true` (insertDetails, /meeting) survives. Files saved
+// before #1123 carry no `open` attribute — the parser defaults them to
+// collapsed (back-compatible read, no format migration).
 // The extensions are wrapped with `.extend()` to add `id` and `file_date`
 // attributes — without these, ProseMirror silently drops the attrs on
 // node creation, causing identity instability across save cycles (#310).
 
 // With `persist: true`, the stock NodeView toggle dispatches a plain
-// setNodeMarkup transaction per fold click. That transaction would dirty the
-// autosave cycle, arm the task sub-editor's unsaved-changes prompt, land in
-// undo history, and (setNodeMarkup replaces attrs wholesale) reset the
-// node's `id`/`file_date`. Silt re-dispatches the toggle itself via the
-// capture-phase plugin on SiltDetailsExtensions' Details below, tagged with
-// this key and `addToHistory: false` (mirroring siltInlineDragHandle);
-// onUpdate consumers (TipTapEditor autosave, TaskSubEditorModal dirty flag)
-// skip transactions carrying it via isDetailsFoldToggle().
+// setNodeMarkup transaction per fold click. That transaction would land in
+// undo history and (setNodeMarkup replaces attrs wholesale) reset the node's
+// `id`/`file_date` — dirtying autosave is now desired (`open` is disk state,
+// #1123), but undo stepping through folds and identity damage never are.
+// Silt re-dispatches the toggle itself via the capture-phase plugin on
+// SiltDetailsExtensions' Details below, tagged with this key and
+// `addToHistory: false` (mirroring siltInlineDragHandle). The tag no longer
+// gates autosave consumers (they save fold toggles like any edit); it stays
+// load-bearing for tests and any future consumer that must tell a fold from
+// a content edit.
 export const detailsFoldToggleKey = new PluginKey('siltDetailsFoldToggle')
 
 export function isDetailsFoldToggle(tr: Transaction): boolean {

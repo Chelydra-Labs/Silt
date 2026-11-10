@@ -45,7 +45,6 @@
     SiltColorMarkExtensions,
     SiltDetailsExtensions,
     SiltTableExtensions,
-    isDetailsFoldToggle,
     UniqueBlockIds,
     ExternalPasteNormalizer,
     SiltHardBreak,
@@ -461,11 +460,11 @@
     // many; HTML pasted into a cell/callout stays paragraph-based. Shared with
     // the Task Sub-Editor so both surfaces behave identically.
     editorProps: siltPasteProps,
-    onUpdate: ({ transaction }) => {
-      // suppressUpdate covers programmatic loads; fold toggles are view
-      // state, not content — no dirty cycle, no buffer-authoritative
-      // release, no autosave churn on identical bytes.
-      if (suppressUpdate || isDetailsFoldToggle(transaction)) return
+    onUpdate: () => {
+      // suppressUpdate covers programmatic loads. Fold toggles are content
+      // now that `open` is disk state (#1123): they ride the normal dirty →
+      // debounced-save cycle like any other edit.
+      if (suppressUpdate) return
       if (autosave.holdsForConflict()) {
         // A keep_theirs/cross-surface resolution armed a reload of this
         // buffer-as-discardable. The #345 "user edit makes the buffer
