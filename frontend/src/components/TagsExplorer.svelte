@@ -2,6 +2,13 @@
   import { QueryBlocksByTag } from '../../bindings/silt/app.js'
   import ViewHeader from './ui/ViewHeader.svelte'
   import ViewState from './ui/ViewState.svelte'
+  import ContextMenu from './ContextMenu.svelte'
+  import {
+    isContextMenuKey,
+    openContextMenuFromKeyboard
+  } from '../lib/contextMenuKey'
+  import { usePageLocatorMenu } from '../lib/pageLocatorMenu.svelte'
+  import { copyText } from '../lib/pageActions'
 
   interface Props {
     selectedTag?: string
@@ -23,6 +30,81 @@
   let loadingResults = $state(false)
   let loadError = $state<string | null>(null)
 
+  // --- block context menu (#1120) -----------------------------------------
+  //
+  // Tag rows are block-scoped, so none of the standard page-locator items
+  // apply verbatim; like Search's "Replace in vault", the items are
+  // surface-owned. The shared helper still owns the menu state, anchor
+  // resolution, dismissal, and focus return — the identical chrome every
+  // #1120 surface shares.
+  interface TagBlockLocator {
+    notebook: string
+    section: string
+    page: string
+    blockId: string
+    date: string
+  }
+
+  function blockLocatorOf(res: TagHit): TagBlockLocator {
+    return {
+      notebook: res.notebook ?? '',
+      section: res.section ?? '',
+      page: res.page ?? '',
+      blockId: res.id,
+      date: res.file_date ?? ''
+    }
+  }
+
+  // Hits without a page triple can't be navigated or referenced; those rows
+  // keep the native menu (the Quick Access unavailable-row rule).
+  function locatorMenuApplies(res: TagHit): boolean {
+    return !!res.notebook && !!res.page
+  }
+
+  // Hosted for chrome/state only — the items below are surface-specific,
+  // so nothing from the standard vocabulary is injected and
+  // locatorMenu.items stays unused.
+  const locatorMenu = usePageLocatorMenu<TagBlockLocator>({})
+
+  function openBlockAt(loc: TagBlockLocator) {
+    window.dispatchEvent(
+      new CustomEvent('navigate-to-block', {
+        detail: {
+          notebook: loc.notebook,
+          section: loc.section,
+          page: loc.page,
+          date: loc.date,
+          blockId: loc.blockId
+        }
+      })
+    )
+  }
+
+  function openContainingPage(loc: TagBlockLocator) {
+    window.dispatchEvent(
+      new CustomEvent('navigate-to-page', {
+        detail: {
+          notebook: loc.notebook,
+          section: loc.section,
+          page: loc.page
+        }
+      })
+    )
+  }
+
+  function runItem(action: (loc: TagBlockLocator) => void): void {
+    const loc = locatorMenu.menu?.locator
+    locatorMenu.close()
+    if (loc) action(loc)
+  }
+
+  function onRowKeydown(e: KeyboardEvent, res: TagHit): void {
+    if (!isContextMenuKey(e)) return
+    if (!locatorMenuApplies(res)) return
+    e.preventDefault()
+    openContextMenuFromKeyboard(e.currentTarget as HTMLElement)
+  }
+
   async function selectTag(path: string) {
     activeTag = path
     loadingResults = true
@@ -40,17 +122,7 @@
   }
 
   function openBlock(res: TagHit) {
-    window.dispatchEvent(
-      new CustomEvent('navigate-to-block', {
-        detail: {
-          notebook: res.notebook,
-          section: res.section,
-          page: res.page,
-          date: res.file_date,
-          blockId: res.id
-        }
-      })
-    )
+    openBlockAt(blockLocatorOf(res))
   }
 
   // When selectedTag updates from props, load the blocks
@@ -108,6 +180,11 @@
       {#each results as res (res.id)}
         <button
           onclick={() => openBlock(res)}
+          aria-keyshortcuts={locatorMenuApplies(res) ? 'Shift+F10' : undefined}
+          onkeydown={(e) => onRowKeydown(e, res)}
+          oncontextmenu={(e) => {
+            if (locatorMenuApplies(res)) locatorMenu.openFromEvent(e, blockLocatorOf(res))
+          }}
           class="w-full text-left px-6 py-3 border-b border-surface-panel-border/50 hover:bg-hover transition-colors border-none bg-transparent cursor-pointer flex flex-col gap-1"
         >
           <div
@@ -130,4 +207,49 @@
       {/each}
     {/if}
   </div>
+
+  {#if locatorMenu.menu}
+    <ContextMenu
+      open={true}
+      anchor={{ x: locatorMenu.menu.x, y: locatorMenu.menu.y }}
+      anchorEl={locatorMenu.menu.anchorEl}
+      onClose={locatorMenu.close}
+      ariaLabel={`Actions for ${locatorMenu.menu.locator.page}`}
+      menuTestId="tags-locator-menu"
+    >
+      <button
+        type="button"
+        role="menuitem"
+        data-testid="tags-menu-open-block"
+        onclick={() => runItem(openBlockAt)}
+      >
+        <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+          >my_location</span
+        >
+        <span>Open block</span>
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        data-testid="tags-menu-open-page"
+        onclick={() => runItem(openContainingPage)}
+      >
+        <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+          >description</span
+        >
+        <span>Open containing page</span>
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        data-testid="tags-menu-copy-block-reference"
+        onclick={() => runItem((loc) => void copyText(`((${loc.blockId}))`))}
+      >
+        <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+          >link</span
+        >
+        <span>Copy block reference</span>
+      </button>
+    </ContextMenu>
+  {/if}
 </div>
