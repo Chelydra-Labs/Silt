@@ -263,6 +263,10 @@ func (a *App) updateBlockStateWithReason(blockID string, newState, reason string
 					} else if newState != "DONE" && wasDone {
 						parsedBlocks[i].CompletedAt = ""
 					}
+					// DONE means complete; stale partial progress must not linger.
+					if newState == "DONE" {
+						parsedBlocks[i].Progress = 100
+					}
 					// Recurring-task auto-recreation (#296): when a task with a
 					// [recur::] token transitions TO DONE (not already DONE),
 					// spawn the next incomplete instance directly below it in

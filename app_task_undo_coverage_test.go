@@ -133,7 +133,7 @@ func TestUndoLastTaskMutation_RestoresEveryField(t *testing.T) {
 					t.Fatalf("UpdateBlockState DONE: %v", err)
 				}
 			},
-			fields:  []string{"status", "completed"},
+			fields:  []string{"status", "completed", "progress"},
 			mutated: "- [x] ",
 			gone:    "[completed::",
 			present: "- [ ] ",
@@ -178,6 +178,44 @@ func TestUndoLastTaskMutation_RestoresEveryField(t *testing.T) {
 			}
 			requireTaskProjection(t, app, id, tc.projected)
 		})
+	}
+}
+
+// A DONE transition normalizes progress to 100, so undo must roll the token
+// back to the prior partial value along with status and completed.
+func TestUndoLastTaskMutation_DoneTransitionRestoresProgress(t *testing.T) {
+	app := newTestApp(t)
+	const id = "a11d0032-1111-1111-1111-111111111111"
+	content := "- [ ] ship [progress:: 40] <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "UndoDoneProgress", "2026-07-01", content)
+
+	if _, err := app.UpdateBlockState(id, "DONE"); err != nil {
+		t.Fatalf("UpdateBlockState DONE: %v", err)
+	}
+	if line := requireTaskLine(t, readTaskPage(t, filePath), id); !strings.Contains(line, "[progress:: 100]") {
+		t.Fatalf("DONE did not normalize progress: %q", line)
+	}
+
+	result, err := app.UndoLastTaskMutation()
+	if err != nil {
+		t.Fatalf("UndoLastTaskMutation: %v", err)
+	}
+	if !result.Undone {
+		t.Fatalf("undo result = %+v, want Undone", result)
+	}
+	if !reflect.DeepEqual(result.ChangedFields, []string{"status", "completed", "progress"}) {
+		t.Errorf("undo changed fields = %v, want [status completed progress]", result.ChangedFields)
+	}
+	line := requireTaskLine(t, readTaskPage(t, filePath), id)
+	if strings.Contains(line, "[progress:: 100]") || !strings.Contains(line, "[progress:: 40]") {
+		t.Errorf("undo did not restore prior progress: %q", line)
+	}
+	var progress int
+	if err := app.db.SQLDB().QueryRow("SELECT progress FROM tasks WHERE block_id = ?", id).Scan(&progress); err != nil {
+		t.Fatalf("read tasks.progress: %v", err)
+	}
+	if progress != 40 {
+		t.Errorf("tasks.progress after undo = %d, want 40", progress)
 	}
 }
 

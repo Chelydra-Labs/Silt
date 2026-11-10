@@ -214,6 +214,77 @@ func TestUpdateBlockState_TransitionsTaskStatus(t *testing.T) {
 	}
 }
 
+// TestUpdateBlockState_DoneForcesProgress100 pins the DONE progress
+// invariant: DONE means 100% regardless of any partial progress left behind,
+// the renderer owns the single [progress::] token, and reopening leaves
+// progress at 100. tasks.progress is asserted via raw SQL because
+// QueryTasksWithFilters does not select that column.
+func TestUpdateBlockState_DoneForcesProgress100(t *testing.T) {
+	const taskID = "77777777-7777-7777-7777-777777777777"
+	cases := []struct {
+		name       string
+		content    string
+		transition string
+	}{
+		{
+			name:       "doing 40 to done renders 100",
+			content:    "- [/] ship [progress:: 40] <!-- id: " + taskID + " -->\n",
+			transition: "DONE",
+		},
+		{
+			name:       "doing 100 to done stays idempotent",
+			content:    "- [/] ship [progress:: 100] <!-- id: " + taskID + " -->\n",
+			transition: "DONE",
+		},
+		{
+			name:       "done at 100 re-mark stays idempotent",
+			content:    "- [x] ship [progress:: 100] <!-- id: " + taskID + " -->\n",
+			transition: "DONE",
+		},
+		{
+			name:       "done at 40 re-mark normalizes to 100",
+			content:    "- [x] ship [progress:: 40] <!-- id: " + taskID + " -->\n",
+			transition: "DONE",
+		},
+		{
+			name:       "reopen keeps 100",
+			content:    "- [x] ship [progress:: 100] <!-- id: " + taskID + " -->\n",
+			transition: "TODO",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newTestApp(t)
+			filePath := indexTestFile(t, app, "W", "S", "DoneProgress", "2026-07-01", tc.content)
+
+			if _, err := app.UpdateBlockState(taskID, tc.transition); err != nil {
+				t.Fatalf("UpdateBlockState %s: %v", tc.transition, err)
+			}
+			updated, err := os.ReadFile(filePath)
+			if err != nil {
+				t.Fatalf("read after write: %v", err)
+			}
+			line := taskLineForID(string(updated), taskID)
+			if line == "" {
+				t.Fatalf("task line not found in:\n%s", updated)
+			}
+			if n := strings.Count(line, "[progress::"); n != 1 {
+				t.Errorf("expected exactly one [progress::] token, got %d in: %q", n, line)
+			}
+			if !strings.Contains(line, "[progress:: 100]") {
+				t.Errorf("line missing [progress:: 100]: %q", line)
+			}
+			var progress int
+			if err := app.db.SQLDB().QueryRow("SELECT progress FROM tasks WHERE block_id = ?", taskID).Scan(&progress); err != nil {
+				t.Fatalf("read tasks.progress: %v", err)
+			}
+			if progress != 100 {
+				t.Errorf("tasks.progress = %d, want 100", progress)
+			}
+		})
+	}
+}
+
 func TestUpdateBlockState_RejectsTraversalMetadata(t *testing.T) {
 	// Inject a block with malicious frontmatter-derived metadata directly
 	// into the DB. UpdateBlockState must sanitize the path before touching

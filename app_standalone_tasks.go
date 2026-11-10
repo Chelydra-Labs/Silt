@@ -170,6 +170,9 @@ func (a *App) createStandaloneTaskWithReason(title, dueDate, status, reason stri
 	// itself and bypasses re-parse minting, so stamp it explicitly.
 	if taskStatus == "DONE" {
 		newBlock.CompletedAt = now.Format("2006-01-02T15:04:05")
+		// DONE means complete: the progress-100 invariant holds at creation,
+		// not only on DONE transitions.
+		newBlock.Progress = 100
 	}
 
 	source := config.LinkedNotebooksVaultSource // ".silt" is an in-vault synthetic notebook.

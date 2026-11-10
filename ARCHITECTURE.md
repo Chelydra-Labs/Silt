@@ -273,7 +273,7 @@ CREATE TABLE tasks (
     due_date TEXT,           -- YYYY-MM-DD or NULL
     priority INTEGER,        -- 1, 2, 3
     pinned INTEGER DEFAULT 0,         -- NULL/0/1 tri-state cache: NULL=no [pin::] token, 0=[pin:: false], 1=[pin:: true]; reproducible from markdown
-    progress INTEGER DEFAULT 0,       -- 0-100; cached from [progress:: N] markdown token
+    progress INTEGER DEFAULT 0,       -- 0-100; cached from [progress:: N] markdown token; forced to 100 when the task is marked DONE
     recur TEXT,                       -- recurrence rule (e.g. 'every week'); NULL for one-off tasks; cached from [recur:: RULE] token
     comments_count INTEGER DEFAULT 0, -- derived: NOTE descendants under the task
     links_count INTEGER DEFAULT 0,    -- derived: ((uuid)) references in body
