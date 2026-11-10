@@ -517,6 +517,56 @@ describe('buildQuery — stale filter (new in #440)', () => {
   })
 })
 
+// ── New: shortlist filter (#1092) ─────────────────────────────────────
+
+describe('buildQuery — shortlist filter (new in #1092)', () => {
+  it('narrows to ranked tasks and leads the ORDER BY with rank ASC', () => {
+    const filters: TaskFilters = { ...emptyFilters, shortlist: true }
+    const { sql, params } = buildQuery('vault', filters, ctx)
+    expect(sql).toContain('t.shortlist_rank IS NOT NULL')
+    expect(params).toEqual([])
+    const orderIdx = sql.indexOf('ORDER BY ')
+    expect(orderIdx).toBeGreaterThan(-1)
+    // Rank leads the whole clause — ahead of the pin-first key.
+    expect(sql.slice(orderIdx)).toMatch(
+      /^ORDER BY t\.shortlist_rank ASC, CASE WHEN t\.pinned = 1/
+    )
+  })
+
+  it('keeps group columns leading so groups stay contiguous, rank right behind', () => {
+    const filters: TaskFilters = { ...emptyFilters, shortlist: true }
+    const { sql } = buildQuery('vault', filters, ctx, { groupBy: 'status' })
+    expect(sql).toMatch(
+      /ORDER BY t\.status ASC, t\.shortlist_rank ASC, CASE WHEN t\.pinned = 1/
+    )
+  })
+
+  it('rank leads within an explicit sort clause too', () => {
+    const filters: TaskFilters = { ...emptyFilters, shortlist: true }
+    const { sql } = buildQuery('vault', filters, ctx, { sort: 'title' })
+    expect(sql).toMatch(
+      /ORDER BY t\.shortlist_rank ASC, CASE WHEN t\.pinned = 1 THEN 0 ELSE 1 END, b\.clean_content ASC/
+    )
+  })
+
+  it('explicit orderBy override stays untouched (no rank splicing)', () => {
+    const filters: TaskFilters = { ...emptyFilters, shortlist: true }
+    const { sql } = buildQuery('vault', filters, ctx, {
+      orderBy: 'b.file_date DESC'
+    })
+    expect(sql).toContain('ORDER BY b.file_date DESC')
+    expect(sql).not.toContain('t.shortlist_rank ASC, b.file_date')
+    // The WHERE narrowing still applies.
+    expect(sql).toContain('t.shortlist_rank IS NOT NULL')
+  })
+
+  it('shortlist=false/undefined is a no-op (no clause, no rank ordering)', () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx)
+    expect(sql).not.toContain('t.shortlist_rank IS NOT NULL')
+    expect(sql).not.toContain('t.shortlist_rank ASC')
+  })
+})
+
 // ── New: activeFilter lever (sidebar smart-list, #432) ───────────────
 
 describe('buildQuery — activeFilter lever (new in #432)', () => {

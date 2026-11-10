@@ -474,7 +474,8 @@ function coerceSavedView(raw: unknown): SavedView | null {
       tags: Array.isArray(fr.tags)
         ? fr.tags.filter((x) => typeof x === 'string')
         : [],
-      ...(typeof fr.stale === 'boolean' ? { stale: fr.stale } : {})
+      ...(typeof fr.stale === 'boolean' ? { stale: fr.stale } : {}),
+      ...(typeof fr.shortlist === 'boolean' ? { shortlist: fr.shortlist } : {})
     }
   }
   return v

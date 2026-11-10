@@ -56,7 +56,8 @@ import {
   getTaskHubState,
   getTaskHubViewState,
   getTaskPageRoute,
-  resetTaskHubState
+  resetTaskHubState,
+  setFilters
 } from './state.svelte'
 import { getTasksUndoView } from './undo.svelte'
 import { getTaskWeekStart } from '../../../lib/taskWeekStart.svelte'
@@ -1117,6 +1118,46 @@ describe('Tasks hub — saved views bookmark (#427)', () => {
     expect(screen.getByTestId('tasks-hub-active-view').textContent).toContain(
       'Sprint 15'
     )
+  })
+
+  it('saving a view snapshots the shortlist filter and the toggle survives apply (#1092)', async () => {
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      stale: true,
+      shortlist: true
+    })
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+    await fireEvent.input(screen.getByTestId('tasks-hub-save-view-name'), {
+      target: { value: 'Focus set' }
+    })
+    await fireEvent.click(screen.getByTestId('tasks-hub-save-view-commit'))
+    await flush()
+
+    const s = getTaskHubState()
+    const saved = s.savedViews.find((v) => v.name === 'Focus set')
+    expect(saved).toBeDefined()
+    // Snapshot-shape guard: every persisted filter dimension survives the
+    // snapshot, so the next filter field cannot be dropped silently.
+    expect(Object.keys(saved?.filters ?? {}).sort()).toEqual([
+      'dueDate',
+      'owners',
+      'priorities',
+      'shortlist',
+      'stale',
+      'tags'
+    ])
+    expect(saved?.filters?.shortlist).toBe(true)
+    // The save flow applies the view back; the toggle must stay on rather
+    // than visibly flipping itself off the moment the user saves.
+    expect(s.filters.shortlist).toBe(true)
+    expect(s.savedViewsDirty).toBe(false)
   })
 
   it('shows the modified (dirty) indicator when the user diverges from the active view', async () => {

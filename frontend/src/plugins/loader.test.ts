@@ -311,7 +311,8 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
       owners: [],
       priorities: [],
       dueDate: '',
-      tags: []
+      tags: [],
+      shortlist: false
     })
     expect(s.focusDate).toBe('')
     expect(s.activeFilter).toBe('all')

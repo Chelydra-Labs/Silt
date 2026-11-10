@@ -170,6 +170,7 @@ interface TaskRow {
   priority: number
   pinned?: boolean
   manual_order?: number
+  shortlist_rank?: number | null
 }
 
 function task(
@@ -1860,6 +1861,326 @@ describe('ListView — subtask badge (#434)', () => {
     expect(screen.getByTestId('tasks-subtask-badge-p1').textContent).toContain(
       '[1/3]'
     )
+  })
+})
+
+describe('ListView — shortlist badge + filter (#1092)', () => {
+  beforeEach(() => {
+    resetTaskHubState()
+    mocks.sqliteQuery.mockReset()
+    mocks.blockChangedCallbacks.length = 0
+  })
+  afterEach(cleanup)
+
+  it('renders a Shortlist badge for ranks 0 and 3, none when unranked', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [
+            task('s0', 'Top focus', { shortlist_rank: 0 }),
+            task('s3', 'Fourth focus', { shortlist_rank: 3 }),
+            task('su', 'Unranked focus')
+          ],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    // Rank 0 is a real rank — its badge must render exactly like any other.
+    expect(screen.getByTestId('tasks-row-shortlist-s0').textContent).toContain(
+      'Shortlist 0'
+    )
+    expect(screen.getByTestId('tasks-row-shortlist-s3').textContent).toContain(
+      'Shortlist 3'
+    )
+    expect(screen.queryByTestId('tasks-row-shortlist-su')).toBeNull()
+  })
+
+  it('shortlist filter wires the rank predicate + rank-ASC order into open SQL and spares the done SQL', async () => {
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const openCall = mocks.sqliteQuery.mock.calls.find((c) =>
+      isOpenSql(String(c[0]))
+    )
+    expect(openCall).toBeTruthy()
+    const openSql = String(openCall![0])
+    expect(openSql).toContain('t.shortlist_rank IS NOT NULL')
+    // Rank leads the default composed order (ahead of the pin-first key).
+    expect(openSql).toMatch(
+      /ORDER BY t\.shortlist_rank ASC, CASE WHEN t\.pinned = 1/
+    )
+
+    // The Completed section is history, not the open-work focus set — the
+    // done query drops the shortlist narrowing like it drops stale/dueDate.
+    const doneCall = mocks.sqliteQuery.mock.calls.find((c) =>
+      isDoneSql(String(c[0]))
+    )
+    expect(doneCall).toBeTruthy()
+    expect(String(doneCall![0])).not.toContain('t.shortlist_rank IS NOT NULL')
+  })
+
+  it('renders the Upcoming bucket rank-first despite later due dates', async () => {
+    // Rank 3 is due sooner than rank 0 — the bucket's due-date re-sort must
+    // not destroy the curated order the SQL promised (#1092 AC6).
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [
+            task('r3', 'Sooner but rank 3', {
+              shortlist_rank: 3,
+              due_date: dateOffsetStr(2)
+            }),
+            task('r0', 'Later but rank 0', {
+              shortlist_rank: 0,
+              due_date: dateOffsetStr(4)
+            })
+          ],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const upcomingIds = Array.from(
+      document.querySelectorAll(
+        'section[data-group="upcoming"] [data-block-id]'
+      )
+    ).map((el) => el.getAttribute('data-block-id'))
+    expect(upcomingIds).toEqual(['r0', 'r3'])
+  })
+
+  it('renders a non-dueDate grouping rank-first within each section', async () => {
+    setGroupBy('priority')
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [
+            task('p-r1', 'Rank 1 in P3', {
+              priority: 3,
+              shortlist_rank: 1,
+              due_date: dateOffsetStr(1)
+            }),
+            task('p-r0', 'Rank 0 in P3', {
+              priority: 3,
+              shortlist_rank: 0,
+              due_date: dateOffsetStr(3)
+            })
+          ],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const sectionIds = Array.from(
+      document.querySelectorAll('section[data-group] [data-block-id]')
+    ).map((el) => el.getAttribute('data-block-id'))
+    expect(sectionIds).toEqual(['p-r0', 'p-r1'])
+  })
+
+  it('sort=manual + lens on: row drag writes no rank-derived order', async () => {
+    // Two ranked rows in a single 'none' group. Under the lens the section
+    // renders rank-led, so a manual drop would renumber rows from the
+    // rank-sorted DOM — the exact defect class the Board gate (1d830527)
+    // closed. The drop must be a no-op: no writes, no reorder.
+    // manual_order is deliberately INVERTED vs the rank order: if the gate
+    // is ever removed, the ungated renumber (r0→1, r3→2) produces real
+    // diffs and setTaskOrders fires — with matching orders the renumber
+    // would be a zero-diff no-op and the test would pass with the defect.
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [
+            task('r0', 'rank zero', {
+              shortlist_rank: 0,
+              manual_order: 2,
+              due_date: ''
+            }),
+            task('r3', 'rank three', {
+              shortlist_rank: 3,
+              manual_order: 1,
+              due_date: ''
+            })
+          ]
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    setGroupBy('none')
+    setSort('manual')
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const ids = () =>
+      Array.from(
+        document.querySelectorAll('[data-group="all"] [data-block-id]')
+      ).map((el) => el.getAttribute('data-block-id'))
+    // Rank leads manual_order while the filter is the active lens.
+    expect(ids()).toEqual(['r0', 'r3'])
+
+    const handleR0 = document.querySelector(
+      '[data-testid="tasks-row-drag-handle-r0"]'
+    ) as HTMLElement
+    const rowR3 = document.querySelector('[data-block-id="r3"]') as HTMLElement
+    expect(handleR0).toBeTruthy()
+    expect(rowR3).toBeTruthy()
+
+    await fireEvent.dragStart(handleR0)
+    // Real browsers only fire `drop` on a target whose dragover was
+    // canceled — jsdom doesn't model that precondition, so assert it here:
+    // without the cancel, this drop (and the announcement below) could
+    // never fire in a real browser and the test would false-certify.
+    let dragOverEvent: Event | undefined
+    rowR3.addEventListener('dragover', (e) => (dragOverEvent = e))
+    await fireEvent.dragOver(rowR3)
+    expect(dragOverEvent?.defaultPrevented).toBe(true)
+    // No insertion highlight under the lens — the drop is announced, not
+    // performed.
+    expect(rowR3.className).not.toContain('tasks-drag-over')
+    await fireEvent.drop(rowR3)
+    await flush()
+
+    expect(mocks.setTaskOrders).not.toHaveBeenCalled()
+    expect(mocks.setTaskOrder).not.toHaveBeenCalled()
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    // No write, but the swallowed reorder is still announced — a silent
+    // snap-back leaves screen-reader users without feedback.
+    expect(screen.getByTestId('tasks-live-message').textContent).toBe(
+      'Manual order is locked while the Shortlist lens is on.'
+    )
+    expect(ids()).toEqual(['r0', 'r3'])
+  })
+
+  it('sort=manual + lens on: cross-group dragover stays uncanceled', async () => {
+    // onRowDragOver returns at the groupKey check BEFORE preventDefault():
+    // canceling a cross-group dragover would make the other group's rows
+    // valid drop targets in a real browser (drop only fires on canceled
+    // dragover), re-enabling exactly the cross-group drop this no-op
+    // exists to suppress. jsdom can't model that precondition, so pin the
+    // cancel decision itself — the same-group test above pins the opposite.
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [
+            task('p', 'pat task', {
+              owner: 'Pat',
+              shortlist_rank: 0,
+              manual_order: 1,
+              due_date: ''
+            }),
+            task('s', 'sam task', {
+              owner: 'Sam',
+              shortlist_rank: 1,
+              manual_order: 1,
+              due_date: ''
+            })
+          ]
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    setGroupBy('owner')
+    setSort('manual')
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const handleP = document.querySelector(
+      '[data-testid="tasks-row-drag-handle-p"]'
+    ) as HTMLElement
+    const rowS = document.querySelector('[data-block-id="s"]') as HTMLElement
+    expect(handleP).toBeTruthy()
+    expect(rowS).toBeTruthy()
+
+    await fireEvent.dragStart(handleP)
+    let dragOverEvent: Event | undefined
+    rowS.addEventListener('dragover', (e) => (dragOverEvent = e))
+    await fireEvent.dragOver(rowS)
+    expect(dragOverEvent?.defaultPrevented).toBe(false)
+
+    // jsdom fires drop regardless; pin the handler side too — the
+    // cross-group branch returns before the lens announcement and every
+    // write path, so the drop is quiet and inert.
+    await fireEvent.drop(rowS)
+    await flush()
+    expect(mocks.setTaskOrders).not.toHaveBeenCalled()
+    expect(mocks.setTaskOrder).not.toHaveBeenCalled()
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    expect(screen.getByTestId('tasks-live-message').textContent).toBe('')
+  })
+
+  it('row edit-button label announces the shortlist rank (Board parity)', async () => {
+    // The Board card's accessible name carries `, shortlist rank {n}`
+    // (rank 0 included, silent when unranked) — the List row button must
+    // match so SR/keyboard users hear the rank on both surfaces.
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [
+            task('s0', 'Top focus', { shortlist_rank: 0 }),
+            task('su', 'Unranked focus')
+          ],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const label = (id: string) =>
+      document
+        .querySelector(
+          `[data-block-id="${id}"] button[aria-label^="Edit metadata for"]`
+        )!
+        .getAttribute('aria-label')
+    expect(label('s0')).toContain(', shortlist rank 0')
+    expect(label('su')).not.toContain('shortlist rank')
   })
 })
 

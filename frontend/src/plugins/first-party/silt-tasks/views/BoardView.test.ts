@@ -142,6 +142,7 @@ import {
   resetTaskHubState,
   enterTaskPageRoute,
   clearTaskPageRoute,
+  setFilters,
   setGroupBy,
   setSort,
   setActiveFilter,
@@ -1953,7 +1954,11 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     // The reactive rebin re-sorted the loaded lanes even though the re-query
     // has not landed; the reload returns the same rows, so it cannot be the
     // source of the new order.
-    expect(sortTasks).toHaveBeenCalledWith('priority', expect.anything())
+    expect(sortTasks).toHaveBeenCalledWith(
+      'priority',
+      expect.anything(),
+      expect.anything()
+    )
 
     pending.resolve({ rows: initialRows, truncated: false })
     await flush()
@@ -2052,5 +2057,182 @@ describe('BoardView — block:changed debounced reload', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('BoardView — shortlist rank order (#1092)', () => {
+  beforeEach(async () => {
+    mocks.tasksSettings = {}
+    mocks.updateBlockState
+      .mockReset()
+      .mockResolvedValue({ ok: true, spawnedId: '' })
+    mocks.setTaskOwner.mockReset().mockResolvedValue(true)
+    mocks.setTaskPriority.mockReset().mockResolvedValue(true)
+    mocks.setTaskDueDate.mockReset().mockResolvedValue(true)
+    mocks.setTaskTags.mockReset().mockResolvedValue(true)
+    mocks.setTaskOrder.mockReset().mockResolvedValue(true)
+    mocks.setTaskOrders.mockReset().mockResolvedValue(true)
+    mocks.createTask.mockReset().mockResolvedValue('new-task-id')
+    mocks.updateTaskMeta.mockReset().mockResolvedValue(true)
+    mocks.getTaskBlockers.mockReset().mockResolvedValue([])
+    mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
+    mocks.notify.mockReset().mockResolvedValue(true)
+    mocks.blockChangedCallbacks.length = 0
+    await initTasksSettings(makeCtx())
+  })
+
+  afterEach(() => {
+    cleanup()
+    clearTaskPageRoute()
+  })
+
+  it('orders a lane rank-first — ahead of the pin key — while the filter is on', async () => {
+    await renderBoard('status', [
+      row({ id: 'p3', pinned: 1, shortlist_rank: 3, clean_content: 'P3' }),
+      row({ id: 'u0', shortlist_rank: 0, clean_content: 'U0' }),
+      row({ id: 'u1', shortlist_rank: 1, clean_content: 'U1' })
+    ])
+    // Pin-first default: the pinned rank-3 card leads the lane.
+    expect(laneCardIds('To Do')).toEqual(['p3', 'u0', 'u1'])
+
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    await flush()
+
+    // Rank leads the pin key while the shortlist filter is the active lens.
+    expect(laneCardIds('To Do')).toEqual(['u0', 'u1', 'p3'])
+  })
+
+  it('sort=manual + lens on: within-lane drag writes no rank-derived order', async () => {
+    await renderBoardWithSort('status', 'manual', [
+      row({ id: 'u0', status: 'TODO', shortlist_rank: 0, clean_content: 'U0' }),
+      row({
+        id: 'p3',
+        status: 'TODO',
+        pinned: 1,
+        shortlist_rank: 3,
+        manual_order: 1,
+        clean_content: 'P3'
+      })
+    ])
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    await flush()
+    // Rank leads the pin key while the filter is the active lens.
+    expect(laneCardIds('To Do')).toEqual(['u0', 'p3'])
+
+    // Drag the rank-0 card onto its rank-3 sibling: a manual move cannot be
+    // expressed while rank leads, so nothing may be written and the lane
+    // keeps its rank order (the drop falls through to the lane handler's
+    // same-column no-op, like any non-manual sort).
+    const cards = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelectorAll<HTMLElement>('[data-card]')
+    await fireEvent.dragStart(cards[0])
+    await fireEvent.drop(cards[1])
+    await flush()
+
+    expect(mocks.setTaskOrders).not.toHaveBeenCalled()
+    expect(mocks.setTaskOrder).not.toHaveBeenCalled()
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    expect(laneCardIds('To Do')).toEqual(['u0', 'p3'])
+    // The swallowed reorder is announced, not silently snapped back.
+    expect(
+      screen.getByText('Manual order is locked while the Shortlist lens is on.')
+    ).toBeTruthy()
+  })
+
+  it('sort=manual + lens on: lane-background drop also announces the locked reorder', async () => {
+    await renderBoardWithSort('status', 'manual', [
+      row({ id: 'u0', status: 'TODO', shortlist_rank: 0, clean_content: 'U0' }),
+      row({
+        id: 'p3',
+        status: 'TODO',
+        pinned: 1,
+        shortlist_rank: 3,
+        manual_order: 1,
+        clean_content: 'P3'
+      })
+    ])
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    await flush()
+    // Rank leads the pin key while the filter is the active lens.
+    expect(laneCardIds('To Do')).toEqual(['u0', 'p3'])
+
+    // Drop on the lane itself (the background between cards): the
+    // card-level lens announcement never runs on this path, and before the
+    // commitDrop guard the same-column early return swallowed the drop
+    // silently.
+    const lane = screen.getByRole('group', { name: 'To Do' })
+    await fireEvent.dragStart(cardByText('U0'))
+    await fireEvent.drop(lane)
+    await flush()
+
+    expect(mocks.setTaskOrders).not.toHaveBeenCalled()
+    expect(mocks.setTaskOrder).not.toHaveBeenCalled()
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    expect(laneCardIds('To Do')).toEqual(['u0', 'p3'])
+    expect(
+      screen.getByText('Manual order is locked while the Shortlist lens is on.')
+    ).toBeTruthy()
+  })
+
+  it('sort=manual + lens on: tag same-column drop writes nothing (no silent re-tail)', async () => {
+    await renderBoardWithSort('tag', 'manual', [
+      row({
+        id: 'g0',
+        tags: 'alpha',
+        shortlist_rank: 0,
+        manual_order: 1,
+        clean_content: 'G0'
+      }),
+      row({
+        id: 'g3',
+        tags: 'alpha',
+        shortlist_rank: 3,
+        manual_order: 2,
+        clean_content: 'G3'
+      })
+    ])
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: true
+    })
+    await flush()
+    // Rank leads the lane while the filter is the active lens.
+    expect(laneCardIds('alpha')).toEqual(['g0', 'g3'])
+
+    // Same-tag drop under the lens: the card-level gate returns early so
+    // the drop bubbles to the lane handler — the one path that still let a
+    // manual re-tail through. No visible move can be expressed while rank
+    // leads, so nothing may be written and the lane keeps its rank order.
+    await fireEvent.dragStart(cardByText('G0'))
+    await fireEvent.drop(cardByText('G3'))
+    await flush()
+
+    expect(mocks.setTaskOrders).not.toHaveBeenCalled()
+    expect(mocks.setTaskOrder).not.toHaveBeenCalled()
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    expect(mocks.setTaskTags).not.toHaveBeenCalled()
+    expect(laneCardIds('alpha')).toEqual(['g0', 'g3'])
   })
 })

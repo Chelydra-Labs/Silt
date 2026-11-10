@@ -51,7 +51,7 @@
   import { binByDimension, type GroupSection } from '../grouping'
   import { buildQuery } from '../query'
   import { useBlockChangedReload, useBlockedDoneGuard } from '../shared.svelte'
-  import { sortTasks } from '../taskOrder'
+  import { compareTasks, sortTasks } from '../taskOrder'
   import { trackTaskUndoWrite } from '../undo.svelte'
 
   interface Props extends TaskViewProps {
@@ -170,17 +170,23 @@
               return ctx.sqliteQuery(sql, params)
             })()
 
-      // Done path: completed rows honoring every hub filter except dueDate and
-      // stale (both describe open work, so they would empty the Completed
-      // section). Text must ride along — otherwise "Find task…" visibly
-      // narrows open rows while completed rows ignore it. Skip for date
-      // smart-lists (Completed section is hidden there).
+      // Done path: completed rows honoring every hub filter except dueDate,
+      // stale, and shortlist (all three describe the current open-work focus,
+      // so they would empty or reorder the Completed history section). Text
+      // must ride along — otherwise "Find task…" visibly narrows open rows
+      // while completed rows ignore it. Skip for date smart-lists (Completed
+      // section is hidden there).
       const donePromise =
         hub.activeFilter === 'all' || hub.activeFilter === 'completed'
           ? (() => {
               const { sql, params } = buildQuery(
                 hub.scope,
-                { ...hub.filters, dueDate: '', stale: false },
+                {
+                  ...hub.filters,
+                  dueDate: '',
+                  stale: false,
+                  shortlist: false
+                },
                 ctxLike,
                 {
                   activeFilter: 'completed',
@@ -310,6 +316,7 @@
     void hub.filters.dueDate
     void hub.filters.tags
     void hub.filters.stale
+    void hub.filters.shortlist
     void hub.filters.text
     void reload()
   })
@@ -337,6 +344,7 @@
     if (hub.filters.dueDate) return true
     if (hub.filters.tags.length > 0) return true
     if (hub.filters.stale) return true
+    if (hub.filters.shortlist) return true
     // Text with no surviving FTS term changes no SQL, so it is not a filter.
     if (buildFtsMatch(hub.filters.text ?? '')) return true
     return false
@@ -357,6 +365,12 @@
   // selector change re-bins the rows without a re-query.
   let hubGroupBy = $derived(getTaskHubViewState().groupBy)
   let hubSort = $derived(getTaskHubViewState().sort)
+  // Rank leads every client-side re-sort while the shortlist filter is the
+  // active lens (#1092), mirroring query.ts's rankLead composition — the
+  // SQL already orders rows rank-first, but buckets/sections re-sort below.
+  let shortlistFirst = $derived(
+    getTaskHubViewState().filters.shortlist ?? false
+  )
 
   // Pinned open tasks render in their own block above every grouping branch,
   // so the group derivations below read `unpinnedOpen` and never duplicate a
@@ -364,7 +378,8 @@
   let pinnedOpen = $derived(
     sortTasks(
       hubSort,
-      filteredOpen.filter((i) => i.pinned)
+      filteredOpen.filter((i) => i.pinned),
+      { shortlistFirst }
     )
   )
   let unpinnedOpen = $derived(filteredOpen.filter((i) => !i.pinned))
@@ -380,12 +395,12 @@
       .filter(
         (i) => !!i.due_date && i.due_date > today && i.due_date <= weekEnd
       )
-      .sort((a, b) => a.due_date.localeCompare(b.due_date))
+      .sort((a, b) => compareTasks('dueDate', a, b, { shortlistFirst }))
   )
   let later = $derived(
     unpinnedOpen
       .filter((i) => !!i.due_date && i.due_date > weekEnd)
-      .sort((a, b) => a.due_date.localeCompare(b.due_date))
+      .sort((a, b) => compareTasks('dueDate', a, b, { shortlistFirst }))
   )
   let undated = $derived(unpinnedOpen.filter((i) => !i.due_date))
 
@@ -416,7 +431,10 @@
     // buckets so the list stays compact when the data is sparse.
     return sections
       .filter((s) => s.items.length > 0)
-      .map((s) => ({ ...s, items: sortTasks(hubSort, s.items) }))
+      .map((s) => ({
+        ...s,
+        items: sortTasks(hubSort, s.items, { shortlistFirst })
+      }))
   })
 
   // Collapsed state for the generalized sections. Tail-collapse heuristic:
@@ -598,7 +616,10 @@
       ]
     }
     if (hubGroupBy === 'none') {
-      return [...pinnedOpen, ...sortTasks(hubSort, unpinnedOpen)]
+      return [
+        ...pinnedOpen,
+        ...sortTasks(hubSort, unpinnedOpen, { shortlistFirst })
+      ]
     }
     const out: TaskDetail[] = []
     for (const g of groupedSections) {
@@ -740,17 +761,38 @@
     dragOverId = null
   }
 
+  // Same lens gate as Board's card-level handlers (1d830527): while the
+  // shortlist lens leads, rank dominates manual_order, so a drop would
+  // renumber the section from the rank-sorted DOM — the drop is a no-op.
   function onRowDragOver(e: DragEvent, item: TaskDetail, groupKey: string) {
     if (hubSort !== 'manual' || !dragItem) return
     // Only within-group reorder; cross-group is a no-op (see Block above).
     if (groupKey !== dragGroupKey) return
+    // Cancel BEFORE the lens gate: browsers only fire `drop` on a target
+    // whose dragover was canceled, so returning early under the lens would
+    // make the row an invalid drop target and strand onRowDrop's locked-
+    // reorder announcement as dead code (mirrors the Board lane handler,
+    // which cancels lens-independently).
     e.preventDefault()
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+    if (shortlistFirst) return
     dragOverId = item.id
   }
 
   function onRowDrop(e: DragEvent, target: TaskDetail, groupKey: string) {
-    if (hubSort !== 'manual' || !dragItem) return
+    if (hubSort !== 'manual' || shortlistFirst || !dragItem) {
+      // Rows are only draggable under manual sort, so a live dragItem with
+      // the lens on means a reorder attempt was just swallowed. Announce
+      // why instead of snapping back silently; cross-group drops are no-ops
+      // regardless of the lens (see onRowDragOver) and stay quiet.
+      if (shortlistFirst && dragItem && groupKey === dragGroupKey) {
+        // The dragover above marked the row a valid target; cancel the drop
+        // too so the browser's default drop action has nothing to run.
+        e.preventDefault()
+        liveMessage = 'Manual order is locked while the Shortlist lens is on.'
+      }
+      return
+    }
     e.preventDefault()
     e.stopPropagation()
     const src = dragItem
@@ -902,7 +944,7 @@
         }
       }}
       class="flex-1 min-w-0 rounded text-left bg-transparent border-none p-0 cursor-pointer focus-visible:outline-none"
-      aria-label={`Edit metadata for ${item.clean_content}${item.notebook === STANDALONE_TASKS_NOTEBOOK ? ', standalone task' : ''}${item.due_date ? `, due ${item.due_date}` : ', no due date'}${item.subtask_total > 0 ? `, ${item.subtask_done} of ${item.subtask_total} subtasks done` : ''}`}
+      aria-label={`Edit metadata for ${item.clean_content}${item.notebook === STANDALONE_TASKS_NOTEBOOK ? ', standalone task' : ''}${item.due_date ? `, due ${item.due_date}` : ', no due date'}${item.subtask_total > 0 ? `, ${item.subtask_done} of ${item.subtask_total} subtasks done` : ''}${item.shortlist_rank != null ? `, shortlist rank ${item.shortlist_rank}` : ''}`}
     >
       <div
         class="truncate text-type-md font-body-md font-medium text-text-primary transition-colors group-hover:text-accent-primary-start"
@@ -942,6 +984,15 @@
         aria-label={`${item.subtask_done} of ${item.subtask_total} subtasks done`}
         >[{item.subtask_done}/{item.subtask_total}]</span
       >
+    {/if}
+    {#if item.shortlist_rank != null}
+      <span
+        class="hidden rounded-full border border-surface-panel-border bg-surface-panel px-1.5 py-0.5 font-mono text-type-3xs text-text-primary md:inline-flex"
+        data-testid={`tasks-row-shortlist-${item.id}`}
+        title="Shortlist rank {item.shortlist_rank} (0 is the top rank)"
+      >
+        Shortlist {item.shortlist_rank}
+      </span>
     {/if}
     {#if item.priority && item.priority <= 3}
       <span
@@ -1206,7 +1257,7 @@
                 data-group="all"
                 aria-label="All Tasks"
               >
-                {#each sortTasks(hubSort, unpinnedOpen) as item (item.id)}
+                {#each sortTasks( hubSort, unpinnedOpen, { shortlistFirst } ) as item (item.id)}
                   <div animate:flip={{ duration: 200, easing: cubicOut }}>
                     {@render taskRow(item, 'all')}
                   </div>

@@ -55,6 +55,11 @@ export interface TaskFilters {
   /** When true, only open tasks with modified_at NULL or older than 30 days. */
   stale?: boolean
   /**
+   * When true, only tasks with a shortlist rank (#1092) — ranked-only,
+   * ordered rank-first (0 = top). Cleared like every other facet.
+   */
+  shortlist?: boolean
+  /**
    * Free-text narrowing over the indexed task text (FTS body). Normalized the
    * same way the backend search does: letters/digits only, terms under 2
    * bytes dropped, implicit AND, prefix match per term.
@@ -242,7 +247,42 @@ const DEFAULT_FILTERS: TaskFilters = {
   owners: [],
   priorities: [],
   dueDate: '',
-  tags: []
+  tags: [],
+  shortlist: false
+}
+
+// DEFAULT_FILTERS's array facets must never leak by reference into state —
+// one in-place push would corrupt every subsequent reset/clear.
+//
+// THE facet enumeration point: every clone of a TaskFilters object funnels
+// through here, so a future facet rides the spread instead of being dropped
+// by a hand-enumerated copy at a call site (the shortlist-drop bug class).
+// Array facets must be added to the explicit re-copy below or they alias.
+export function cloneFilters(filters: TaskFilters): TaskFilters {
+  return {
+    ...filters,
+    owners: [...filters.owners],
+    priorities: [...filters.priorities],
+    tags: [...filters.tags]
+  }
+}
+
+/**
+ * The canonical "no filters active" shape as a fresh clone. Clear-all and
+ * resets emit this instead of hand-enumerating facets, so a future facet's
+ * default lands here (its reset value) rather than surviving a clear via a
+ * stale literal at a call site.
+ */
+export function defaultFilters(): TaskFilters {
+  return cloneFilters(DEFAULT_FILTERS)
+}
+
+// Snapshot filters for a SavedView: every facet except the free-text
+// search, which is transient by design (views must not persist or restore
+// the search bar's narrowing).
+export function clonePersistableFilters(filters: TaskFilters): TaskFilters {
+  const { text: _transient, ...persistable } = filters
+  return cloneFilters(persistable)
 }
 
 function freshDefaults(): TaskHubState {
@@ -252,7 +292,7 @@ function freshDefaults(): TaskHubState {
     sort: 'dueDate',
     scope: 'vault',
     scopeUserOverride: false,
-    filters: { ...DEFAULT_FILTERS },
+    filters: cloneFilters(DEFAULT_FILTERS),
     focusDate: '',
     activeFilter: 'all',
     calendarSubMode: 'month',
@@ -312,16 +352,7 @@ export function enterTaskPageRoute(
     target: { ...target },
     defaults: {
       ...defaults,
-      filters: defaults.filters
-        ? {
-            owners: [...defaults.filters.owners],
-            priorities: [...defaults.filters.priorities],
-            dueDate: defaults.filters.dueDate,
-            tags: [...defaults.filters.tags],
-            stale: defaults.filters.stale,
-            text: defaults.filters.text
-          }
-        : undefined
+      filters: defaults.filters ? cloneFilters(defaults.filters) : undefined
     }
   }
 }
@@ -481,7 +512,7 @@ export function setColumns(cols: BoardColumn[]): void {
 /** Clear all active filters. */
 export function clearFilters(): void {
   clearTaskPageRoute()
-  _state.filters = { ...DEFAULT_FILTERS }
+  _state.filters = defaultFilters()
   markDirtyIfViewActive()
 }
 
@@ -582,16 +613,12 @@ export function applySavedView(view: SavedView): void {
     _state.scopeUserOverride = true
   }
   if (view.filters !== undefined) {
-    // Deep-clone the array fields: a shallow spread shares the owners/
-    // priorities/tags array references, so a later in-place edit on this
-    // state would mutate the SavedView's stored filters (and a saved-view
-    // reload would surface the mutation).
+    // Deep-clone through the shared facet enumeration: a shallow spread
+    // shares the owners/priorities/tags array references, so a later
+    // in-place edit on this state would mutate the SavedView's stored
+    // filters (and a saved-view reload would surface the mutation).
     _state.filters = {
-      owners: [...view.filters.owners],
-      priorities: [...view.filters.priorities],
-      dueDate: view.filters.dueDate,
-      tags: [...view.filters.tags],
-      stale: view.filters.stale,
+      ...cloneFilters(view.filters),
       // The free-text search is transient and orthogonal to views; keep it
       // so clicking a saved view narrows instead of discarding the search.
       text: _state.filters.text

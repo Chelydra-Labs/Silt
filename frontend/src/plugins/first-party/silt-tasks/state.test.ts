@@ -58,7 +58,8 @@ describe('silt-tasks unified state (#419)', () => {
         owners: [],
         priorities: [],
         dueDate: '',
-        tags: []
+        tags: [],
+        shortlist: false
       })
       expect(s.focusDate).toBe('')
       expect(s.activeFilter).toBe('all')
@@ -131,6 +132,39 @@ describe('silt-tasks unified state (#419)', () => {
       enterTaskPageRoute(target)
       setFilters({ owners: ['Alice'], priorities: [], dueDate: '', tags: [] })
       expect(getTaskPageRoute()).toBeNull()
+    })
+
+    it('clones every filter dimension into route defaults', () => {
+      // Shape guard: enterTaskPageRoute hand-enumerates the clone (the class
+      // of site that silently dropped shortlist before #1092), so a future
+      // TaskFilters facet must fail here rather than vanish from route
+      // defaults silently. AllFacets drops each facet's `?`, so the
+      // `satisfies` literal is forced to cover every facet — a new one
+      // breaks typecheck until the fixture (and with it the expected
+      // keys) grows.
+      type AllFacets = { [K in keyof TaskFilters]-?: TaskFilters[K] }
+      const fullFilters = {
+        owners: ['Alice'],
+        priorities: [2],
+        dueDate: 'today',
+        tags: ['urgent'],
+        stale: true,
+        shortlist: true,
+        text: 'koa'
+      } satisfies AllFacets
+      enterTaskPageRoute(target, { filters: fullFilters })
+      expect(
+        Object.keys(getTaskPageRoute()?.defaults.filters ?? {}).sort()
+      ).toEqual(Object.keys(fullFilters).sort())
+      // Array dimensions are cloned, not aliased: mutating the source literal
+      // after entering the route must not reach into the stored defaults.
+      const source: string[] = ['Alice']
+      enterTaskPageRoute(target, {
+        filters: { owners: source, priorities: [], dueDate: '', tags: [] }
+      })
+      source.push('Bob')
+      expect(getTaskPageRoute()?.defaults.filters?.owners).toEqual(['Alice'])
+      clearTaskPageRoute()
     })
   })
 
@@ -301,7 +335,8 @@ describe('silt-tasks unified state (#419)', () => {
         owners: [],
         priorities: [],
         dueDate: '',
-        tags: []
+        tags: [],
+        shortlist: false
       })
     })
 
@@ -687,7 +722,8 @@ describe('silt-tasks unified state (#419)', () => {
         owners: [],
         priorities: [],
         dueDate: '',
-        tags: []
+        tags: [],
+        shortlist: false
       })
       expect(s.focusDate).toBe('')
       expect(s.activeFilter).toBe('all')

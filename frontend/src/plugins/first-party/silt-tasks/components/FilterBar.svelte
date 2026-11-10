@@ -13,6 +13,7 @@
     SortMode,
     Scope
   } from '../state.svelte'
+  import { defaultFilters } from '../state.svelte'
   import { motionDuration } from '../motion'
   import { trailingDebounce } from '../debounce'
   import { buildFtsMatch } from '../../../../lib/ftsQuery'
@@ -217,6 +218,9 @@
   function toggleStale() {
     onFiltersChange({ ...filters, stale: !filters.stale })
   }
+  function toggleShortlist() {
+    onFiltersChange({ ...filters, shortlist: !filters.shortlist })
+  }
   function clearAll() {
     const hadText =
       (filters.text ?? '').trim() !== '' || textDraft.trim() !== ''
@@ -225,21 +229,15 @@
     commitText.cancel()
     textDraft = ''
     lastCommittedText = ''
-    const hadFacets =
-      filters.owners.length > 0 ||
-      filters.priorities.length > 0 ||
-      !!filters.dueDate ||
-      filters.tags.length > 0 ||
-      !!filters.stale
+    // Facet-agnostic: any non-text facet with an active value keeps the
+    // Clear-all affordance visible — a hand-enumerated list here would
+    // hide the button for a future facet it forgot.
+    const hadFacets = countActiveFacets(filters) > 0
     if (hadFacets) {
-      onFiltersChange({
-        owners: [],
-        priorities: [],
-        dueDate: '',
-        tags: [],
-        stale: false,
-        text: ''
-      })
+      // Route the reset through the state-level default clone shape so a
+      // future facet is cleared with the rest instead of surviving via a
+      // stale hand-enumerated literal here.
+      onFiltersChange({ ...defaultFilters(), text: '' })
     }
     // The search is transient: clearing it must not mark an active saved view
     // dirty (a facets-only clear legitimately does).
@@ -299,18 +297,28 @@
     first.focus()
   }
 
+  // One facet-activeness walk for both the badge count and Clear-all's
+  // gate, so a future facet can't be counted in one and missed in the
+  // other. Text is excluded here: Clear-all routes it through the
+  // transient onTextChange path, and the badge counts it via
+  // buildFtsMatch below.
+  function countActiveFacets(f: TaskFilters): number {
+    let n = 0
+    for (const [key, value] of Object.entries(f)) {
+      if (key === 'text') continue
+      const active = Array.isArray(value) ? value.length > 0 : !!value
+      if (active) n++
+    }
+    return n
+  }
+
   // A chip counts as "active" if it has at least one selection; the Clear-all
   // affordance appears once any chip is active. The free-text search counts
   // too — but only when it produces a usable MATCH term, since text that
   // normalizes away ("a", "((*") changes no SQL and would otherwise show a
   // filter badge with zero effect.
   let activeCount = $derived(
-    (filters.owners.length ? 1 : 0) +
-      (filters.priorities.length ? 1 : 0) +
-      (filters.dueDate ? 1 : 0) +
-      (filters.tags.length ? 1 : 0) +
-      (filters.stale ? 1 : 0) +
-      (buildFtsMatch(filters.text ?? '') ? 1 : 0)
+    countActiveFacets(filters) + (buildFtsMatch(filters.text ?? '') ? 1 : 0)
   )
 
   // aria-live announcer for active-filter changes. The unified sidebar used to
@@ -784,6 +792,22 @@
         </div>
       {/if}
     </div>
+
+    <!-- Shortlist chip (#1092): only ranked tasks, ordered 0..3 -->
+    <button
+      type="button"
+      data-testid="filter-shortlist-toggle"
+      onclick={toggleShortlist}
+      aria-pressed={!!filters.shortlist}
+      title="Only tasks with a shortlist rank (0–3), ordered by rank. 0 is the top rank."
+      data-active={filters.shortlist ? 'true' : undefined}
+      class="task-filter-chip task-filter-chip-facet"
+    >
+      <span class="material-symbols-outlined text-icon-sm"
+        >format_list_numbered</span
+      >
+      <span>Shortlist</span>
+    </button>
 
     <!-- Stale chip (#440): open tasks untouched for 30+ days -->
     <button

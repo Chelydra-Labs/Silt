@@ -154,6 +154,9 @@
   let sort = $derived(getTaskHubViewState().sort)
   let scope = $derived(getTaskHubViewState().scope)
   let filters = $derived(getTaskHubViewState().filters)
+  // Rank leads the lane sort while the shortlist filter is the active lens
+  // (#1092); mirrors query.ts's rankLead composition.
+  let shortlistFirst = $derived(filters.shortlist ?? false)
   let weekStart = $derived(getTaskWeekStart())
   let today = $derived(ctx.today)
   let dndEnabled = $derived(DND_DIMENSIONS.has(groupBy))
@@ -173,6 +176,7 @@
   // concern. Every lane reuses the shared comparator so pinned cards lead
   // the column and each pinned/unpinned subset keeps the active SortMode —
   // including a groupBy-only rebin, which changes the lanes but not the sort.
+  // While the shortlist filter is on, rank leads the pin key instead (#1092).
   function deriveColumns(
     loaded: TaskDetail[],
     g: GroupBy,
@@ -189,7 +193,7 @@
     )
     return lanes.map((lane) => ({
       ...lane,
-      items: sortTasks(sort, lane.items)
+      items: sortTasks(sort, lane.items, { shortlistFirst })
     }))
   }
 
@@ -311,6 +315,7 @@
     getGroupBy: () => groupBy,
     getSort: () => sort,
     getToday: () => today,
+    getShortlistFirst: () => shortlistFirst,
     isDndEnabled: () => dndEnabled,
     snapshotColumns: () => cols.snapshotColumns(),
     revertTo: (p) => cols.revertTo(p),
@@ -420,6 +425,7 @@
     void filters.dueDate
     void filters.tags
     void filters.stale
+    void filters.shortlist
     void filters.text
     void reload()
   })
@@ -429,6 +435,7 @@
   $effect(() => {
     void groupBy
     void sort
+    void shortlistFirst
     void weekStart
     void cols.statusColumns
     rebin()

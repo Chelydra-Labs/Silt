@@ -73,22 +73,36 @@ const MATCH_DIMS = [
 
 /**
  * Partial comparison of the `filters` bag: each sub-field the VIEW defines
- * is compared; undefined-by-view sub-fields are skipped. `stale` is the
- * exception — it's compared unconditionally (mirrors the original contract:
- * a view with no stale opinion still shouldn't match a state surfacing
- * stale-only tasks).
+ * is compared; undefined-by-view sub-fields are skipped. `stale` and
+ * `shortlist` are the exception — both are compared unconditionally
+ * (mirrors the original contract: a view with no stale opinion still
+ * shouldn't match a state surfacing stale-only tasks).
  */
 function filtersEqual(viewFilters: unknown, stateFilters: unknown): boolean {
   if (!viewFilters || typeof viewFilters !== 'object') return false
   if (!stateFilters || typeof stateFilters !== 'object') return false
   const v = viewFilters as TaskFilters
   const s = stateFilters as TaskFilters
-  if (v.owners !== undefined && !arrayEqual(v.owners, s.owners)) return false
-  if (v.priorities !== undefined && !arrayEqual(v.priorities, s.priorities))
-    return false
-  if (v.dueDate !== undefined && v.dueDate !== s.dueDate) return false
-  if (v.tags !== undefined && !arrayEqual(v.tags, s.tags)) return false
   if (!!v.stale !== !!s.stale) return false
+  if (!!v.shortlist !== !!s.shortlist) return false
+  // Remaining facets are keyed off the view snapshot itself rather than a
+  // hand-enumerated list: a future facet rides clonePersistableFilters's
+  // spread into the snapshot and is compared here automatically, instead of
+  // silently failing to dirty the active view (the missed-facet bug class).
+  for (const key of Object.keys(v) as (keyof TaskFilters)[]) {
+    // Transient search is never a view dimension; the unconditional pair
+    // above already handled the optional booleans.
+    if (key === 'text' || key === 'stale' || key === 'shortlist') continue
+    const viewVal = v[key]
+    if (viewVal === undefined) continue
+    const stateVal = s[key]
+    if (Array.isArray(viewVal)) {
+      if (!Array.isArray(stateVal) || !arrayEqual<unknown>(viewVal, stateVal))
+        return false
+    } else if (viewVal !== stateVal) {
+      return false
+    }
+  }
   return true
 }
 

@@ -5,7 +5,15 @@
 // makes system views highlight correctly, so we lock it here.
 import { describe, expect, it } from 'vitest'
 import { SYSTEM_VIEWS, viewMatchesState } from './savedViews'
-import { type SavedView, type TaskHubState } from './state.svelte'
+import {
+  applySavedView,
+  getTaskHubState,
+  resetTaskHubState,
+  saveView,
+  type SavedView,
+  type TaskFilters,
+  type TaskHubState
+} from './state.svelte'
 
 describe('SYSTEM_VIEWS (#427)', () => {
   it('defines exactly three built-in defaults', () => {
@@ -170,5 +178,84 @@ describe('viewMatchesState (#432 — lenient match for partial-template views)',
         })
       )
     ).toBe(true)
+  })
+})
+
+describe('saved views — shortlist filter (#1092)', () => {
+  // The hub state is module-level; keep this describe self-contained.
+  resetTaskHubState()
+
+  function makeState(overrides: Partial<TaskHubState> = {}): TaskHubState {
+    return {
+      displayMode: 'list',
+      groupBy: 'none',
+      sort: 'dueDate',
+      scope: 'vault',
+      scopeUserOverride: false,
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] },
+      focusDate: '',
+      activeFilter: 'all',
+      calendarSubMode: 'month',
+      columns: [],
+      savedViews: [],
+      activeSavedViewId: '',
+      savedViewsDirty: false,
+      pageRoute: null,
+      ...overrides
+    }
+  }
+
+  const baseFilters: TaskFilters = {
+    owners: [],
+    priorities: [],
+    dueDate: '',
+    tags: []
+  }
+
+  it('a shortlist view matches state only when the toggle agrees', () => {
+    const view: SavedView = {
+      id: 'v-short',
+      name: 'Focus four',
+      filters: { ...baseFilters, shortlist: true }
+    }
+    expect(
+      viewMatchesState(
+        view,
+        makeState({ filters: { ...baseFilters, shortlist: true } })
+      )
+    ).toBe(true)
+    // shortlist is compared unconditionally (like stale): a view with no
+    // shortlist opinion must not match a shortlist-only state.
+    expect(
+      viewMatchesState(view, makeState({ filters: { ...baseFilters } }))
+    ).toBe(false)
+    expect(
+      viewMatchesState(
+        { ...view, filters: { ...baseFilters } },
+        makeState({ filters: { ...baseFilters, shortlist: true } })
+      )
+    ).toBe(false)
+  })
+
+  it('applySavedView round-trips filters.shortlist into hub state', () => {
+    const view: SavedView = {
+      id: 'v-short',
+      name: 'Focus four',
+      filters: { ...baseFilters, shortlist: true }
+    }
+    saveView(view)
+    applySavedView(view)
+    expect(getTaskHubState().filters.shortlist).toBe(true)
+
+    // Applying a shortlist-free view clears it back (undefined → falsy,
+    // same contract as stale: the clone copies the view's opinion verbatim).
+    const plain: SavedView = {
+      id: 'v-plain',
+      name: 'Everything',
+      filters: { ...baseFilters }
+    }
+    saveView(plain)
+    applySavedView(plain)
+    expect(getTaskHubState().filters.shortlist).toBeFalsy()
   })
 })

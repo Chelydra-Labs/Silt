@@ -278,6 +278,48 @@ describe('FilterBar stale chip (#440)', () => {
   })
 })
 
+describe('FilterBar shortlist chip (#1092)', () => {
+  it('toggles filters.shortlist true then false', async () => {
+    const onFiltersChange = vi.fn()
+    const { rerender } = render(FilterBar, {
+      props: makeProps({ onFiltersChange })
+    })
+
+    const chip = screen.getByTestId('filter-shortlist-toggle')
+    expect(chip).toHaveAttribute('aria-pressed', 'false')
+    await fireEvent.click(chip)
+    expect(onFiltersChange).toHaveBeenCalledWith(
+      expect.objectContaining({ shortlist: true })
+    )
+
+    await rerender(
+      makeProps({
+        onFiltersChange,
+        filters: {
+          owners: [],
+          priorities: [],
+          dueDate: '',
+          tags: [],
+          shortlist: true
+        }
+      })
+    )
+    const activeChip = screen.getByTestId('filter-shortlist-toggle')
+    expect(activeChip).toHaveAttribute('aria-pressed', 'true')
+    await fireEvent.click(activeChip)
+    expect(onFiltersChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ shortlist: false })
+    )
+  })
+
+  it('exposes rank semantics via title', () => {
+    render(FilterBar, { props: makeProps() })
+    const chip = screen.getByTestId('filter-shortlist-toggle')
+    expect(chip.getAttribute('title') ?? '').toMatch(/0–3/)
+    expect(chip.getAttribute('title') ?? '').toMatch(/0 is the top rank/)
+  })
+})
+
 describe('FilterBar aria-live announcer', () => {
   it('announces the active-filter count and updates on change', async () => {
     // The decomposition moved counts to SmartLists and trimmed its region to
@@ -505,12 +547,63 @@ describe('FilterBar "Clear all" and the transient search', () => {
       })
     })
     await fireEvent.click(screen.getByRole('button', { name: /Clear all/ }))
-    expect(onFiltersChange).toHaveBeenCalledWith({
+    expect(onFiltersChange).toHaveBeenCalledTimes(1)
+    const cleared = onFiltersChange.mock.calls[0][0] as TaskFilters
+    // Exact-key canary (mirrors the TasksHub snapshot-shape guard): the
+    // emitted reset must be the canonical default shape, so the next
+    // filter field cannot survive "Clear all" or fall off the reset.
+    expect(Object.keys(cleared).sort()).toEqual([
+      'dueDate',
+      'owners',
+      'priorities',
+      'shortlist',
+      'tags',
+      'text'
+    ])
+    expect(cleared).toEqual({
       owners: [],
       priorities: [],
       dueDate: '',
       tags: [],
-      stale: false,
+      shortlist: false,
+      text: ''
+    })
+  })
+
+  it('clears a shortlist-only bag through the facet gate', async () => {
+    // The gate's minimal case: shortlist is the only active facet. The
+    // multi-facet test above can't distinguish a facet-agnostic gate from
+    // one that merely enumerates today's facets — shortlist-only can.
+    const onFiltersChange = vi.fn()
+    render(FilterBar, {
+      props: makeProps({
+        onFiltersChange,
+        filters: {
+          owners: [],
+          priorities: [],
+          dueDate: '',
+          tags: [],
+          shortlist: true
+        }
+      })
+    })
+    await fireEvent.click(screen.getByRole('button', { name: /Clear all/ }))
+    expect(onFiltersChange).toHaveBeenCalledTimes(1)
+    const cleared = onFiltersChange.mock.calls[0][0] as TaskFilters
+    expect(Object.keys(cleared).sort()).toEqual([
+      'dueDate',
+      'owners',
+      'priorities',
+      'shortlist',
+      'tags',
+      'text'
+    ])
+    expect(cleared).toEqual({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      shortlist: false,
       text: ''
     })
   })

@@ -417,6 +417,7 @@ Metadata Tokens (Dataview `[key:: value]` format):
 | `start` | — | `[start:: YYYY-MM-DD]` | `[start:: 2026-06-13]` |
 | `owner` | `[o:: name]` | `[owner:: name]` | `[owner:: Bob]` |
 | `priority` | `[p:: N]` | `[priority:: N]` (1=high, 2=normal, 3=low) | `[priority:: 1]` |
+| `shortlist` | — | `[shortlist:: N]` (0=top … 3; absent = unranked) | `[shortlist:: 0]` |
 | `pin` | `[pinned:: true]` | `[pin:: true]` (boolean) | `[pin:: true]` |
 | `progress` | `[prog:: N]` | `[progress:: N]` (0-100) | `[progress:: 50]` |
 | `recur` | `[recurrence:: RULE]` | `[recur:: RULE]` (natural language) | `[recur:: every week]` |
@@ -491,14 +492,15 @@ format:
    general `/` command palette). Typing filters; selecting inserts
    `[key:: ]` with the cursor positioned for value entry, and `pin`
    auto-fills `[pin:: true]`. The key catalog lives in
-   `taskMetaSuggest.ts` (`META_KEYS`: due, start, owner, priority, pin,
-   progress, recur, blocked_by) — see the source for the authoritative
-   list rather than enumerating it here.
+   `taskMetaSuggest.ts` (`META_KEYS`: due, start, owner, priority,
+   shortlist, pin, progress, recur, blocked_by) — see the source for the
+   authoritative list rather than enumerating it here.
 2. **Task edit drawer**: `TaskEditDrawer.svelte` is the primary
    structured editor for task metadata across every task view (Board,
    List, Calendar) — opened by a single click on a task card or chip. It
-   exposes status, due date, priority, owner, estimate, tags,
-   recurrence, pin, and dependencies through purpose-built controls
+   exposes status, due date, start date, priority, shortlist, owner,
+   estimate, tags, recurrence, pin, dependencies, and progress through
+   purpose-built controls
    (radiogroups, date picker, chip input, dependency picker), all
    committing through the canonical atomic write chain.
 3. **Direct typing**: Power users type `[key:: value]` directly — what

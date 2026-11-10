@@ -31,7 +31,7 @@ export interface MetaKey {
   description: string
 }
 
-// The six metadata keys Silt recognises inline. Order is the display order
+// The metadata keys Silt recognises inline. Order is the display order
 // shown when `%` is typed with no filter.
 export const META_KEYS: readonly MetaKey[] = [
   { key: 'due', label: 'due', description: 'Due date' },
@@ -41,6 +41,11 @@ export const META_KEYS: readonly MetaKey[] = [
     key: 'priority',
     label: 'priority',
     description: 'Priority (1=high, 2=normal, 3=low)'
+  },
+  {
+    key: 'shortlist',
+    label: 'shortlist',
+    description: 'Shortlist focus rank (0=top … 3; omit when unranked)'
   },
   { key: 'pin', label: 'pin', description: 'Pinned task' },
   {

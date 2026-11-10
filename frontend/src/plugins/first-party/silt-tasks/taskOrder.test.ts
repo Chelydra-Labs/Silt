@@ -92,3 +92,42 @@ describe('compareTasks pin partition', () => {
     expect(compareTasks('manual', unpinned, pinned)).toBeGreaterThan(0)
   })
 })
+
+describe('compareTasks shortlist rank lead (#1092)', () => {
+  const rankFirst: SortMode = 'dueDate'
+
+  it('puts rank ahead of the pin key while shortlistFirst is on', () => {
+    const rows = [
+      makeTask({ id: 'p3', pinned: true, shortlist_rank: 3 }),
+      makeTask({ id: 'u1', shortlist_rank: 1 }),
+      makeTask({ id: 'u0', shortlist_rank: 0 })
+    ]
+
+    expect(
+      sortTasks(rankFirst, rows, { shortlistFirst: true }).map((t) => t.id)
+    ).toEqual(['u0', 'u1', 'p3'])
+  })
+
+  it('keeps the pin-first default when the option is off', () => {
+    const rows = [
+      makeTask({ id: 'u0', shortlist_rank: 0 }),
+      makeTask({ id: 'p3', pinned: true, shortlist_rank: 3 })
+    ]
+
+    expect(sortTasks(rankFirst, rows).map((t) => t.id)).toEqual(['p3', 'u0'])
+  })
+
+  it('sorts unranked rows last and falls through to pin + mode key on equal ranks', () => {
+    const rows = [
+      makeTask({ id: 'u-null' }),
+      makeTask({ id: 'p-null', pinned: true }),
+      makeTask({ id: 'p-0', pinned: true, shortlist_rank: 0 }),
+      makeTask({ id: 'u-0', shortlist_rank: 0, due_date: '2026-01-01' })
+    ]
+
+    // Ranked lead unranked; within the unranked tail the pin key applies.
+    expect(
+      sortTasks(rankFirst, rows, { shortlistFirst: true }).map((t) => t.id)
+    ).toEqual(['p-0', 'u-0', 'p-null', 'u-null'])
+  })
+})

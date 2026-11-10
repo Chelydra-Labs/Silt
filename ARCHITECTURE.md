@@ -50,15 +50,18 @@ correctness regression, not a style choice.
 | **Per-linked-notebook overrides** | YAML | `<linkedRoot>/.system/config.yaml` | Per-notebook plugin setting overrides for a linked (external) notebook. Read-only to Silt (user-authored); deep-merged over the vault defaults (linked wins per-key). See §3.1. | `plugins.plugin_settings.silt-tasks.default_group_by: status` |
 | **Per-vault schema assets** | YAML | `<vault>/.system/types/*.yaml` | Type schemas: property definitions, hero field, target-type constraints for `page`/`pages` relations. Sibling to `.system/templates/` and `.system/themes/`. User-authored or shipped defaults; durable and portable. See ADR `docs/decisions/0008-typed-notes.md`. | `TypeDef` YAML with `properties: [{name, type, target, ...}]` |
 | **User-global, pre-vault** | JSON | `<config>/silt/settings.json` | Settings that must be known before any vault is open: active theme id, dark/light/system mode, non-vault font preferences | `{"active_theme": "silt-graphite", "mode": "dark"}` |
-| **Working memory** | SQLite (WAL) | `<DataDir>/silt/indexes/<vault-key>/index.sqlite*` (per-user local DataDir; relocated OUT of the synced vault) | Re-derivable caches: block↔location projection, FTS5 search index, denormalized per-task caches (comments/links counts, pin, progress — all re-derived from markdown on re-index), file mtime/size for incremental re-index, typed-notes projection (`page_types`/`page_properties` — page→type membership + property values, re-derived from frontmatter `type:` + the type schema) | The `blocks` table, `blocks_fts` virtual table, `files` mtime cache, `page_types`/`page_properties` projection |
+| **Working memory** | SQLite (WAL) | `<DataDir>/silt/indexes/<vault-key>/index.sqlite*` (per-user local DataDir; relocated OUT of the synced vault) | Re-derivable caches: block↔location projection, FTS5 search index, denormalized per-task caches (full re-derived inventory: see cardinal rule 4), file mtime/size for incremental re-index, typed-notes projection (`page_types`/`page_properties` — page→type membership + property values, re-derived from frontmatter `type:` + the type schema) | The `blocks` table, `blocks_fts` virtual table, `files` mtime cache, `page_types`/`page_properties` projection |
 | **Plugin-owned storage** | SQLite (WAL) | `<vault>/.system/plugins/<id>/data/plugin.db` | Per-plugin private data the plugin owns the schema for: working memory OR durable storage at the plugin's discretion (embeddings, content-hash caches, agent memory). The plugin decides durability semantics; data that must survive uninstall or be portable MUST round-trip through markdown. | A plugin's `vec0` vector index, a content-hash cache table |
 | **Page history** | gzip + JSONL | `<vault>/.system/history/` (linked: `<linkedRoot>/.system/history/`) | Opt-in previous-content snapshots of page markdown plus a per-page append-only manifest. Durable user recovery data — not reproducible working memory. Deleting `index.sqlite` must not delete it. Scanner skips leading-`.` dirs, so history is not indexed, not in nav, and not in FTS. | `.system/history/pages/vault/Work/__root__/Note.jsonl` + matching `.md.gz` blob |
 
 **The cardinal rules:**
 
 1. **Markdown is the source of truth for content.** Every per-block
-   metadata field (status, owner, priority, dates, pin, progress) MUST
-   round-trip through the markdown inline task syntax. The block
+   metadata field (status, owner, priority, dates, lifecycle timestamps,
+   tags, pin, progress, estimate, recurrence, blocked-by, manual order,
+   shortlist rank) MUST
+   round-trip through the markdown inline task
+   syntax. The block
    identity comment is the only identifier stored in the file; the file
    position and the inline syntax are the source for everything else.
    Deleting the entire `<vault>` should be recoverable by re-creating
@@ -79,10 +82,16 @@ correctness regression, not a style choice.
    MUST be reproducible from the markdown + YAML above. The recovery path for
    any core-index corruption is *delete the index file and relaunch* — the
    documented, supported operation. The core index holds the block↔location projection, FTS5, file
-   mtime/size caches, and re-derived per-task caches (comments/links counts,
-   pin, progress, lifecycle timestamps/sort position — re-derived from
-   markdown `[pin:: true]` / `[progress:: N]` / `[created::]` / `[completed::]`
-   / `[order:: N]` tokens on every re-index; plus NOTE-block comment
+   mtime/size caches, and re-derived per-task caches (status, owner,
+   dates, priority, pin, progress, recurrence, blocked-by edges, tags,
+   comments/links/subtask counts, lifecycle timestamps/sort position,
+   estimate, shortlist rank — re-derived from the task checkbox and
+   hashtags plus the `[due::]` / `[start::]` / `[owner::]` /
+   `[priority::]` / `[pin:: true]` / `[progress:: N]` / `[recur::]` /
+   `[blocked_by:: ((uuid))]` / `[created::]` / `[completed::]` /
+   `[modified::]` / `[order:: N]` / `[estimate::]` / `[shortlist:: N]`
+   tokens on every
+   re-index; plus NOTE-block comment
    attribution `[author::]` / `[ts::]` into the sparse `block_meta`
    projection). It is **forbidden** to hold user intent *as the source of
    truth* there: pin state, progress, custom column names, filter
@@ -208,7 +217,7 @@ within a 300 ms cooldown of our own atomic write. See
 
 Every file ingested is scanned line-by-line using a customized Markdown AST engine built on top of yuin/goldmark (`backend/parser`).
 
-**Block model.** A GFM checkbox item (`- [ ]`, `- [/]`, `- [x]`) is a task; the remainder of any line is scanned for Dataview-style `[key:: value]` metadata tokens (due, start, owner, priority, pin, progress, recur, blocked_by, created, completed, order) — order-independent and extensible via the `scanTaskTokens` dispatch. NOTE blocks are scanned separately for two comment-attribution tokens (`author`, `ts`) via `scanNoteTokens`; the TASK and NOTE token spaces are disjoint by design, so comment attribution never leaks into task queries and task metadata never lands on a note. Each parsed line becomes a `ParsedBlock` typed as one of three prose types (`TASK`, `NOTE`, `HEADER`) or one of four multi-line region types (`CODE`, `TABLE`, `DETAILS`, `CALLOUT`).
+**Block model.** A GFM checkbox item (`- [ ]`, `- [/]`, `- [x]`) is a task; the remainder of any line is scanned for Dataview-style `[key:: value]` metadata tokens (due, start, owner, priority, shortlist, pin, progress, recur, blocked_by, created, completed, modified, order, estimate) — order-independent and extensible via the `scanTaskTokens` dispatch. NOTE blocks are scanned separately for two comment-attribution tokens (`author`, `ts`) via `scanNoteTokens`; the TASK and NOTE token spaces are disjoint by design, so comment attribution never leaks into task queries and task metadata never lands on a note. Each parsed line becomes a `ParsedBlock` typed as one of three prose types (`TASK`, `NOTE`, `HEADER`) or one of four multi-line region types (`CODE`, `TABLE`, `DETAILS`, `CALLOUT`).
 
 **Multi-line region blocks.** The parser's `accumulateRegion` detects four region shapes — fenced code, GFM table runs (header + separator), `<details>` HTML (depth-counted), and Obsidian callouts (`> [!variant]` + consecutive `>` lines) — and collapses each into one managed `ParsedBlock` (one `blocks`-table row, one UUID, one FTS5 document). The block-identity comment lives on its own dedicated trailing line after the region so the on-disk format stays strictly GFM/HTML/Obsidian syntax (byte-exact interop with Obsidian/GitHub/VS Code). `ParseFileContent` and `RenderFileContent` share the region-boundary helpers (`detectRegionKind` / `findRegionCloser` / `skipManagedRegion`) so both paths agree. Legacy files with per-line id comments are detected (id comments stripped before matching), migrated to the trailing-id format on first parse, and `((uuid))` references to vanished per-line ids are remapped to the region block's id.
 
@@ -282,6 +291,7 @@ CREATE TABLE tasks (
     manual_order INTEGER,             -- 1-based [order:: N] sort position; NULL when absent (no backfill); reproducible from markdown
     modified_at TEXT,                 -- ISO 8601 local [modified::]; NULL when absent; reproducible from markdown
     estimate_minutes INTEGER,         -- minutes from [estimate::]; NULL when absent; reproducible from markdown
+    shortlist_rank INTEGER,           -- rank 0-3 from [shortlist:: N], 0 = top focus; NULL = unranked (#1092)
     subtask_total INTEGER DEFAULT 0,  -- derived: direct TASK children
     subtask_done INTEGER DEFAULT 0,   -- derived: direct TASK children with status DONE
     FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE

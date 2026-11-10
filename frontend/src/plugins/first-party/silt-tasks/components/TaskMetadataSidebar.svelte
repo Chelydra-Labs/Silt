@@ -24,10 +24,10 @@
 
   /**
    * The shared task metadata surface — extracted from TaskEditDrawer so the
-   * same controls (title, status, due date, pin, progress, estimate,
-   * recurrence, owner, priority, timestamps, tags, dependencies, comments)
-   * render identically inside the TaskEditDrawer inspector AND the
-   * TaskSubEditorModal right sidebar (#780).
+   * same controls (title, status, due date, start date, pin, progress,
+   * estimate, recurrence, owner, priority, shortlist, timestamps, tags,
+   * dependencies, comments) render identically inside the TaskEditDrawer
+   * inspector AND the TaskSubEditorModal right sidebar (#780).
    *
    * Owns every optimistic-commit field + the DONE-on-blocked guard. The host
    * (drawer / modal) owns only the chrome and calls `onMetaChanged` after each
@@ -169,6 +169,12 @@
     onChanged: notifyMeta,
     onError: setMetaError
   })
+  const shortlistField = optimisticField<number | null>({
+    initial: null,
+    write: (r) => trackTaskUndoWrite(ctx.setTaskShortlistRank(task!.id, r)),
+    onChanged: notifyMeta,
+    onError: setMetaError
+  })
   const tagsField = optimisticField<string[]>({
     initial: [],
     write: (tags) => trackTaskUndoWrite(ctx.setTaskTags(task!.id, tags)),
@@ -182,9 +188,11 @@
     onError: setMetaError
   })
 
-  // Anchor for revert: the last status/priority successfully persisted.
+  // Anchor for revert: the last status/priority/shortlist successfully
+  // persisted.
   let statusCommitted = $state<TaskStatus>('TODO')
   let priorityCommitted = $state(2)
+  let shortlistCommitted = $state<number | null>(null)
 
   let recurrenceOpen = $state(false)
   let dueDateOpen = $state(false)
@@ -223,6 +231,10 @@
 
   const STATUSES: TaskStatus[] = ['TODO', 'DOING', 'DONE']
   const PRIORITIES: number[] = [1, 2, 3]
+  // Shortlist ranks (#1092): 0 is a REAL rank (the top one), null is the
+  // unranked state. Always compare with == null / != null — never truthiness,
+  // because rank 0 is falsy.
+  const SHORTLIST_OPTIONS: (number | null)[] = [null, 0, 1, 2, 3]
 
   // One label style for every section heading and field label so the drawer and
   // the 320px modal aside read as the same surface (D5).
@@ -247,6 +259,7 @@
     void task?.status
     void task?.owner
     void task?.priority
+    void task?.shortlist_rank
     void task?.tags
     void task?.clean_content
     void task?.estimate_minutes
@@ -272,6 +285,28 @@
     if (untrack(() => !priorityField.pending)) {
       priorityField.reset(task?.priority ?? 2)
       priorityCommitted = task?.priority ?? 2
+    }
+    if (
+      untrack(
+        () =>
+          !shortlistField.pending &&
+          !shortlistCommitInFlight &&
+          // value !== committed means the debouncer is armed with newer
+          // local intent (a queued activation the chain tail mirrored into
+          // the value). The host's success re-query echoes the rank the
+          // chain just wrote and would clobber that intent before the
+          // flush lands; with no intent armed, value === committed is the
+          // resting invariant, so genuine external changes still re-seed.
+          shortlistField.value === shortlistCommitted
+      )
+    ) {
+      // ?? (not ||): rank 0 must survive the reset — only null/undefined map
+      // to the unranked state. The in-flight flag covers the lookup+demote
+      // awaits before pending turns on, where a host re-query (new task prop
+      // from an unrelated write) would otherwise snap the optimistic rank
+      // back to the server value mid-chain.
+      shortlistField.reset(task?.shortlist_rank ?? null)
+      shortlistCommitted = task?.shortlist_rank ?? null
     }
     if (untrack(() => !tagsField.pending)) {
       tagsField.reset(task?.tags ? task.tags.split('|').filter(Boolean) : [])
@@ -541,10 +576,176 @@
   }
   const priorityDebouncer = trailingDebounce(flushPriorityCommit, 200)
 
+  function shortlistLabel(r: number | null): string {
+    return r == null ? 'None' : String(r)
+  }
+  function shortlistAttr(r: number | null): string {
+    return r == null ? 'none' : String(r)
+  }
+
+  let shortlistCheckedIdx = $derived(
+    SHORTLIST_OPTIONS.indexOf(shortlistField.value)
+  )
+
+  // Current holder of a shortlist rank, if any (#1092). Ranks are
+  // single-holder by design, so assigning R has to free it first. If
+  // duplicates exist at rest (hand-edited [shortlist:: N] tokens, or the
+  // restore race below), this picks one row arbitrarily and demotes only
+  // that one — ties are legal data and the UI resolves the one conflict
+  // it knows about, not every duplicate.
+  async function findShortlistHolder(rank: number): Promise<string | null> {
+    const res = await ctx.sqliteQuery(
+      'SELECT block_id FROM tasks WHERE shortlist_rank = ? AND block_id != ?',
+      [rank, task!.id]
+    )
+    const row = (res.rows?.[0] ?? null) as { block_id?: string } | null
+    return row?.block_id ?? null
+  }
+
+  // Sibling radiogroups are atomic for free — field.pending flips on before
+  // their first await. The shortlist lookup+demote+commit chain spans two
+  // awaits before pending turns on, so this flag closes that reentrancy
+  // window; a second activation inside it queues behind the flush, never
+  // reverts mid-chain.
+  let shortlistCommitInFlight = $state(false)
+
+  // Newest intent expressed while a chain is in flight. Recorded explicitly
+  // at every activation — pointer clicks and keyboard flushes when they enter
+  // commitShortlist, keystrokes in onShortlistKeydown (whose flush may not
+  // fire until after the chain settles). The value cannot carry this signal:
+  // a cancel back to the committed anchor leaves it unchanged, which is
+  // exactly how a queued cancel used to be dropped. `undefined` = nothing
+  // newer than the in-flight target.
+  let shortlistNewestIntent: number | null | undefined
+
+  async function commitShortlist(r: number | null) {
+    if (!task) return
+    if (shortlistCommitInFlight || shortlistField.pending) {
+      // Record before any equality guard: an activation on the value the
+      // control still shows (the committed anchor) is a cancel-back, not a
+      // no-op. The value mirrors the intent for display; the chain's tail
+      // re-arms the flush to land it.
+      shortlistNewestIntent = r
+      shortlistField.value = r
+      return
+    }
+    if (r === shortlistCommitted) return
+    shortlistNewestIntent = undefined
+    // Pointer activations set the display optimistically (a keyboard flush
+    // already carries r in the value); the awaits below would otherwise
+    // leave the clicked radio unchecked until the whole chain settles.
+    shortlistField.value = r
+    shortlistCommitInFlight = true
+    // Holder freed by a successful demote, if one ran — needed to compensate
+    // when the assign itself fails.
+    let demotedHolder: string | null = null
+    try {
+      // Occupied-rank demotion (#1092): assigning a real rank R first clears
+      // the task currently holding R. Two separate, individually-undoable
+      // writes — never a hidden cross-file swap.
+      if (r != null) {
+        let holder: string | null
+        try {
+          holder = await findShortlistHolder(r)
+        } catch (e) {
+          // Lookup failed: whether R is occupied is unknown, so assigning it
+          // could duplicate the rank. Abort like a failed demotion.
+          shortlistField.value = shortlistCommitted
+          shortlistNewestIntent = undefined
+          setMetaError(friendlyCaughtError(e))
+          return
+        }
+        if (holder) {
+          try {
+            await trackTaskUndoWrite(ctx.setTaskShortlistRank(holder, null))
+            demotedHolder = holder
+          } catch (e) {
+            // Demotion failed: R is still occupied, so assigning it would
+            // duplicate the rank. Abort without implying a clean swap.
+            shortlistField.value = shortlistCommitted
+            shortlistNewestIntent = undefined
+            setMetaError(friendlyCaughtError(e))
+            return
+          }
+        }
+      }
+      // commit() resets the value to its own argument, so any newer intent
+      // recorded during the awaits above is restored by the tail below —
+      // not inferred from value drift, which cannot see a cancel back to
+      // the committed anchor.
+      const ok = await shortlistField.commit(r)
+      if (ok) {
+        shortlistCommitted = r
+      } else {
+        shortlistField.value = shortlistCommitted
+        // The demote above already freed rank r on its previous holder, so
+        // a failed assign would leave both tasks unranked. Best-effort,
+        // journaled restore — no retry loop; if it also fails, extend the
+        // banner so the loss is visible (the journal keeps Ctrl+Z viable).
+        // The restore assumes r stayed free across the failed assign; a
+        // concurrent writer claiming it in that window leaves a benign
+        // duplicate that sorts deterministically until re-ranked.
+        if (demotedHolder != null) {
+          try {
+            await trackTaskUndoWrite(ctx.setTaskShortlistRank(demotedHolder, r))
+          } catch {
+            setMetaError(
+              `${metaError} — the previous holder of rank ${r} could not be restored`
+            )
+          }
+        }
+      }
+      // Land the recorded newest intent: put it back into the value (commit
+      // above reset it to r) so the display tells the truth and the re-arm
+      // below flushes it as a fresh chain. On a failed chain the record is
+      // dropped — the value already reverted to the anchor and a failed
+      // write never auto-retries. Except: an activation landing during the
+      // compensating-restore await above mirrors into the value after that
+      // revert ran, so the re-arm check below lands it as a fresh chain.
+      const queuedIntent = shortlistNewestIntent
+      shortlistNewestIntent = undefined
+      if (
+        ok &&
+        queuedIntent !== undefined &&
+        queuedIntent !== shortlistCommitted
+      ) {
+        shortlistField.value = queuedIntent
+      }
+      if (shortlistField.value !== shortlistCommitted)
+        shortlistDebouncer.trigger()
+    } finally {
+      shortlistCommitInFlight = false
+    }
+  }
+
+  function onShortlistKeydown(e: KeyboardEvent) {
+    const curIdx = shortlistCheckedIdx >= 0 ? shortlistCheckedIdx : 0
+    const idx = nextRadiogroupIndex(e.key, curIdx, SHORTLIST_OPTIONS.length)
+    if (idx === null) return
+    e.preventDefault()
+    const next = SHORTLIST_OPTIONS[idx]
+    // A keystroke inside the pre-commit window is newest intent; record it
+    // directly because its debounced flush may not enter commitShortlist
+    // until after the chain settles.
+    if (shortlistCommitInFlight || shortlistField.pending)
+      shortlistNewestIntent = next
+    shortlistField.value = next
+    shortlistDebouncer.trigger()
+    ;(e.currentTarget as HTMLElement)
+      .querySelector<HTMLElement>(`[data-shortlist="${shortlistAttr(next)}"]`)
+      ?.focus()
+  }
+
+  function flushShortlistCommit() {
+    void commitShortlist(shortlistField.value)
+  }
+  const shortlistDebouncer = trailingDebounce(flushShortlistCommit, 200)
+
   $effect(() => {
     return () => {
       statusDebouncer.cancel()
       priorityDebouncer.cancel()
+      shortlistDebouncer.cancel()
     }
   })
 
@@ -922,6 +1123,50 @@
           </button>
         {/each}
       </div>
+    </section>
+
+    <section aria-labelledby={id('task-shortlist-label')}>
+      <h3 id={id('task-shortlist-label')} class="mb-1 {FIELD_LABEL}">
+        Shortlist
+      </h3>
+      <div
+        class="flex items-center gap-0.5 rounded-lg border border-surface-panel-border bg-surface-panel p-0.5"
+        role="radiogroup"
+        aria-label="Shortlist rank"
+        aria-describedby={id('task-shortlist-hint')}
+        aria-busy={shortlistCommitInFlight}
+        tabindex="-1"
+        onkeydown={onShortlistKeydown}
+      >
+        {#each SHORTLIST_OPTIONS as r, i (shortlistAttr(r))}
+          <button
+            data-shortlist={shortlistAttr(r)}
+            type="button"
+            onclick={() => void commitShortlist(r)}
+            role="radio"
+            aria-checked={shortlistField.value === r}
+            tabindex={shortlistCheckedIdx >= 0
+              ? shortlistCheckedIdx === i
+                ? 0
+                : -1
+              : i === 0
+                ? 0
+                : -1}
+            class="flex-1 cursor-pointer rounded border-none px-2.5 py-1 font-label-sm transition-colors"
+            class:bg-hover={shortlistField.value === r}
+            class:text-accent-primary-start={shortlistField.value === r}
+            class:text-text-muted={shortlistField.value !== r}
+          >
+            {shortlistLabel(r)}
+          </button>
+        {/each}
+      </div>
+      <p
+        id={id('task-shortlist-hint')}
+        class="mt-1 font-label-sm text-type-2xs text-text-muted"
+      >
+        0 is the top rank
+      </p>
     </section>
 
     {#if metaError}

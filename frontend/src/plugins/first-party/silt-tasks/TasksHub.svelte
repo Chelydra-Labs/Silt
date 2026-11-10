@@ -26,6 +26,7 @@
     getTaskHubViewState,
     getTaskPageRoute,
     clearTaskPageRoute,
+    clonePersistableFilters,
     setDisplayMode,
     setFilters,
     setFilterText,
@@ -653,13 +654,7 @@
       groupBy: hubState.groupBy,
       sort: hubState.sort,
       scope: hubState.scope,
-      filters: {
-        owners: [...hubState.filters.owners],
-        priorities: [...hubState.filters.priorities],
-        dueDate: hubState.filters.dueDate,
-        tags: [...hubState.filters.tags],
-        stale: hubState.filters.stale
-      },
+      filters: clonePersistableFilters(hubState.filters),
       calendarSubMode: hubState.calendarSubMode,
       columns: cloneColumns(hubState.columns),
       system: false,

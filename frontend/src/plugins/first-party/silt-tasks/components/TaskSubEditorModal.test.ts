@@ -614,6 +614,16 @@ describe('TaskSubEditorModal — metadata sidebar (#780 / #826)', () => {
       onClose
     })
     await vi.waitFor(() => expect(mocks.sqliteQuery).toHaveBeenCalled())
+    // The editor autofocuses asynchronously (onCreate → loadSubtree →
+    // queueMicrotask focus). Let that chain land before driving the popover:
+    // if it fires mid-interaction it steals focus after Escape's restore, so
+    // an immediate focus assertion races (the CI flake this guards against).
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+    await vi.waitFor(() =>
+      expect(document.activeElement?.closest('.ProseMirror')).not.toBeNull()
+    )
     await flush()
 
     const dueTrigger = screen.getByRole('button', { name: /2026-07-15/ })
@@ -628,7 +638,9 @@ describe('TaskSubEditorModal — metadata sidebar (#780 / #826)', () => {
     await flush()
     expect(dueTrigger).toHaveAttribute('aria-expanded', 'false')
     expect(onClose).not.toHaveBeenCalled()
-    expect(document.activeElement).toBe(dueTrigger)
+    // The sidebar restores focus on a tick after Escape; wait for the same
+    // condition instead of asserting it synchronously.
+    await vi.waitFor(() => expect(document.activeElement).toBe(dueTrigger))
 
     await fireEvent.keyDown(window, { key: 'Escape' })
     await flush()
@@ -1057,7 +1069,7 @@ describe('TaskSubEditorModal — cross-surface sidebar parity (D7)', () => {
     expect(drawerSidebar, 'drawer sidebar must render').not.toBeNull()
 
     const expected = {
-      primary: ['Status', 'Due date', 'Start day', 'Priority'],
+      primary: ['Status', 'Due date', 'Start day', 'Priority', 'Shortlist'],
       essentials: ['Owner', 'Tags'],
       planning: [
         'Planning & tracking',
