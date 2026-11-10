@@ -42,7 +42,10 @@ export function createStatusColumnsController({
   let configError = $state('')
 
   // --- Column-management UI state (status dimension only) -----------------
-  let menuCol = $state<string | null>(null)
+  // Column action menu anchor (#1121): identity + open coordinates for the
+  // shared ContextMenu primitive. The ⋯ button in ColumnHeader is the
+  // anchorEl (focus return + scroll-scoped dismissal), owned there.
+  let colMenu = $state<{ colKey: string; x: number; y: number } | null>(null)
   let renamingColKey = $state<string | null>(null)
   let renameValue = $state('')
   let colDragIndex = $state<number | null>(null)
@@ -75,18 +78,22 @@ export function createStatusColumnsController({
   }
 
   // --- Column management (status dimension only) --------------------------
-  function toggleColMenu(colKey: string) {
-    const next = menuCol === colKey ? null : colKey
-    menuCol = next
-    if (!next || next !== colKey) {
-      wipEditCol = null
-      wipEditError = ''
-    }
+  function openColMenu(colKey: string, x: number, y: number) {
+    // Every open is a fresh presentation: drop any WIP-editor state left
+    // over from a previous one so the menu always starts at its item list.
+    wipEditCol = null
+    wipEditError = ''
+    colMenu = { colKey, x, y }
+  }
+  function closeColMenu() {
+    colMenu = null
+    wipEditCol = null
+    wipEditError = ''
   }
   function startRename(statusName: string, colKey: string) {
     renamingColKey = colKey
     renameValue = statusName
-    menuCol = null
+    closeColMenu()
   }
   function commitRename(oldStatus: string) {
     const v = renameValue.trim()
@@ -111,7 +118,7 @@ export function createStatusColumnsController({
     saveStatusColumns([...statusColumns, { name }], prev)
   }
   function removeColumn(statusName: string) {
-    menuCol = null
+    closeColMenu()
     if (
       !window.confirm(
         `Remove column "${laneLabel(statusName)}"? Cards keep their status.`
@@ -137,7 +144,9 @@ export function createStatusColumnsController({
   }
 
   function applyWipLimit(statusName: string) {
-    const trimmed = wipDraft.trim()
+    // bind:value on a type=number input yields a number (or null when
+    // cleared), not the seeded string — normalize so both validate the same.
+    const trimmed = String(wipDraft ?? '').trim()
     let wipLimit: number | null
     if (trimmed === '') {
       wipLimit = null
@@ -162,7 +171,7 @@ export function createStatusColumnsController({
     configError = ''
     wipEditCol = null
     wipEditError = ''
-    menuCol = null
+    closeColMenu()
     saveStatusColumns(next, prev)
   }
 
@@ -175,9 +184,7 @@ export function createStatusColumnsController({
       return rest
     })
     configError = ''
-    wipEditCol = null
-    wipEditError = ''
-    menuCol = null
+    closeColMenu()
     saveStatusColumns(next, prev)
   }
 
@@ -227,11 +234,8 @@ export function createStatusColumnsController({
     get configError() {
       return configError
     },
-    get menuCol() {
-      return menuCol
-    },
-    set menuCol(v: string | null) {
-      menuCol = v
+    get colMenu() {
+      return colMenu
     },
     get renamingColKey() {
       return renamingColKey
@@ -262,7 +266,8 @@ export function createStatusColumnsController({
     revertTo,
     // column config actions
     saveStatusColumns,
-    toggleColMenu,
+    openColMenu,
+    closeColMenu,
     startRename,
     commitRename,
     cancelRename,

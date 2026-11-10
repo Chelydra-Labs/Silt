@@ -842,12 +842,15 @@
               {overWip}
               {dndEnabled}
               renaming={cols.renamingColKey === col.key}
-              menuOpen={cols.menuCol === col.key}
+              menu={cols.colMenu?.colKey === col.key
+                ? { x: cols.colMenu.x, y: cols.colMenu.y }
+                : null}
               wipEditing={cols.wipEditCol === statusName}
               wipEditError={cols.wipEditError}
               bind:renameValue={cols.renameValue}
               bind:wipDraft={cols.wipDraft}
-              onToggleMenu={() => cols.toggleColMenu(col.key)}
+              onOpenMenu={(x, y) => cols.openColMenu(col.key, x, y)}
+              onCloseMenu={cols.closeColMenu}
               onStartRename={() => cols.startRename(statusName, col.key)}
               onCommitRename={() => cols.commitRename(statusName)}
               onCancelRename={cols.cancelRename}
@@ -855,7 +858,6 @@
               onStartWipEdit={() => cols.startWipEdit(statusName)}
               onApplyWipLimit={() => cols.applyWipLimit(statusName)}
               onClearWipLimit={() => cols.clearWipLimit(statusName)}
-              onMenuEscape={() => (cols.menuCol = null)}
               onWipEscape={() => cols.escapeWipEdit()}
               onColDragStart={(e) => cols.onColDragStart(e, colIdx)}
               onColDragOver={(e) => cols.onColDragOver(e, colIdx)}
@@ -992,15 +994,6 @@
   onOpenSubEditor={(task) => (subEditorCard = task)}
   onError={(message) => (menuError = message)}
 />
-
-{#if cols.menuCol}
-  <!-- Click-away for the column action menu. -->
-  <div
-    class="fixed inset-0 z-40"
-    aria-hidden="true"
-    onclick={() => (cols.menuCol = null)}
-  ></div>
-{/if}
 
 <BlockedDoneGuard
   pending={blockedGuard.pending}

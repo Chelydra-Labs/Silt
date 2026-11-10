@@ -935,6 +935,9 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     // The inline rename input replaces the header label (a11y-friendly
     // alternative to window.prompt for the rename affordance).
     const input = screen.getByLabelText('Rename column')
+    // Pins the focus handoff between the menu's focus-return and the
+    // editor's tick()-deferred focus: the input must win the race.
+    expect(input).toHaveFocus()
     await fireEvent.input(input, { target: { value: 'Backlog' } })
     await fireEvent.keyDown(input, { key: 'Enter' })
     await flush()
@@ -947,6 +950,101 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     expect(
       screen.queryByRole('group', { name: 'To Do' })
     ).not.toBeInTheDocument()
+  })
+
+  it('right-click on a column header opens the action menu at the pointer', async () => {
+    await renderBoard('status', [])
+
+    const header = screen.getByRole('group', { name: 'To Do column header' })
+    await fireEvent.contextMenu(header, { clientX: 300, clientY: 90 })
+    await flush()
+
+    const menu = screen.getByRole('menu', { name: 'Actions for To Do column' })
+    expect(menu).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitem', { name: 'WIP limit…' })
+    ).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Remove' })).toBeInTheDocument()
+  })
+
+  it('context-menu key (Shift+F10) on the ⋯ button opens the same menu', async () => {
+    await renderBoard('status', [])
+
+    const btn = screen.getAllByRole('button', { name: 'Column actions' })[0]
+    await fireEvent.keyDown(btn, { key: 'F10', shiftKey: true })
+    await flush()
+
+    expect(
+      screen.getByRole('menu', { name: 'Actions for To Do column' })
+    ).toBeInTheDocument()
+    expect(screen.getAllByRole('menuitem').length).toBe(3)
+  })
+
+  it('column menu Escape closes it and returns focus to the ⋯ button', async () => {
+    await renderBoard('status', [])
+
+    const btn = screen.getAllByRole('button', { name: 'Column actions' })[0]
+    await fireEvent.click(btn)
+    await flush()
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await flush()
+
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(btn).toHaveFocus()
+  })
+
+  it('WIP limit set through the menu persists and renders the badge', async () => {
+    await renderBoard('status', [])
+
+    const btn = screen.getAllByRole('button', { name: 'Column actions' })[0]
+    await fireEvent.click(btn)
+    await flush()
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'WIP limit…' }))
+    await flush()
+
+    const input = screen.getByTestId('board-wip-input-status-TODO')
+    expect(input).toHaveFocus()
+    await fireEvent.input(input, { target: { value: '2' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await flush()
+
+    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+      'columns',
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'TODO', wipLimit: 2 })
+      ])
+    )
+    expect(
+      screen.getByTestId('board-wip-badge-status-TODO')
+    ).toBeInTheDocument()
+  })
+
+  it('WIP editor Escape keeps the menu open and refocuses the WIP limit item', async () => {
+    await renderBoard('status', [])
+
+    const btn = screen.getAllByRole('button', { name: 'Column actions' })[0]
+    await fireEvent.click(btn)
+    await flush()
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'WIP limit…' }))
+    await flush()
+
+    const input = screen.getByTestId('board-wip-input-status-TODO')
+    // Arrows in the input must not hand focus to the menu's roving order.
+    await fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(input).toHaveFocus()
+
+    await fireEvent.keyDown(input, { key: 'Escape' })
+    await flush()
+
+    // Only the editor closed; the menu stayed open for further actions.
+    expect(
+      screen.queryByTestId('board-wip-edit-status-TODO')
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'WIP limit…' })).toHaveFocus()
   })
 
   // --- Drawer integration ------------------------------------------------
