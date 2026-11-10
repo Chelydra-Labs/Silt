@@ -9,8 +9,13 @@
   import { trackTaskUndoWrite } from '../undo.svelte'
   import { PRIORITY_LABELS, type TaskDetail } from '../types'
   import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
+  import { onDestroy } from 'svelte'
   import type { PluginContext, TaskStatus } from '../../../sdk'
-  import type { TaskContextMenuState } from './useTaskContextMenu.svelte'
+  import {
+    neighborTaskHit,
+    rescueFocusAfterWrite,
+    type TaskContextMenuState
+  } from './useTaskContextMenu.svelte'
 
   /**
    * Shared task context menu (#1116) — one instance hosted per view (List
@@ -29,19 +34,46 @@
     onEditTask: (task: TaskDetail) => void
     /** Shift+Enter parity: open the host's sub-editor for the task. */
     onOpenSubEditor: (task: TaskDetail) => void
+    /**
+     * Write-failure reporting into the host's top error strip. Called with
+     * the full message on failure and with '' after the 8s auto-dismiss
+     * (markDownError parity). Without it the banner renders in-flow here.
+     */
+    onError?: (message: string) => void
   }
 
-  let { ctx, menu, onClose, onEditTask, onOpenSubEditor }: Props = $props()
+  let { ctx, menu, onClose, onEditTask, onOpenSubEditor, onError }: Props =
+    $props()
 
   let writeError = $state('')
+  let writeErrorTimer: ReturnType<typeof setTimeout> | null = null
   // Delete is two-step on purpose (issue: no silent delete) — the ConfirmModal
   // target outlives the menu close so the dialog opens after dismissal.
   let deleteTarget = $state<TaskDetail | null>(null)
+  // Anchor snapshot for writes that confirm later than the menu click
+  // (blocked-DONE dialog, delete modal) — set on every activation.
+  let lastAnchor: HTMLElement | null = null
+
+  onDestroy(() => {
+    if (writeErrorTimer) clearTimeout(writeErrorTimer)
+  })
+
+  function reportWriteError(e: unknown): void {
+    const message = `Couldn't update task: ${friendlyCaughtError(e)}`
+    writeError = message
+    onError?.(message)
+    if (writeErrorTimer) clearTimeout(writeErrorTimer)
+    writeErrorTimer = setTimeout(() => {
+      writeError = ''
+      onError?.('')
+      writeErrorTimer = null
+    }, 8_000)
+  }
 
   // ctx is a stable plugin-context singleton — see BoardView for rationale.
   // svelte-ignore state_referenced_locally
   const blockedGuard = useBlockedDoneGuard<TaskDetail>(ctx, (e) => {
-    writeError = friendlyCaughtError(e)
+    reportWriteError(e)
   })
 
   let weekStart = $derived(getTaskWeekStart())
@@ -49,18 +81,38 @@
 
   const PRIORITIES = [1, 2, 3]
 
-  /** Fire-and-forget journaled write; failures surface in the banner. */
-  function runWrite(op: () => Promise<unknown>): void {
+  /** Snapshot the menu's anchor before onClose() clears the menu state. */
+  function claimAnchor(): HTMLElement | null {
+    lastAnchor = menu?.anchorEl ?? null
+    return lastAnchor
+  }
+
+  /**
+   * Fire-and-forget journaled write. Failures surface in the error strip; on
+   * success the focus rescue keeps keyboard focus inside the view when the
+   * debounced block:changed reload removes the anchored row/card/chip (the
+   * hub's Ctrl+Z scope dies with a fall to <body>).
+   */
+  function runWrite(
+    op: () => Promise<unknown>,
+    anchor: HTMLElement | null
+  ): void {
     writeError = ''
-    void trackTaskUndoWrite(op()).catch((e) => {
-      writeError = friendlyCaughtError(e)
-    })
+    const neighbor = anchor ? neighborTaskHit(anchor) : null
+    void trackTaskUndoWrite(op())
+      .then(() => {
+        if (anchor) rescueFocusAfterWrite(anchor, neighbor)
+      })
+      .catch((e) => {
+        reportWriteError(e)
+      })
   }
 
   async function applyStatus(
     task: TaskDetail,
     next: TaskStatus
   ): Promise<void> {
+    const anchor = claimAnchor()
     onClose()
     // DONE-on-blocked parity with the row checkbox / drawer status control:
     // blocked tasks confirm through the dialog before the write lands.
@@ -68,7 +120,7 @@
       const result = await blockedGuard.check(task.id, task.is_blocked, task)
       if (result !== 'clear') return
     }
-    runWrite(() => ctx.updateBlockState(task.id, next))
+    runWrite(() => ctx.updateBlockState(task.id, next), anchor)
   }
 
   // Item handlers take the task as a parameter: reading the template's
@@ -76,18 +128,24 @@
   // on a closed menu — capturing by value keeps every activation safe.
 
   function togglePin(task: TaskDetail): void {
+    const anchor = claimAnchor()
     onClose()
-    runWrite(() => ctx.updateTaskMeta(task.id, { pinned: !task.pinned }))
+    runWrite(
+      () => ctx.updateTaskMeta(task.id, { pinned: !task.pinned }),
+      anchor
+    )
   }
 
   function setDueDate(task: TaskDetail, ymd: string): void {
+    const anchor = claimAnchor()
     onClose()
-    runWrite(() => ctx.setTaskDueDate(task.id, ymd))
+    runWrite(() => ctx.setTaskDueDate(task.id, ymd), anchor)
   }
 
   function setPriority(task: TaskDetail, p: number): void {
+    const anchor = claimAnchor()
     onClose()
-    runWrite(() => ctx.setTaskPriority(task.id, p))
+    runWrite(() => ctx.setTaskPriority(task.id, p), anchor)
   }
 
   function openSubEditorFor(task: TaskDetail): void {
@@ -101,6 +159,7 @@
   }
 
   function requestDelete(task: TaskDetail): void {
+    claimAnchor()
     onClose()
     deleteTarget = task
   }
@@ -109,7 +168,10 @@
     const pending = blockedGuard.pending
     blockedGuard.dismiss()
     if (pending)
-      runWrite(() => ctx.updateBlockState(pending.context.id, 'DONE'))
+      runWrite(
+        () => ctx.updateBlockState(pending.context.id, 'DONE'),
+        lastAnchor
+      )
   }
 
   function confirmDelete(): void {
@@ -119,7 +181,7 @@
     // ctx.deleteBlock is NOT journaled by the Go undo surface (applyBlocksOps
     // never calls recordTaskUndo); tracking still gates the undo affordance
     // for the write's duration. Noted in the PR body for #1116.
-    runWrite(() => ctx.deleteBlock(task.id))
+    runWrite(() => ctx.deleteBlock(task.id), lastAnchor)
   }
 </script>
 
@@ -274,9 +336,11 @@
   </ContextMenu>
 {/if}
 
-{#if writeError}
+{#if writeError && !onError}
+  <!-- Fallback for hosts that don't wire onError; the views hoist this into
+       their top error strip with the 8s auto-dismiss parity. -->
   <ErrorBanner
-    message={`Couldn't update task: ${writeError}`}
+    message={writeError}
     dataTestId="task-menu-error"
     onDismiss={() => (writeError = '')}
   />

@@ -2083,4 +2083,60 @@ describe('Tasks hub undo (#1011)', () => {
       'Undid status change in Work › Journal › Daily. No more changes to undo.'
     )
   })
+
+  it('keeps Ctrl+Z in scope after a task-menu Mark done removes the focused row (#1116)', async () => {
+    // Two rows: the neighbor keeps focus — and with it the hub's Ctrl+Z
+    // containment — alive when the debounced reload removes the row the
+    // context menu acted on.
+    let done = false
+    mocks.updateBlockState.mockImplementation(async () => {
+      done = true
+      return { ok: true, spawnedId: '' }
+    })
+    mocks.sqliteQuery.mockImplementation(async () => ({
+      rows: done
+        ? [boardRow({ id: 't2', clean_content: 'Neighbor task' })]
+        : [
+            boardRow({ id: 't1', clean_content: 'Menu target' }),
+            boardRow({ id: 't2', clean_content: 'Neighbor task' })
+          ],
+      truncated: false
+    }))
+
+    render(TasksHub, { ctx: undoCtx(), manifest: MANIFEST })
+    await flush()
+
+    // Keyboard-invoke the menu where focus already lives (Shift+F10).
+    const bodyBtn = document.querySelector(
+      '[data-block-id="t1"] button[aria-label^="Edit metadata for"]'
+    ) as HTMLElement
+    bodyBtn.focus()
+    await fireEvent.keyDown(bodyBtn, { key: 'F10', shiftKey: true })
+    expect(screen.getByTestId('task-context-menu')).toBeInTheDocument()
+    await fireEvent.click(screen.getByTestId('task-menu-toggle-status'))
+    expect(mocks.updateBlockState).toHaveBeenCalledWith('t1', 'DONE')
+
+    // The backend write emits block:changed; drive the debounced reload the
+    // way production would so the row removal actually happens.
+    mocks.blockChangedCallbacks.forEach((cb) => cb())
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await flush()
+
+    // Focus was rescued onto the neighbor — <body> would fail the hub's
+    // Ctrl+Z containment check.
+    const active = document.activeElement as HTMLElement
+    expect(active).not.toBe(document.body)
+    expect(active.closest('[data-tasks-hub]')).toBeTruthy()
+
+    const undoKey = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    active.dispatchEvent(undoKey)
+    await flush()
+    expect(undoKey.defaultPrevented).toBe(true)
+    expect(mocks.undoLastTaskMutation).toHaveBeenCalledTimes(1)
+  })
 })

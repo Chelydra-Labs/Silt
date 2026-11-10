@@ -302,4 +302,25 @@ describe('TaskContextMenu (#1116)', () => {
       "Couldn't update task"
     )
   })
+
+  it('reports write failures through onError instead of the in-flow banner', async () => {
+    const onError = vi.fn()
+    renderMenu(
+      makeTask(),
+      makeCtx({
+        setTaskPriority: vi.fn().mockRejectedValue(new Error('disk locked'))
+      }),
+      { onError }
+    )
+    const menu = screen.getByTestId('task-context-menu')
+    const priSub = within(
+      menu.querySelector('[role="menu"][aria-label="Priority"]')!
+    )
+    await fireEvent.click(priSub.getByTestId('task-menu-priority-1'))
+    await flush()
+    expect(onError).toHaveBeenCalledWith(
+      expect.stringContaining("Couldn't update task")
+    )
+    expect(screen.queryByTestId('task-menu-error')).toBeNull()
+  })
 })

@@ -98,6 +98,9 @@
   // clears the previous message (optimisticField calls onError('') up front).
   let pinError = $state('')
   let pinErrorTimer: ReturnType<typeof setTimeout> | null = null
+  // Task-menu write failures, hoisted into the top strip (#1116): the menu
+  // component owns the 8s auto-dismiss; this only renders the message.
+  let menuError = $state('')
   // The pending-disable blurs the toggle to <body>; refocus the card's pin
   // control once the write settles. The counter is the per-commit token:
   // re-toggling the same card inside the expiry window must still re-run the
@@ -695,6 +698,14 @@
     />
   {/if}
 
+  {#if menuError}
+    <ErrorBanner
+      message={menuError}
+      dataTestId="task-menu-error"
+      onDismiss={() => (menuError = '')}
+    />
+  {/if}
+
   {#if cols.configError}
     <ErrorBanner
       kind="warning"
@@ -979,6 +990,7 @@
   onClose={taskMenu.close}
   onEditTask={selectCard}
   onOpenSubEditor={(task) => (subEditorCard = task)}
+  onError={(message) => (menuError = message)}
 />
 
 {#if cols.menuCol}

@@ -89,6 +89,9 @@
   let loading = $state(true)
   let errorMsg = $state('')
   let resultsTruncated = $state(false)
+  // Task-menu write failures, hoisted into the top strip (#1116): the menu
+  // component owns the 8s auto-dismiss; this only renders the message.
+  let menuError = $state('')
   let selectedTask = $state<TaskDetail | null>(null)
   let selectedFilteredOut = $state(false)
 
@@ -846,6 +849,14 @@
     />
   {/if}
 
+  {#if menuError}
+    <ErrorBanner
+      message={menuError}
+      dataTestId="task-menu-error"
+      onDismiss={() => (menuError = '')}
+    />
+  {/if}
+
   {#if resultsTruncated}
     <div
       class="px-6 py-2 bg-status-warn/10 border-b border-status-warn/30 text-status-warn text-type-sm font-body-md flex items-center gap-2"
@@ -1011,7 +1022,7 @@
                   <button
                     type="button"
                     draggable="true"
-                    aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                    aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Shift+F10"
                     ondragstart={(e) => onCardDragStart(e, item)}
                     ondragend={onCardDragEnd}
                     oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
@@ -1053,7 +1064,7 @@
                     type="button"
                     draggable="true"
                     data-overdue-surfaced="true"
-                    aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                    aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Shift+F10"
                     ondragstart={(e) => onCardDragStart(e, item)}
                     ondragend={onCardDragEnd}
                     oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
@@ -1173,7 +1184,7 @@
                 <button
                   type="button"
                   draggable="true"
-                  aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                  aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Shift+F10"
                   ondragstart={(e) => onCardDragStart(e, item)}
                   ondragend={onCardDragEnd}
                   oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
@@ -1198,7 +1209,7 @@
                   type="button"
                   draggable="true"
                   data-overdue-surfaced="true"
-                  aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                  aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Shift+F10"
                   ondragstart={(e) => onCardDragStart(e, item)}
                   ondragend={onCardDragEnd}
                   oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
@@ -1268,7 +1279,7 @@
               <button
                 type="button"
                 draggable="true"
-                aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Shift+F10"
                 ondragstart={(e) => onCardDragStart(e, item)}
                 ondragend={onCardDragEnd}
                 oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
@@ -1424,6 +1435,7 @@
   onClose={taskMenu.close}
   onEditTask={selectTask}
   onOpenSubEditor={(task) => (subEditorTask = task)}
+  onError={(message) => (menuError = message)}
 />
 
 {#if subEditorTask}

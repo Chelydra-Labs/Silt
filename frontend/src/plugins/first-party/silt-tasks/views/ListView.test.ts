@@ -3230,4 +3230,17 @@ describe('ListView — task context menu (#1116)', () => {
     await flush()
     expect(screen.getByTestId('task-primary-header')).toBeInTheDocument()
   })
+
+  it('mouse-invoked menu actions restore focus inside the row (hub Ctrl+Z scope)', async () => {
+    await renderWithMenuTask()
+    const row = document.querySelector('[data-block-id="m1"]') as HTMLElement
+    await fireEvent.contextMenu(row, { clientX: 5, clientY: 5 })
+    await fireEvent.click(screen.getByTestId('task-menu-priority-1'))
+
+    // Focus on <body> would fail the hub's Ctrl+Z containment check; the
+    // anchor resolves to a focusable control inside the row, so the
+    // primitive's close-time restore lands there.
+    expect(document.activeElement).not.toBe(document.body)
+    expect(row.contains(document.activeElement)).toBe(true)
+  })
 })

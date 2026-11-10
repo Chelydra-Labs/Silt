@@ -95,6 +95,9 @@
   let markDownTimer: ReturnType<typeof setTimeout> | null = null
   let pinError = $state('')
   let pinErrorTimer: ReturnType<typeof setTimeout> | null = null
+  // Task-menu write failures, hoisted into the top strip (#1116): the menu
+  // component owns the 8s auto-dismiss; this only renders the message.
+  let menuError = $state('')
   // Pin writes re-bin the row into a different {#each} block, which destroys
   // the focused button; this holds the id to chase after the reload.
   let pendingPinFocus = $state<{
@@ -967,6 +970,7 @@
         }
       }}
       class="flex-1 min-w-0 rounded text-left bg-transparent border-none p-0 cursor-pointer focus-visible:outline-none"
+      aria-keyshortcuts="Enter Shift+Enter Shift+F10"
       aria-label={`Edit metadata for ${item.clean_content}${item.notebook === STANDALONE_TASKS_NOTEBOOK ? ', standalone task' : ''}${item.due_date ? `, due ${item.due_date}` : ', no due date'}${item.subtask_total > 0 ? `, ${item.subtask_done} of ${item.subtask_total} subtasks done` : ''}${item.shortlist_rank != null ? `, shortlist rank ${item.shortlist_rank}` : ''}`}
     >
       <div
@@ -1097,6 +1101,14 @@
       message={`Couldn't update pin: ${pinError}`}
       dataTestId="tasks-pin-error"
       onDismiss={() => setPinError('')}
+    />
+  {/if}
+
+  {#if menuError}
+    <ErrorBanner
+      message={menuError}
+      dataTestId="task-menu-error"
+      onDismiss={() => (menuError = '')}
     />
   {/if}
 
@@ -1507,6 +1519,7 @@
   onClose={taskMenu.close}
   onEditTask={selectTask}
   onOpenSubEditor={openSubEditor}
+  onError={(message) => (menuError = message)}
 />
 
 <style>
