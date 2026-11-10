@@ -471,6 +471,24 @@
     margin: 4px 6px;
     background-color: var(--color-border);
   }
+  /* Parent items get a trailing flyout chevron from the primitive, so
+     consumers never hand-add arrows to labels. Masked glyph rather than
+     text content — CSS-generated text would pollute the accessible name. */
+  :global(
+    [data-context-menu-root] [role='menuitem'][aria-haspopup='menu']
+  )::after {
+    content: '';
+    margin-left: auto;
+    width: 14px;
+    height: 14px;
+    flex: none;
+    background-color: currentColor;
+    opacity: 0.6;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M9%206l6%206-6%206' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M9%206l6%206-6%206' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+  }
   /* Submenus authored in the children snippet: hidden until the primitive
      opens them as fixed-position flyouts beside their parent item. */
   :global([data-context-menu-root] [role='menu']) {
