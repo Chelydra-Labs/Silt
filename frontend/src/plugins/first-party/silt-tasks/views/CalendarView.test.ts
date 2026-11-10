@@ -1482,6 +1482,35 @@ describe('CalendarView — day-cell context menu (#1119)', () => {
     expect(screen.queryByTestId('quick-add-task-input')).toBeNull()
   })
 
+  it('arrow keys in the quick-add input keep the caret, not the cell focus', async () => {
+    await mockQueries([])
+    await renderCalendar()
+
+    // Regression: arrow keydowns from the inline composer used to fall
+    // through to the cell's navigation branch — preventDefault froze the
+    // caret, and the roving focus jump blurred the input, cancelling an
+    // empty draft via onBlur.
+    const cell = document.querySelector(
+      `[data-celldate="${TODAY}"]`
+    ) as HTMLElement
+    await fireEvent.click(cell)
+    const input = screen.getByTestId('quick-add-task-input')
+    input.focus()
+
+    for (const key of ['ArrowLeft', 'ArrowRight']) {
+      const ev = new KeyboardEvent('keydown', {
+        key,
+        bubbles: true,
+        cancelable: true
+      })
+      input.dispatchEvent(ev)
+      expect(ev.defaultPrevented).toBe(false)
+      expect(document.activeElement).toBe(input)
+    }
+    // The draft was never blur-cancelled.
+    expect(screen.getByTestId('quick-add-task-input')).toBeInTheDocument()
+  })
+
   it('week-view cells expose the same menu', async () => {
     await mockQueries([])
     await renderCalendar()
