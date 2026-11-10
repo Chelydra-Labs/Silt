@@ -1117,7 +1117,7 @@ index.js      native ESM exporting { manifest, init(ctx) }
 - **Enable/Disable:** a `.disabled` sentinel file inside the plugin folder (the loader skips disabled plugins) — avoids fragile config.yaml edits. Discovery is folder-based, so install "just works" without editing config.
 - **Uninstall:** removes the plugin folder (id sanitized + within-vault check).
 - The in-app **Plugin Manager** (titlebar extension icon) drives validate → preview → install, plus per-plugin enable/disable and uninstall.
-- First-party plugins (silt-tasks, silt-attachments, silt-meeting) are always available (bundled) regardless of `.system/plugins/` contents.
+- First-party plugins (e.g. `silt-tasks`, `silt-meeting` — see `backend/plugins/first_party.go` for the authoritative set) are always available (bundled) regardless of `.system/plugins/` contents.
 
 8.5 Attachments Plugin Convention
 

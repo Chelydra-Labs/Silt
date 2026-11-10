@@ -5,6 +5,7 @@ import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
 import { keydownHandler } from '@tiptap/pm/keymap'
 import { freshId } from './uniqueIdPlugin'
 import { DEFAULT_TASK_PRIORITY } from './types'
+import { dispatchFoldToggle } from './schema'
 import { resolveShortcut } from '../../settings/hotkeys'
 import { settings } from '../../settings/store.svelte'
 import {
@@ -777,17 +778,17 @@ export function insertDetails(editor: Editor): boolean {
 }
 
 // Toggle the `open` attr on the `<details>` enclosing the cursor (#183).
-// Walks up from the selection to the nearest details node and flips open.
+// Walks up from the selection to the nearest details node and flips open via
+// the shared dispatchFoldToggle helper — the same tagged, history-free path
+// as clicking the toggle button, so the keyboard route stays out of
+// autosave/undo/sub-editor-dirty state too.
 export function toggleDetails(editor: Editor): boolean {
   if (!editor || editor.isDestroyed) return false
   const $pos = editor.state.selection.$from
   for (let d = $pos.depth; d >= 1; d--) {
     const node = $pos.node(d)
     if (node.type.name === 'details') {
-      const pos = $pos.before(d)
-      editor.view.dispatch(
-        editor.state.tr.setNodeAttribute(pos, 'open', !node.attrs.open)
-      )
+      dispatchFoldToggle(editor.view, $pos.before(d), node)
       return true
     }
   }

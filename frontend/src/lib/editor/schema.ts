@@ -1083,6 +1083,25 @@ export function isDetailsFoldToggle(tr: Transaction): boolean {
   return tr.getMeta(detailsFoldToggleKey) === true
 }
 
+// Single dispatch path for every fold-toggle entry point (the capture-phase
+// click plugin below and the Mod-Shift-. command in keymaps.ts): tagged,
+// excluded from history, and identity-preserving (stock setNodeMarkup with a
+// partial attrs object would reset id/file_date). Route any new entry point
+// through here so it cannot drift back onto an untagged content edit.
+export function dispatchFoldToggle(
+  view: EditorView,
+  pos: number,
+  node: PMNode
+): void {
+  const tr = view.state.tr.setNodeMarkup(pos, undefined, {
+    ...node.attrs,
+    open: !node.attrs.open
+  })
+  tr.setMeta('addToHistory', false)
+  tr.setMeta(detailsFoldToggleKey, true)
+  view.dispatch(tr)
+}
+
 export const SiltDetailsExtensions = [
   Details.extend({
     addAttributes() {
@@ -1103,7 +1122,12 @@ export const SiltDetailsExtensions = [
       }
     },
     addProseMirrorPlugins() {
+      // Spread the parent plugins: the stock Details extension registers the
+      // detailsSelection appendTransaction that relocates the caret out of
+      // hidden (collapsed) detailsContent. Returning only our plugin would
+      // silently drop that correction for every Silt details section.
       return [
+        ...(this.parent?.() ?? []),
         new Plugin({
           key: detailsFoldToggleKey,
           view: (view) => {
@@ -1150,13 +1174,7 @@ export const SiltDetailsExtensions = [
                 }
               }
               if (!node || pos < 0) return
-              const tr = view.state.tr.setNodeMarkup(pos, undefined, {
-                ...node.attrs,
-                open: !node.attrs.open
-              })
-              tr.setMeta('addToHistory', false)
-              tr.setMeta(detailsFoldToggleKey, true)
-              view.dispatch(tr)
+              dispatchFoldToggle(view, pos, node)
               // The button natively took focus; hand it back so keyboard
               // shortcuts keep working, as the stock handler does.
               view.focus()
