@@ -1114,6 +1114,9 @@ export function dispatchFoldToggle(
       }
     })
     const { from, to } = view.state.selection
+    // Only fully-contained ranges move: a partially-overlapping selection
+    // keeps its visible half live (no silent invisible-only edits), and
+    // stock's detailsSelection skips non-empty selections too.
     if (
       summaryStart >= 0 &&
       contentStart >= 0 &&

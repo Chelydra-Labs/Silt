@@ -291,8 +291,10 @@ describe('collapsing relocates a caret stranded in detailsContent', () => {
 
   it('collapsing leaves a caret outside detailsContent untouched', () => {
     const editor = makeEditor(() => {})
-    // The initial selection sits in the summary text (start of doc).
-    const before = editor.state.selection.from
+    // Seed at the END of the summary text (pos 20). The default start-of-doc
+    // caret sits exactly on summaryStart (pos 2), so without a distinguishable
+    // caret a spurious relocation to the summary would go undetected here.
+    editor.commands.setTextSelection(20)
     expect(editor.state.selection.$from.parent.type.name).toBe('detailsSummary')
 
     toggleDetails(editor)
@@ -300,6 +302,6 @@ describe('collapsing relocates a caret stranded in detailsContent', () => {
     // The summary caret was not relocated (still before contentStart);
     // the toggle remains a pure attr flip for it.
     expect(editor.state.doc.child(0).attrs.open).toBe(false)
-    expect(editor.state.selection.from).toBe(before)
+    expect(editor.state.selection.from).toBe(20)
   })
 })
