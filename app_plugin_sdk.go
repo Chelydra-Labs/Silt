@@ -264,7 +264,8 @@ func (a *App) PluginUpdateBlockState(pluginID, sessionToken, blockID, status str
 //
 //	pin:      -2 = clear (remove the [pin::] token), -1 = no change,
 //	          0 = explicitly unpin ([pin:: false]), 1 = pin ([pin:: true])
-//	progress: -1 = no change, 0-100 = set value (0 clears the token)
+//	progress: -1 = no change, 0-100 = set value (0 clears the token; on a
+//	          DONE task any write normalizes to 100 instead)
 //
 // The tri-state pin sentinel preserves a typed [pin:: false] across UI
 // toggles: the renderer emits exactly one pin token from the *bool, so
@@ -313,7 +314,13 @@ func (a *App) PluginUpdateTaskMeta(pluginID, sessionToken, blockID string, pin i
 			}
 		}
 		if progress != -1 {
-			b.Progress = progress
+			// DONE means complete; a finished task must never carry (or lose)
+			// partial progress — normalize even the clear sentinel to 100.
+			if b.Status == "DONE" {
+				b.Progress = 100
+			} else {
+				b.Progress = progress
+			}
 		}
 	}); err != nil {
 		return false, err

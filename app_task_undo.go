@@ -682,7 +682,13 @@ func applyTaskUndoSnapshot(dst *parser.ParsedBlock, before, after parser.ParsedB
 		dst.Pinned = cloneBoolPtr(before.Pinned)
 	}
 	if before.Progress != after.Progress {
-		dst.Progress = before.Progress
+		// Replay must not reintroduce partial progress onto a finished task:
+		// dst.Status is already final here, so DONE keeps 100 over the snapshot.
+		if dst.Status == "DONE" {
+			dst.Progress = 100
+		} else {
+			dst.Progress = before.Progress
+		}
 	}
 	if before.Recurrence != after.Recurrence {
 		dst.Recurrence = before.Recurrence
