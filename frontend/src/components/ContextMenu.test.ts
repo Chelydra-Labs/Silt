@@ -586,6 +586,45 @@ describe('ContextMenu', () => {
     )
   })
 
+  it('closes open flyouts when re-anchored while the menu stays open', async () => {
+    const onClose = vi.fn()
+    const { rerender } = render(ContextMenu, {
+      props: { open: true, anchor: { x: 100, y: 100 }, onClose }
+    })
+    await tick()
+    const menu = document.querySelector(
+      '[data-context-menu-root]'
+    ) as HTMLElement
+    menu.innerHTML = SUBMENU_MARKUP
+    await tick()
+    const parent = screen.getByTestId('parent-1') as HTMLElement
+    const sub = screen.getByTestId('sub-1') as HTMLElement
+    parent.focus()
+    await fireEvent.keyDown(menu, { key: 'ArrowRight' })
+    expect(sub).toHaveClass('is-open')
+
+    // The documented re-anchor flow: new anchor, open stays true.
+    await rerender({ open: true, anchor: { x: 300, y: 300 }, onClose })
+    await tick()
+    expect(sub).not.toHaveClass('is-open')
+    expect(parent).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('seeds aria-expanded on parent items inserted while the menu stays open', async () => {
+    const ctx = await setupSubmenuMenu()
+    // Dynamic content: this parent missed the open-time seed pass.
+    const late = document.createElement('button')
+    late.type = 'button'
+    late.setAttribute('role', 'menuitem')
+    late.setAttribute('aria-haspopup', 'menu')
+    late.setAttribute('data-testid', 'parent-late')
+    ctx.leaf2.after(late)
+
+    ctx.parent.focus()
+    await fireEvent.keyDown(ctx.menu, { key: 'ArrowRight' })
+    expect(late).toHaveAttribute('aria-expanded', 'false')
+  })
+
   it('ArrowRight on a parent item opens the flyout and focuses its first item', async () => {
     const { parent, sub, sub1, onClose } = await openFlyout()
     expect(parent).toHaveAttribute('aria-expanded', 'true')

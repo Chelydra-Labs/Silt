@@ -101,12 +101,31 @@
     return Array.from(
       menu.querySelectorAll<HTMLElement>('[role="menuitem"]')
     ).filter(
-      (el) =>
-        el.closest('[role="menu"]') === menu && !isDisabledItem(el)
+      (el) => el.closest('[role="menu"]') === menu && !isDisabledItem(el)
     )
   }
 
+  /**
+   * Seed aria-expanded="false" on every parent item (flyouts are authored
+   * inside the root menu's DOM, so this covers all levels) so screen readers
+   * announce the collapsed state before first interaction. Idempotent:
+   * existing aria-expanded values are left alone.
+   */
+  function seedAriaExpanded(root: HTMLElement) {
+    root
+      .querySelectorAll('[role="menuitem"][aria-haspopup="menu"]')
+      .forEach((el) => {
+        if (!el.hasAttribute('aria-expanded')) {
+          el.setAttribute('aria-expanded', 'false')
+        }
+      })
+  }
+
   function openSubmenu(parent: HTMLElement, sub: HTMLElement) {
+    // Items can be inserted after the open-time seed pass (dynamic lists
+    // while the menu stays open); the seed is idempotent, so re-run it.
+    if (menuEl) seedAriaExpanded(menuEl)
+
     // Close levels that are not on the path to this parent (e.g. switching
     // from one root parent's flyout to another's).
     while (
@@ -177,13 +196,25 @@
 
   // --- positioning + dismissal $effect ------------------------------------
 
+  // Anchor of the menu currently presented, keyed by identity (not coords)
+  // so unrelated effect re-runs don't slam flyouts shut. Null while closed.
+  let presentedAnchor: { x: number; y: number } | null = null
+
   $effect(() => {
     if (!open || !anchor) {
       menuPos = null
       openLevels.length = 0
+      presentedAnchor = null
       return
     }
     const currentAnchor = anchor
+    if (currentAnchor !== presentedAnchor) {
+      // A re-anchor while open presents a new menu; without this, flyouts
+      // from the previous presentation would linger at stale coordinates
+      // with their parents stuck at aria-expanded="true".
+      closeAllSubmenus()
+      presentedAnchor = currentAnchor
+    }
 
     const measure = () => {
       const w = menuEl?.offsetWidth ?? 180
@@ -272,15 +303,7 @@
     // `anchor` is part of the guard: a re-anchor while open presents a new
     // menu, so seeding + initial focus run again for the new contents.
     if (open && anchor && menuEl) {
-      // aria-expanded must exist in both states; seed it before first
-      // interaction so parent items announce "collapsed" right away.
-      menuEl
-        .querySelectorAll('[role="menuitem"][aria-haspopup="menu"]')
-        .forEach((el) => {
-          if (!el.hasAttribute('aria-expanded')) {
-            el.setAttribute('aria-expanded', 'false')
-          }
-        })
+      seedAriaExpanded(menuEl)
       // Scoped to root-level items so a hidden flyout's items can't steal
       // the initial focus.
       focusFirstItem(menuEl)
@@ -309,7 +332,9 @@
     }
 
     if (e.key === 'Tab') {
-      // Never cycle within the menu: close up and let focus move on naturally.
+      // Never cycle within the menu: close up. The trigger-restore teardown
+      // then pulls focus back to the invoking element (same as Escape) —
+      // the conventional menu-button outcome.
       closeAllSubmenus()
       onClose()
       return
