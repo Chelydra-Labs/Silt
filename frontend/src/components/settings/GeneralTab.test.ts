@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => {
     },
     saveConfig: vi.fn(async () => true),
     reloadFromBackend: vi.fn(async () => {}),
+    updatePluginSetting: vi.fn(async () => true),
     themeState: {
       id: 'cyber_forest',
       name: 'Cyber Forest',
@@ -67,6 +68,9 @@ const appMocks = vi.hoisted(() =>
     ImportVault: vi.fn(),
     GetCloseToTray: vi.fn().mockResolvedValue(false),
     SetCloseToTray: vi.fn().mockResolvedValue(undefined),
+    // Comment author (#1125) — OS-account prefill + atomic pref write.
+    GetLocalAuthor: vi.fn().mockResolvedValue(''),
+    UpdatePluginSetting: vi.fn().mockResolvedValue(undefined),
     // Custom dictionary IPC (#196 / #338) — GeneralTab loads the list on mount.
     GetCustomDictionary: vi.fn().mockResolvedValue([]),
     AddCustomDictionaryWord: vi.fn().mockResolvedValue([]),
@@ -107,7 +111,8 @@ vi.mock('@wailsio/runtime', () => ({
 vi.mock('../../settings/store.svelte', () => ({
   settings: mocks.settings,
   saveConfig: mocks.saveConfig,
-  reloadFromBackend: mocks.reloadFromBackend
+  reloadFromBackend: mocks.reloadFromBackend,
+  updatePluginSetting: mocks.updatePluginSetting
 }))
 vi.mock('../../theme/store.svelte', () => ({ themeState: mocks.themeState }))
 
@@ -379,6 +384,79 @@ describe('GeneralTab close-to-tray toggle (#501)', () => {
     expect(appMocks.SetCloseToTray).toHaveBeenCalledTimes(1)
     resolveWrite()
     await tick()
+  })
+})
+
+// Comment author (#1125): stored pref wins, OS-account prefill fills the
+// field only until an explicit save, and saves route through the store's
+// atomic single-field setter (never read-modify-saveConfig).
+describe('GeneralTab comment author (#1125)', () => {
+  const authorInput = () =>
+    screen.getByLabelText('Name on task comments') as HTMLInputElement
+
+  beforeEach(() => {
+    mocks.settings.config = mocks.baseConfig
+    mocks.updatePluginSetting.mockReset()
+    mocks.updatePluginSetting.mockResolvedValue(true)
+    appMocks.GetLocalAuthor.mockReset()
+    appMocks.GetLocalAuthor.mockResolvedValue('')
+  })
+  afterEach(() => cleanup())
+
+  it('renders the stored pref and skips the OS prefill call', async () => {
+    mocks.settings.config = {
+      ...mocks.baseConfig,
+      plugins: {
+        active: [],
+        disabled: [],
+        plugin_settings: {
+          'silt-tasks': { local_author: 'Dana' }
+        }
+      }
+    }
+    render(GeneralTab)
+    await tick()
+    await waitFor(() => {
+      expect(authorInput().value).toBe('Dana')
+    })
+    expect(appMocks.GetLocalAuthor).not.toHaveBeenCalled()
+  })
+
+  it('prefills from GetLocalAuthor when the pref is empty (absent or "")', async () => {
+    appMocks.GetLocalAuthor.mockResolvedValue('Chris Full')
+    render(GeneralTab)
+    await waitFor(() => {
+      expect(authorInput().value).toBe('Chris Full')
+    })
+  })
+
+  it('saving persists the trimmed value through the atomic setter', async () => {
+    appMocks.GetLocalAuthor.mockResolvedValue('Chris Full')
+    render(GeneralTab)
+    await waitFor(() => {
+      expect(authorInput().value).toBe('Chris Full')
+    })
+    await fireEvent.input(authorInput(), { target: { value: '  Renamed  ' } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await tick()
+    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+      'silt-tasks',
+      'local_author',
+      'Renamed'
+    )
+  })
+
+  it('shows role=alert when the save fails', async () => {
+    mocks.updatePluginSetting.mockResolvedValue(false)
+    render(GeneralTab)
+    await waitFor(() => {
+      expect(authorInput().value).toBe('')
+    })
+    await fireEvent.input(authorInput(), { target: { value: 'Nope' } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await tick()
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toMatch(/couldn't save the comment author/i)
   })
 })
 

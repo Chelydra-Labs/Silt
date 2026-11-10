@@ -1,7 +1,15 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { GetCloseToTray, SetCloseToTray } from '../../../bindings/silt/app.js'
-  import { settings, reloadFromBackend } from '../../settings/store.svelte'
+  import {
+    GetCloseToTray,
+    SetCloseToTray,
+    GetLocalAuthor
+  } from '../../../bindings/silt/app.js'
+  import {
+    settings,
+    reloadFromBackend,
+    updatePluginSetting
+  } from '../../settings/store.svelte'
   import { themeState } from '../../theme/store.svelte'
   import { loadedPlugins } from '../../plugins/store.svelte'
   import { aiProviderNeedsSetup } from '../../settings/ai-setup'
@@ -59,6 +67,59 @@
     } finally {
       closeToTrayInflight = false
     }
+  }
+
+  // Comment author (#1125): vault-scoped silt-tasks pref that attributes
+  // Task comment threads. The stored pref wins; the OS account name is a
+  // display-only prefill until the user explicitly saves.
+  let commentAuthorInflight = $state(false)
+  let commentAuthorError = $state('')
+  let commentAuthorStatus = $state('')
+  let osAuthorPrefill = $state('')
+
+  let storedCommentAuthor = $derived.by(() => {
+    const v =
+      settings.config?.plugins?.plugin_settings?.['silt-tasks']?.[
+        'local_author'
+      ]
+    return typeof v === 'string' ? v : ''
+  })
+
+  // Writable derived: renders the stored pref (or the OS prefill) but lets
+  // the user type over it; recomputes when the store mirrors a post-save or
+  // external config change, so an in-progress edit is only replaced by a
+  // real pref change — never clobbered by unrelated re-renders.
+  let commentAuthor = $derived(storedCommentAuthor || osAuthorPrefill)
+
+  onMount(async () => {
+    // Skip the IPC round-trip when a pref is already stored — it would be
+    // overwritten by the stored value anyway.
+    if (storedCommentAuthor) return
+    try {
+      osAuthorPrefill = await GetLocalAuthor()
+    } catch {
+      osAuthorPrefill = ''
+    }
+  })
+
+  async function saveCommentAuthor() {
+    if (commentAuthorInflight) return
+    commentAuthorInflight = true
+    commentAuthorError = ''
+    commentAuthorStatus = ''
+    // Atomic single-field write — never read-modify-saveConfig, which could
+    // clobber a concurrent external config.yaml edit (#120).
+    const ok = await updatePluginSetting(
+      'silt-tasks',
+      'local_author',
+      commentAuthor.trim()
+    )
+    if (ok) {
+      commentAuthorStatus = 'Saved.'
+    } else {
+      commentAuthorError = "Couldn't save the comment author."
+    }
+    commentAuthorInflight = false
   }
 
   // Workspace relocation + portable-archive menu (#141, #143).
@@ -495,6 +556,82 @@
       <p class="text-text-muted text-type-xs font-label-sm mt-1.5">
         Move, copy, back up, or migrate this workspace from the actions menu.
       </p>
+    </section>
+
+    <!-- Comment author (#1125): vault-scoped pref consumed by the Tasks
+         comment composer. -->
+    <section
+      id="general-comment-author"
+      aria-labelledby="general-comment-author-heading"
+      class={ringClass('general-comment-author', ringAnchor)}
+    >
+      <h3
+        id="general-comment-author-heading"
+        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
+      >
+        Comment author
+      </h3>
+      <div
+        class="bg-surface-panel border border-surface-panel-border rounded-lg px-4 py-3 space-y-2"
+      >
+        <label
+          for="general-comment-author-input"
+          class="block text-text-primary text-type-sm font-body-md"
+        >
+          Name on task comments
+        </label>
+        <input
+          id="general-comment-author-input"
+          type="text"
+          bind:value={commentAuthor}
+          aria-describedby="general-comment-author-help"
+          aria-invalid={commentAuthorError ? 'true' : undefined}
+          disabled={commentAuthorInflight}
+          onkeydown={(e: KeyboardEvent) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              void saveCommentAuthor()
+            }
+          }}
+          class="w-full px-2.5 py-1.5 rounded-lg bg-surface-panel border {commentAuthorError
+            ? 'border-status-danger'
+            : 'border-surface-panel-border'} text-text-primary text-type-md font-body-md focus:outline-none focus:border-accent-primary-start/60 disabled:opacity-50"
+        />
+        <p
+          id="general-comment-author-help"
+          class="text-text-muted text-type-xs font-label-sm leading-relaxed"
+        >
+          The name added to comments you post on tasks. Prefilled from this
+          computer's account name until you save a change.
+        </p>
+        <div class="flex justify-end">
+          <button
+            type="button"
+            onclick={() => void saveCommentAuthor()}
+            disabled={commentAuthorInflight}
+            class="px-3 py-1.5 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start text-type-md font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {commentAuthorInflight ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+        {#if commentAuthorError}
+          <p
+            class="text-status-danger text-type-sm font-body-md flex items-center gap-1.5"
+            role="alert"
+          >
+            <span class="material-symbols-outlined text-icon-md">error</span>
+            {commentAuthorError}
+          </p>
+        {/if}
+        {#if commentAuthorStatus}
+          <p
+            class="text-text-muted text-type-xs font-label-sm"
+            aria-live="polite"
+          >
+            {commentAuthorStatus}
+          </p>
+        {/if}
+      </div>
     </section>
 
     <!-- Custom spellcheck dictionary (#196 / #338). Vault-scoped. -->
