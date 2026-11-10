@@ -2083,4 +2083,132 @@ describe('Tasks hub undo (#1011)', () => {
       'Undid status change in Work › Journal › Daily. No more changes to undo.'
     )
   })
+
+  it('keeps Ctrl+Z in scope after a task-menu Mark done removes the focused row (#1116)', async () => {
+    // Two rows: the neighbor keeps focus — and with it the hub's Ctrl+Z
+    // containment — alive when the debounced reload removes the row the
+    // context menu acted on.
+    let done = false
+    mocks.updateBlockState.mockImplementation(async () => {
+      done = true
+      return { ok: true, spawnedId: '' }
+    })
+    mocks.sqliteQuery.mockImplementation(async () => ({
+      rows: done
+        ? [boardRow({ id: 't2', clean_content: 'Neighbor task' })]
+        : [
+            boardRow({ id: 't1', clean_content: 'Menu target' }),
+            boardRow({ id: 't2', clean_content: 'Neighbor task' })
+          ],
+      truncated: false
+    }))
+
+    render(TasksHub, { ctx: undoCtx(), manifest: MANIFEST })
+    await flush()
+
+    // Keyboard-invoke the menu where focus already lives (Shift+F10).
+    const bodyBtn = document.querySelector(
+      '[data-block-id="t1"] button[aria-label^="Edit metadata for"]'
+    ) as HTMLElement
+    bodyBtn.focus()
+    await fireEvent.keyDown(bodyBtn, { key: 'F10', shiftKey: true })
+    expect(screen.getByTestId('task-context-menu')).toBeInTheDocument()
+    await fireEvent.click(screen.getByTestId('task-menu-toggle-status'))
+    expect(mocks.updateBlockState).toHaveBeenCalledWith('t1', 'DONE')
+
+    // The backend write emits block:changed; drive the debounced reload the
+    // way production would so the row removal actually happens.
+    mocks.blockChangedCallbacks.forEach((cb) => cb())
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await flush()
+
+    // Focus was rescued onto the neighbor row's primary control — <body>
+    // would fail the hub's Ctrl+Z containment check, and the hub-heading
+    // fallback would strand keyboard users at the top of the list.
+    const active = document.activeElement as HTMLElement
+    expect(active).not.toBe(document.body)
+    expect(active).toBe(
+      document
+        .querySelector('[data-block-id="t2"]')
+        ?.querySelector('button[data-task-primary]')
+    )
+    expect(active.closest('[data-tasks-hub]')).toBeTruthy()
+
+    const undoKey = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    active.dispatchEvent(undoKey)
+    await flush()
+    expect(undoKey.defaultPrevented).toBe(true)
+    expect(mocks.undoLastTaskMutation).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps Ctrl+Z in scope when a board delete empties the surface (#1116)', async () => {
+    // A single-card board has no neighbor, so the rescue must fall
+    // through to the hub heading. TaskCard's nested wrapper marker used
+    // to be captured as the "neighbor" and unmounted with the card, so
+    // focus fell to <body> and the hub rejected the very next Ctrl+Z.
+    mocks.tasksSettings = {
+      default_display_mode: 'board',
+      default_group_by: 'status'
+    }
+    let deleted = false
+    const deleteBlock = vi.fn(async () => {
+      deleted = true
+      return true
+    })
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT DISTINCT owner'))
+        return { rows: [], truncated: false }
+      if (sql.includes('SELECT DISTINCT level_0'))
+        return { rows: [], truncated: false }
+      return {
+        rows: deleted
+          ? []
+          : [boardRow({ id: 't1', clean_content: 'Only card' })],
+        truncated: false
+      }
+    })
+
+    render(TasksHub, { ctx: undoCtx({ deleteBlock }), manifest: MANIFEST })
+    await flush()
+
+    const card = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card="t1"]')!
+    await fireEvent.contextMenu(card, { clientX: 5, clientY: 5 })
+    await fireEvent.click(screen.getByTestId('task-menu-delete'))
+    await fireEvent.click(
+      screen.getByTestId('task-menu-delete-confirm-confirm')
+    )
+    expect(deleteBlock).toHaveBeenCalledWith('t1')
+
+    // Production removal: the write emits block:changed, the debounced
+    // reload drops the only card, the rescue polls past it.
+    mocks.blockChangedCallbacks.forEach((cb) => cb())
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await flush()
+
+    expect(document.querySelector('[data-card="t1"]')).toBeNull()
+    const heading = document.querySelector<HTMLElement>('[data-tasks-hub] h1')!
+    const active = document.activeElement as HTMLElement
+    expect(active).not.toBe(document.body)
+    expect(active).toBe(heading)
+    expect(active.isConnected).toBe(true)
+    expect(active.closest('[data-tasks-hub]')).toBeTruthy()
+
+    const undoKey = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    active.dispatchEvent(undoKey)
+    await flush()
+    expect(undoKey.defaultPrevented).toBe(true)
+    expect(mocks.undoLastTaskMutation).toHaveBeenCalledTimes(1)
+  })
 })

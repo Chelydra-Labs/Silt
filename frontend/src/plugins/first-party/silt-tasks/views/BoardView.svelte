@@ -34,6 +34,8 @@
   import QuickAddTask from '../components/QuickAddTask.svelte'
   import ColumnHeader from '../components/ColumnHeader.svelte'
   import TaskCard from '../components/TaskCard.svelte'
+  import TaskContextMenu from '../components/TaskContextMenu.svelte'
+  import { useTaskContextMenu } from '../components/useTaskContextMenu.svelte'
   import {
     coerceTaskRow,
     PRIORITY_LABELS,
@@ -63,6 +65,10 @@
   import { createStatusColumnsController } from './controllers/useStatusColumns.svelte'
   import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
   import { LEGACY_MISSING_TASK_PRIORITY } from '../../../../lib/taskPriority'
+  import {
+    isContextMenuKey,
+    openContextMenuFromKeyboard
+  } from '../../../../lib/contextMenuKey'
 
   type Props = TaskViewProps
 
@@ -92,6 +98,9 @@
   // clears the previous message (optimisticField calls onError('') up front).
   let pinError = $state('')
   let pinErrorTimer: ReturnType<typeof setTimeout> | null = null
+  // Task-menu write failures, hoisted into the top strip (#1116): the menu
+  // component owns the 8s auto-dismiss; this only renders the message.
+  let menuError = $state('')
   // The pending-disable blurs the toggle to <body>; refocus the card's pin
   // control once the write settles. The counter is the per-commit token:
   // re-toggling the same card inside the expiry window must still re-run the
@@ -107,6 +116,8 @@
   let selectedCard = $state<TaskDetail | null>(null)
   let selectedFilteredOut = $state(false)
   let subEditorCard = $state<TaskDetail | null>(null)
+  // Right-click / Shift+F10 task menu (#1116), hosted once for all cards.
+  const taskMenu = useTaskContextMenu()
 
   function selectCard(card: TaskDetail) {
     if (selectedCard?.id === card.id) {
@@ -568,6 +579,13 @@
       void dnd.commitDrop(card, col.key, columns[nextIdx])
       return
     }
+    if (isContextMenuKey(e)) {
+      // Synthetic contextmenu on the focused card → the card's own
+      // oncontextmenu handler (#1116 keyboard parity).
+      e.preventDefault()
+      openContextMenuFromKeyboard(e.currentTarget as HTMLElement)
+      return
+    }
     if (e.key === 'Enter' && e.shiftKey) {
       e.preventDefault()
       subEditorCard = card
@@ -677,6 +695,14 @@
       message={`Couldn't update pin: ${pinError}`}
       dataTestId="tasks-pin-error"
       onDismiss={() => setPinError('')}
+    />
+  {/if}
+
+  {#if menuError}
+    <ErrorBanner
+      message={menuError}
+      dataTestId="task-menu-error"
+      onDismiss={() => (menuError = '')}
     />
   {/if}
 
@@ -860,6 +886,7 @@
                     }}
                     onKeydown={(e) => onCardKeydown(e, card, col)}
                     onSelect={() => selectCard(card)}
+                    onContextMenu={(e) => taskMenu.openFromEvent(e, card)}
                     onPinToggle={(next) => togglePin(card, next)}
                     onPinError={setPinError}
                     selected={selectedCard?.id === card.id}
@@ -956,6 +983,14 @@
   }}
   onMetaChanged={reload}
   onOpenSubEditor={() => selectedCard && (subEditorCard = selectedCard)}
+/>
+<TaskContextMenu
+  {ctx}
+  menu={taskMenu.menu}
+  onClose={taskMenu.close}
+  onEditTask={selectCard}
+  onOpenSubEditor={(task) => (subEditorCard = task)}
+  onError={(message) => (menuError = message)}
 />
 
 {#if cols.menuCol}

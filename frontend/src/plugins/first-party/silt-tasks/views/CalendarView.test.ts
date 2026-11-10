@@ -953,3 +953,271 @@ describe('CalendarView — Calendar display mode (#425)', () => {
     return renderCalendar()
   }
 })
+
+// --- Task context menu (#1116) -------------------------------------------
+// Wiring-level coverage for calendar chips (incl. overdue-surfaced); the
+// item matrix itself lives in TaskContextMenu.test.ts.
+
+describe('CalendarView — task context menu (#1116)', () => {
+  beforeEach(async () => {
+    mocks.tasksSettings = {}
+    mocks.setTaskDueDate.mockReset().mockResolvedValue(true)
+    mocks.createTask.mockReset().mockResolvedValue('new-task-id')
+    mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
+    mocks.blockChangedCallbacks.length = 0
+    await initTasksSettings(makeCtx())
+  })
+
+  afterEach(() => {
+    cleanup()
+    clearTaskPageRoute()
+  })
+
+  async function renderCalendarWithMenu(
+    rows: Record<string, unknown>[],
+    undatedRows: Record<string, unknown>[] = []
+  ) {
+    await mockQueries(rows, undatedRows)
+    const ctx = makeCtx({
+      updateBlockState: vi.fn().mockResolvedValue({ ok: true }),
+      setTaskPriority: vi.fn().mockResolvedValue(true),
+      deleteBlock: vi.fn().mockResolvedValue(true)
+    })
+    await renderCalendar({ ctx })
+    return ctx
+  }
+
+  function rootItemLabels(): string[] {
+    return Array.from(
+      screen
+        .getByTestId('task-context-menu')
+        .querySelectorAll<HTMLElement>(':scope > [role="menuitem"]')
+    ).map((el) => {
+      const span = el.querySelector<HTMLSpanElement>('span:not([aria-hidden])')
+      return (span ?? el).textContent?.trim() ?? ''
+    })
+  }
+
+  it('right-click on a chip opens the seven-item menu', async () => {
+    await renderCalendarWithMenu([
+      row({
+        id: 'm1',
+        clean_content: 'Menu chip',
+        due_date: TODAY,
+        priority: 2
+      })
+    ])
+    await fireEvent.contextMenu(screen.getByText('Menu chip'), {
+      clientX: 80,
+      clientY: 80
+    })
+    expect(screen.getByTestId('task-context-menu')).toBeInTheDocument()
+    expect(rootItemLabels()).toEqual([
+      'Mark done',
+      'Pin',
+      'Due date',
+      'Priority',
+      'Open in sub-editor',
+      'Edit task',
+      'Delete task'
+    ])
+  })
+
+  it('overdue-surfaced chips carry the same menu', async () => {
+    const ctx = await renderCalendarWithMenu([
+      row({
+        id: 'od1',
+        clean_content: 'Overdue chip',
+        due_date: '2026-07-01',
+        status: 'TODO'
+      })
+    ])
+    const chip = document.querySelector(
+      'button[data-overdue-surfaced]'
+    ) as HTMLElement
+    expect(chip).toBeTruthy()
+    await fireEvent.contextMenu(chip, { clientX: 5, clientY: 5 })
+    expect(screen.getByTestId('task-context-menu')).toBeInTheDocument()
+    await fireEvent.click(screen.getByTestId('task-menu-toggle-status'))
+    expect(ctx.updateBlockState).toHaveBeenCalledWith('od1', 'DONE')
+  })
+
+  it('is state-aware on DONE chips: Reopen label, no Pin', async () => {
+    await renderCalendarWithMenu([
+      row({
+        id: 'd1',
+        clean_content: 'Done chip',
+        due_date: TODAY,
+        status: 'DONE',
+        pinned: 1
+      })
+    ])
+    await fireEvent.contextMenu(screen.getByText('Done chip'), {
+      clientX: 5,
+      clientY: 5
+    })
+    const labels = rootItemLabels()
+    expect(labels[0]).toBe('Reopen')
+    expect(labels).not.toContain('Pin')
+    expect(labels).not.toContain('Unpin')
+  })
+
+  it('Shift+F10 on a chip opens the menu (keyboard parity)', async () => {
+    await renderCalendarWithMenu([
+      row({ id: 'm1', clean_content: 'Menu chip', due_date: TODAY })
+    ])
+    const chip = screen.getByText('Menu chip')
+    chip.focus()
+    await fireEvent.keyDown(chip, { key: 'F10', shiftKey: true })
+    expect(screen.getByTestId('task-context-menu')).toBeInTheDocument()
+  })
+
+  it('menu actions dispatch the SDK writes: status, due preset, delete', async () => {
+    const ctx = await renderCalendarWithMenu([
+      row({
+        id: 'm1',
+        clean_content: 'Menu chip',
+        due_date: TODAY,
+        priority: 2
+      })
+    ])
+    const chip = screen.getByText('Menu chip')
+
+    await fireEvent.contextMenu(chip, { clientX: 5, clientY: 5 })
+    await fireEvent.click(screen.getByTestId('task-menu-toggle-status'))
+    expect(ctx.updateBlockState).toHaveBeenCalledWith('m1', 'DONE')
+
+    // The menu's due write rides the same setTaskDueDate mock the DnD path
+    // uses, but through the journaled TaskContextMenu path.
+    await fireEvent.contextMenu(chip, { clientX: 5, clientY: 5 })
+    await fireEvent.click(screen.getByTestId(`task-menu-due-${TODAY}`))
+    expect(mocks.setTaskDueDate).toHaveBeenCalledWith('m1', TODAY)
+
+    await fireEvent.contextMenu(chip, { clientX: 5, clientY: 5 })
+    expect(screen.getByTestId('task-menu-priority-2').textContent).toContain(
+      '(current)'
+    )
+    await fireEvent.click(screen.getByTestId('task-menu-priority-3'))
+    expect(ctx.setTaskPriority).toHaveBeenCalledWith('m1', 3)
+
+    await fireEvent.contextMenu(chip, { clientX: 5, clientY: 5 })
+    await fireEvent.click(screen.getByTestId('task-menu-delete'))
+    expect(ctx.deleteBlock).not.toHaveBeenCalled()
+    await fireEvent.click(screen.getByTestId('task-menu-delete-confirm-cancel'))
+    expect(ctx.deleteBlock).not.toHaveBeenCalled()
+  })
+
+  it('menu Delete on the 3rd chip keeps focus when "+N more" vanishes', async () => {
+    // A 4-task day renders 3 chips plus a "+1 more" overflow control that
+    // also carries data-task-hit="overflow"; deleting the third chip used
+    // to capture that button as the neighbor, and it unmounts once the
+    // count drops to 3 — leaving the rescue focusing a detached node
+    // (<body>).
+    let deleted = false
+    const deleteBlock = vi.fn(async () => {
+      deleted = true
+      return true
+    })
+    mocks.sqliteQuery.mockReset()
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('due_date IS NULL')) {
+        return { rows: [], truncated: false }
+      }
+      if (sql.includes("status != 'DONE'") && !sql.includes('due_date >=')) {
+        return { rows: [], truncated: false }
+      }
+      return {
+        rows: deleted
+          ? [
+              row({ id: 'c1', clean_content: 'First chip', due_date: TODAY }),
+              row({
+                id: 'c2',
+                clean_content: 'Neighbor chip',
+                due_date: TODAY
+              }),
+              row({ id: 'c4', clean_content: 'Hidden chip', due_date: TODAY })
+            ]
+          : [
+              row({ id: 'c1', clean_content: 'First chip', due_date: TODAY }),
+              row({
+                id: 'c2',
+                clean_content: 'Neighbor chip',
+                due_date: TODAY
+              }),
+              row({ id: 'c3', clean_content: 'Menu chip', due_date: TODAY }),
+              row({ id: 'c4', clean_content: 'Hidden chip', due_date: TODAY })
+            ],
+        truncated: false
+      }
+    })
+    const ctx = makeCtx({ deleteBlock })
+    await renderCalendar({ ctx })
+
+    const more = screen.getByTestId(`calendar-more-${TODAY}`)
+    expect(more).toBeInTheDocument()
+    // The exclusion is the explicit overflow marker — not the button's
+    // aria-haspopup, which a future task surface may legitimately carry.
+    expect(more.getAttribute('data-task-hit')).toBe('overflow')
+    await fireEvent.contextMenu(screen.getByText('Menu chip'), {
+      clientX: 5,
+      clientY: 5
+    })
+    await fireEvent.click(screen.getByTestId('task-menu-delete'))
+    await fireEvent.click(
+      screen.getByTestId('task-menu-delete-confirm-confirm')
+    )
+    expect(ctx.deleteBlock).toHaveBeenCalledWith('c3')
+
+    // Production removal: the write emits block:changed, the debounced
+    // reload re-buckets the day (now 3 tasks, no overflow), the rescue
+    // polls past it.
+    mocks.blockChangedCallbacks.forEach((cb) => cb())
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await flush()
+
+    expect(screen.queryByTestId(`calendar-more-${TODAY}`)).toBeNull()
+    const neighbor = screen.getByText('Neighbor chip').closest('button')!
+    const active = document.activeElement as HTMLElement
+    expect(active).not.toBe(document.body)
+    expect(active).toBe(neighbor)
+    expect(active.isConnected).toBe(true)
+  })
+
+  it('Open in sub-editor and Edit task reuse the chip affordance state', async () => {
+    await renderCalendarWithMenu([
+      row({ id: 'm1', clean_content: 'Menu chip', due_date: TODAY })
+    ])
+    const chip = screen.getByText('Menu chip')
+
+    // Drawer first: the sub-editor modal renders a second metadata header,
+    // so the single-element query must run while only the drawer is up.
+    await fireEvent.contextMenu(chip, { clientX: 5, clientY: 5 })
+    await fireEvent.click(screen.getByTestId('task-menu-edit'))
+    expect(screen.getByTestId('task-primary-header')).toBeInTheDocument()
+
+    await fireEvent.contextMenu(chip, { clientX: 5, clientY: 5 })
+    await fireEvent.click(screen.getByTestId('task-menu-sub-editor'))
+    expect(
+      document.querySelector('[aria-labelledby="sub-editor-title"]')
+    ).toBeInTheDocument()
+  })
+
+  it('Escape and backdrop dismiss; Alt+Arrow reschedule still works after', async () => {
+    await renderCalendarWithMenu([
+      row({ id: 'm1', clean_content: 'Menu chip', due_date: TODAY })
+    ])
+    const chip = screen.getByText('Menu chip')
+    chip.focus()
+    await fireEvent.keyDown(chip, { key: 'F10', shiftKey: true })
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByTestId('task-context-menu')).toBeNull()
+
+    await fireEvent.contextMenu(chip, { clientX: 5, clientY: 5 })
+    await fireEvent.click(screen.getByTestId('task-menu-backdrop'))
+    expect(screen.queryByTestId('task-context-menu')).toBeNull()
+
+    // No-regression: the chip's own Alt+Arrow reschedule is untouched.
+    await fireEvent.keyDown(chip, { key: 'ArrowRight', altKey: true })
+    expect(mocks.setTaskDueDate).toHaveBeenCalledWith('m1', '2026-07-07')
+  })
+})

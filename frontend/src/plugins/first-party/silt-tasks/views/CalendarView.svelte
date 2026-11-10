@@ -24,6 +24,8 @@
   import ErrorBanner from '../components/ErrorBanner.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
   import QuickAddTask from '../components/QuickAddTask.svelte'
+  import TaskContextMenu from '../components/TaskContextMenu.svelte'
+  import { useTaskContextMenu } from '../components/useTaskContextMenu.svelte'
   import {
     coerceTaskRow,
     laneLabel,
@@ -51,6 +53,10 @@
     monthWeeks as computeMonthWeeks
   } from '../../../../lib/dateGrid'
   import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
+  import {
+    isContextMenuKey,
+    openContextMenuFromKeyboard
+  } from '../../../../lib/contextMenuKey'
 
   type Props = TaskViewProps
 
@@ -83,6 +89,9 @@
   let loading = $state(true)
   let errorMsg = $state('')
   let resultsTruncated = $state(false)
+  // Task-menu write failures, hoisted into the top strip (#1116): the menu
+  // component owns the 8s auto-dismiss; this only renders the message.
+  let menuError = $state('')
   let selectedTask = $state<TaskDetail | null>(null)
   let selectedFilteredOut = $state(false)
 
@@ -96,6 +105,8 @@
     selectedFilteredOut = false
   }
   let subEditorTask = $state<TaskDetail | null>(null)
+  // Right-click / Shift+F10 task menu (#1116), hosted once for every chip.
+  const taskMenu = useTaskContextMenu()
   // null = closed; '' = open undated; YYYY-MM-DD = open for that day.
   let quickAddDate = $state<string | null>(null)
 
@@ -663,6 +674,11 @@
       e.preventDefault()
       e.stopPropagation()
       subEditorTask = item
+    } else if (isContextMenuKey(e)) {
+      // Same per-chip handler as a right-click: dispatch a synthetic
+      // contextmenu on the focused chip (#1116 keyboard parity).
+      e.preventDefault()
+      openContextMenuFromKeyboard(e.currentTarget as HTMLElement)
     }
   }
 
@@ -833,6 +849,14 @@
     />
   {/if}
 
+  {#if menuError}
+    <ErrorBanner
+      message={menuError}
+      dataTestId="task-menu-error"
+      onDismiss={() => (menuError = '')}
+    />
+  {/if}
+
   {#if resultsTruncated}
     <div
       class="px-6 py-2 bg-status-warn/10 border-b border-status-warn/30 text-status-warn text-type-sm font-body-md flex items-center gap-2"
@@ -998,9 +1022,10 @@
                   <button
                     type="button"
                     draggable="true"
-                    aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                    aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Shift+F10"
                     ondragstart={(e) => onCardDragStart(e, item)}
                     ondragend={onCardDragEnd}
+                    oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
                     onkeydown={(e) => onCardKeydown(e, item)}
                     onclick={() => selectTask(item)}
                     data-status={item.status}
@@ -1018,6 +1043,8 @@
                   >
                 {/each}
                 {#if items.length > 3}
+                  <!-- data-task-hit="overflow": a control, not a task — opts
+                       out of the context menu's neighbor indexing. -->
                   <button
                     type="button"
                     onclick={(e) => openDayAgenda(e, ymd(day))}
@@ -1026,7 +1053,7 @@
                     aria-controls="calendar-day-agenda"
                     aria-label={`Show ${items.length - 3} more tasks for ${ymd(day)}`}
                     data-testid={`calendar-more-${ymd(day)}`}
-                    data-task-hit
+                    data-task-hit="overflow"
                     class="w-full rounded-md border border-transparent px-1 py-0.5 text-left text-type-3xs font-label-sm text-text-muted transition-colors hover:border-surface-card-border hover:bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
                     >+{items.length - 3} more</button
                   >
@@ -1039,9 +1066,10 @@
                     type="button"
                     draggable="true"
                     data-overdue-surfaced="true"
-                    aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                    aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Shift+F10"
                     ondragstart={(e) => onCardDragStart(e, item)}
                     ondragend={onCardDragEnd}
+                    oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
                     onkeydown={(e) => onCardKeydown(e, item)}
                     onclick={() => selectTask(item)}
                     data-task-hit
@@ -1060,6 +1088,7 @@
                   >
                 {/each}
                 {#if overdueHere.length > 2}
+                  <!-- Same overflow opt-out as the "+N more" button above. -->
                   <button
                     type="button"
                     onclick={(e) => openDayAgenda(e, ymd(day))}
@@ -1068,7 +1097,7 @@
                     aria-controls="calendar-day-agenda"
                     aria-label={`Show ${overdueHere.length - 2} more overdue tasks for ${ymd(day)}`}
                     data-testid={`calendar-overdue-more-${ymd(day)}`}
-                    data-task-hit
+                    data-task-hit="overflow"
                     class="w-full rounded-md border border-error/20 bg-error/10 px-1 py-0.5 text-left text-type-3xs font-label-sm text-error transition-colors hover:border-error hover:bg-error-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
                     >+{overdueHere.length - 2} overdue</button
                   >
@@ -1158,9 +1187,10 @@
                 <button
                   type="button"
                   draggable="true"
-                  aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                  aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Shift+F10"
                   ondragstart={(e) => onCardDragStart(e, item)}
                   ondragend={onCardDragEnd}
+                  oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
                   onkeydown={(e) => onCardKeydown(e, item)}
                   onclick={() => selectTask(item)}
                   data-status={item.status}
@@ -1182,9 +1212,10 @@
                   type="button"
                   draggable="true"
                   data-overdue-surfaced="true"
-                  aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                  aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Shift+F10"
                   ondragstart={(e) => onCardDragStart(e, item)}
                   ondragend={onCardDragEnd}
+                  oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
                   onkeydown={(e) => onCardKeydown(e, item)}
                   onclick={() => selectTask(item)}
                   data-task-hit
@@ -1251,9 +1282,10 @@
               <button
                 type="button"
                 draggable="true"
-                aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Shift+F10"
                 ondragstart={(e) => onCardDragStart(e, item)}
                 ondragend={onCardDragEnd}
+                oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
                 onkeydown={(e) => onCardKeydown(e, item)}
                 onclick={() => selectTask(item)}
                 data-task-hit
@@ -1399,6 +1431,14 @@
   }}
   onMetaChanged={reload}
   onOpenSubEditor={() => selectedTask && (subEditorTask = selectedTask)}
+/>
+<TaskContextMenu
+  {ctx}
+  menu={taskMenu.menu}
+  onClose={taskMenu.close}
+  onEditTask={selectTask}
+  onOpenSubEditor={(task) => (subEditorTask = task)}
+  onError={(message) => (menuError = message)}
 />
 
 {#if subEditorTask}

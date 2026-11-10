@@ -55,7 +55,8 @@ function makeProps(card: TaskDetail) {
     onCardDrop: () => {},
     onKeydown: () => {},
     onSelect: () => {},
-    onPinToggle: () => {}
+    onPinToggle: () => {},
+    onContextMenu: () => {}
   }
 }
 
