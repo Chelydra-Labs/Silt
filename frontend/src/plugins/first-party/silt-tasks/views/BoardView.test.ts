@@ -385,6 +385,55 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     expect(screen.getByRole('group', { name: 'Done' })).toBeInTheDocument()
   })
 
+  it('due-date grouping never renders a DONE row, even one past due', async () => {
+    await renderBoard('dueDate', [
+      row({
+        id: 'd1',
+        status: 'DONE',
+        due_date: '2026-07-01',
+        clean_content: 'Done task'
+      }),
+      row({
+        id: 'o1',
+        status: 'TODO',
+        due_date: '2026-07-12',
+        clean_content: 'Open task'
+      })
+    ])
+
+    expect(laneCardIds('Overdue')).toEqual([])
+    expect(laneCardIds('Today')).toEqual([])
+    expect(laneCardIds('Upcoming')).toEqual([])
+    expect(laneCardIds('No Date')).toEqual([])
+    // The open row renders (board is populated), the DONE one renders nowhere.
+    expect(laneCardIds('Later')).toEqual(['o1'])
+  })
+
+  it('due-date grouping queries exclude DONE (t.status != "DONE")', async () => {
+    await renderBoard('dueDate', [])
+
+    expect(mocks.sqliteQuery).toHaveBeenCalled()
+    // The load effect may fire more than once during mount — inspect the
+    // most recent query.
+    const lastCall = mocks.sqliteQuery.mock.calls.at(-1)!
+    expect(lastCall[0] as string).toContain("t.status != 'DONE'")
+  })
+
+  it('status grouping still renders a past-due DONE card in the Done lane', async () => {
+    // Regression guard: the due-date DONE exclusion must not bleed into the
+    // status-grouped board, whose Done lane is the home for finished work.
+    await renderBoard('status', [
+      row({
+        id: 'd1',
+        status: 'DONE',
+        due_date: '2026-07-01',
+        clean_content: 'Done task'
+      })
+    ])
+
+    expect(laneCardIds('Done')).toEqual(['d1'])
+  })
+
   it('renders distinct owners + an Unassigned column on the far left (groupBy=owner)', async () => {
     await renderBoard('owner', [
       row({ id: 't1', owner: 'Alice', clean_content: 'A' }),
