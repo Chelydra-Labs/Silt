@@ -187,9 +187,11 @@ describe('block creation scan (#188 / #180 / #189 / #183 / #172)', () => {
     const node = (editor.getJSON() as DocJSON).content[0]
     expect(node?.type).toBe('details')
     // Save form: ONE DETAILS ParsedBlock whose clean_text is the full HTML.
+    // The section is built expanded (open: true), and that state is disk
+    // state — the opener carries the `open` attr (#1123).
     const saved = docToBlocks(editor.getJSON() as DocJSON)
     expect(saved[0].type).toBe('DETAILS')
-    expect(saved[0].clean_text).toContain('<details>')
+    expect(saved[0].clean_text).toContain('<details open>')
     expect(saved[0].clean_text).toContain('<summary>')
     expect(saved[0].clean_text).toContain('</details>')
   })

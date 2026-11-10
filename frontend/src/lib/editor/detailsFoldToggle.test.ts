@@ -4,8 +4,8 @@
 // phase (schema.ts detailsFoldToggleKey) and re-dispatches with
 // `addToHistory: false`, preserving identity attrs. These tests pin the
 // three consumer-visible guarantees: a fold toggle never enters undo
-// history, never reaches onUpdate as a content edit (the autosave /
-// sub-editor dirty guards skip tagged transactions), and never resets the
+// history, reaches onUpdate as exactly one tagged transaction (consumers
+// now save it — `open` is disk state, #1123), and never resets the
 // details node's `id`/`file_date` (stock setNodeMarkup would). The keyboard
 // route (Mod-Shift-. → toggleDetails) and the stock detailsSelection plugin
 // registration are pinned here as well.
@@ -135,8 +135,8 @@ describe('details fold toggle interception (persist: true)', () => {
     expect(details.attrs.open).toBe(false)
     // Nothing else was edited: a fold toggle must leave nothing to undo.
     expect(editor.can().undo()).toBe(false)
-    // onUpdate saw exactly the tagged toggle transaction — the autosave /
-    // sub-editor dirty guards skip it.
+    // onUpdate saw exactly the tagged toggle transaction — consumers save
+    // it like any edit now (#1123); the tag identifies, it no longer gates.
     expect(seen).toEqual([true])
     // The NodeView stayed in sync with the model.
     expect(toggle.getAttribute('aria-label')).toBe('Expand details content')
@@ -221,8 +221,7 @@ describe('details fold toggle via keyboard (Mod-Shift-.)', () => {
     expect(toggleDetails(editor)).toBe(true)
 
     expect(editor.state.doc.child(0).attrs.open).toBe(false)
-    // Exactly one transaction reached onUpdate and it is tagged — the
-    // autosave / sub-editor dirty guards skip it.
+    // Exactly one transaction reached onUpdate and it is tagged.
     expect(seen).toEqual([true])
     // A keyboard fold must leave nothing to undo, like a click fold.
     expect(editor.can().undo()).toBe(false)
