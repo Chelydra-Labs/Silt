@@ -896,11 +896,65 @@
     if (loc) action(loc)
   }
 
+  /** One flyout row: a candidate target, or a display-only truncation hint. */
+  interface BacklinkMenuChild {
+    id: string
+    label: string
+    /** Omitted on hint rows — nothing to activate. */
+    run?: () => void
+    /** Hint rows are presentational: disabled, skipped by the roving focus. */
+    disabled?: boolean
+    /** Accessible name when the visible label is a terse "+N more". */
+    ariaLabel?: string
+  }
+
   interface BacklinkMenuItem {
     id: string
     icon: string
     label: string
-    run: () => void
+    /** Omitted on parent items — their flyout opens instead (APG pattern). */
+    run?: () => void
+    /** Submenu rows; the ContextMenu primitive hosts the flyout + chevron. */
+    children?: BacklinkMenuChild[]
+  }
+
+  /**
+   * Candidate rows for an ambiguous mention — the menu twin of the inline
+   * chips, labeled and routed exactly like them. The wire list is capped
+   * server-side, so a trailing disabled hint carries the same "+N more"
+   * signal the chip row shows.
+   */
+  function promoteCandidates(
+    mention: UnlinkedMention,
+    blockId: string
+  ): BacklinkMenuChild[] {
+    const children: BacklinkMenuChild[] = (mention.candidates ?? []).map(
+      (cand, i) => ({
+        id: `candidate-${i}`,
+        label: candidatePathLabel(cand),
+        run: () =>
+          runRowItem(
+            () =>
+              void promoteMention(mention, blockId, {
+                notebook: cand.notebook,
+                section: cand.section,
+                page: cand.page
+              })
+          )
+      })
+    )
+    const shown = mention.candidates?.length ?? 0
+    const total = mention.candidatesTotal ?? 0
+    if (mention.candidatesTruncated && total > shown) {
+      const more = total - shown
+      children.push({
+        id: 'candidates-truncated',
+        label: `+${more} more`,
+        disabled: true,
+        ariaLabel: `+${more} more matching paths not shown`
+      })
+    }
+    return children
   }
 
   const rowMenuItems = $derived.by((): BacklinkMenuItem[] => {
@@ -908,20 +962,28 @@
     if (!open) return []
     const loc = open.locator
     const items: BacklinkMenuItem[] = []
-    // Promote only where a target is unambiguous: ambiguous rows keep the
-    // candidate chips as THE disambiguation affordance — a bare item can't
-    // pick a target. Busy rows drop it while the inline promote is in flight.
-    if (
-      loc.mention &&
-      !loc.mention.ambiguous &&
-      !unlinkedBusy.has(loc.blockId)
-    ) {
-      items.push({
-        id: 'promote-to-link',
-        icon: 'add_link',
-        label: 'Promote to link',
-        run: () => runRowItem((l) => void promoteMention(l.mention!, l.blockId))
-      })
+
+    // Busy rows drop Promote while their inline promote is in flight. An
+    // ambiguous row cannot pick a target from a flat item, so it gets the
+    // candidate flyout instead (the chips' menu twin).
+    if (loc.mention && !unlinkedBusy.has(loc.blockId)) {
+      const mention = loc.mention
+      if (!mention.ambiguous) {
+        items.push({
+          id: 'promote-to-link',
+          icon: 'add_link',
+          label: 'Promote to link',
+          run: () =>
+            runRowItem((l) => void promoteMention(l.mention!, l.blockId))
+        })
+      } else if (mention.candidates?.length) {
+        items.push({
+          id: 'promote-to-link',
+          icon: 'add_link',
+          label: 'Promote to link',
+          children: promoteCandidates(mention, loc.blockId)
+        })
+      }
     }
     items.push({
       id: 'open-source-page',
@@ -1455,12 +1517,25 @@
                               aria-label={`Link targets for mention of ${mention.title}`}
                             >
                               {#each mention.candidates ?? [] as cand, cIdx (`${cand.notebook}/${cand.section}/${cand.page}:${cIdx}`)}
+                                <!-- The chip is this block's interactive
+                                     control, so it carries the row-menu
+                                     trigger (right-click / Shift+F10) the
+                                     unambiguous row's Link button carries —
+                                     the menu's Promote flyout lists these
+                                     same candidates. -->
                                 <button
                                   type="button"
                                   class="max-w-full truncate rounded-full border border-surface-sidebar-border bg-surface-sidebar px-2 py-0.5 text-type-3xs text-accent-primary-start hover:bg-accent-primary-start/10 cursor-pointer transition-colors disabled:cursor-wait disabled:opacity-65 focus-visible:ring-2 focus-visible:ring-accent-primary-start"
                                   disabled={unlinkedBusy.has(blockId)}
                                   title={candidatePathLabel(cand)}
                                   aria-label={`Link mention of ${mention.title} as ${candidatePathLabel(cand)} in block ${blockId.slice(0, 8)} on page ${mention.sourcePage}`}
+                                  aria-keyshortcuts="Shift+F10"
+                                  onkeydown={onRowMenuKeydown}
+                                  oncontextmenu={(e) =>
+                                    rowMenu.openFromEvent(
+                                      e,
+                                      mentionBlockLocator(mention, blockId)
+                                    )}
                                   onclick={() =>
                                     promoteMention(mention, blockId, {
                                       notebook: cand.notebook,
@@ -1544,6 +1619,7 @@
         <button
           type="button"
           role="menuitem"
+          aria-haspopup={item.children?.length ? 'menu' : undefined}
           data-testid={`backlinks-menu-${item.id}`}
           onclick={item.run}
         >
@@ -1553,6 +1629,25 @@
           >
           <span>{item.label}</span>
         </button>
+        {#if item.children?.length}
+          <!-- Flyout authored as the parent's sibling: the primitive owns
+               open/close, positioning, focus and the ▸ chevron. -->
+          <div role="menu" aria-label={item.label}>
+            {#each item.children as child (child.id)}
+              <button
+                type="button"
+                role="menuitem"
+                disabled={child.disabled === true}
+                aria-label={child.ariaLabel}
+                data-testid={`backlinks-menu-${item.id}-${child.id}`}
+                onclick={child.run}
+              >
+                <span class="w-4 shrink-0" aria-hidden="true"></span>
+                <span>{child.label}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
       {/each}
     </ContextMenu>
   {/if}
