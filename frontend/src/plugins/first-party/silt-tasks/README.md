@@ -136,7 +136,8 @@ Each module has a co-located `*.test.ts`:
   DONE guard, and visible truncated-result notices for capped queries.
 - `Sidebar.test.ts` — smart-list pick, saved-view list, mini-cal, filter
   sync back into hub state.
-- `components/*.test.ts` — drawer, comment thread (incl.
-  `ctx.getLocalAuthor` seeding + persist), dependency picker, sub-editor.
+- `components/*.test.ts` — drawer, comment thread (settings-based
+  `local_author` attribution, empty pref → no token, pending/double-post
+  guard), dependency picker, sub-editor.
 - Backend `app_task_meta_test.go` / `backend/parser/parser_test.go` — priority
   IPC range validation and deliberate legacy missing-priority compatibility.
