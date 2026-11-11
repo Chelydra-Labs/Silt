@@ -112,18 +112,24 @@
       : osAuthorPrefill
   })
 
-  onMount(async () => {
-    // Skip the IPC round-trip when any pref is stored — including an
-    // explicitly cleared ("") one, which must not be re-prefilled.
-    if (hasStoredAuthor) return
-    try {
-      const v = await GetLocalAuthor()
-      // The user's in-progress typing wins over the late IPC, same rule
-      // as the close-to-tray hydrate above.
-      if (!commentAuthorTouched) osAuthorPrefill = v
-    } catch {
-      if (!commentAuthorTouched) osAuthorPrefill = ''
-    }
+  // Arm the OS prefill whenever the pref is (or becomes) absent — at mount
+  // for a never-saved vault, and again when a later external snapshot drops
+  // a stored key, which would otherwise blank the field instead of re-arming
+  // the prefill the help text promises. Stored values — including an
+  // explicitly cleared ("") one — never trigger the round-trip.
+  $effect(() => {
+    if (hasStoredAuthor || commentAuthorTouched || osAuthorPrefill !== '')
+      return
+    void (async () => {
+      try {
+        const v = await GetLocalAuthor()
+        // The user's in-progress typing wins over the late IPC, same rule
+        // as the close-to-tray hydrate above.
+        if (!commentAuthorTouched) osAuthorPrefill = v
+      } catch {
+        // Leave the prefill unset; a later absent-edge re-run retries.
+      }
+    })()
   })
 
   // "Saved." describes the last save, not the in-progress edit; clear it

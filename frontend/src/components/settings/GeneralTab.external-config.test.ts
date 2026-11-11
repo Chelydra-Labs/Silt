@@ -148,11 +148,16 @@ describe('GeneralTab comment author vs external config reload (#1125)', () => {
     expect(authorInput().value).toBe('External Name')
   })
 
-  it('keeps the field empty after a cleared save (presence, not truthiness)', async () => {
-    settings.config = snapshot('Dana')
+  it('keeps the field empty after a cleared save despite a non-empty OS prefill', async () => {
+    // Start absent with a live prefill: this is the configuration the
+    // presence rule must survive. Seeding a stored value here (as an
+    // earlier version did) skipped the prefill IPC entirely, so the final
+    // empty-field assertion also passed under a truthiness regression.
+    appMocks.GetLocalAuthor.mockResolvedValue('OS Name')
+    settings.config = snapshot(undefined)
     render(GeneralTab)
     await waitFor(() => {
-      expect(authorInput().value).toBe('Dana')
+      expect(authorInput().value).toBe('OS Name')
     })
     await fireEvent.input(authorInput(), { target: { value: '' } })
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }))
@@ -163,10 +168,33 @@ describe('GeneralTab comment author vs external config reload (#1125)', () => {
         ''
       )
     })
-    // The mirrored "" is a real stored value for the session: presence
-    // keeps the field empty rather than snapping back to a prefill.
+    // The mirrored "" is a real stored value: presence keeps the field
+    // empty rather than snapping back to the non-empty prefill.
     await waitFor(() => {
       expect(authorInput().value).toBe('')
+    })
+    // The prefill IPC ran once at mount and stays retired for the session.
+    expect(appMocks.GetLocalAuthor).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-arms the OS prefill when an external snapshot drops the stored author', async () => {
+    appMocks.GetLocalAuthor.mockResolvedValue('OS Name')
+    settings.config = snapshot('Dana')
+    render(GeneralTab)
+    await waitFor(() => {
+      expect(authorInput().value).toBe('Dana')
+    })
+    // Stored at mount: the prefill round-trip is skipped entirely.
+    expect(appMocks.GetLocalAuthor).not.toHaveBeenCalled()
+    // An external edit (hand-edit of config.yaml, or the backend's legacy
+    // seed strip) removes the key: the field falls back to the OS prefill
+    // instead of going blank.
+    settings.config = snapshot(undefined)
+    await waitFor(() => {
+      expect(appMocks.GetLocalAuthor).toHaveBeenCalledTimes(1)
+    })
+    await waitFor(() => {
+      expect(authorInput().value).toBe('OS Name')
     })
   })
 })
