@@ -330,6 +330,30 @@ func TestLoad_LocalAuthorPresenceSemantics(t *testing.T) {
 	}
 }
 
+func TestSave_StampsLocalAuthorSeedMarkerWithoutLoad(t *testing.T) {
+	// A snapshot can reach Save carrying local_author: "" and no marker
+	// (e.g. a future frontend mirror that drops unknown plugin_settings
+	// keys). Save must stamp the marker itself — mirroring the hotkeys
+	// marker, which self-heals via normalize on both paths — so the next
+	// Load reads the "" as a deliberate clear instead of stripping it as
+	// a legacy seed (which would silently resurrect the OS prefill).
+	tmp := t.TempDir()
+	cfg := Defaults()
+	cfg.Plugins.PluginSettings["silt-tasks"] = map[string]any{"local_author": ""}
+	if err := Save(tmp, cfg); err != nil {
+		t.Fatalf("Save(unmigrated snapshot): %v", err)
+	}
+	loaded, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load(after Save stamp): %v", err)
+	}
+	entry, _ := loaded.Plugins.PluginSettings["silt-tasks"].(map[string]any)
+	if v, has := entry["local_author"]; !has || v != "" {
+		t.Errorf(`Save must stamp %s so "" survives the next Load as a deliberate clear, got %v (present=%v)`,
+			localAuthorSeedMigratedKey, v, has)
+	}
+}
+
 func TestLoad_MalformedYAML_ReturnsError(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, ConfigPath(tmp), "editor:\n  font_family: [unterminated\n  : : :")
