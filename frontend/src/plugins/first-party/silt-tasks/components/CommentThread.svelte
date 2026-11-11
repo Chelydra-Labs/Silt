@@ -542,7 +542,7 @@
           class="text-type-2xs font-label-sm text-text-muted hover:text-accent-primary-start transition-colors px-1 disabled:opacity-50 disabled:cursor-not-allowed"
           aria-label="Reply to comment"
           title="Reply"
-          disabled={replyPending}
+          disabled={replyPending || c.pending}
           onclick={(e) => startReply(c, e.currentTarget)}
         >
           Reply

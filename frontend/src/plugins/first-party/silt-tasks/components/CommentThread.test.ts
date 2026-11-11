@@ -674,6 +674,31 @@ describe('CommentThread', () => {
     expect(addTaskComment).toHaveBeenCalledTimes(1)
   })
 
+  it('disables Reply on a comment whose own post is still in flight', async () => {
+    // The optimistic entry renders with pending: true; replying to it
+    // would carry parentId = "optimistic-…", which the id swap strands:
+    // the composer vanishes and a failed reply restores the draft into
+    // an id that no longer renders.
+    let resolveComment!: (id: string) => void
+    const pendingComment = new Promise<string>((res) => {
+      resolveComment = res
+    })
+    const addTaskComment = vi.fn(() => pendingComment)
+    const ctx = makeCtx({ addTaskComment })
+    mount({ ctx })
+    await flush()
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'top-level' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    await flush()
+    // The optimistic entry is the only comment; its Reply button holds
+    // until the real id replaces the optimistic one.
+    expect(screen.getAllByLabelText('Reply to comment')[0]!).toBeDisabled()
+    resolveComment('real-uuid')
+    await flush()
+    expect(screen.getAllByLabelText('Reply to comment')[0]!).toBeEnabled()
+  })
+
   it('a failed reply re-opens the composer on the original parent with the draft restored (Escape mid-flight is a no-op)', async () => {
     // Deferred-then-rejecting post: the failure path must restore the
     // draft INTO the composer even though Escape was pressed mid-flight —
