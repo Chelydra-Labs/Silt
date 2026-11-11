@@ -1,8 +1,10 @@
 // Board-card rendering of the shortlist badge (#1092). TaskCard is a pure
 // presentational component — props in, markup out — so these are plain render
 // assertions (no IPC, per AGENTS.md: Vitest component tests only).
-import { describe, expect, it, afterEach } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/svelte'
+import { describe, expect, it, afterEach, vi } from 'vitest'
+import { tick } from 'svelte'
+import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
+import userEvent from '@testing-library/user-event'
 
 import TaskCard from './TaskCard.svelte'
 import type { TaskDetail } from '../types'
@@ -56,6 +58,7 @@ function makeProps(card: TaskDetail) {
     onKeydown: () => {},
     onSelect: () => {},
     onPinToggle: () => {},
+    onPriorityCycle: () => {},
     onContextMenu: () => {}
   }
 }
@@ -104,5 +107,65 @@ describe('TaskCard shortlist badge (#1092)', () => {
     expect(
       document.querySelector('[data-card="c1"]')!.getAttribute('aria-label')
     ).not.toContain('shortlist rank')
+  })
+})
+
+describe('TaskCard priority pill', () => {
+  afterEach(cleanup)
+
+  it('always renders the pill — ghost state when unprioritized', () => {
+    render(TaskCard, makeProps(makeCard({ priority: 0 })))
+    const pill = screen.getByTestId('tasks-priority-c1')
+    expect(pill.textContent).toContain('None')
+    expect(pill.getAttribute('aria-label')).toBe(
+      'Priority: None — click to set Low'
+    )
+  })
+
+  it('announces the current priority and the next click value', () => {
+    render(TaskCard, makeProps(makeCard({ priority: 1 })))
+    const pill = screen.getByTestId('tasks-priority-c1')
+    expect(pill.textContent).toContain('High')
+    // High wraps to Low — the pinned cycle is Low→Normal→High→Low.
+    expect(pill.getAttribute('aria-label')).toBe(
+      'Priority: High — click to set Low'
+    )
+  })
+
+  it('clicking the pill cycles priority without opening the card', async () => {
+    const onSelect = vi.fn()
+    const onPriorityCycle = vi.fn()
+    render(TaskCard, {
+      ...makeProps(makeCard({ priority: 3 })),
+      onSelect,
+      onPriorityCycle
+    })
+
+    await fireEvent.click(screen.getByTestId('tasks-priority-c1'))
+
+    expect(onPriorityCycle).toHaveBeenCalledWith(2)
+    expect(onSelect).not.toHaveBeenCalled()
+  })
+
+  it('Enter/Space on the pill cycle without selecting the card', async () => {
+    const onSelect = vi.fn()
+    const onPriorityCycle = vi.fn()
+    render(TaskCard, {
+      ...makeProps(makeCard({ priority: 2 })),
+      onSelect,
+      onPriorityCycle
+    })
+    const user = userEvent.setup()
+
+    const pill = screen.getByTestId('tasks-priority-c1')
+    pill.focus()
+    await user.keyboard('{Enter}')
+    await tick()
+    await user.keyboard(' ')
+
+    expect(onPriorityCycle).toHaveBeenCalledTimes(2)
+    expect(onPriorityCycle).toHaveBeenNthCalledWith(1, 1)
+    expect(onPriorityCycle).toHaveBeenNthCalledWith(2, 3)
+    expect(onSelect).not.toHaveBeenCalled()
   })
 })

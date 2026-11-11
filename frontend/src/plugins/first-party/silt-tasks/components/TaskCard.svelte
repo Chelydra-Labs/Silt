@@ -2,15 +2,11 @@
   // Presentational board task card. Pure render from props; the board owns
   // all DnD/selection state and passes pre-bound callbacks keyed to this
   // card + its column.
-  import {
-    PRIORITY_LABELS,
-    laneLabel,
-    priorityClass,
-    type TaskDetail
-  } from '../types'
+  import { laneLabel, priorityLabel, type TaskDetail } from '../types'
   import { dueDateClass, dueDateTextClass } from '../dueDate'
   import type { GroupBy } from '../state.svelte'
   import PinToggle from './PinToggle.svelte'
+  import PriorityPill, { PRIORITY_CHIP_CLASS } from './PriorityPill.svelte'
 
   interface Props {
     card: TaskDetail
@@ -30,6 +26,7 @@
     onSelect: () => void
     onPinToggle: (next: boolean) => Promise<unknown> | void
     onPinError?: (message: string) => void
+    onPriorityCycle: (next: number) => Promise<unknown> | void
     /** Right-click host hook-in (#1116); board passes a pre-bound callback. */
     onContextMenu: (e: MouseEvent) => void
     selected?: boolean
@@ -53,6 +50,7 @@
     onSelect,
     onPinToggle,
     onPinError,
+    onPriorityCycle,
     onContextMenu,
     selected = false
   }: Props = $props()
@@ -65,7 +63,7 @@
   )
 </script>
 
-<div class="relative" data-task-hit>
+<div class="relative group" data-task-hit>
   <div
     data-card={card.id}
     data-index={index}
@@ -104,36 +102,33 @@
       >
         {laneLabel(card.status)}
       </span>
-      {#if card.shortlist_rank != null || (card.priority && card.priority <= 3)}
-        <div class="ml-auto flex items-center gap-1.5">
-          {#if card.shortlist_rank != null}
-            <!-- Neutral mono badge — deliberately outside the priority
-                 palette so it can't read as a fourth priority level. -->
-            <span
-              class="rounded-sm border border-surface-panel-border bg-surface-panel px-1.5 py-0.5 font-mono text-type-3xs text-text-primary"
-              data-testid={`board-shortlist-badge-${card.id}`}
-              title="Shortlist rank {card.shortlist_rank} (0 is the top rank)"
-            >
-              Shortlist {card.shortlist_rank}
-            </span>
-          {/if}
-          {#if card.priority && card.priority <= 3}
-            <span
-              class="px-1.5 py-0.5 border rounded-sm font-label-sm text-type-3xs uppercase tracking-wide {priorityClass(
-                card.priority
-              )}"
-            >
-              {PRIORITY_LABELS[card.priority] ?? 'Normal'}
-            </span>
-          {/if}
-        </div>
-      {/if}
       {#if card.status === 'DONE'}
+        <!-- Beside the lane label so the badge cluster keeps the fixed right
+             edge the priority pill overlay aligns to. -->
         <span
           class="material-symbols-outlined text-accent-primary-start text-icon-md"
           aria-hidden="true">check_circle</span
         >
       {/if}
+      <div class="ml-auto flex items-center gap-1.5">
+        {#if card.shortlist_rank != null}
+          <!-- Neutral mono badge — deliberately outside the priority
+               palette so it can't read as a fourth priority level. -->
+          <span
+            class="rounded-sm border border-surface-panel-border bg-surface-panel px-1.5 py-0.5 font-mono text-type-3xs text-text-primary"
+            data-testid={`board-shortlist-badge-${card.id}`}
+            title="Shortlist rank {card.shortlist_rank} (0 is the top rank)"
+          >
+            Shortlist {card.shortlist_rank}
+          </span>
+        {/if}
+        <!-- Invisible layout slot mirroring PriorityPill's chip: the pill is a
+             sibling of the card root (nested-interactive rule) and overlays
+             this reserved width from outside the card. -->
+        <span aria-hidden="true" class="invisible {PRIORITY_CHIP_CLASS}"
+          >{priorityLabel(card.priority)}</span
+        >
+      </div>
     </div>
     <p
       class="mb-2 text-type-md font-body-md font-medium leading-snug text-text-primary {card.status ===
@@ -267,6 +262,13 @@
       class="absolute top-2 right-2 z-10"
     />
   {/if}
+  <!-- Same sibling rule as PinToggle; its chip overlays the header slot. -->
+  <PriorityPill
+    priority={card.priority}
+    onCycle={onPriorityCycle}
+    testId={`tasks-priority-${card.id}`}
+    class="absolute top-2 right-9 z-10"
+  />
 </div>
 
 <style>
