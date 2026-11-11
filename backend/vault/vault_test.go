@@ -297,8 +297,11 @@ func TestScaffoldVault_SeedsSiltTasksPluginSettings(t *testing.T) {
 	if tasks["calendar_sub_mode"] != "month" {
 		t.Errorf("silt-tasks.calendar_sub_mode: got %v, want month", tasks["calendar_sub_mode"])
 	}
-	if tasks["local_author"] != "" {
-		t.Errorf("silt-tasks.local_author: got %v, want empty", tasks["local_author"])
+	// local_author is deliberately absent from the scaffold (#1125): the
+	// pref is presence-based, and a "" seed would make "never set"
+	// indistinguishable from "explicitly cleared".
+	if _, has := tasks["local_author"]; has {
+		t.Errorf("scaffolded config.yaml must not seed silt-tasks.local_author")
 	}
 	// Active list contains the unified task hub.
 	for _, id := range []string{"silt-tasks"} {

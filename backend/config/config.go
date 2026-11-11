@@ -314,6 +314,7 @@ func Load(vaultPath string) (SystemConfig, error) {
 		return Defaults(), fmt.Errorf("failed to parse config.yaml: %w", err)
 	}
 	migrateLegacyQuickAccessCollapsed(data, &cfg)
+	stripLegacyEmptyLocalAuthor(&cfg)
 	cfg = normalize(cfg)
 	return cfg, nil
 }
@@ -346,6 +347,24 @@ func migrateLegacyQuickAccessCollapsed(data []byte, cfg *SystemConfig) {
 		view = "quick"
 	}
 	cfg.UI.SidebarView = &view
+}
+
+// stripLegacyEmptyLocalAuthor removes the `local_author: ""` entry that
+// pre-#1125 Defaults() and the vault scaffold seeded into every silt-tasks
+// plugin-settings map. The pref is presence-based (absent = Settings prefills
+// the OS account name), so a loaded snapshot must never carry the empty seed —
+// Load-only on purpose: an in-session cleared save keeps its "" in the live
+// config until the next Load treats it as unset (restart shows the prefill
+// again; SPECS §4.1). Scoped to exactly this key: a saved, non-empty author
+// always survives.
+func stripLegacyEmptyLocalAuthor(cfg *SystemConfig) {
+	entry, ok := cfg.Plugins.PluginSettings["silt-tasks"].(map[string]any)
+	if !ok {
+		return
+	}
+	if s, isStr := entry["local_author"].(string); isStr && s == "" {
+		delete(entry, "local_author")
+	}
 }
 
 // Save atomically writes cfg to <vault>/.system/config.yaml. Atomicity

@@ -443,7 +443,7 @@ Metadata Tokens (Dataview `[key:: value]` format):
 
 The `author` of a comment is **distinct from the task `Owner` (the assignee)** — a task can be owned by one person and commented on by several others; the two token spaces never overlap (an `[author::]` or `[ts::]` on a TASK line, or an `[owner::]` on a NOTE line, is not picked up by the other scanner). Likewise `ts` (a full timestamp) is **distinct from the date-only `file_date`** that lives in the block-identity comment — `ts` carries wall-clock time, `file_date` carries the day the block was authored. Both are nullable: a NOTE block without the tokens has no attribution row at all (no backfill).
 
-New comments take their `author` from the vault-scoped `plugins.plugin_settings.silt-tasks.local_author` pref, configured in Settings → General → Comment author; the composer has no per-comment author input. The Settings field prefills from the OS account display name (username fallback) but persists nothing until the user saves. An empty pref writes no `[author::]` token — the same nullable/"Unknown" rendering as a legacy NOTE — and attribution already stored in files is never backfilled.
+New comments take their `author` from the vault-scoped `plugins.plugin_settings.silt-tasks.local_author` pref, configured in Settings → General → Comment author; the composer has no per-comment author input. The key is absent until the user saves one; while absent, the Settings field prefills (display-only) from the OS account display name (username fallback) and persists nothing until saved. An empty pref writes no `[author::]` token — the same nullable/"Unknown" rendering as a legacy NOTE — and attribution already stored in files is never backfilled. A cleared (empty) pref is kept for the session, but a reload treats it as unset — the field shows the OS prefill again while the stored attribution stays empty, so comments keep posting without an author token until the user saves one.
 
 Task dependencies: the `blocked_by` token lists this task's prerequisites as
 space-separated `((uuid))` block references (#301). The silt-tasks List,
@@ -1594,7 +1594,9 @@ plugins:
       default_display_mode: "list"   # list | board | calendar
       default_group_by: "dueDate"
       default_sort: "dueDate"
-      local_author: ""               # name on task comments; "" = no [author::] token ("Unknown")
+      # local_author: only present once saved in Settings → General →
+      #   Comment author (absent = OS-name prefill there); "" = no
+      #   [author::] token ("Unknown")
       columns: ["TODO", "DOING", "DONE"]   # status-board lane order
       saved_views:
         - id: "55c1f0...-..."        # client-generated UUID; system views (sys-*) never persist

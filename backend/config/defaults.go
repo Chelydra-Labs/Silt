@@ -190,6 +190,12 @@ func Defaults() SystemConfig {
 				// values use []any (not []string) so they survive a YAML
 				// round-trip — yaml.v3 loads sequences as []any, so a
 				// []string seed would mismatch on Load.
+				//
+				// local_author is deliberately NOT seeded (#1125): its
+				// semantics are presence-based (absent = Settings
+				// prefills the OS account name), which a "" seed would
+				// make inexpressible. Load() strips the empty seed
+				// legacy vaults still carry.
 				"silt-tasks": map[string]any{
 					"default_display_mode": "list",
 					"default_group_by":     "dueDate",
@@ -203,8 +209,7 @@ func Defaults() SystemConfig {
 						"dueDate":    "",
 						"tags":       []any{},
 					},
-					"saved_views":  []any{},
-					"local_author": "",
+					"saved_views": []any{},
 				},
 			},
 		},
