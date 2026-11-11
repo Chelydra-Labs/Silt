@@ -1934,6 +1934,13 @@ describe('ListView — shortlist badge + filter (#1092)', () => {
   it('renders the Upcoming bucket rank-first despite later due dates', async () => {
     // Rank 3 is due sooner than rank 0 — the bucket's due-date re-sort must
     // not destroy the curated order the SQL promised (#1092 AC6).
+    // Fixed today + derived dates keep both rows inside (today, weekEnd]
+    // year-round; wall-clock offsets drifted into "Later" late in the week
+    // and red CI'd the branch depending on the run day.
+    const today = '2026-07-06'
+    setWeekStart('monday')
+    const sooner = addDaysISO(today, 1)
+    const laterInWeek = addDaysISO(endOfWeekISO(today, 'monday'), -1)
     setFilters({
       owners: [],
       priorities: [],
@@ -1947,11 +1954,11 @@ describe('ListView — shortlist badge + filter (#1092)', () => {
           rows: [
             task('r3', 'Sooner but rank 3', {
               shortlist_rank: 3,
-              due_date: dateOffsetStr(2)
+              due_date: sooner
             }),
             task('r0', 'Later but rank 0', {
               shortlist_rank: 0,
-              due_date: dateOffsetStr(4)
+              due_date: laterInWeek
             })
           ],
           truncated: false
@@ -1959,7 +1966,7 @@ describe('ListView — shortlist badge + filter (#1092)', () => {
       }
       return { rows: [], truncated: false }
     })
-    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    render(Tasks, { ctx: { ...makeCtx(), today }, manifest: MANIFEST })
     await flush()
 
     const upcomingIds = Array.from(
