@@ -344,19 +344,6 @@ export function persistWeekStart(value: WeekStart): Promise<boolean> {
 }
 
 /**
- * Persisted local author for task comments (#430, moved to Settings #1125).
- * Returns the saved name, `''` when the user explicitly cleared it, or
- * `undefined` when the key has never been written. Callers treat both empty
- * forms as "unresolved" (the OS-account prefill / "Unknown" fallback).
- */
-export function loadLocalAuthor(): string | undefined {
-  const slice = tasksSettings()
-  if (!('local_author' in slice)) return undefined
-  const v = slice['local_author']
-  return typeof v === 'string' ? v : ''
-}
-
-/**
  * Persisted Board-mode status columns (#421/#437). The Board is the only
  * surface with user-managed columns (every other grouping dimension is
  * data-driven). Accepts legacy string[] and structured {name, wipLimit?}[]

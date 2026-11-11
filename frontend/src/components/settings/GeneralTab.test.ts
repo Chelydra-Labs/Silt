@@ -422,12 +422,66 @@ describe('GeneralTab comment author (#1125)', () => {
     expect(appMocks.GetLocalAuthor).not.toHaveBeenCalled()
   })
 
-  it('prefills from GetLocalAuthor when the pref is empty (absent or "")', async () => {
+  it('prefills from GetLocalAuthor when the pref is absent', async () => {
     appMocks.GetLocalAuthor.mockResolvedValue('Chris Full')
     render(GeneralTab)
     await waitFor(() => {
       expect(authorInput().value).toBe('Chris Full')
     })
+  })
+
+  it('clearing the field + Enter saves "" and keeps the field empty', async () => {
+    appMocks.GetLocalAuthor.mockResolvedValue('Chris Full')
+    mocks.settings.config = {
+      ...mocks.baseConfig,
+      plugins: {
+        active: [],
+        disabled: [],
+        plugin_settings: {
+          'silt-tasks': { local_author: 'Dana' }
+        }
+      }
+    }
+    render(GeneralTab)
+    await waitFor(() => {
+      expect(authorInput().value).toBe('Dana')
+    })
+    await fireEvent.input(authorInput(), { target: { value: '' } })
+    await fireEvent.keyDown(authorInput(), { key: 'Enter' })
+    await tick()
+    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+      'silt-tasks',
+      'local_author',
+      ''
+    )
+    // A cleared pref is a real value — the field must not snap back to
+    // the OS prefill once the save lands.
+    expect(authorInput().value).toBe('')
+    expect(screen.getByText('Saved.')).toBeInTheDocument()
+    // Typing again retires the stale "Saved." status over unsaved edits.
+    await fireEvent.input(authorInput(), { target: { value: 'x' } })
+    await tick()
+    expect(screen.queryByText('Saved.')).toBeNull()
+  })
+
+  it('stored "" pref shows an empty field and skips the OS prefill', async () => {
+    appMocks.GetLocalAuthor.mockResolvedValue('Chris Full')
+    mocks.settings.config = {
+      ...mocks.baseConfig,
+      plugins: {
+        active: [],
+        disabled: [],
+        plugin_settings: {
+          'silt-tasks': { local_author: '' }
+        }
+      }
+    }
+    render(GeneralTab)
+    await tick()
+    // Presence semantics: an explicitly cleared pref is authoritative —
+    // no re-prefill, no GetLocalAuthor round-trip.
+    expect(authorInput().value).toBe('')
+    expect(appMocks.GetLocalAuthor).not.toHaveBeenCalled()
   })
 
   it('saving persists the trimmed value through the atomic setter', async () => {

@@ -82,25 +82,37 @@
       settings.config?.plugins?.plugin_settings?.['silt-tasks']?.[
         'local_author'
       ]
-    return typeof v === 'string' ? v : ''
+    return typeof v === 'string' ? v : undefined
   })
+  // Presence, not truthiness: "" is an explicitly cleared pref and keeps
+  // winning over the OS prefill; only a never-written key falls back to it.
+  let hasStoredAuthor = $derived(storedCommentAuthor !== undefined)
 
   // Writable derived: renders the stored pref (or the OS prefill) but lets
   // the user type over it; recomputes when the store mirrors a post-save or
   // external config change, so an in-progress edit is only replaced by a
   // real pref change — never clobbered by unrelated re-renders.
-  let commentAuthor = $derived(storedCommentAuthor || osAuthorPrefill)
+  let commentAuthor = $derived(
+    hasStoredAuthor ? (storedCommentAuthor as string) : osAuthorPrefill
+  )
 
   onMount(async () => {
-    // Skip the IPC round-trip when a pref is already stored — it would be
-    // overwritten by the stored value anyway.
-    if (storedCommentAuthor) return
+    // Skip the IPC round-trip when any pref is stored — including an
+    // explicitly cleared ("") one, which must not be re-prefilled.
+    if (hasStoredAuthor) return
     try {
       osAuthorPrefill = await GetLocalAuthor()
     } catch {
       osAuthorPrefill = ''
     }
   })
+
+  // "Saved." describes the last save, not the in-progress edit; clear it
+  // (and any stale error) as soon as the field changes again.
+  function handleCommentAuthorInput() {
+    commentAuthorStatus = ''
+    commentAuthorError = ''
+  }
 
   async function saveCommentAuthor() {
     if (commentAuthorInflight) return
@@ -584,6 +596,7 @@
           id="general-comment-author-input"
           type="text"
           bind:value={commentAuthor}
+          oninput={handleCommentAuthorInput}
           aria-describedby="general-comment-author-help"
           aria-invalid={commentAuthorError ? 'true' : undefined}
           disabled={commentAuthorInflight}

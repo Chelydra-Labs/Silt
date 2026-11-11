@@ -268,6 +268,12 @@
   async function submit() {
     const text = composerText.trim()
     if (!text || composerPending) return
+    // Claim before the await below: a second Enter during the author
+    // re-read would otherwise pass the guard and double-post.
+    composerPending = true
+    // Re-read the pref at submit: Settings can change the author while
+    // this thread stays open, and the mount-time read would be stale.
+    await loadAuthor()
     const author = commentAuthor.trim()
     const now = new Date().toISOString().slice(0, 19)
     const optimisticKey = nextKey()
@@ -286,7 +292,6 @@
     }
     comments = [...comments, optimistic]
     composerText = ''
-    composerPending = true
     errorMsg = ''
     errorRetryable = false
     try {
@@ -328,6 +333,10 @@
     const text = replyText.trim()
     const parentId = replyToId
     if (!text || !parentId || replyPending) return
+    // Same claim-before-await as submit(): the author re-read opens a
+    // window where a second Enter would otherwise double-post.
+    replyPending = true
+    await loadAuthor()
     const author = commentAuthor.trim()
     const now = new Date().toISOString().slice(0, 19)
     const optimisticKey = nextKey()
@@ -355,7 +364,6 @@
       return top
     })
     replyText = ''
-    replyPending = true
     errorMsg = ''
     errorRetryable = false
     try {

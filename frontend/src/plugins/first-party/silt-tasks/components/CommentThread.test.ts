@@ -468,6 +468,56 @@ describe('CommentThread', () => {
     expect(addTaskComment).toHaveBeenCalledWith('task-1', 'anon', undefined)
   })
 
+  it('getPluginSettings rejection still posts (author undefined, non-fatal)', async () => {
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const ctx = makeCtx({
+      addTaskComment,
+      getPluginSettings: vi.fn().mockRejectedValue(new Error('ipc died'))
+    })
+    mount({ ctx })
+    await flush()
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'resilient' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    await flush()
+    // loadAuthor's catch path swallows the rejection at mount AND at the
+    // submit-time re-read — the post carries no author token.
+    expect(addTaskComment).toHaveBeenCalledWith(
+      'task-1',
+      'resilient',
+      undefined
+    )
+  })
+
+  it('whitespace-only pref ("  ") posts with author undefined', async () => {
+    seedSettings({ local_author: '   ' })
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const ctx = makeCtx({ addTaskComment })
+    mount({ ctx })
+    await flush()
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'anon' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    await flush()
+    expect(addTaskComment).toHaveBeenCalledWith('task-1', 'anon', undefined)
+  })
+
+  it('re-reads the author at submit (Settings change after mount wins)', async () => {
+    seedSettings({})
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const ctx = makeCtx({ addTaskComment })
+    mount({ ctx })
+    await flush()
+    // The user sets the author in Settings while this thread stays open;
+    // the submit-time re-read must pick it up.
+    seedSettings({ local_author: 'Dana' })
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'fresh' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    await flush()
+    expect(addTaskComment).toHaveBeenCalledWith('task-1', 'fresh', 'Dana')
+  })
+
   it('block:changed event triggers a reload of the thread', async () => {
     const off = vi.fn()
     let registered: (() => void) | null = null
