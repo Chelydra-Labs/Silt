@@ -7,6 +7,7 @@
   // self-describing for assistive tech.
   import {
     splitMultiValueText,
+    locatorOf,
     type DashboardColumn,
     type GroupSection,
     type SortState,
@@ -17,6 +18,7 @@
     isContextMenuKey,
     openContextMenuFromKeyboard
   } from '../lib/contextMenuKey'
+  import type { DashboardPageLocator } from '../lib/navigationTargets'
   import { usePageLocatorMenu } from '../lib/pageLocatorMenu.svelte'
   import type { PageActionRef } from '../lib/pageActions'
 
@@ -30,12 +32,7 @@
     collapsed: Set<string>
     onSort: (property: string) => void
     onToggleGroup: (key: string) => void
-    onOpenPage: (locator: {
-      source: string
-      notebook: string
-      section: string
-      page: string
-    }) => void
+    onOpenPage: (locator: DashboardPageLocator) => void
     /** Toggle the Quick Access favorite; omitted hosts hide the Pin item. */
     onToggleFavorite?: (locator: PageActionRef) => void
     /** Favorite state, read once at menu open for the Pin/Unpin label. */
@@ -55,23 +52,6 @@
     onToggleFavorite,
     isFavorite
   }: Props = $props()
-
-  /** Row locator: the page triple the shared helper requires plus source. */
-  interface DashboardPageLocator {
-    source: string
-    notebook: string
-    section: string
-    page: string
-  }
-
-  function locatorOf(row: TypeDashboardRow): DashboardPageLocator {
-    return {
-      source: row.source,
-      notebook: row.notebook,
-      section: row.section,
-      page: row.page
-    }
-  }
 
   // Shared page-locator menu (#1120): standard vocabulary only — Open rides
   // the existing onOpenPage prop, Copy page reference is helper-owned, and

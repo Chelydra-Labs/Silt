@@ -7,6 +7,7 @@
   // readers and keyboard users reach the same onOpenPage path as a click.
   import {
     formatMultiValueDisplay,
+    locatorOf,
     type DashboardColumn,
     type GroupSection,
     type TypeDashboardProp,
@@ -17,6 +18,7 @@
     isContextMenuKey,
     openContextMenuFromKeyboard
   } from '../lib/contextMenuKey'
+  import type { DashboardPageLocator } from '../lib/navigationTargets'
   import { usePageLocatorMenu } from '../lib/pageLocatorMenu.svelte'
   import type { PageActionRef } from '../lib/pageActions'
 
@@ -25,12 +27,7 @@
     columns: DashboardColumn[]
     grouped: boolean
     heroField?: string
-    onOpenPage: (locator: {
-      source: string
-      notebook: string
-      section: string
-      page: string
-    }) => void
+    onOpenPage: (locator: DashboardPageLocator) => void
     /** Toggle the Quick Access favorite; omitted hosts hide the Pin item. */
     onToggleFavorite?: (locator: PageActionRef) => void
     /** Favorite state, read once at menu open for the Pin/Unpin label. */
@@ -46,23 +43,6 @@
     onToggleFavorite,
     isFavorite
   }: Props = $props()
-
-  /** Row locator: the page triple the shared helper requires plus source. */
-  interface DashboardPageLocator {
-    source: string
-    notebook: string
-    section: string
-    page: string
-  }
-
-  function locatorOf(row: TypeDashboardRow): DashboardPageLocator {
-    return {
-      source: row.source,
-      notebook: row.notebook,
-      section: row.section,
-      page: row.page
-    }
-  }
 
   // Shared page-locator menu (#1120), standard vocabulary only — mirrors
   // TypeDashboardTable's wiring so both view modes offer identical items.
@@ -98,12 +78,7 @@
   }
 
   function open(row: TypeDashboardRow): void {
-    onOpenPage({
-      source: row.source,
-      notebook: row.notebook,
-      section: row.section,
-      page: row.page
-    })
+    onOpenPage(locatorOf(row))
   }
 
   // Enter / Space activate the focused card (role=button convention); the
