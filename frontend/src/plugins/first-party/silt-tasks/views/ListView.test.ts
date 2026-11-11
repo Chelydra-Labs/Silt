@@ -1940,40 +1940,50 @@ describe('ListView — shortlist badge + filter (#1092)', () => {
   it('renders the Upcoming bucket rank-first despite later due dates', async () => {
     // Rank 3 is due sooner than rank 0 — the bucket's due-date re-sort must
     // not destroy the curated order the SQL promised (#1092 AC6).
-    setFilters({
-      owners: [],
-      priorities: [],
-      dueDate: '',
-      tags: [],
-      shortlist: true
-    })
-    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (isOpenSql(sql)) {
-        return {
-          rows: [
-            task('r3', 'Sooner but rank 3', {
-              shortlist_rank: 3,
-              due_date: dateOffsetStr(2)
-            }),
-            task('r0', 'Later but rank 0', {
-              shortlist_rank: 0,
-              due_date: dateOffsetStr(4)
-            })
-          ],
-          truncated: false
+    // Pin the clock to a Monday: the bucket only spans tomorrow..week-end,
+    // so relative due dates (+2d/+4d) fall outside it on some run days and
+    // the fixture silently became date-dependent. Only Date is faked —
+    // flush() relies on real setTimeout.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 6, 6, 12))
+    try {
+      setFilters({
+        owners: [],
+        priorities: [],
+        dueDate: '',
+        tags: [],
+        shortlist: true
+      })
+      mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+        if (isOpenSql(sql)) {
+          return {
+            rows: [
+              task('r3', 'Sooner but rank 3', {
+                shortlist_rank: 3,
+                due_date: dateOffsetStr(2)
+              }),
+              task('r0', 'Later but rank 0', {
+                shortlist_rank: 0,
+                due_date: dateOffsetStr(4)
+              })
+            ],
+            truncated: false
+          }
         }
-      }
-      return { rows: [], truncated: false }
-    })
-    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
-    await flush()
+        return { rows: [], truncated: false }
+      })
+      render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+      await flush()
 
-    const upcomingIds = Array.from(
-      document.querySelectorAll(
-        'section[data-group="upcoming"] [data-block-id]'
-      )
-    ).map((el) => el.getAttribute('data-block-id'))
-    expect(upcomingIds).toEqual(['r0', 'r3'])
+      const upcomingIds = Array.from(
+        document.querySelectorAll(
+          'section[data-group="upcoming"] [data-block-id]'
+        )
+      ).map((el) => el.getAttribute('data-block-id'))
+      expect(upcomingIds).toEqual(['r0', 'r3'])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('renders a non-dueDate grouping rank-first within each section', async () => {
