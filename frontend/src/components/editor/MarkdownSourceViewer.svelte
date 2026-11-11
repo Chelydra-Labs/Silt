@@ -82,7 +82,6 @@
     page = '',
     onBlocksSaved,
     editable = true,
-    // eslint-disable-next-line no-useless-assignment -- $bindable out-param for parent FindBar
     sourceSearchTarget = $bindable<SourceSearchTarget | null>(null),
     conflictActive = false,
     onSaveRefused,

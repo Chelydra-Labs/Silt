@@ -146,7 +146,6 @@
     onUpdate,
     editorInstance = $bindable(null),
     activeMarks = $bindable(new SvelteSet<string>()),
-    // eslint-disable-next-line no-useless-assignment -- $bindable out-param for parent word count
     wordCount = $bindable<number>(0),
     onSaveStateChange,
     onReady,
