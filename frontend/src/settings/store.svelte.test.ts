@@ -7,14 +7,15 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   SetOpenDevtoolsOnStartup: vi.fn().mockResolvedValue(undefined),
   SetShowFormatToolbar: vi.fn().mockResolvedValue(undefined),
-  UpdatePluginSetting: vi.fn().mockResolvedValue(undefined)
+  UpdatePluginSetting: vi.fn().mockResolvedValue(undefined),
+  SaveSystemConfig: vi.fn().mockResolvedValue(undefined)
 }))
 
 vi.mock('$silt-app', () =>
   createAppIpcMocks({
     GetSystemConfig: vi.fn(),
     GetConfigLoadError: vi.fn(),
-    SaveSystemConfig: vi.fn(),
+    SaveSystemConfig: mocks.SaveSystemConfig,
     UpdatePluginSetting: mocks.UpdatePluginSetting,
     AppendDismissedTip: vi.fn(),
     SetShowFormatToolbar: mocks.SetShowFormatToolbar,
@@ -122,6 +123,8 @@ describe('updatePluginSetting (atomic single-field write + local mirror)', () =>
   beforeEach(() => {
     mocks.UpdatePluginSetting.mockReset()
     mocks.UpdatePluginSetting.mockResolvedValue(undefined)
+    mocks.SaveSystemConfig.mockReset()
+    mocks.SaveSystemConfig.mockResolvedValue(undefined)
     resetConfig()
   })
 
@@ -137,6 +140,9 @@ describe('updatePluginSetting (atomic single-field write + local mirror)', () =>
       'local_author',
       'Dana'
     )
+    // Exclusivity: the atomic write must never fall back to a full
+    // read-modify-write save (the #120 clobber class).
+    expect(mocks.SaveSystemConfig).not.toHaveBeenCalled()
     expect(settings.saving).toBe(false)
     expect(
       settings.config?.plugins?.plugin_settings?.['silt-tasks']?.[
@@ -157,6 +163,13 @@ describe('updatePluginSetting (atomic single-field write + local mirror)', () =>
       }
     } as unknown as SystemConfig
     await updatePluginSetting('silt-tasks', 'local_author', '')
+    expect(mocks.UpdatePluginSetting).toHaveBeenCalledWith(
+      'silt-tasks',
+      'local_author',
+      ''
+    )
+    // Exclusivity: never a full read-modify-write save (#120 clobber class).
+    expect(mocks.SaveSystemConfig).not.toHaveBeenCalled()
     expect(
       settings.config?.plugins?.plugin_settings?.['silt-tasks']?.[
         'local_author'
