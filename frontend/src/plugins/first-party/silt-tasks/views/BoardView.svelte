@@ -55,6 +55,7 @@
   import { sortTasks } from '../taskOrder'
   import { buildQuery } from '../query'
   import { trackTaskUndoWrite } from '../undo.svelte'
+  import { applyPriorityCycle } from '../priorityCycle'
   import { useBlockChangedReload, useBlockedDoneGuard } from '../shared.svelte'
   import {
     createBoardDndController,
@@ -891,6 +892,8 @@
                     onContextMenu={(e) => taskMenu.openFromEvent(e, card)}
                     onPinToggle={(next) => togglePin(card, next)}
                     onPinError={setPinError}
+                    onPriorityCycle={(next) =>
+                      applyPriorityCycle(ctx, card, next)}
                     selected={selectedCard?.id === card.id}
                   />
                 </div>

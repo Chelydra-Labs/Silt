@@ -90,6 +90,11 @@ export const PRIORITY_LABELS: Record<number, string> = {
   3: 'Low'
 }
 
+/** Display label for a priority level; anything outside 1-3 reads as unset. */
+export function priorityLabel(p: number): string {
+  return PRIORITY_LABELS[p] ?? 'None'
+}
+
 // Standard statuses get friendly labels; custom lanes show their raw name.
 export function laneLabel(s: string): string {
   if (s === 'TODO') return 'To Do'

@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   sqliteQuery: vi.fn(),
   updateBlockState: vi.fn(),
   updateTaskMeta: vi.fn(),
+  setTaskPriority: vi.fn().mockResolvedValue(true),
   createTask: vi.fn().mockResolvedValue('new-task-id'),
   setTaskOrder: vi.fn().mockResolvedValue(true),
   setTaskOrders: vi.fn().mockResolvedValue(true),
@@ -32,7 +33,11 @@ import {
   setSort,
   setWeekStart
 } from '../state.svelte'
-import { initTasksUndo } from '../undo.svelte'
+import { initTasksUndo, resetTasksUndo } from '../undo.svelte'
+import {
+  notificationsState,
+  _resetForTests as resetNotifications
+} from '../../../../notifications/store.svelte'
 
 // jsdom polyfills: the shared drawer uses Svelte transition:fly (element.
 // animate()); the sub-editor modal's TipTap needs Range.getClientRects +
@@ -95,6 +100,7 @@ function makeCtx(): PluginContext {
     updateBlockState: mocks.updateBlockState,
     mutateBlock: vi.fn(),
     createTask: mocks.createTask,
+    setTaskPriority: mocks.setTaskPriority,
     setTaskOrder: mocks.setTaskOrder,
     setTaskOrders: mocks.setTaskOrders,
     updateTaskMeta: mocks.updateTaskMeta,
@@ -1934,13 +1940,9 @@ describe('ListView — shortlist badge + filter (#1092)', () => {
   it('renders the Upcoming bucket rank-first despite later due dates', async () => {
     // Rank 3 is due sooner than rank 0 — the bucket's due-date re-sort must
     // not destroy the curated order the SQL promised (#1092 AC6).
-    // Fixed today + derived dates keep both rows inside (today, weekEnd]
-    // year-round; wall-clock offsets drifted into "Later" late in the week
-    // and red CI'd the branch depending on the run day.
-    const today = '2026-07-06'
-    setWeekStart('monday')
-    const sooner = addDaysISO(today, 1)
-    const laterInWeek = addDaysISO(endOfWeekISO(today, 'monday'), -1)
+    // Pinned mid-week Tuesday: with a wall-clock today the +4 fixture lands
+    // past the week boundary (Wed–Sat) and silently re-buckets to "later".
+    const today = '2026-11-10'
     setFilters({
       owners: [],
       priorities: [],
@@ -1954,11 +1956,11 @@ describe('ListView — shortlist badge + filter (#1092)', () => {
           rows: [
             task('r3', 'Sooner but rank 3', {
               shortlist_rank: 3,
-              due_date: sooner
+              due_date: addDaysISO(today, 2)
             }),
             task('r0', 'Later but rank 0', {
               shortlist_rank: 0,
-              due_date: laterInWeek
+              due_date: addDaysISO(today, 4)
             })
           ],
           truncated: false
@@ -3047,6 +3049,110 @@ describe('Tasks view — pinned block (#1091)', () => {
       'Task unpinned'
     )
     expect(document.activeElement).toBe(screen.getByTestId('tasks-pin-p1'))
+  })
+})
+
+describe('ListView — priority pill cycling', () => {
+  beforeEach(() => {
+    resetTaskHubState()
+    mocks.sqliteQuery.mockReset()
+    mocks.blockChangedCallbacks.length = 0
+    resetNotifications()
+    // Hermetic against the module-singleton undo mirror (initTasksUndo leaks
+    // its ctx across tests in a file otherwise).
+    resetTasksUndo()
+  })
+  afterEach(cleanup)
+
+  it('clicking the row pill writes the cycled priority and offers undo', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [task('t1', 'Cycle me', { priority: 3 })],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('tasks-priority-t1'))
+    await flush()
+
+    expect(mocks.setTaskPriority).toHaveBeenCalledWith('t1', 2)
+    const toast = notificationsState.items.find((n) => n.kind === 'success')
+    expect(toast?.message).toBe('Task priority set to Normal')
+    expect(toast?.action?.label).toBe('Undo')
+  })
+
+  it('renders a ghost pill on an unprioritized row, bootstrapping to Low', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [task('t1', 'Unprioritized', { priority: 0 })],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const pill = screen.getByTestId('tasks-priority-t1')
+    expect(pill.textContent).toContain('None')
+    await fireEvent.click(pill)
+    await flush()
+    expect(mocks.setTaskPriority).toHaveBeenCalledWith('t1', 3)
+  })
+
+  it('toast Undo reverses the write while it is still the journal head', async () => {
+    const journal = {
+      canUndo: true,
+      remaining: 1,
+      changedFields: ['priority'],
+      blockIds: ['t1'],
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      source: 'vault'
+    }
+    const getTaskUndoState = vi.fn(async () => ({ ...journal }))
+    const undoLastTaskMutation = vi.fn(async () => ({
+      undone: true,
+      skipped: false,
+      blockIds: ['t1'],
+      skippedBlockIds: [],
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      removedSpawnedId: '',
+      changedFields: ['priority'],
+      remaining: 0
+    }))
+    initTasksUndo({
+      ...makeCtx(),
+      getTaskUndoState,
+      undoLastTaskMutation
+    } as unknown as PluginContext)
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [task('t1', 'Cycle me', { priority: 3 })],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('tasks-priority-t1'))
+    await flush()
+    const toast = notificationsState.items.find((n) => n.kind === 'success')
+    await toast?.action?.run()
+
+    expect(undoLastTaskMutation).toHaveBeenCalledTimes(1)
   })
 })
 

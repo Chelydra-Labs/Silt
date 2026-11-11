@@ -166,6 +166,7 @@ export function getTasksUndoView() {
     writePending: activeWrites > 0,
     remaining: journal.remaining,
     changedFields: journal.changedFields,
+    blockIds: journal.blockIds,
     pageLabel: undoPageLabel(journal.notebook, journal.section, journal.page),
     announcement,
     error
