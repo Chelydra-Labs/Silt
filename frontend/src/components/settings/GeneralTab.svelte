@@ -94,13 +94,20 @@
   // winning over the OS prefill; only a never-written key falls back to it.
   let hasStoredAuthor = $derived(storedCommentAuthor !== undefined)
 
-  // Writable derived: renders the stored pref (or the OS prefill) but lets
-  // the user type over it; recomputes when the store mirrors a post-save or
-  // external config change, so an in-progress edit is only replaced by a
-  // real pref change — never clobbered by unrelated re-renders.
-  let commentAuthor = $derived(
-    hasStoredAuthor ? (storedCommentAuthor as string) : osAuthorPrefill
-  )
+  // The field's text lives in a local draft (the SettingsForm pattern):
+  // seeded and re-synced from the store in $effect.pre — gated on the
+  // touched flag — rather than captured once in a $state initializer. A
+  // writable $derived was ruled out: the config:changed hot-reload
+  // replaces the whole snapshot for ANY external config.yaml write, which
+  // would invalidate the derived and silently discard in-progress typing
+  // in this field.
+  let commentAuthor = $state('')
+  $effect.pre(() => {
+    if (commentAuthorTouched) return
+    commentAuthor = hasStoredAuthor
+      ? (storedCommentAuthor as string)
+      : osAuthorPrefill
+  })
 
   onMount(async () => {
     // Skip the IPC round-trip when any pref is stored — including an
@@ -145,6 +152,9 @@
     )
     if (ok) {
       commentAuthorStatus = 'Saved.'
+      // Retire the touched flag so the sync above adopts the persisted
+      // (trimmed) text mirrored into the store by updatePluginSetting.
+      commentAuthorTouched = false
     } else {
       commentAuthorError = "Couldn't save the comment author."
     }
