@@ -1057,8 +1057,9 @@ Dataview-style tokens attribute the comment:
 | `ts` | `[ts:: YYYY-MM-DDTHH:MM:SS]` (ISO 8601 local) | `[ts:: 2026-08-03T14:22:00]` |
 
 The Tasks hub renders these NOTE children as a thread inside the task's edit
-drawer (`components/CommentThread.svelte`); adding a comment splices a new
-NOTE child through the canonical write chain (`SaveSubtreeBlocks`). The
+drawer (`components/CommentThread.svelte`); adding a comment appends a new
+NOTE child atomically (`ctx.addTaskComment` → `PluginAppendTaskComment` —
+one server-side lock hold, not the generic two-step write chain). The
 author comes from the per-vault `local_author` pref, edited in
 Settings → General → Comment author (prefilled from the OS account name
 until saved); an empty pref writes no `[author::]` token. The `block_meta`
