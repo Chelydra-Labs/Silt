@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import {
     GetCloseToTray,
     SetCloseToTray,
@@ -76,6 +76,11 @@
   let commentAuthorError = $state('')
   let commentAuthorStatus = $state('')
   let osAuthorPrefill = $state('')
+  // Set on the first user keystroke; the late prefill IPC must not clobber
+  // an in-progress edit (widest on first use, when the field is empty and
+  // the user is typing their name).
+  let commentAuthorTouched = false
+  let commentAuthorInputEl = $state<HTMLInputElement | null>(null)
 
   let storedCommentAuthor = $derived.by(() => {
     const v =
@@ -101,21 +106,29 @@
     // explicitly cleared ("") one, which must not be re-prefilled.
     if (hasStoredAuthor) return
     try {
-      osAuthorPrefill = await GetLocalAuthor()
+      const v = await GetLocalAuthor()
+      // The user's in-progress typing wins over the late IPC, same rule
+      // as the close-to-tray hydrate above.
+      if (!commentAuthorTouched) osAuthorPrefill = v
     } catch {
-      osAuthorPrefill = ''
+      if (!commentAuthorTouched) osAuthorPrefill = ''
     }
   })
 
   // "Saved." describes the last save, not the in-progress edit; clear it
   // (and any stale error) as soon as the field changes again.
   function handleCommentAuthorInput() {
+    commentAuthorTouched = true
     commentAuthorStatus = ''
     commentAuthorError = ''
   }
 
   async function saveCommentAuthor() {
     if (commentAuthorInflight) return
+    // Capture focus before the inflight flag disables the input, so it
+    // can be handed back when the save lands — Enter-saves otherwise dump
+    // keyboard users on <body> to restart Tab traversal from the top.
+    const hadFocus = document.activeElement === commentAuthorInputEl
     commentAuthorInflight = true
     commentAuthorError = ''
     commentAuthorStatus = ''
@@ -132,6 +145,12 @@
       commentAuthorError = "Couldn't save the comment author."
     }
     commentAuthorInflight = false
+    if (hadFocus) {
+      // Wait for the DOM to re-enable the input first — focus() on a
+      // still-disabled element is a silent no-op.
+      await tick()
+      commentAuthorInputEl?.focus()
+    }
   }
 
   // Workspace relocation + portable-archive menu (#141, #143).
@@ -596,6 +615,7 @@
           id="general-comment-author-input"
           type="text"
           bind:value={commentAuthor}
+          bind:this={commentAuthorInputEl}
           oninput={handleCommentAuthorInput}
           aria-describedby="general-comment-author-help"
           aria-invalid={commentAuthorError ? 'true' : undefined}

@@ -27,7 +27,7 @@ const mocks = vi.hoisted(() => {
     hotkeys: { open_search: 'Ctrl+P' },
     plugins: { active: [], disabled: [], plugin_settings: {} }
   }
-  return {
+  const m = {
     baseConfig,
     settings: {
       config: baseConfig as typeof baseConfig | null,
@@ -39,7 +39,7 @@ const mocks = vi.hoisted(() => {
     },
     saveConfig: vi.fn(async () => true),
     reloadFromBackend: vi.fn(async () => {}),
-    updatePluginSetting: vi.fn(async () => true),
+    updatePluginSetting: vi.fn(),
     themeState: {
       id: 'cyber_forest',
       name: 'Cyber Forest',
@@ -52,8 +52,29 @@ const mocks = vi.hoisted(() => {
       } as Record<string, string>,
       lightTokens: {} as Record<string, string>,
       error: null as string | null
+    },
+    // Mirrors the real updatePluginSetting (settings/store.svelte.ts): the
+    // single-field write lands in the local config snapshot so the derived
+    // post-save recompute (stored-pref flip + trimmed snap) is exercised.
+    mirrorPluginSetting: async (
+      pluginID: string,
+      key: string,
+      value: unknown
+    ): Promise<boolean> => {
+      const cfg = m.settings.config as typeof baseConfig | null
+      if (cfg) {
+        const ps = (cfg.plugins.plugin_settings ??= {}) as Record<
+          string,
+          Record<string, unknown>
+        >
+        ps[pluginID] ??= {}
+        ps[pluginID][key] = value
+      }
+      return true
     }
   }
+  m.updatePluginSetting.mockImplementation(m.mirrorPluginSetting)
+  return m
 })
 
 const appMocks = vi.hoisted(() =>
@@ -395,9 +416,14 @@ describe('GeneralTab comment author (#1125)', () => {
     screen.getByLabelText('Name on task comments') as HTMLInputElement
 
   beforeEach(() => {
-    mocks.settings.config = mocks.baseConfig
+    // Fresh config per test: the mirroring setter writes into it, and a
+    // shared baseConfig would leak saved prefs across tests.
+    mocks.settings.config = {
+      ...mocks.baseConfig,
+      plugins: { active: [], disabled: [], plugin_settings: {} }
+    }
     mocks.updatePluginSetting.mockReset()
-    mocks.updatePluginSetting.mockResolvedValue(true)
+    mocks.updatePluginSetting.mockImplementation(mocks.mirrorPluginSetting)
     appMocks.GetLocalAuthor.mockReset()
     appMocks.GetLocalAuthor.mockResolvedValue('')
   })
@@ -498,6 +524,9 @@ describe('GeneralTab comment author (#1125)', () => {
       'local_author',
       'Renamed'
     )
+    // The mocked store is a plain object, so the component's derived
+    // refresh can't be observed here; the mirror itself is pinned in
+    // settings/store.svelte.test.ts against the real store.
   })
 
   it('shows role=alert when the save fails', async () => {
@@ -511,6 +540,51 @@ describe('GeneralTab comment author (#1125)', () => {
     await tick()
     const alert = screen.getByRole('alert')
     expect(alert.textContent).toMatch(/couldn't save the comment author/i)
+  })
+
+  it('typing before the prefill IPC resolves keeps the typed text', async () => {
+    let resolveAuthor!: (v: string) => void
+    appMocks.GetLocalAuthor.mockReturnValue(
+      new Promise<string>((res) => {
+        resolveAuthor = res
+      })
+    )
+    render(GeneralTab)
+    await tick()
+    await fireEvent.input(authorInput(), { target: { value: 'Typed' } })
+    resolveAuthor('OS Prefill')
+    await tick()
+    await waitFor(() => {
+      expect(appMocks.GetLocalAuthor).toHaveBeenCalledTimes(1)
+    })
+    // The late IPC must not clobber the in-progress edit.
+    expect(authorInput().value).toBe('Typed')
+  })
+
+  it('Enter-save restores focus to the field once the save lands', async () => {
+    let resolveSave!: (ok: boolean) => void
+    mocks.updatePluginSetting.mockImplementation(
+      () => new Promise<boolean>((res) => (resolveSave = res))
+    )
+    render(GeneralTab)
+    await tick()
+    const input = authorInput()
+    await fireEvent.input(input, { target: { value: 'Dana' } })
+    input.focus()
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await tick()
+    // Disabling the field during the flight moves focus off it; park it
+    // somewhere explicit so the restore below is decisive in jsdom too.
+    expect(input).toBeDisabled()
+    const elsewhere = document.createElement('input')
+    document.body.appendChild(elsewhere)
+    elsewhere.focus()
+    expect(document.activeElement).toBe(elsewhere)
+    resolveSave(true)
+    await waitFor(() => {
+      expect(document.activeElement).toBe(input)
+    })
+    elsewhere.remove()
   })
 })
 
