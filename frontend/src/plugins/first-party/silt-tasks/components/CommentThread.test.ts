@@ -518,6 +518,94 @@ describe('CommentThread', () => {
     expect(addTaskComment).toHaveBeenCalledWith('task-1', 'fresh', 'Dana')
   })
 
+  // Opens the claim-before-await window the pending guard protects: the
+  // settings read pends until the test resolves it, so a second Enter
+  // lands while submit()/submitReply() is still suspended.
+  function deferredSettings() {
+    let resolveSettings!: (v: Record<string, unknown>) => void
+    const pending = new Promise<Record<string, unknown>>((res) => {
+      resolveSettings = res
+    })
+    return {
+      getPluginSettings: vi.fn(() => pending),
+      resolveSettings
+    }
+  }
+
+  it('drops a second Enter during the author re-read (no double post)', async () => {
+    const { getPluginSettings, resolveSettings } = deferredSettings()
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const ctx = makeCtx({ addTaskComment, getPluginSettings })
+    mount({ ctx })
+    await flush()
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'once' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    // Refill the draft so the second Enter falls to the pending guard,
+    // not the empty-text one — pinning the claim-before-await ordering.
+    await fireEvent.input(ta, { target: { value: 'once' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    resolveSettings({ local_author: 'Dana' })
+    await flush()
+    expect(addTaskComment).toHaveBeenCalledTimes(1)
+    expect(addTaskComment).toHaveBeenCalledWith('task-1', 'once', 'Dana')
+  })
+
+  it('drops a second Enter during the reply author re-read (no double post)', async () => {
+    const { getPluginSettings, resolveSettings } = deferredSettings()
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const ctx = makeCtx({
+      addTaskComment,
+      getPluginSettings,
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: 'parent comment',
+          author: 'alice',
+          timestamp: '2026-07-01T09:00:00',
+          parent_id: 'task-1'
+        })
+      ])
+    })
+    mount({ ctx })
+    await flush()
+    const replyBtn = screen.getAllByLabelText('Reply to comment')[0]!
+    await fireEvent.click(replyBtn)
+    await flush()
+    const replyTa = screen.getByLabelText('Reply text') as HTMLTextAreaElement
+    await fireEvent.input(replyTa, { target: { value: 'reply once' } })
+    await fireEvent.keyDown(replyTa, { key: 'Enter' })
+    await fireEvent.input(replyTa, { target: { value: 'reply once' } })
+    await fireEvent.keyDown(replyTa, { key: 'Enter' })
+    resolveSettings({})
+    await flush()
+    expect(addTaskComment).toHaveBeenCalledTimes(1)
+    expect(addTaskComment).toHaveBeenCalledWith(
+      'task-1',
+      'reply once',
+      undefined,
+      'c1'
+    )
+  })
+
+  it('keystrokes typed during the author re-read survive the post', async () => {
+    const { getPluginSettings, resolveSettings } = deferredSettings()
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const ctx = makeCtx({ addTaskComment, getPluginSettings })
+    mount({ ctx })
+    await flush()
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'first' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    // The composer stays editable while the re-read pends; what the user
+    // types now is the start of the next draft, not collateral to wipe.
+    await fireEvent.input(ta, { target: { value: 'second' } })
+    resolveSettings({})
+    await flush()
+    expect(addTaskComment).toHaveBeenCalledWith('task-1', 'first', undefined)
+    expect(ta.value).toBe('second')
+  })
+
   it('block:changed event triggers a reload of the thread', async () => {
     const off = vi.fn()
     let registered: (() => void) | null = null

@@ -269,8 +269,11 @@
     const text = composerText.trim()
     if (!text || composerPending) return
     // Claim before the await below: a second Enter during the author
-    // re-read would otherwise pass the guard and double-post.
+    // re-read would otherwise pass the guard and double-post. The draft
+    // clears here too, while still synchronous — keystrokes landing during
+    // the re-read start the next draft instead of being wiped post-await.
     composerPending = true
+    composerText = ''
     // Re-read the pref at submit: Settings can change the author while
     // this thread stays open, and the mount-time read would be stale.
     await loadAuthor()
@@ -291,7 +294,6 @@
       replies: []
     }
     comments = [...comments, optimistic]
-    composerText = ''
     errorMsg = ''
     errorRetryable = false
     try {
@@ -334,8 +336,10 @@
     const parentId = replyToId
     if (!text || !parentId || replyPending) return
     // Same claim-before-await as submit(): the author re-read opens a
-    // window where a second Enter would otherwise double-post.
+    // window where a second Enter would otherwise double-post, and the
+    // draft must clear before it for the same reason.
     replyPending = true
+    replyText = ''
     await loadAuthor()
     const author = commentAuthor.trim()
     const now = new Date().toISOString().slice(0, 19)
@@ -363,7 +367,6 @@
       }
       return top
     })
-    replyText = ''
     errorMsg = ''
     errorRetryable = false
     try {
