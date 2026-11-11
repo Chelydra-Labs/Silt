@@ -78,8 +78,11 @@
   let osAuthorPrefill = $state('')
   // Set on the first user keystroke; the late prefill IPC must not clobber
   // an in-progress edit (widest on first use, when the field is empty and
-  // the user is typing their name).
-  let commentAuthorTouched = false
+  // the user is typing their name). $state, not a plain let: the sync gate
+  // below reads it, so retiring the flag after a save must re-trigger the
+  // effect for the field to adopt the persisted (trimmed) mirror and stay
+  // attached to external config changes.
+  let commentAuthorTouched = $state(false)
   let commentAuthorInputEl = $state<HTMLInputElement | null>(null)
   let commentAuthorSaveBtn = $state<HTMLButtonElement | null>(null)
 

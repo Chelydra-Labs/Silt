@@ -85,6 +85,7 @@ describe('GeneralTab comment author vs external config reload (#1125)', () => {
     settings.dirty = false
     settings.pendingExternal = false
     appMocks.GetLocalAuthor.mockClear()
+    appMocks.UpdatePluginSetting.mockClear()
   })
   afterEach(() => cleanup())
 
@@ -117,5 +118,55 @@ describe('GeneralTab comment author vs external config reload (#1125)', () => {
     settings.config = snapshot('External Name')
     await tick()
     expect(authorInput().value).toBe('External Name')
+  })
+
+  it('adopts the trimmed persisted value after a save, then still follows external changes', async () => {
+    settings.config = snapshot('Dana')
+    render(GeneralTab)
+    await waitFor(() => {
+      expect(authorInput().value).toBe('Dana')
+    })
+    await fireEvent.input(authorInput(), { target: { value: '  Renamed  ' } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => {
+      expect(appMocks.UpdatePluginSetting).toHaveBeenCalledWith(
+        'silt-tasks',
+        'local_author',
+        'Renamed'
+      )
+    })
+    // The real store mirrors the trimmed write into settings.config;
+    // retiring the touched flag must re-run the sync so the field drops
+    // the padding it was typed with.
+    await waitFor(() => {
+      expect(authorInput().value).toBe('Renamed')
+    })
+    // The sync must stay alive afterwards: an external snapshot swap still
+    // reaches the now-untouched field instead of leaving it detached.
+    settings.config = snapshot('External Name')
+    await tick()
+    expect(authorInput().value).toBe('External Name')
+  })
+
+  it('keeps the field empty after a cleared save (presence, not truthiness)', async () => {
+    settings.config = snapshot('Dana')
+    render(GeneralTab)
+    await waitFor(() => {
+      expect(authorInput().value).toBe('Dana')
+    })
+    await fireEvent.input(authorInput(), { target: { value: '' } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => {
+      expect(appMocks.UpdatePluginSetting).toHaveBeenCalledWith(
+        'silt-tasks',
+        'local_author',
+        ''
+      )
+    })
+    // The mirrored "" is a real stored value for the session: presence
+    // keeps the field empty rather than snapping back to a prefill.
+    await waitFor(() => {
+      expect(authorInput().value).toBe('')
+    })
   })
 })

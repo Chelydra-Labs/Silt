@@ -480,9 +480,11 @@ describe('GeneralTab comment author (#1125)', () => {
       'local_author',
       ''
     )
-    // A cleared pref is a real value — the field must not snap back to
-    // the OS prefill once the save lands.
-    expect(authorInput().value).toBe('')
+    // The mocked store is a plain object, so the post-save re-sync cannot
+    // observe the mirrored "" — the "field stays empty after a cleared
+    // save" pin lives against the real store in
+    // GeneralTab.external-config.test.ts. What this mock pins is the ""
+    // write itself and the status lifecycle around it.
     expect(screen.getByText('Saved.')).toBeInTheDocument()
     // Typing again retires the stale "Saved." status over unsaved edits.
     await fireEvent.input(authorInput(), { target: { value: 'x' } })

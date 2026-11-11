@@ -489,6 +489,25 @@ describe('CommentThread', () => {
     )
   })
 
+  it('keeps the loaded author when only the submit-time re-read fails', async () => {
+    // Mount read succeeds, submit re-read rejects: discarding the
+    // mount-time author would silently downgrade attribution to
+    // "Unknown" over a transient IPC failure.
+    const getPluginSettings = vi
+      .fn()
+      .mockResolvedValueOnce({ local_author: 'Dana' })
+      .mockRejectedValue(new Error('ipc died'))
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const ctx = makeCtx({ addTaskComment, getPluginSettings })
+    mount({ ctx })
+    await flush()
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'keep author' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    await flush()
+    expect(addTaskComment).toHaveBeenCalledWith('task-1', 'keep author', 'Dana')
+  })
+
   it('whitespace-only pref ("  ") posts with author undefined', async () => {
     seedSettings({ local_author: '   ' })
     const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
@@ -586,6 +605,41 @@ describe('CommentThread', () => {
       undefined,
       'c1'
     )
+  })
+
+  it('disables reply Cancel while the reply is in flight', async () => {
+    // Canceling mid-flight would close the composer the failure path
+    // restores its draft into; the button (and the Escape route through
+    // cancelReply) must hold until the post settles.
+    const { getPluginSettings, resolveSettings } = deferredSettings()
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const ctx = makeCtx({
+      addTaskComment,
+      getPluginSettings,
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: 'parent comment',
+          author: 'alice',
+          timestamp: '2026-07-01T09:00:00',
+          parent_id: 'task-1'
+        })
+      ])
+    })
+    mount({ ctx })
+    await flush()
+    await fireEvent.click(screen.getAllByLabelText('Reply to comment')[0]!)
+    await flush()
+    const replyTa = screen.getByLabelText('Reply text') as HTMLTextAreaElement
+    await fireEvent.input(replyTa, { target: { value: 'reply' } })
+    await fireEvent.keyDown(replyTa, { key: 'Enter' })
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+    resolveSettings({})
+    await flush()
+    // Success closes the composer (replyToId resets) — the Cancel button
+    // is gone, not merely re-enabled.
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
+    expect(addTaskComment).toHaveBeenCalledTimes(1)
   })
 
   it('keystrokes typed during the author re-read survive the post', async () => {

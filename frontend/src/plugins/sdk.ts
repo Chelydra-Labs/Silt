@@ -415,9 +415,10 @@ export interface PluginContext {
    * persisted until saved). The user's explicit local_author pref (if set)
    * always wins over this.
    *
-   * Not capability-gated: the OS account name is treated as non-secret (it
-   * already appears in audit events). Revisit if Silt ever hosts untrusted
-   * plugins.
+   * Not capability-gated: the value is treated as non-secret — the
+   * username fallback already appears in audit events, and the display
+   * name is held to the same standard. Revisit if Silt ever hosts
+   * untrusted plugins.
    */
   getLocalAuthor: () => Promise<string>
   /**

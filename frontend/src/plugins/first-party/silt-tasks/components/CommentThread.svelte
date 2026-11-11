@@ -82,6 +82,10 @@
   // Configured in Settings → General (#1125); "" means no author token
   // (renderer shows "Unknown").
   let commentAuthor = $state('')
+  // Whether loadAuthor ever succeeded: a failed re-read at submit must not
+  // discard the mount-time author (a transient IPC failure would otherwise
+  // silently downgrade attribution to "Unknown").
+  let authorLoaded = false
   let composerPending = $state(false)
   let liveMessage = $state('')
   // Inline reply composer: which comment is being replied to, plus its draft.
@@ -228,9 +232,12 @@
       const slice = (await ctx.getPluginSettings()) ?? {}
       const v = slice['local_author']
       commentAuthor = typeof v === 'string' ? v : ''
+      authorLoaded = true
     } catch {
-      // Non-fatal: posts carry no author token (renderer shows "Unknown").
-      commentAuthor = ''
+      // Non-fatal: keep the last-known-good author — only a failure before
+      // any successful read leaves nothing known, in which case posts carry
+      // no author token (renderer shows "Unknown").
+      if (!authorLoaded) commentAuthor = ''
     }
   }
 
@@ -326,6 +333,9 @@
   }
 
   function cancelReply() {
+    // Closing mid-flight would strand the in-flight post's draft restore
+    // in a composer that no longer renders; the failure path re-opens it.
+    if (replyPending) return
     replyToId = null
     replyText = ''
     void tick().then(() => replyReturnEl?.focus())
@@ -392,6 +402,9 @@
         replies: top.replies.filter((r) => r.key !== optimisticKey)
       }))
       replyText = text
+      // Re-open the composer alongside the draft: a cancel/Escape during
+      // flight (or a second startReply) may have closed or moved it.
+      replyToId = parentId
       errorMsg = friendlyCaughtError(e)
       errorRetryable = false
       liveMessage = 'Reply failed to post'
@@ -548,8 +561,9 @@
         <div class="flex items-center justify-end gap-2">
           <button
             type="button"
-            class="px-2 py-0.5 rounded text-type-xs font-label-sm text-text-muted hover:text-text-primary transition-colors"
+            class="px-2 py-0.5 rounded text-type-xs font-label-sm text-text-muted hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             onclick={cancelReply}
+            disabled={replyPending}
           >
             Cancel
           </button>
