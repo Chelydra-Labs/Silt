@@ -18,6 +18,8 @@
   import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
   import QuickAddTask from '../components/QuickAddTask.svelte'
   import PinToggle from '../components/PinToggle.svelte'
+  import TaskContextMenu from '../components/TaskContextMenu.svelte'
+  import { useTaskContextMenu } from '../components/useTaskContextMenu.svelte'
   import { friendlyCaughtError } from '../errors'
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
@@ -44,6 +46,10 @@
     type TaskViewProps
   } from '../types'
   import { dueDateClass, dueDateTextClass } from '../dueDate'
+  import {
+    isContextMenuKey,
+    openContextMenuFromKeyboard
+  } from '../../../../lib/contextMenuKey'
   import ErrorBanner from '../components/ErrorBanner.svelte'
   import { getTaskHubQueryContext, getTaskHubViewState } from '../state.svelte'
   import { binByDimension, type GroupSection } from '../grouping'
@@ -89,6 +95,9 @@
   let markDownTimer: ReturnType<typeof setTimeout> | null = null
   let pinError = $state('')
   let pinErrorTimer: ReturnType<typeof setTimeout> | null = null
+  // Task-menu write failures, hoisted into the top strip (#1116): the menu
+  // component owns the 8s auto-dismiss; this only renders the message.
+  let menuError = $state('')
   // Pin writes re-bin the row into a different {#each} block, which destroys
   // the focused button; this holds the id to chase after the reload.
   let pendingPinFocus = $state<{
@@ -104,6 +113,8 @@
   let selectedTask = $state<TaskDetail | null>(null)
   let selectedFilteredOut = $state(false)
   let subEditorTask = $state<TaskDetail | null>(null)
+  // Right-click / Shift+F10 task menu (#1116), hosted once for every row.
+  const taskMenu = useTaskContextMenu()
   let hostEl = $state<HTMLDivElement | null>(null)
   let hostWidth = $state(0)
   /** False until the host has a measured width — avoids overlay→pane flash. */
@@ -488,10 +499,11 @@
           document.querySelectorAll<HTMLElement>('[data-block-id]')
         ).find((el) => el.dataset.blockId === nextId)
       : null
+    // [data-task-primary] = the row's labeled content control, the shared
+    // focus landing for removal rescues (see useTaskContextMenu).
     const target =
-      row?.querySelector<HTMLElement>(
-        'button[aria-label^="Edit metadata for"]'
-      ) ?? document.querySelector<HTMLElement>('[data-tasks-hub] h1')
+      row?.querySelector<HTMLElement>('[data-task-primary]') ??
+      document.querySelector<HTMLElement>('[data-tasks-hub] h1')
     target?.focus()
   }
 
@@ -915,6 +927,7 @@
     data-task-hit
     aria-current={selectedTask?.id === item.id ? 'true' : undefined}
     role="listitem"
+    oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
     ondragover={(e) => onRowDragOver(e, item, groupKey)}
     ondrop={(e) => onRowDrop(e, item, groupKey)}
     ondragleave={() => {
@@ -950,9 +963,16 @@
           e.preventDefault()
           e.stopPropagation()
           openSubEditor(item)
+        } else if (isContextMenuKey(e)) {
+          // Same per-node handler as a right-click: dispatch a synthetic
+          // contextmenu that bubbles to the row's oncontextmenu.
+          e.preventDefault()
+          openContextMenuFromKeyboard(e.currentTarget as HTMLElement)
         }
       }}
       class="flex-1 min-w-0 rounded text-left bg-transparent border-none p-0 cursor-pointer focus-visible:outline-none"
+      aria-keyshortcuts="Enter Shift+Enter Shift+F10"
+      data-task-primary
       aria-label={`Edit metadata for ${item.clean_content}${item.notebook === STANDALONE_TASKS_NOTEBOOK ? ', standalone task' : ''}${item.due_date ? `, due ${item.due_date}` : ', no due date'}${item.subtask_total > 0 ? `, ${item.subtask_done} of ${item.subtask_total} subtasks done` : ''}${item.shortlist_rank != null ? `, shortlist rank ${item.shortlist_rank}` : ''}`}
     >
       <div
@@ -1080,6 +1100,14 @@
       message={`Couldn't update pin: ${pinError}`}
       dataTestId="tasks-pin-error"
       onDismiss={() => setPinError('')}
+    />
+  {/if}
+
+  {#if menuError}
+    <ErrorBanner
+      message={menuError}
+      dataTestId="task-menu-error"
+      onDismiss={() => (menuError = '')}
     />
   {/if}
 
@@ -1483,6 +1511,14 @@
   cardText={blockedGuard.pending?.context.clean_content}
   onConfirm={confirmBlockedDone}
   onCancel={cancelBlockedDone}
+/>
+<TaskContextMenu
+  {ctx}
+  menu={taskMenu.menu}
+  onClose={taskMenu.close}
+  onEditTask={selectTask}
+  onOpenSubEditor={openSubEditor}
+  onError={(message) => (menuError = message)}
 />
 
 <style>

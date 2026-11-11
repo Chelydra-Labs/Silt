@@ -702,6 +702,98 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     )
   })
 
+  it('round-trips an expanded <details open> section (#1123)', () => {
+    const blocks = [
+      mkBlock('DETAILS', {
+        clean_text:
+          '<details open>\n<summary>Title</summary>\ninner note\n</details>'
+      })
+    ]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content[0]?.type).toBe('details')
+    expect(doc.content[0]?.attrs?.open).toBe(true)
+    const back = docToBlocks(doc)
+    expect(back).toHaveLength(1)
+    expect(back[0].clean_text).toBe(
+      '<details open>\n<summary>Title</summary>\ninner note\n</details>'
+    )
+  })
+
+  it('round-trips a collapsed section as bare <details> (#1123)', () => {
+    // Back-compat: files predating #1123 carry no `open` attr — they load
+    // collapsed and re-save without the attr.
+    const blocks = [
+      mkBlock('DETAILS', {
+        clean_text: '<details>\n<summary>T</summary>\nbody\n</details>'
+      })
+    ]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content[0]?.attrs?.open).toBe(false)
+    const back = docToBlocks(doc)
+    expect(back[0].clean_text).toBe(
+      '<details>\n<summary>T</summary>\nbody\n</details>'
+    )
+  })
+
+  it('parses open-attr variants and canonicalizes on save (#1123)', () => {
+    // HTML boolean attrs are case-insensitive and valueless; any `open=…`
+    // form — presence, not value — is expanded per HTML semantics.
+    for (const opener of [
+      '<details OPEN="">',
+      "<details open=''>",
+      '<details open="false">',
+      '<details class="x" open>'
+    ]) {
+      const doc = blocksToDoc([
+        mkBlock('DETAILS', {
+          clean_text: `${opener}\n<summary>T</summary>\nbody\n</details>`
+        })
+      ])
+      expect(doc.content[0]?.attrs?.open).toBe(true)
+      // Silt's canonical form is the bare `open` attr.
+      expect(docToBlocks(doc)[0].clean_text).toContain('<details open>\n')
+    }
+  })
+
+  it('does not read `open` inside another attribute value (#1123)', () => {
+    // Hand-authored files may carry `open` as a word inside a quoted attr
+    // value; only a real `open` attribute expands the section.
+    const doc = blocksToDoc([
+      mkBlock('DETAILS', {
+        clean_text:
+          '<details class="my open thing">\n<summary>T</summary>\nbody\n</details>'
+      })
+    ])
+    expect(doc.content[0]?.attrs?.open).toBe(false)
+    expect(docToBlocks(doc)[0].clean_text).toContain('<details>\n')
+  })
+
+  it('round-trips nested details with independent open state (#1123)', () => {
+    const html = [
+      '<details open>',
+      '<summary>Outer</summary>',
+      '<details>',
+      '<summary>Inner</summary>',
+      'inner body',
+      '</details>',
+      '</details>'
+    ].join('\n')
+    const doc = blocksToDoc([mkBlock('DETAILS', { clean_text: html })])
+    const outer = doc.content[0]
+    expect(outer?.attrs?.open).toBe(true)
+    const outerContent = (outer?.content || []).find(
+      (c) => c.type === 'detailsContent'
+    )
+    const nested = (outerContent?.content || []).find(
+      (c) => c.type === 'details'
+    )
+    expect(nested?.attrs?.open).toBe(false)
+    // Each level re-serializes with its own open state.
+    const back = docToBlocks(doc)
+    expect(back).toHaveLength(1)
+    expect(back[0].clean_text).toBe(html)
+  })
+
   it('handles an unterminated <details> gracefully (#183)', () => {
     // No closing tag → the Go parser leaves it as a NOTE; the converter
     // sees NOTE and produces a noteBlock (no crash, no loss).
@@ -2373,8 +2465,9 @@ describe('/meeting section round-trip (#1105)', () => {
     for (const label of FIELD_LABELS) {
       expect(saved[0].clean_text).toContain(label)
     }
-    // No-disk-change invariant: the serializer never writes the `open` attr.
-    expect(saved[0].clean_text).not.toContain('open=')
+    // No-disk-change invariant, flipped by #1123: expanded-at-insert is
+    // persisted — the opener carries the `open` attr.
+    expect(saved[0].clean_text).toContain('<details open>')
     expect(saved[1]).toMatchObject({
       type: 'NOTE',
       id: bodyId,
@@ -2386,11 +2479,10 @@ describe('/meeting section round-trip (#1105)', () => {
       clean_text: 'follow-up'
     })
 
-    // Reopen: reparse keeps the section first with the summary intact, and
-    // collapses it — the parser hardcodes `open: false` (file-is-truth).
+    // Reopen: the persisted `open` attr restores the expanded state (#1123).
     const reopened = blocksToDoc(saved)
     expect(reopened.content?.[0]?.type).toBe('details')
-    expect(reopened.content?.[0]?.attrs?.open).toBe(false)
+    expect(reopened.content?.[0]?.attrs?.open).toBe(true)
     const summary = reopened.content?.[0]?.content?.find(
       (c) => c.type === 'detailsSummary'
     )

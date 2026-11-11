@@ -19,11 +19,14 @@
   // Calendar mode with a non-'none'/non-'dueDate' groupBy active.
   import { onMount, onDestroy, tick } from 'svelte'
   import Popover from '../../../../components/Popover.svelte'
+  import ContextMenu from '../../../../components/ContextMenu.svelte'
   import { plusDaysISO } from '../../../sdk'
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import ErrorBanner from '../components/ErrorBanner.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
   import QuickAddTask from '../components/QuickAddTask.svelte'
+  import TaskContextMenu from '../components/TaskContextMenu.svelte'
+  import { useTaskContextMenu } from '../components/useTaskContextMenu.svelte'
   import {
     coerceTaskRow,
     laneLabel,
@@ -51,6 +54,10 @@
     monthWeeks as computeMonthWeeks
   } from '../../../../lib/dateGrid'
   import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
+  import {
+    isContextMenuKey,
+    openContextMenuFromKeyboard
+  } from '../../../../lib/contextMenuKey'
 
   type Props = TaskViewProps
 
@@ -83,6 +90,9 @@
   let loading = $state(true)
   let errorMsg = $state('')
   let resultsTruncated = $state(false)
+  // Task-menu write failures, hoisted into the top strip (#1116): the menu
+  // component owns the 8s auto-dismiss; this only renders the message.
+  let menuError = $state('')
   let selectedTask = $state<TaskDetail | null>(null)
   let selectedFilteredOut = $state(false)
 
@@ -96,6 +106,19 @@
     selectedFilteredOut = false
   }
   let subEditorTask = $state<TaskDetail | null>(null)
+  // Right-click / Shift+F10 task menu (#1116), hosted once for every chip.
+  const taskMenu = useTaskContextMenu()
+  // Right-click / Shift+F10 day-cell menu (#1119), hosted once for every
+  // gridcell. The anchor cell doubles as the close-time focus-restore target
+  // — gridcells are focusable through the roving tabindex — and scopes the
+  // primitive's scroll-dismissal to the calendar's scroll container.
+  interface DayCellMenuState {
+    day: Date
+    x: number
+    y: number
+    anchorEl: HTMLElement | null
+  }
+  let dayMenu = $state<DayCellMenuState | null>(null)
   // null = closed; '' = open undated; YYYY-MM-DD = open for that day.
   let quickAddDate = $state<string | null>(null)
 
@@ -238,8 +261,16 @@
   let agendaHeading = $derived.by(() => {
     if (!agendaDate) return ''
     const [year, month, day] = agendaDate.split('-').map(Number)
-    return `${MONTHS[(month ?? 1) - 1]} ${day}, ${year}`
+    return dayHeading(new Date(year ?? 1970, (month ?? 1) - 1, day ?? 1))
   })
+
+  /**
+   * Human label for a calendar day, shared by the agenda heading and the
+   * day-cell menu copy (#1119) so both read the exact same date format.
+   */
+  function dayHeading(day: Date): string {
+    return `${MONTHS[day.getMonth()]} ${day.getDate()}, ${day.getFullYear()}`
+  }
 
   function focusAgendaItem(index: number): void {
     agendaFocusIdx = index
@@ -252,7 +283,13 @@
 
   function openDayAgenda(e: MouseEvent, date: string): void {
     e.stopPropagation()
-    agendaAnchor = e.currentTarget as HTMLElement
+    openAgendaForDate(date, e.currentTarget as HTMLElement)
+  }
+
+  // Shared open path for both agenda triggers — the "+N more" affordance and
+  // the day-cell menu (#1119) — so anchoring and focus land identically.
+  function openAgendaForDate(date: string, anchor: HTMLElement | null): void {
+    agendaAnchor = anchor
     agendaDate = date
     focusAgendaItem(0)
   }
@@ -542,6 +579,37 @@
     quickAddDate = null
   }
 
+  // --- Day-cell menu (#1119) -------------------------------------------
+  // Right-click on a day cell opens a two-item menu (add task / agenda) on
+  // the shared ContextMenu primitive. Chips, the + button, "+N more", and
+  // the quick-add input keep their own context behavior — the task menu and
+  // the native text menu — so only events on the cell surface itself open
+  // the day menu (the event still bubbles here from those children).
+  function onCellContextMenu(e: MouseEvent, day: Date): void {
+    const t = e.target as HTMLElement
+    if (t.closest('button,input')) return
+    e.preventDefault()
+    dayMenu = {
+      day,
+      x: e.clientX,
+      y: e.clientY,
+      anchorEl: e.currentTarget as HTMLElement
+    }
+  }
+
+  // Item handlers capture the menu state by value: reading `dayMenu` after
+  // nulling it would re-evaluate a closed menu (same lesson as the task
+  // menu's item handlers).
+  function addTaskFromDayMenu(m: DayCellMenuState): void {
+    dayMenu = null
+    openQuickAddForDay(m.day)
+  }
+
+  function openAgendaFromDayMenu(m: DayCellMenuState): void {
+    dayMenu = null
+    openAgendaForDate(ymd(m.day), m.anchorEl)
+  }
+
   // --- Drag-and-drop reschedule (lifted from silt-calendar, #292/#293/#294)
   // A chip is draggable onto any day cell OR the "No Date" strip. Drop on a
   // day rewrites [due:: YYYY-MM-DD]; drop on the strip clears the due date.
@@ -663,6 +731,11 @@
       e.preventDefault()
       e.stopPropagation()
       subEditorTask = item
+    } else if (isContextMenuKey(e)) {
+      // Same per-chip handler as a right-click: dispatch a synthetic
+      // contextmenu on the focused chip (#1116 keyboard parity).
+      e.preventDefault()
+      openContextMenuFromKeyboard(e.currentTarget as HTMLElement)
     }
   }
 
@@ -674,9 +747,27 @@
   // (monthWeeks is [] in week view, weekDays is [] in month view).
   function onCellKeydown(e: KeyboardEvent, day: Date) {
     if (e.altKey) return
+    const t = e.target as HTMLElement
+    // The quick-add input owns all of its keys: arrows must move its caret,
+    // not the roving focus (a focus jump would blur-cancel an empty draft).
+    if (t.closest('input')) return
+    // Interactive button children (chips, +, "+N more") own their Enter and
+    // context-menu keys: swallowing Enter would kill the chip's native
+    // click → drawer, and re-dispatching here would stack the day menu on
+    // top of the chip's own menu. Returning before preventDefault lets
+    // those defaults run, matching the onclick/oncontextmenu guards below.
+    if (t.closest('button') && (e.key === 'Enter' || isContextMenuKey(e)))
+      return
     if (e.key === 'Enter') {
       e.preventDefault()
       openQuickAddForDay(day)
+      return
+    }
+    if (isContextMenuKey(e)) {
+      // Same per-cell handler as a right-click: dispatch a synthetic
+      // contextmenu on the focused cell (#1119 keyboard parity).
+      e.preventDefault()
+      openContextMenuFromKeyboard(e.currentTarget as HTMLElement)
       return
     }
     const map: Record<string, number> = {
@@ -833,6 +924,14 @@
     />
   {/if}
 
+  {#if menuError}
+    <ErrorBanner
+      message={menuError}
+      dataTestId="task-menu-error"
+      onDismiss={() => (menuError = '')}
+    />
+  {/if}
+
   {#if resultsTruncated}
     <div
       class="px-6 py-2 bg-status-warn/10 border-b border-status-warn/30 text-status-warn text-type-sm font-body-md flex items-center gap-2"
@@ -948,7 +1047,9 @@
                       (items.length + overdueHere.length === 1 ? '' : 's')
                     : ''
                 }`}
+                aria-keyshortcuts="Enter Shift+F10"
                 onkeydown={(e) => onCellKeydown(e, day)}
+                oncontextmenu={(e) => onCellContextMenu(e, day)}
                 ondragover={(e) => onCellDragOver(e, day)}
                 ondragleave={(e) => onCellDragLeave(e, day)}
                 ondrop={(e) => onCellDrop(e, day)}
@@ -998,9 +1099,10 @@
                   <button
                     type="button"
                     draggable="true"
-                    aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                    aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Shift+F10"
                     ondragstart={(e) => onCardDragStart(e, item)}
                     ondragend={onCardDragEnd}
+                    oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
                     onkeydown={(e) => onCardKeydown(e, item)}
                     onclick={() => selectTask(item)}
                     data-status={item.status}
@@ -1018,6 +1120,8 @@
                   >
                 {/each}
                 {#if items.length > 3}
+                  <!-- data-task-hit="overflow": a control, not a task — opts
+                       out of the context menu's neighbor indexing. -->
                   <button
                     type="button"
                     onclick={(e) => openDayAgenda(e, ymd(day))}
@@ -1026,7 +1130,7 @@
                     aria-controls="calendar-day-agenda"
                     aria-label={`Show ${items.length - 3} more tasks for ${ymd(day)}`}
                     data-testid={`calendar-more-${ymd(day)}`}
-                    data-task-hit
+                    data-task-hit="overflow"
                     class="w-full rounded-md border border-transparent px-1 py-0.5 text-left text-type-3xs font-label-sm text-text-muted transition-colors hover:border-surface-card-border hover:bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
                     >+{items.length - 3} more</button
                   >
@@ -1039,9 +1143,10 @@
                     type="button"
                     draggable="true"
                     data-overdue-surfaced="true"
-                    aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                    aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Shift+F10"
                     ondragstart={(e) => onCardDragStart(e, item)}
                     ondragend={onCardDragEnd}
+                    oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
                     onkeydown={(e) => onCardKeydown(e, item)}
                     onclick={() => selectTask(item)}
                     data-task-hit
@@ -1060,6 +1165,7 @@
                   >
                 {/each}
                 {#if overdueHere.length > 2}
+                  <!-- Same overflow opt-out as the "+N more" button above. -->
                   <button
                     type="button"
                     onclick={(e) => openDayAgenda(e, ymd(day))}
@@ -1068,7 +1174,7 @@
                     aria-controls="calendar-day-agenda"
                     aria-label={`Show ${overdueHere.length - 2} more overdue tasks for ${ymd(day)}`}
                     data-testid={`calendar-overdue-more-${ymd(day)}`}
-                    data-task-hit
+                    data-task-hit="overflow"
                     class="w-full rounded-md border border-error/20 bg-error/10 px-1 py-0.5 text-left text-type-3xs font-label-sm text-error transition-colors hover:border-error hover:bg-error-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
                     >+{overdueHere.length - 2} overdue</button
                   >
@@ -1114,6 +1220,7 @@
                     (items.length + overdueHere.length === 1 ? '' : 's')
                   : ''
               }`}
+              aria-keyshortcuts="Enter Shift+F10"
               ondragover={(e) => onCellDragOver(e, day)}
               ondragleave={(e) => onCellDragLeave(e, day)}
               ondrop={(e) => onCellDrop(e, day)}
@@ -1123,6 +1230,7 @@
                 openQuickAddForDay(day)
               }}
               onkeydown={(e) => onCellKeydown(e, day)}
+              oncontextmenu={(e) => onCellContextMenu(e, day)}
             >
               <div
                 class="flex items-center justify-between pb-2 border-b border-surface-panel-border"
@@ -1158,9 +1266,10 @@
                 <button
                   type="button"
                   draggable="true"
-                  aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                  aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Shift+F10"
                   ondragstart={(e) => onCardDragStart(e, item)}
                   ondragend={onCardDragEnd}
+                  oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
                   onkeydown={(e) => onCardKeydown(e, item)}
                   onclick={() => selectTask(item)}
                   data-status={item.status}
@@ -1182,9 +1291,10 @@
                   type="button"
                   draggable="true"
                   data-overdue-surfaced="true"
-                  aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                  aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Shift+F10"
                   ondragstart={(e) => onCardDragStart(e, item)}
                   ondragend={onCardDragEnd}
+                  oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
                   onkeydown={(e) => onCardKeydown(e, item)}
                   onclick={() => selectTask(item)}
                   data-task-hit
@@ -1251,9 +1361,10 @@
               <button
                 type="button"
                 draggable="true"
-                aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Shift+F10"
                 ondragstart={(e) => onCardDragStart(e, item)}
                 ondragend={onCardDragEnd}
+                oncontextmenu={(e) => taskMenu.openFromEvent(e, item)}
                 onkeydown={(e) => onCardKeydown(e, item)}
                 onclick={() => selectTask(item)}
                 data-task-hit
@@ -1400,6 +1511,53 @@
   onMetaChanged={reload}
   onOpenSubEditor={() => selectedTask && (subEditorTask = selectedTask)}
 />
+<TaskContextMenu
+  {ctx}
+  menu={taskMenu.menu}
+  onClose={taskMenu.close}
+  onEditTask={selectTask}
+  onOpenSubEditor={(task) => (subEditorTask = task)}
+  onError={(message) => (menuError = message)}
+/>
+
+{#if dayMenu}
+  {@const m = dayMenu}
+  <!-- Day-cell menu (#1119): two items over the existing quick-add and
+       agenda paths. m is captured at render so the item handlers never
+       re-read a closed menu. -->
+  <ContextMenu
+    open={true}
+    anchor={{ x: m.x, y: m.y }}
+    anchorEl={m.anchorEl}
+    onClose={() => (dayMenu = null)}
+    ariaLabel={`Day actions for ${dayHeading(m.day)}`}
+    backdropTestId="day-menu-backdrop"
+    menuTestId="calendar-day-menu"
+  >
+    <button
+      type="button"
+      role="menuitem"
+      onclick={() => addTaskFromDayMenu(m)}
+      data-testid="calendar-day-menu-add"
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >add</span
+      >
+      <span>Add task for {dayHeading(m.day)}</span>
+    </button>
+    <button
+      type="button"
+      role="menuitem"
+      onclick={() => openAgendaFromDayMenu(m)}
+      data-testid="calendar-day-menu-agenda"
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >event_note</span
+      >
+      <span>Open agenda</span>
+    </button>
+  </ContextMenu>
+{/if}
 
 {#if subEditorTask}
   <TaskSubEditorModal

@@ -29,6 +29,10 @@
     type DragItem,
     type DropTarget
   } from '../../lib/sidebar/useDragDrop'
+  import {
+    isContextMenuKey,
+    openContextMenuFromKeyboard
+  } from '../../lib/contextMenuKey'
   import { shortcutBinding } from '../../settings/shortcutActions'
   import { settings } from '../../settings/store.svelte'
 
@@ -289,36 +293,10 @@
       } else if (node.parentId) destination = node.parentId
     } else if (event.key === 'Enter' || event.key === ' ') {
       activateTreeNode(id)
-    } else if (
-      event.key === 'ContextMenu' ||
-      (event.shiftKey && event.key === 'F10')
-    ) {
-      event.preventDefault()
-      const bounds = target?.getBoundingClientRect()
-      const syntheticEvent = new MouseEvent('contextmenu', {
-        bubbles: true,
-        clientX: bounds?.left ?? 0,
-        clientY: bounds?.bottom ?? 0
-      })
-      if (node.kind === 'section') {
-        openContextMenu(
-          syntheticEvent,
-          'section',
-          activeNotebook,
-          node.section,
-          '',
-          target
-        )
-      } else {
-        openContextMenu(
-          syntheticEvent,
-          'page',
-          activeNotebook,
-          node.section,
-          node.page,
-          target
-        )
-      }
+    } else if (isContextMenuKey(event)) {
+      // Dispatch a synthetic contextmenu on the row so the same per-node
+      // oncontextmenu handler runs for keyboard and mouse.
+      openContextMenuFromKeyboard(target)
     } else if (
       event.key.length === 1 &&
       !event.shiftKey &&
@@ -668,6 +646,10 @@
     error={preferencesError}
     onOpen={handleQuickPage}
     onToggleFavorite={(ref) => void toggleFavorite(ref)}
+    onOpenInNewTab={(ref) =>
+      // Reuses the tree's existing refused-open pin funnel (double/middle
+      // click parity) — no separate open-in-new-tab contract needed.
+      onPinPage(ref.notebook, ref.section, ref.page)}
     onRetry={() => void loadNavigationPreferences()}
   />
 {:else}

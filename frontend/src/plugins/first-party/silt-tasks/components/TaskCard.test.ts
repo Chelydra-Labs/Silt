@@ -58,7 +58,8 @@ function makeProps(card: TaskDetail) {
     onKeydown: () => {},
     onSelect: () => {},
     onPinToggle: () => {},
-    onPriorityCycle: () => {}
+    onPriorityCycle: () => {},
+    onContextMenu: () => {}
   }
 }
 

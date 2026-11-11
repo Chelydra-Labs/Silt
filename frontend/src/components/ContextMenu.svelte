@@ -3,7 +3,8 @@
   import type { Snippet } from 'svelte'
   import {
     clampToViewport,
-    findScrollableAncestor
+    findScrollableAncestor,
+    submenuPosition
   } from '../lib/editor/popoverPositioning'
 
   interface Props {
@@ -46,14 +47,174 @@
   let menuEl = $state<HTMLDivElement | null>(null)
   let menuPos = $state<{ left: number; top: number } | null>(null)
 
+  // --- submenu flyouts (WAI-ARIA APG menu pattern) -------------------------
+  //
+  // Consumers opt a menuitem into a flyout by giving it aria-haspopup="menu"
+  // and authoring the submenu as a sibling `[role="menu"]` immediately after
+  // it, inside the same children snippet. The primitive hides those nested
+  // menus, hosts open/close + positioning, and wires the parent's
+  // aria-expanded / the flyout's aria-labelledby.
+
+  /** Open flyout levels, outermost first (only one per menu level). */
+  let openLevels: { parent: HTMLElement; menu: HTMLElement }[] = []
+  let triggerIdSeq = 0
+
+  function isParentItem(el: Element | null): boolean {
+    return (
+      !!el &&
+      el.getAttribute('role') === 'menuitem' &&
+      el.getAttribute('aria-haspopup') === 'menu'
+    )
+  }
+
+  function isDisabledItem(el: HTMLElement): boolean {
+    return (
+      (el instanceof HTMLButtonElement && el.disabled) ||
+      el.getAttribute('aria-disabled') === 'true'
+    )
+  }
+
+  /** The submenu authored right after a parent item (APG sibling placement). */
+  function findSubmenu(parent: HTMLElement): HTMLElement | null {
+    let sib = parent.nextElementSibling
+    while (sib) {
+      if (sib.getAttribute('role') === 'menu') return sib as HTMLElement
+      // Hit the next item before any menu — no submenu was authored.
+      if (sib.getAttribute('role') === 'menuitem') return null
+      sib = sib.nextElementSibling
+    }
+    return null
+  }
+
+  function focusFirstItem(container: HTMLElement) {
+    const first = scopedItems(container)[0]
+    if (first) first.focus()
+    else container.focus()
+  }
+
+  /**
+   * Items of one menu level: descendants of `menu` whose nearest menu is
+   * `menu` itself, so flyout items never leak into the parent level's roving
+   * order. Disabled items are skipped (existing primitive contract).
+   */
+  function scopedItems(menu: HTMLElement): HTMLElement[] {
+    return Array.from(
+      menu.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).filter(
+      (el) => el.closest('[role="menu"]') === menu && !isDisabledItem(el)
+    )
+  }
+
+  /**
+   * Seed aria-expanded="false" on every parent item (flyouts are authored
+   * inside the root menu's DOM, so this covers all levels) so screen readers
+   * announce the collapsed state before first interaction. Idempotent:
+   * existing aria-expanded values are left alone.
+   */
+  function seedAriaExpanded(root: HTMLElement) {
+    root
+      .querySelectorAll('[role="menuitem"][aria-haspopup="menu"]')
+      .forEach((el) => {
+        if (!el.hasAttribute('aria-expanded')) {
+          el.setAttribute('aria-expanded', 'false')
+        }
+      })
+  }
+
+  function openSubmenu(parent: HTMLElement, sub: HTMLElement) {
+    // Items can be inserted after the open-time seed pass (dynamic lists
+    // while the menu stays open); the seed is idempotent, so re-run it.
+    if (menuEl) seedAriaExpanded(menuEl)
+
+    // Close levels that are not on the path to this parent (e.g. switching
+    // from one root parent's flyout to another's).
+    while (
+      openLevels.length &&
+      !openLevels[openLevels.length - 1].menu.contains(parent)
+    ) {
+      closeTopLevel(false)
+    }
+
+    if (!parent.id) parent.id = `ctx-sub-trigger-${++triggerIdSeq}`
+    sub.setAttribute('aria-labelledby', parent.id)
+    // Focusable container so an empty flyout still holds focus deterministically.
+    sub.setAttribute('tabindex', '-1')
+    parent.setAttribute('aria-expanded', 'true')
+
+    // Lay out hidden so the flyout measures at its real size, then place and
+    // reveal — same never-flash-at-origin pattern as the root menu.
+    sub.style.visibility = 'hidden'
+    sub.classList.add('is-open')
+    const rect = parent.getBoundingClientRect()
+    const pos = submenuPosition(
+      { left: rect.left, right: rect.right, top: rect.top },
+      { width: sub.offsetWidth, height: sub.offsetHeight },
+      { width: window.innerWidth, height: window.innerHeight }
+    )
+    let left = pos.left
+    let top = pos.top
+    sub.style.left = `${left}px`
+    sub.style.top = `${top}px`
+
+    // Filter Effects L2: a non-none backdrop-filter makes the card — and each
+    // open flyout, for deeper nesting — the containing block for fixed-position
+    // descendants, so viewport-space coords above would render offset by that
+    // ancestor's origin. Correct by the delta between the intended viewport
+    // position and where it actually rendered (exact for translated containing
+    // blocks; self-correcting for any filtered ancestor).
+    const actual = sub.getBoundingClientRect()
+    left += pos.left - actual.left
+    top += pos.top - actual.top
+    sub.style.left = `${left}px`
+    sub.style.top = `${top}px`
+    sub.style.visibility = ''
+
+    openLevels.push({ parent, menu: sub })
+    focusFirstItem(sub)
+  }
+
+  function closeTopLevel(focusParent: boolean) {
+    const level = openLevels.pop()
+    if (!level) return
+    level.parent.setAttribute('aria-expanded', 'false')
+    level.menu.classList.remove('is-open')
+    if (focusParent) level.parent.focus()
+  }
+
+  function closeAllSubmenus() {
+    while (openLevels.length) closeTopLevel(false)
+  }
+
+  /** Deepest open flyout, if focus is inside it. */
+  function focusedLevel(): { parent: HTMLElement; menu: HTMLElement } | null {
+    const active = document.activeElement
+    const deepest = openLevels[openLevels.length - 1]
+    return deepest && active instanceof Node && deepest.menu.contains(active)
+      ? deepest
+      : null
+  }
+
   // --- positioning + dismissal $effect ------------------------------------
+
+  // Anchor of the menu currently presented, keyed by identity (not coords)
+  // so unrelated effect re-runs don't slam flyouts shut. Null while closed.
+  let presentedAnchor: { x: number; y: number } | null = null
 
   $effect(() => {
     if (!open || !anchor) {
       menuPos = null
+      openLevels.length = 0
+      presentedAnchor = null
       return
     }
     const currentAnchor = anchor
+    if (currentAnchor !== presentedAnchor) {
+      // A re-anchor while open presents a new menu; without this, flyouts
+      // from the previous presentation would linger at stale coordinates
+      // with their parents stuck at aria-expanded="true".
+      closeAllSubmenus()
+      presentedAnchor = currentAnchor
+    }
 
     const measure = () => {
       const w = menuEl?.offsetWidth ?? 180
@@ -74,9 +235,36 @@
     }
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        onClose()
+      if (e.key !== 'Escape') return
+      // Escape with focus inside the menu is owned by the card's own keydown
+      // handler (per-level flyout close + its own stopPropagation). Window
+      // itself can be the target (window-dispatched keydown) and is not a Node.
+      if (e.target instanceof Node && menuEl?.contains(e.target)) return
+      // Fallback path (focus outside the menu): swallow in the capture phase
+      // so app-level listeners registered before the menu opened (drawer
+      // dismissal etc.) never see the key that is closing the menu.
+      e.preventDefault()
+      e.stopPropagation()
+      onClose()
+    }
+
+    // Parent items toggle their flyout on mouse click (keyboard uses
+    // ArrowRight / Enter / Space in onMenuKeydown). Leaf clicks fall through
+    // to consumer handlers untouched.
+    const onRootClick = (e: MouseEvent) => {
+      const item = (e.target as HTMLElement | null)?.closest<HTMLElement>(
+        '[role="menuitem"]'
+      )
+      if (!item) return
+      if (!isParentItem(item) || isDisabledItem(item)) return
+      const sub = findSubmenu(item)
+      if (!sub) return
+      e.preventDefault()
+      const deepest = openLevels[openLevels.length - 1]
+      if (deepest && deepest.parent === item) {
+        closeTopLevel(false)
+      } else {
+        openSubmenu(item, sub)
       }
     }
 
@@ -88,14 +276,17 @@
       capture: true,
       passive: true
     })
+    const root = menuEl
+    root?.addEventListener('click', onRootClick)
 
     window.addEventListener('resize', dismiss, { passive: true })
-    window.addEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
 
     return () => {
       scrollRoot.removeEventListener('scroll', dismiss, { capture: true })
+      root?.removeEventListener('click', onRootClick)
       window.removeEventListener('resize', dismiss)
-      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keydown', onKey, true)
     }
   })
 
@@ -103,40 +294,102 @@
 
   // Capture the trigger element at open so we can restore focus on close.
   let triggerEl: HTMLElement | null = null
+  // Tab-dismissed closes must not restore focus: the APG menu pattern has
+  // Tab carry focus out of the widget via native navigation.
+  let tabDismissed = false
   $effect(() => {
     if (open && anchorEl) {
       triggerEl = anchorEl
+      // Fresh presentation — a stale flag must not suppress a later
+      // Escape/outside-click restore for this menu.
+      tabDismissed = false
     }
     return () => {
-      if (triggerEl) {
+      if (triggerEl && !tabDismissed) {
         triggerEl.focus()
-        triggerEl = null
       }
+      triggerEl = null
     }
   })
 
   $effect(() => {
-    if (open && menuEl) {
-      const first = menuEl.querySelector<HTMLElement>(
-        '[role="menuitem"]:not([disabled]):not([aria-disabled="true"])'
-      )
-      if (first) {
-        first.focus()
-      } else {
-        menuEl.focus()
-      }
+    // `anchor` is part of the guard: a re-anchor while open presents a new
+    // menu, so seeding + initial focus run again for the new contents.
+    if (open && anchor && menuEl) {
+      seedAriaExpanded(menuEl)
+      // Scoped to root-level items so a hidden flyout's items can't steal
+      // the initial focus.
+      focusFirstItem(menuEl)
     }
   })
 
   // --- arrow-key navigation (WAI-ARIA menu pattern) -----------------------
 
   function onMenuKeydown(e: KeyboardEvent) {
+    const active = document.activeElement as HTMLElement | null
+    // The menu level that owns focus — root, or the flyout containing it.
+    const scope = active?.closest<HTMLElement>('[role="menu"]') ?? menuEl
+
     if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
+      const level = focusedLevel()
+      if (level) {
+        // Escape inside a flyout closes just that level and refocuses its
+        // parent item; the root menu stays open.
+        closeTopLevel(true)
+      } else {
+        onClose()
+      }
+      return
+    }
+
+    if (e.key === 'Tab') {
+      // Never cycle within the menu: close up and let the default Tab
+      // action carry focus out of the widget (APG menu pattern) —
+      // tabDismissed keeps the close from snapping focus back first.
+      tabDismissed = true
+      closeAllSubmenus()
       onClose()
       return
     }
+
+    if (e.key === 'ArrowRight') {
+      // Only parent items open a flyout; on a leaf, ArrowRight does nothing.
+      if (active && isParentItem(active) && !isDisabledItem(active)) {
+        const sub = findSubmenu(active)
+        if (sub) {
+          e.preventDefault()
+          openSubmenu(active, sub)
+        }
+      }
+      return
+    }
+
+    if (e.key === 'ArrowLeft') {
+      const level = focusedLevel()
+      if (level) {
+        // Closes the flyout and returns focus to its parent item; at root
+        // level ArrowLeft does nothing.
+        e.preventDefault()
+        closeTopLevel(true)
+      }
+      return
+    }
+
+    if (e.key === 'Enter' || e.key === ' ') {
+      if (active && isParentItem(active) && !isDisabledItem(active)) {
+        const sub = findSubmenu(active)
+        if (sub) {
+          // Suppress the native button click so the flyout isn't also
+          // toggled by the delegated click handler.
+          e.preventDefault()
+          openSubmenu(active, sub)
+        }
+      }
+      return
+    }
+
     if (
       e.key !== 'ArrowDown' &&
       e.key !== 'ArrowUp' &&
@@ -146,19 +399,11 @@
       return
     }
     e.preventDefault()
-    const menu = menuEl
-    if (!menu) return
+    if (!scope) return
 
-    const items = Array.from(
-      menu.querySelectorAll<HTMLElement>('[role="menuitem"]')
-    ).filter((el) => {
-      const disabled = el instanceof HTMLButtonElement ? el.disabled : false
-      return !disabled && el.getAttribute('aria-disabled') !== 'true'
-    })
-
+    const items = scopedItems(scope)
     if (items.length === 0) return
 
-    const active = document.activeElement as HTMLElement | null
     const idx = active ? items.indexOf(active) : -1
 
     let next: number
@@ -264,5 +509,44 @@
     height: 1px;
     margin: 4px 6px;
     background-color: var(--color-border);
+  }
+  /* Parent items get a trailing flyout chevron from the primitive, so
+     consumers never hand-add arrows to labels. Masked glyph rather than
+     text content — CSS-generated text would pollute the accessible name. */
+  :global(
+    [data-context-menu-root] [role='menuitem'][aria-haspopup='menu']
+  )::after {
+    content: '';
+    margin-left: auto;
+    width: 14px;
+    height: 14px;
+    flex: none;
+    background-color: currentColor;
+    opacity: 0.6;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M9%206l6%206-6%206' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M9%206l6%206-6%206' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+  }
+  /* Submenus authored in the children snippet: hidden until the primitive
+     opens them as fixed-position flyouts beside their parent item. */
+  :global([data-context-menu-root] [role='menu']) {
+    display: none;
+  }
+  :global([data-context-menu-root] [role='menu'].is-open) {
+    display: block;
+    position: fixed;
+    min-width: 150px;
+    padding: 4px;
+    background-color: color-mix(
+      in srgb,
+      var(--color-surface-popover) 94%,
+      transparent
+    );
+    backdrop-filter: blur(12px) saturate(140%);
+    border: 1px solid var(--color-border-active);
+    border-radius: 8px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    z-index: 182;
   }
 </style>

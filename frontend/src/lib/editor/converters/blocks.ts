@@ -456,6 +456,18 @@ function emitGfmSeparator(width: number, align: string): string {
 
 const DETAILS_OPEN_RE = /^<details(?:\s+[^>]*)?>$/i
 const DETAILS_CLOSE_RE = /^<\/details>$/i
+
+// The HTML boolean `open` attribute on the opener line (#1123): presence,
+// not value, marks expansion (HTML semantics). Quoted values are dropped
+// first so `open` inside another attribute's value can't false-match.
+function detailsOpenerIsOpen(line: string): boolean {
+  const attrs = line.trim().match(/^<details\s+([^>]*)>$/i)
+  if (attrs === null) return false
+  return attrs[1]
+    .replace(/=\s*"[^"]*"|=\s*'[^']*'/gi, ' ')
+    .split(/\s+/)
+    .some((token) => /^open$/i.test(token))
+}
 const DETAILS_SUMMARY_RE = /^<summary(?:\s[^>]*)?>([\s\S]*?)<\/summary>$/i
 
 // Parse <details> HTML into a details node tree. The opener's line carries the
@@ -494,7 +506,8 @@ function parseDetailsHTML(
     type: 'details',
     attrs: {
       id: blockId || null,
-      open: false,
+      // Absence of the attr (files predating #1123) reads collapsed.
+      open: detailsOpenerIsOpen(lines[0]),
       depth,
       file_date: fileDate || today
     },
@@ -684,7 +697,9 @@ function serializeDetailsToHTML(node: NodeJSON): string {
     ? serializeInlineContent(summaryNode.content)
     : ''
 
-  const lines: string[] = ['<details>']
+  // `open` is disk state (#1123): expanded persists as `<details open>`,
+  // collapsed stays the bare tag (absence = collapsed).
+  const lines: string[] = [node.attrs?.open ? '<details open>' : '<details>']
   if (summaryText) lines.push(`<summary>${summaryText}</summary>`)
 
   if (contentNode?.content) {
