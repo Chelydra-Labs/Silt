@@ -231,7 +231,15 @@
     try {
       const slice = (await ctx.getPluginSettings()) ?? {}
       const v = slice['local_author']
-      commentAuthor = typeof v === 'string' ? v : ''
+      if (typeof v === 'string') {
+        // Present — including an explicit "" clear — is authoritative.
+        commentAuthor = v
+      } else {
+        // Absent: attribute from the OS display name so a never-saved
+        // vault still posts with an author. Display-only — the fallback
+        // is never persisted, so saving in Settings stays the only write.
+        commentAuthor = (await ctx.getLocalAuthor()).trim()
+      }
       authorLoaded = true
     } catch {
       // Non-fatal: keep the last-known-good author — only a failure before
@@ -325,6 +333,10 @@
   }
 
   async function startReply(comment: Comment, trigger: HTMLButtonElement) {
+    // A second startReply mid-flight would move the composer to another
+    // comment; the in-flight settle then either closes it out from under
+    // the user (success) or wipes the new draft with the failed text.
+    if (replyPending) return
     replyToId = comment.id
     replyText = ''
     replyReturnEl = trigger
@@ -403,7 +415,9 @@
       }))
       replyText = text
       // Re-open the composer alongside the draft: a cancel/Escape during
-      // flight (or a second startReply) may have closed or moved it.
+      // flight is guarded (cancelReply/startReply early-return while
+      // pending), so this is defense-in-depth for any future path that
+      // closes or moves it before the post settles.
       replyToId = parentId
       errorMsg = friendlyCaughtError(e)
       errorRetryable = false
@@ -525,9 +539,10 @@
       <div class="flex items-center gap-1">
         <button
           type="button"
-          class="text-type-2xs font-label-sm text-text-muted hover:text-accent-primary-start transition-colors px-1"
+          class="text-type-2xs font-label-sm text-text-muted hover:text-accent-primary-start transition-colors px-1 disabled:opacity-50 disabled:cursor-not-allowed"
           aria-label="Reply to comment"
           title="Reply"
+          disabled={replyPending}
           onclick={(e) => startReply(c, e.currentTarget)}
         >
           Reply

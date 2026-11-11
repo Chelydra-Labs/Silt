@@ -4,8 +4,11 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 // CommentThread attributes comments from the configured local_author pref
 // (#1125): a fresh ctx.getPluginSettings() read at mount (Settings writes
 // emit no config:changed, so the hub's cached slice can be stale) with no
-// per-comment Author input. The test ctx's getPluginSettings resolves
-// `mocks.tasksSettings`, so each test seeds the slice before mount.
+// per-comment Author input. An ABSENT pref falls back to the OS display
+// name via ctx.getLocalAuthor (display-only); a present "" is an explicit
+// clear and posts without an author. The test ctx's getPluginSettings
+// resolves `mocks.tasksSettings`, so each test seeds the slice before
+// mount.
 const mocks = vi.hoisted(() => ({
   updatePluginSetting: vi.fn().mockResolvedValue(true),
   tasksSettings: {} as Record<string, unknown>
@@ -372,7 +375,10 @@ describe('CommentThread', () => {
     const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
     await fireEvent.input(ta, { target: { value: 'optimistic body' } })
     await fireEvent.keyDown(ta, { key: 'Enter' })
-    // The optimistic comment appears immediately, before the promise resolves.
+    // The optimistic comment appears before addTaskComment resolves (its
+    // promise is still pending here; only the author read's microtasks
+    // ran — the absent pref takes the OS-name fallback hop).
+    await flush()
     expect(screen.getByText('optimistic body')).toBeInTheDocument()
     expect(addTaskComment).toHaveBeenCalled()
     // Resolve to let pending state clear + avoid hanging the test.
@@ -455,10 +461,32 @@ describe('CommentThread', () => {
     )
   })
 
-  it('empty pref → author is undefined (no [author::] token, "Unknown" fallback)', async () => {
+  it('absent pref → posts with the OS display name (display-only, never persisted)', async () => {
     seedSettings({})
     const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
-    const ctx = makeCtx({ addTaskComment })
+    const getLocalAuthor = vi.fn().mockResolvedValue('OS Name')
+    const ctx = makeCtx({ addTaskComment, getLocalAuthor })
+    mount({ ctx })
+    await flush()
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'auto-attributed' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    await flush()
+    expect(addTaskComment).toHaveBeenCalledWith(
+      'task-1',
+      'auto-attributed',
+      'OS Name'
+    )
+    expect(getLocalAuthor).toHaveBeenCalled()
+    // The fallback is display-only: posting must not persist anything.
+    expect(mocks.updatePluginSetting).not.toHaveBeenCalled()
+  })
+
+  it('present "" pref → author is undefined (explicit clear, no OS fallback)', async () => {
+    seedSettings({ local_author: '' })
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const getLocalAuthor = vi.fn().mockResolvedValue('OS Name')
+    const ctx = makeCtx({ addTaskComment, getLocalAuthor })
     mount({ ctx })
     await flush()
     const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
@@ -466,6 +494,7 @@ describe('CommentThread', () => {
     await fireEvent.keyDown(ta, { key: 'Enter' })
     await flush()
     expect(addTaskComment).toHaveBeenCalledWith('task-1', 'anon', undefined)
+    expect(getLocalAuthor).not.toHaveBeenCalled()
   })
 
   it('getPluginSettings rejection still posts (author undefined, non-fatal)', async () => {
@@ -634,12 +663,74 @@ describe('CommentThread', () => {
     await fireEvent.input(replyTa, { target: { value: 'reply' } })
     await fireEvent.keyDown(replyTa, { key: 'Enter' })
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+    // Per-comment Reply buttons are gated too: starting another comment's
+    // reply mid-flight would move the composer the settle path reuses.
+    expect(screen.getAllByLabelText('Reply to comment')[0]!).toBeDisabled()
     resolveSettings({})
     await flush()
     // Success closes the composer (replyToId resets) — the Cancel button
     // is gone, not merely re-enabled.
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
     expect(addTaskComment).toHaveBeenCalledTimes(1)
+  })
+
+  it('a failed reply re-opens the composer on the original parent with the draft restored (Escape mid-flight is a no-op)', async () => {
+    // Deferred-then-rejecting post: the failure path must restore the
+    // draft INTO the composer even though Escape was pressed mid-flight —
+    // cancelReply's pending guard kept it open — and re-anchor it to the
+    // original parent.
+    let rejectComment!: (e: Error) => void
+    const pendingComment = new Promise<string>((_, rej) => {
+      rejectComment = rej
+    })
+    const addTaskComment = vi.fn(() => pendingComment)
+    const ctx = makeCtx({
+      addTaskComment,
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: 'parent comment',
+          author: 'alice',
+          timestamp: '2026-07-01T09:00:00',
+          parent_id: 'task-1'
+        }),
+        makeBlock({
+          id: 'c2',
+          clean_text: 'second comment',
+          author: 'bob',
+          timestamp: '2026-07-01T10:00:00',
+          parent_id: 'task-1'
+        })
+      ])
+    })
+    mount({ ctx })
+    await flush()
+    await fireEvent.click(screen.getAllByLabelText('Reply to comment')[0]!)
+    await flush()
+    const replyTa = screen.getByLabelText('Reply text') as HTMLTextAreaElement
+    await fireEvent.input(replyTa, { target: { value: 'flaky reply' } })
+    await fireEvent.keyDown(replyTa, { key: 'Enter' })
+    // Escape mid-flight: cancelReply must hold (guard), composer stays.
+    await fireEvent.keyDown(replyTa, { key: 'Escape' })
+    expect(screen.getByTestId('reply-composer')).toBeInTheDocument()
+    rejectComment(new Error('post failed'))
+    await flush()
+    // Failure restores the draft into the composer re-anchored to the
+    // original parent (c1's article), not the second comment's.
+    const composer = screen.getByTestId('reply-composer')
+    const hostArticle = composer.closest('article')
+    expect(hostArticle).not.toBeNull()
+    expect(hostArticle!.textContent).toContain('parent comment')
+    expect(
+      (screen.getByLabelText('Reply text') as HTMLTextAreaElement).value
+    ).toBe('flaky reply')
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+    expect(addTaskComment).toHaveBeenCalledWith(
+      'task-1',
+      'flaky reply',
+      undefined,
+      'c1'
+    )
   })
 
   it('keystrokes typed during the author re-read survive the post', async () => {

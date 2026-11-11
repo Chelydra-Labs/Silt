@@ -90,7 +90,7 @@ All prefs live under `plugins.plugin_settings.silt-tasks` in the vault
 | `week_start` | `sunday` / `monday` (defaults to `sunday`; controls all task calendar and week-range boundaries). |
 | `columns` | Status-board lanes: legacy `string[]` or `{ name, wipLimit? }[]` (defaults to TODO/DOING/DONE, unlimited WIP). |
 | `saved_views[]` | User-defined saved views (system views are re-derived from code, never persisted). |
-| `local_author` | Name on task comments (Settings → General → Comment author). Empty = no `[author::]` token ("Unknown"). |
+| `local_author` | Name on task comments (Settings → General → Comment author). Absent = OS account display name (display-only fallback); empty = no `[author::]` token ("Unknown"). |
 
 The `filters` shape (`{ owners, priorities, dueDate, tags, stale?, shortlist? }`)
 is held in hub state and snapshotted into saved views; it is not separately
