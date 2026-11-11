@@ -586,6 +586,34 @@ describe('GeneralTab comment author (#1125)', () => {
     })
     elsewhere.remove()
   })
+
+  it('Save-button activation restores focus to the button once the save lands', async () => {
+    let resolveSave!: (ok: boolean) => void
+    mocks.updatePluginSetting.mockImplementation(
+      () => new Promise<boolean>((res) => (resolveSave = res))
+    )
+    render(GeneralTab)
+    await tick()
+    const save = screen.getByRole('button', { name: 'Save' })
+    await fireEvent.input(authorInput(), { target: { value: 'Dana' } })
+    // Keyboard activation: the button itself holds focus when Enter/Space
+    // fires it.
+    save.focus()
+    await fireEvent.click(save)
+    await tick()
+    // Disabling the button during the flight moves focus off it; park it
+    // somewhere explicit so the restore below is decisive in jsdom too.
+    expect(save).toBeDisabled()
+    const elsewhere = document.createElement('input')
+    document.body.appendChild(elsewhere)
+    elsewhere.focus()
+    expect(document.activeElement).toBe(elsewhere)
+    resolveSave(true)
+    await waitFor(() => {
+      expect(document.activeElement).toBe(save)
+    })
+    elsewhere.remove()
+  })
 })
 
 // When config is absent but the backend reported a load error, the

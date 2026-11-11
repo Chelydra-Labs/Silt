@@ -81,6 +81,7 @@
   // the user is typing their name).
   let commentAuthorTouched = false
   let commentAuthorInputEl = $state<HTMLInputElement | null>(null)
+  let commentAuthorSaveBtn = $state<HTMLButtonElement | null>(null)
 
   let storedCommentAuthor = $derived.by(() => {
     const v =
@@ -125,10 +126,13 @@
 
   async function saveCommentAuthor() {
     if (commentAuthorInflight) return
-    // Capture focus before the inflight flag disables the input, so it
-    // can be handed back when the save lands — Enter-saves otherwise dump
-    // keyboard users on <body> to restart Tab traversal from the top.
-    const hadFocus = document.activeElement === commentAuthorInputEl
+    // Capture focus before the inflight flag disables the controls, so it
+    // can be handed back when the save lands — Enter-saves and
+    // button-activated saves otherwise dump keyboard users on <body> to
+    // restart Tab traversal from the top.
+    const prevFocus = document.activeElement as HTMLElement | null
+    const hadFocus =
+      prevFocus === commentAuthorInputEl || prevFocus === commentAuthorSaveBtn
     commentAuthorInflight = true
     commentAuthorError = ''
     commentAuthorStatus = ''
@@ -146,10 +150,10 @@
     }
     commentAuthorInflight = false
     if (hadFocus) {
-      // Wait for the DOM to re-enable the input first — focus() on a
+      // Wait for the DOM to re-enable the control first — focus() on a
       // still-disabled element is a silent no-op.
       await tick()
-      commentAuthorInputEl?.focus()
+      prevFocus?.focus()
     }
   }
 
@@ -640,6 +644,7 @@
         <div class="flex justify-end">
           <button
             type="button"
+            bind:this={commentAuthorSaveBtn}
             onclick={() => void saveCommentAuthor()}
             disabled={commentAuthorInflight}
             class="px-3 py-1.5 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start text-type-md font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
