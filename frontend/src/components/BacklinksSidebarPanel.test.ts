@@ -7,11 +7,13 @@ import {
   waitFor
 } from '@testing-library/svelte'
 import userEvent from '@testing-library/user-event'
+import { tick } from 'svelte'
 
 const mocks = vi.hoisted(() => ({
   getBacklinksPaged: vi.fn(),
   getUnlinkedMentionsPaged: vi.fn(),
   promoteUnlinkedMention: vi.fn(),
+  resolvePageLink: vi.fn(),
   eventsOn: vi.fn(),
   pushNotification: vi.fn()
 }))
@@ -20,7 +22,8 @@ vi.mock('$silt-app', () =>
   createAppIpcMocks({
     GetBacklinksPaged: mocks.getBacklinksPaged,
     GetUnlinkedMentionsPaged: mocks.getUnlinkedMentionsPaged,
-    PromoteUnlinkedMention: mocks.promoteUnlinkedMention
+    PromoteUnlinkedMention: mocks.promoteUnlinkedMention,
+    ResolvePageLink: mocks.resolvePageLink
   })
 )
 
@@ -138,6 +141,10 @@ describe('BacklinksSidebarPanel', () => {
       .mockReset()
       .mockResolvedValue(unlinkedWire({}))
     mocks.promoteUnlinkedMention.mockReset().mockResolvedValue(undefined)
+    mocks.resolvePageLink.mockReset().mockResolvedValue({
+      exists: true,
+      shortest: 'Launch plan'
+    })
     mocks.pushNotification.mockReset()
     mocks.eventsOn.mockReset().mockImplementation((event, callback) => {
       if (event === 'block:changed') blockChanged = callback
@@ -1741,5 +1748,269 @@ describe('BacklinksSidebarPanel', () => {
       '',
       50
     )
+  })
+})
+
+describe('BacklinksSidebarPanel — row context menu (#1120)', () => {
+  const menu = () => screen.getByTestId('backlinks-locator-menu')
+
+  function menuLabels(): string[] {
+    return Array.from(
+      menu().querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).map((el) => {
+      const span = el.querySelector<HTMLSpanElement>('span:not([aria-hidden])')
+      return (span ?? el).textContent?.trim() ?? ''
+    })
+  }
+
+  async function openMenuOn(el: Element, x = 8, y = 12) {
+    await tick()
+    const e = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: x,
+      clientY: y
+    })
+    el.dispatchEvent(e)
+    await tick()
+    return e
+  }
+
+  async function loadedPanel() {
+    renderPanel()
+    await screen.findByText('2 pages link here')
+  }
+
+  beforeEach(() => {
+    // defineProperty (not Object.assign): this file imports user-event,
+    // which installs a getter-only navigator.clipboard that plain assignment
+    // cannot overwrite (see lib/editor/clipboard.test.ts for the precedent).
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+      configurable: true,
+      writable: true
+    })
+  })
+
+  it('right-click a linked row with a block shows the full row subset', async () => {
+    await loadedPanel()
+    const row = screen.getByRole('button', {
+      name: /Open block reference in page Launch plan/
+    })
+    expect(row).toHaveAttribute('aria-keyshortcuts', 'Shift+F10')
+
+    const e = await openMenuOn(row, 30, 40)
+    expect(e.defaultPrevented).toBe(true)
+    expect(menu()).toHaveAttribute('role', 'menu')
+    expect(menuLabels()).toEqual([
+      'Open source page',
+      'Open exact block',
+      'Copy page reference'
+    ])
+    expect(menu().getAttribute('style')).toContain('left: 30px')
+    expect(menu().getAttribute('style')).toContain('top: 40px')
+  })
+
+  it('rows without a block id (page links) omit the exact-block item', async () => {
+    await loadedPanel()
+    const row = screen.getByRole('button', {
+      name: /Open page link in page Launch plan/
+    })
+    await openMenuOn(row)
+    expect(menuLabels()).toEqual(['Open source page', 'Copy page reference'])
+  })
+
+  it('group headers show the page-level subset', async () => {
+    await loadedPanel()
+    const header = screen.getByRole('button', {
+      name: 'Open page Launch plan'
+    })
+    await openMenuOn(header)
+    expect(menuLabels()).toEqual(['Open source page', 'Copy page reference'])
+  })
+
+  it('menu items dispatch navigation with the source page detail', async () => {
+    await loadedPanel()
+    const onPage = vi.fn()
+    const onBlock = vi.fn()
+    window.addEventListener('navigate-to-page', onPage)
+    window.addEventListener('navigate-to-block', onBlock)
+
+    const row = screen.getByRole('button', {
+      name: /Open block reference in page Launch plan/
+    })
+    await openMenuOn(row)
+    await fireEvent.click(screen.getByTestId('backlinks-menu-open-source-page'))
+    expect((onPage.mock.calls[0][0] as CustomEvent).detail).toEqual({
+      notebook: 'Work',
+      section: 'Projects',
+      page: 'Launch plan',
+      source: 'vault'
+    })
+    expect(screen.queryByTestId('backlinks-locator-menu')).toBeNull()
+
+    await openMenuOn(row)
+    await fireEvent.click(screen.getByTestId('backlinks-menu-open-exact-block'))
+    expect((onBlock.mock.calls[0][0] as CustomEvent).detail).toEqual({
+      notebook: 'Work',
+      section: 'Projects',
+      page: 'Launch plan',
+      blockId: 'block-42',
+      source: 'vault'
+    })
+
+    window.removeEventListener('navigate-to-page', onPage)
+    window.removeEventListener('navigate-to-block', onBlock)
+  })
+
+  it('copy page reference resolves the shortest form and writes it', async () => {
+    mocks.resolvePageLink.mockResolvedValue({
+      exists: true,
+      shortest: 'Launch plan'
+    })
+    await loadedPanel()
+    const row = screen.getByRole('button', {
+      name: /Open block reference in page Launch plan/
+    })
+    await openMenuOn(row)
+    await fireEvent.click(
+      screen.getByTestId('backlinks-menu-copy-page-reference')
+    )
+    await waitFor(() =>
+      expect(mocks.resolvePageLink).toHaveBeenCalledWith(
+        'Work/Projects/Launch plan'
+      )
+    )
+    await waitFor(() =>
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+        '[[Launch plan]]'
+      )
+    )
+  })
+
+  it('unlinked-mention Link rows offer Promote to link and promote through the menu', async () => {
+    let unlinkedCleared = false
+    const mention = unlinkedMentionWire({
+      source_page: 'Launch plan',
+      source_block_ids: ['block-42'],
+      source_snippets: ['see Research here']
+    })
+    mocks.getUnlinkedMentionsPaged.mockImplementation(() =>
+      Promise.resolve({
+        results: unlinkedCleared ? [] : [mention],
+        cursor: '',
+        has_more: false
+      })
+    )
+    mocks.promoteUnlinkedMention.mockImplementation(async () => {
+      unlinkedCleared = true
+    })
+    renderPanel()
+    await screen.findByText('1 page mentions this title')
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+
+    const link = await screen.findByRole('button', {
+      name: /Link mention of Research in block block-42/
+    })
+    const e = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 6,
+      clientY: 9
+    })
+    link.dispatchEvent(e)
+    await tick()
+    expect(e.defaultPrevented).toBe(true)
+    expect(menuLabels()).toEqual([
+      'Promote to link',
+      'Open source page',
+      'Copy page reference'
+    ])
+
+    await fireEvent.click(screen.getByTestId('backlinks-menu-promote-to-link'))
+    await waitFor(() =>
+      expect(mocks.promoteUnlinkedMention).toHaveBeenCalledWith(
+        'block-42',
+        'Work',
+        'Knowledge',
+        'Research'
+      )
+    )
+    await waitFor(() => expect(mocks.pushNotification).toHaveBeenCalled())
+    expect(screen.queryByTestId('backlinks-locator-menu')).toBeNull()
+  })
+
+  it('ambiguous mention rows omit Promote (candidate chips stay the flow)', async () => {
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue(
+      unlinkedWire({
+        results: [
+          unlinkedMentionWire({
+            source_page: 'Notes',
+            source_block_ids: ['block-7'],
+            ambiguous: true,
+            candidates: [
+              { notebook: 'Work', section: 'Journal', page: 'Standup' }
+            ]
+          })
+        ]
+      })
+    )
+    renderPanel()
+    await screen.findByText('1 page mentions this title')
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+
+    // The mention page header carries the page-level subset.
+    const header = await screen.findByRole('button', {
+      name: 'Open page Notes'
+    })
+    const e = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 4,
+      clientY: 6
+    })
+    header.dispatchEvent(e)
+    await tick()
+    expect(menuLabels()).toEqual(['Open source page', 'Copy page reference'])
+    expect(screen.queryByTestId('backlinks-menu-promote-to-link')).toBeNull()
+  })
+
+  it('Shift+F10 on a focused row opens the menu; Escape returns focus', async () => {
+    await loadedPanel()
+    const row = screen.getByRole('button', {
+      name: /Open embed in page Reading notes/
+    })
+    row.focus()
+
+    await fireEvent.keyDown(row, { key: 'F10', shiftKey: true })
+    await tick()
+    expect(menu()).toBeInTheDocument()
+    expect(menu().contains(document.activeElement)).toBe(true)
+
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await tick()
+    expect(screen.queryByTestId('backlinks-locator-menu')).toBeNull()
+    expect(document.activeElement).toBe(row)
+  })
+
+  it('backdrop click dismisses without navigating', async () => {
+    await loadedPanel()
+    const onPage = vi.fn()
+    window.addEventListener('navigate-to-page', onPage)
+
+    const row = screen.getByRole('button', {
+      name: /Open page link in page Launch plan/
+    })
+    await openMenuOn(row)
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Close context menu' })
+    )
+    expect(screen.queryByTestId('backlinks-locator-menu')).toBeNull()
+    expect(onPage).not.toHaveBeenCalled()
+    window.removeEventListener('navigate-to-page', onPage)
   })
 })

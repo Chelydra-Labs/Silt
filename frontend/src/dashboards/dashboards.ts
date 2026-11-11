@@ -4,6 +4,7 @@
 // list, and the frontend bins it into groups client-side (mirrors the silt-tasks
 // grouping model). The TypeDef/PropertyDef/PropertyType types are reused from
 // the properties module so the schema has one source of truth.
+import type { DashboardPageLocator } from '../lib/navigationTargets'
 import type { PropertyDef, PropertyType, TypeDef } from '../properties/types'
 import {
   binByKey,
@@ -77,6 +78,18 @@ export function rowPropertyValue(
 ): string {
   const hit = row.properties.find((p) => p.name === propName)
   return hit?.valueText ?? ''
+}
+
+/** Project a row onto the navigation locator contract (adds nothing, just
+ *  picks the locator fields out of the wider row shape) — shared by the table
+ *  and board views so both build identical locator payloads. */
+export function locatorOf(row: TypeDashboardRow): DashboardPageLocator {
+  return {
+    source: row.source,
+    notebook: row.notebook,
+    section: row.section,
+    page: row.page
+  }
 }
 
 /**
