@@ -192,10 +192,10 @@ func Defaults() SystemConfig {
 				// []string seed would mismatch on Load.
 				//
 				// local_author is deliberately NOT seeded (#1125): its
-				// semantics are presence-based (absent = Settings
-				// prefills the OS account name), which a "" seed would
-				// make inexpressible. Load() strips the empty seed
-				// legacy vaults still carry.
+				// semantics are presence-based (absent = OS account name
+				// attribution), which a "" seed would make inexpressible.
+				// Load() one-shot strips the empty seed legacy vaults
+				// still carry.
 				"silt-tasks": map[string]any{
 					"default_display_mode": "list",
 					"default_group_by":     "dueDate",

@@ -265,8 +265,9 @@ func TestLoad_LocalAuthorPresenceSemantics(t *testing.T) {
 	}
 
 	// Legacy vault: pre-#1125 defaults/scaffolding wrote local_author: ""
-	// into config.yaml; Load must strip exactly that empty seed so the
-	// pref reads as never-set for existing vaults too.
+	// into config.yaml; the first Load must strip exactly that empty seed
+	// and stamp the one-shot marker so the pref reads as never-set for
+	// existing vaults too.
 	writeFile(t, ConfigPath(tmp), strings.Join([]string{
 		"plugins:",
 		"  plugin_settings:",
@@ -279,6 +280,38 @@ func TestLoad_LocalAuthorPresenceSemantics(t *testing.T) {
 	}
 	if v, has := siltTasks(cfg)["local_author"]; has {
 		t.Errorf(`legacy local_author: "" must load as absent, got %v`, v)
+	}
+	if done, _ := cfg.Plugins.PluginSettings[localAuthorSeedMigratedKey].(bool); !done {
+		t.Errorf("first Load of a legacy seed must stamp %s", localAuthorSeedMigratedKey)
+	}
+	// Persist the migrated snapshot the way any atomic setter does
+	// (mutateConfigFresh: Load → mutate → Save) — the marker must reach
+	// disk with the write.
+	if err := Save(tmp, cfg); err != nil {
+		t.Fatalf("Save(migrated snapshot): %v", err)
+	}
+
+	// One-shot: with the marker persisted, an explicitly cleared "" is a
+	// live value. Simulate the clear through the same Load -> mutate ->
+	// Save cycle UpdatePluginSetting runs, then verify every later Load —
+	// the re-read inside each subsequent atomic write — keeps it
+	// untouched.
+	cfg, err = Load(tmp)
+	if err != nil {
+		t.Fatalf("Load(after migration): %v", err)
+	}
+	siltTasks(cfg)["local_author"] = ""
+	if err := Save(tmp, cfg); err != nil {
+		t.Fatalf("Save(explicit clear): %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		cfg, err = Load(tmp)
+		if err != nil {
+			t.Fatalf("Load #%d after explicit clear: %v", i+1, err)
+		}
+		if v, has := siltTasks(cfg)["local_author"]; !has || v != "" {
+			t.Errorf(`explicitly cleared local_author "" must survive Load #%d, got %v (present=%v)`, i+1, v, has)
+		}
 	}
 
 	// A saved author is a real value and must survive Load untouched.
@@ -317,8 +350,10 @@ func TestSave_RoundTrip(t *testing.T) {
 	original.Hotkeys["custom_action"] = "Ctrl+Shift+X"
 	original.Plugins.PluginSettings["my-plugin"] = map[string]any{"key": "value"}
 	// Save/Load both run normalize (opt-in disabled seed, nil maps, …). Compare
-	// against the normalized form so seed markers are not a false mismatch.
+	// against the normalized form so seed markers are not a false mismatch,
+	// and apply Load's local-author seed marker for the same reason.
 	original = normalize(original)
+	stripLegacyEmptyLocalAuthor(&original)
 
 	if err := Save(tmp, original); err != nil {
 		t.Fatalf("Save: %v", err)

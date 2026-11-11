@@ -292,7 +292,13 @@ func Load(vaultPath string) (SystemConfig, error) {
 	data, err := safeio.ReadFileMax(ConfigPath(vaultPath), maxConfigYAMLBytes)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return Defaults(), nil
+			cfg := Defaults()
+			// Stamp the one-shot marker even without a file: a fresh vault's
+			// first explicit clear is saved via mutateConfigFresh (Load →
+			// mutate → Save), and the stamp is what protects that "" from
+			// being read back as a legacy seed on the next Load.
+			stripLegacyEmptyLocalAuthor(&cfg)
+			return cfg, nil
 		}
 		return Defaults(), fmt.Errorf("failed to read config.yaml: %w", err)
 	}
@@ -349,22 +355,38 @@ func migrateLegacyQuickAccessCollapsed(data []byte, cfg *SystemConfig) {
 	cfg.UI.SidebarView = &view
 }
 
+// localAuthorSeedMigratedKey is the one-shot marker (top-level in
+// plugin_settings, mirroring hotkeysDefaultsV1MigratedKey) that records a
+// vault has been migrated off the pre-#1125 local_author seed. Presence
+// gates the strip below so it runs at most once per vault.
+const localAuthorSeedMigratedKey = "_local_author_seed_migrated"
+
 // stripLegacyEmptyLocalAuthor removes the `local_author: ""` entry that
 // pre-#1125 Defaults() and the vault scaffold seeded into every silt-tasks
-// plugin-settings map. The pref is presence-based (absent = Settings prefills
-// the OS account name), so a loaded snapshot must never carry the empty seed —
-// Load-only on purpose: an in-session cleared save keeps its "" in the live
-// config until the next Load treats it as unset (restart shows the prefill
-// again; SPECS §4.1). Scoped to exactly this key: a saved, non-empty author
+// plugin-settings map. The pref is presence-based (absent = OS account name
+// attribution), so a migrated snapshot must never carry the empty seed.
+//
+// One-shot via a persisted marker: Load also runs inside every atomic setter
+// (mutateConfigFresh re-reads config.yaml before each targeted write), so an
+// ungated strip would erase a live explicitly-cleared "" on any unrelated
+// config write mid-session. The marker is stamped on every Load result —
+// including a missing file's Defaults() — and persists with the next config
+// write; once on disk it makes every later "" a deliberate clear that Load
+// must leave alone. Scoped to exactly this key: a saved, non-empty author
 // always survives.
 func stripLegacyEmptyLocalAuthor(cfg *SystemConfig) {
-	entry, ok := cfg.Plugins.PluginSettings["silt-tasks"].(map[string]any)
-	if !ok {
+	if cfg.Plugins.PluginSettings == nil {
+		cfg.Plugins.PluginSettings = map[string]any{}
+	}
+	if _, done := cfg.Plugins.PluginSettings[localAuthorSeedMigratedKey]; done {
 		return
 	}
-	if s, isStr := entry["local_author"].(string); isStr && s == "" {
-		delete(entry, "local_author")
+	if entry, ok := cfg.Plugins.PluginSettings["silt-tasks"].(map[string]any); ok {
+		if s, isStr := entry["local_author"].(string); isStr && s == "" {
+			delete(entry, "local_author")
+		}
 	}
+	cfg.Plugins.PluginSettings[localAuthorSeedMigratedKey] = true
 }
 
 // Save atomically writes cfg to <vault>/.system/config.yaml. Atomicity
