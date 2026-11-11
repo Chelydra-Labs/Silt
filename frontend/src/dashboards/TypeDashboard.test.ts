@@ -76,7 +76,14 @@ const appMocks = vi.hoisted(() =>
     ReloadTypes: vi.fn().mockResolvedValue(undefined),
     GetTypesReprojectionStatus: vi
       .fn()
-      .mockResolvedValue({ active: false, processed: 0, total: 0 })
+      .mockResolvedValue({ active: false, processed: 0, total: 0 }),
+    // Favorites wiring (#1120): GetNavigationPreferences feeds the dashboard
+    // mirror; SetFavoritePage is the shared service's write.
+    GetNavigationPreferences: vi.fn(),
+    SetFavoritePage: vi.fn(),
+    ResolvePageLink: vi
+      .fn()
+      .mockResolvedValue({ exists: true, shortest: 'Dune' })
   })
 )
 vi.mock('$silt-app', () => appMocks)
@@ -515,5 +522,121 @@ describe('TypeDashboard', () => {
         expect(screen.queryByTestId('reprojection-progress')).toBeNull()
       })
     })
+  })
+})
+
+describe('TypeDashboard — row menus + favorites wiring (#1120)', () => {
+  beforeEach(() => {
+    appMocks.GetNavigationPreferences.mockReset().mockResolvedValue({
+      favorites: [],
+      recent_pages: [],
+      expanded_sections: []
+    })
+    appMocks.SetFavoritePage.mockReset().mockResolvedValue(undefined)
+  })
+
+  it('pins through the shared favorites service and resyncs on the broadcast', async () => {
+    Object.assign(navigator, {
+      clipboard: { writeText: vi.fn().mockResolvedValue(undefined) }
+    })
+    // Post-pin reload returns the row as a favorite so the next open labels
+    // Unpin — proves the broadcast-driven reload re-read the set.
+    appMocks.GetNavigationPreferences.mockImplementation(async () => ({
+      favorites: appMocks.SetFavoritePage.mock.calls.length
+        ? [{ notebook: 'Work', section: 'Reading', page: 'Dune' }]
+        : [],
+      recent_pages: [],
+      expanded_sections: []
+    }))
+
+    await mount()
+
+    const row = screen.getByRole('button', { name: /Open page Dune/ })
+    row.dispatchEvent(
+      new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 10,
+        clientY: 10
+      })
+    )
+    await tick()
+
+    const menu = screen.getByTestId('dash-table-locator-menu')
+    const labels = Array.from(
+      menu.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).map((el) => {
+      const span = el.querySelector<HTMLSpanElement>('span:not([aria-hidden])')
+      return (span ?? el).textContent?.trim() ?? ''
+    })
+    expect(labels).toEqual([
+      'Open',
+      'Copy page reference',
+      'Pin to Quick Access'
+    ])
+
+    await fireEvent.click(screen.getByTestId('dash-table-menu-toggle-favorite'))
+
+    await waitFor(() =>
+      expect(appMocks.SetFavoritePage).toHaveBeenCalledWith(
+        'Work',
+        'Reading',
+        'Dune',
+        true
+      )
+    )
+    // The service's broadcast is what reloads both this mirror and the
+    // sidebar's Quick Access list.
+    await waitFor(() =>
+      expect(
+        appMocks.GetNavigationPreferences.mock.calls.length
+      ).toBeGreaterThan(1)
+    )
+
+    // The reloaded mirror relabels the item on the next open.
+    row.dispatchEvent(
+      new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 10,
+        clientY: 10
+      })
+    )
+    await tick()
+    await waitFor(() => {
+      const items = Array.from(
+        screen
+          .getByTestId('dash-table-locator-menu')
+          .querySelectorAll<HTMLElement>('[role="menuitem"]')
+      ).map((el) => {
+        const span = el.querySelector<HTMLSpanElement>(
+          'span:not([aria-hidden])'
+        )
+        return (span ?? el).textContent?.trim() ?? ''
+      })
+      expect(items).toEqual(['Open', 'Copy page reference', 'Unpin'])
+    })
+  })
+
+  it('toasts instead of throwing when the favorite write fails', async () => {
+    appMocks.SetFavoritePage.mockRejectedValue(new Error('vault not loaded'))
+    await mount()
+
+    const row = screen.getByRole('button', { name: /Open page Dune/ })
+    row.dispatchEvent(
+      new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 8,
+        clientY: 8
+      })
+    )
+    await tick()
+    await fireEvent.click(screen.getByTestId('dash-table-menu-toggle-favorite'))
+
+    await waitFor(() => expect(appMocks.SetFavoritePage).toHaveBeenCalled())
+    // The rejection was contained by the toggle wrapper — the dashboard
+    // stays rendered and functional.
+    expect(screen.getByTestId('type-dashboard-header')).toBeInTheDocument()
   })
 })
