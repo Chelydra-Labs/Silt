@@ -14,9 +14,11 @@ import (
 // localDisplayName returns the OS account's display name — user.User.Name,
 // populated from the Windows "Full Name" account field / Linux GECOS —
 // trimmed. Var so tests can pin GetLocalAuthor without depending on the host
-// user; "" on error or when the account has none set. Separate from
-// auditActor on purpose: the audit log's Actor field keeps username
-// semantics, and sharing the lookup would couple the two contracts.
+// user; "" on error or an empty display name. On Windows, os/user bakes the
+// SAM-compatible COMPUTER\user name into u.Name when the Full-Name lookup
+// fails (stdlib fallback), so such accounts get that here rather than "".
+// Separate from auditActor on purpose: the audit log's Actor field keeps
+// username semantics, and sharing the lookup would couple the two contracts.
 var localDisplayName = func() string {
 	u, err := user.Current()
 	if err != nil {
