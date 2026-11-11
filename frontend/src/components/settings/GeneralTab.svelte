@@ -640,7 +640,9 @@
           bind:value={commentAuthor}
           bind:this={commentAuthorInputEl}
           oninput={handleCommentAuthorInput}
-          aria-describedby="general-comment-author-help"
+          aria-describedby={commentAuthorError
+            ? 'general-comment-author-help general-comment-author-error'
+            : 'general-comment-author-help'}
           aria-invalid={commentAuthorError ? 'true' : undefined}
           disabled={commentAuthorInflight}
           onkeydown={(e: KeyboardEvent) => {
@@ -673,6 +675,7 @@
         </div>
         {#if commentAuthorError}
           <p
+            id="general-comment-author-error"
             class="text-status-danger text-type-sm font-body-md flex items-center gap-1.5"
             role="alert"
           >

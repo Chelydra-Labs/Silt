@@ -542,6 +542,12 @@ describe('GeneralTab comment author (#1125)', () => {
     await tick()
     const alert = screen.getByRole('alert')
     expect(alert.textContent).toMatch(/couldn't save the comment author/i)
+    // The error joins the help text in the field's description so
+    // re-querying the input reads the failure, not just the help.
+    expect(authorInput()).toHaveAttribute(
+      'aria-describedby',
+      'general-comment-author-help general-comment-author-error'
+    )
   })
 
   it('typing before the prefill IPC resolves keeps the typed text', async () => {
