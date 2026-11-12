@@ -3,11 +3,11 @@ import { buildStartDatePresets } from './startDatePresets'
 
 describe('buildStartDatePresets', () => {
   it('resolves all presets against a Sunday-start week and month rollover', () => {
+    // 2026-01-31 rolls into 2026-02-01 on all three of Tomorrow / Start of
+    // next week / Start of next month, so first-wins keeps only "Tomorrow".
     expect(buildStartDatePresets('2026-01-31', 'sunday')).toEqual([
       { label: 'Today', value: '2026-01-31' },
-      { label: 'Tomorrow', value: '2026-02-01' },
-      { label: 'Start of next week', value: '2026-02-01' },
-      { label: 'Start of next month', value: '2026-02-01' }
+      { label: 'Tomorrow', value: '2026-02-01' }
     ])
   })
 

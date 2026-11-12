@@ -22,10 +22,16 @@ export function buildStartDatePresets(
   const thisWeekStart = startOfWeekISO(today, weekStart)
   const startOfNextWeek = addDaysISO(thisWeekStart, 7)
   const nextMonthStart = ymd(startOfMonth(addMonths(dateFromYmd(today), 1)))
-  return [
+  const presets = [
     { label: 'Today', value: today },
     { label: 'Tomorrow', value: tomorrow },
     { label: 'Start of next week', value: startOfNextWeek },
     { label: 'Start of next month', value: nextMonthStart }
   ]
+  // Shortcut dates can collide ("Tomorrow" == "Start of next month" on the
+  // second-to-last day of a month). Keep the first — more specific — shortcut
+  // so every preset offers a distinct date, matching the due-date presets.
+  return presets.filter(
+    (preset, i) => presets.findIndex((p) => p.value === preset.value) === i
+  )
 }

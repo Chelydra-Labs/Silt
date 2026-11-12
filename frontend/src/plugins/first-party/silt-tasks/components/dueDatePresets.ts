@@ -24,7 +24,7 @@ export function buildDueDatePresets(
   const endOfCurrentMonth = ymd(endOfMonth(todayDate))
   const endOfNextMonth = ymd(endOfMonth(addMonths(todayDate, 1)))
 
-  return [
+  const presets = [
     { label: 'Today', value: today },
     { label: 'Tomorrow', value: addDaysISO(today, 1) },
     { label: 'End of week', value: endOfWeek },
@@ -32,4 +32,11 @@ export function buildDueDatePresets(
     { label: 'End of month', value: endOfCurrentMonth },
     { label: 'End of next month', value: endOfNextMonth }
   ]
+  // Shortcut dates can collide ("Tomorrow" == "End of week" on the week's
+  // second-to-last day, "Today" == "End of month" on the 31st). The context
+  // menu keys rows and testids by the resolved date, so keep the first —
+  // more specific — shortcut and drop later duplicates.
+  return presets.filter(
+    (preset, i) => presets.findIndex((p) => p.value === preset.value) === i
+  )
 }
