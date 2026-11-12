@@ -8,7 +8,6 @@
     onBlockFocus: _onBlockFocus,
     onBlockBlur: _onBlockBlur,
     onUpdate: _onUpdate,
-    // eslint-disable-next-line no-useless-assignment -- $bindable out-param for parent
     editorInstance = $bindable(null),
     activeMarks: _activeMarks,
     onSaveStateChange,

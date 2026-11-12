@@ -56,7 +56,6 @@
     onNextTask,
     hasPrevTask = false,
     hasNextTask = false,
-    // eslint-disable-next-line no-useless-assignment
     busy = $bindable(false)
   }: Props = $props()
 

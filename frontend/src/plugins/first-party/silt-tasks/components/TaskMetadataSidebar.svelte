@@ -73,7 +73,6 @@
     task,
     ctx,
     onMetaChanged,
-    // eslint-disable-next-line no-useless-assignment
     busy = $bindable(),
     stickyPrimary = false,
     onClose,
