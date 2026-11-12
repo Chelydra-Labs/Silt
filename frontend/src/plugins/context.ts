@@ -397,9 +397,9 @@ export function makePluginContext(
     // CapContentMutate); fetchSubtree/getTaskBlockers/searchBlocks are reads
     // and stay direct (the fullTextSearch precedent).
     fetchSubtree: (blockId) => FetchSubtree(blockId),
-    // Host OS username — default for the local_author pref (#430). Direct
-    // read (no capability gate): the value is not secret and every plugin
-    // surface that renders comment attribution needs it.
+    // Host OS account name — prefill for the local_author pref (#430/#1125).
+    // Direct read (no capability gate): the value is not secret and every
+    // plugin surface that renders comment attribution needs it.
     getLocalAuthor: () => GetLocalAuthor(),
     saveSubtreeBlocks: (blockId, children) =>
       PluginSaveSubtreeBlocks(

@@ -4,7 +4,6 @@
   import type { PluginContext, SubtreeBlock } from '../../../sdk'
   import RichText from '../../../../components/RichText.svelte'
   import { motionDuration } from '../motion'
-  import { loadLocalAuthor, persistLocalAuthor } from '../settings'
   import ErrorBanner from './ErrorBanner.svelte'
   import { friendlyCaughtError } from '../errors'
 
@@ -80,7 +79,13 @@
   // have no clean retry path from the banner.
   let errorRetryable = $state(false)
   let composerText = $state('')
-  let composerAuthor = $state('')
+  // Configured in Settings → General (#1125); "" means no author token
+  // (renderer shows "Unknown").
+  let commentAuthor = $state('')
+  // Whether loadAuthor ever succeeded: a failed re-read at submit must not
+  // discard the mount-time author (a transient IPC failure would otherwise
+  // silently downgrade attribution to "Unknown").
+  let authorLoaded = false
   let composerPending = $state(false)
   let liveMessage = $state('')
   // Inline reply composer: which comment is being replied to, plus its draft.
@@ -218,23 +223,29 @@
     }
   }
 
+  // Read the author pref fresh from the SDK rather than the hub's cached
+  // settings slice: Settings saves go through UpdatePluginSetting, which
+  // emits no config:changed, so a write while the hub is open would leave
+  // the cached slice stale until re-mount.
   async function loadAuthor() {
-    const saved = loadLocalAuthor()
-    if (saved !== undefined) {
-      // Respect both a saved name AND an explicit clear (''); only re-seed
-      // from the OS username when the key is absent (never set).
-      composerAuthor = saved
-      return
-    }
-    // Seed from the OS user once, then persist so later opens skip the IPC
-    // and the user keeps a stable identity across task switches.
     try {
-      const who = await ctx.getLocalAuthor()
-      composerAuthor = who || ''
-      if (who) await persistLocalAuthor(who)
+      const slice = (await ctx.getPluginSettings()) ?? {}
+      const v = slice['local_author']
+      if (typeof v === 'string') {
+        // Present — including an explicit "" clear — is authoritative.
+        commentAuthor = v
+      } else {
+        // Absent: attribute from the OS display name so a never-saved
+        // vault still posts with an author. Display-only — the fallback
+        // is never persisted, so saving in Settings stays the only write.
+        commentAuthor = (await ctx.getLocalAuthor()).trim()
+      }
+      authorLoaded = true
     } catch {
-      // Non-fatal: composerAuthor stays '' and the comment posts with no
-      // author token (renderer shows "Unknown").
+      // Non-fatal: keep the last-known-good author — only a failure before
+      // any successful read leaves nothing known, in which case posts carry
+      // no author token (renderer shows "Unknown").
+      if (!authorLoaded) commentAuthor = ''
     }
   }
 
@@ -272,7 +283,16 @@
   async function submit() {
     const text = composerText.trim()
     if (!text || composerPending) return
-    const author = composerAuthor.trim()
+    // Claim before the await below: a second Enter during the author
+    // re-read would otherwise pass the guard and double-post. The draft
+    // clears here too, while still synchronous — keystrokes landing during
+    // the re-read start the next draft instead of being wiped post-await.
+    composerPending = true
+    composerText = ''
+    // Re-read the pref at submit: Settings can change the author while
+    // this thread stays open, and the mount-time read would be stale.
+    await loadAuthor()
+    const author = commentAuthor.trim()
     const now = new Date().toISOString().slice(0, 19)
     const optimisticKey = nextKey()
     // Optimistic push so the user sees the comment immediately; the
@@ -289,8 +309,6 @@
       replies: []
     }
     comments = [...comments, optimistic]
-    composerText = ''
-    composerPending = true
     errorMsg = ''
     errorRetryable = false
     try {
@@ -315,6 +333,10 @@
   }
 
   async function startReply(comment: Comment, trigger: HTMLButtonElement) {
+    // A second startReply mid-flight would move the composer to another
+    // comment; the in-flight settle then either closes it out from under
+    // the user (success) or wipes the new draft with the failed text.
+    if (replyPending) return
     replyToId = comment.id
     replyText = ''
     replyReturnEl = trigger
@@ -323,6 +345,9 @@
   }
 
   function cancelReply() {
+    // Closing mid-flight would strand the in-flight post's draft restore
+    // in a composer that no longer renders; the failure path re-opens it.
+    if (replyPending) return
     replyToId = null
     replyText = ''
     void tick().then(() => replyReturnEl?.focus())
@@ -332,7 +357,13 @@
     const text = replyText.trim()
     const parentId = replyToId
     if (!text || !parentId || replyPending) return
-    const author = composerAuthor.trim()
+    // Same claim-before-await as submit(): the author re-read opens a
+    // window where a second Enter would otherwise double-post, and the
+    // draft must clear before it for the same reason.
+    replyPending = true
+    replyText = ''
+    await loadAuthor()
+    const author = commentAuthor.trim()
     const now = new Date().toISOString().slice(0, 19)
     const optimisticKey = nextKey()
     const optimistic: Comment = {
@@ -358,8 +389,6 @@
       }
       return top
     })
-    replyText = ''
-    replyPending = true
     errorMsg = ''
     errorRetryable = false
     try {
@@ -385,6 +414,11 @@
         replies: top.replies.filter((r) => r.key !== optimisticKey)
       }))
       replyText = text
+      // Re-open the composer alongside the draft: a cancel/Escape during
+      // flight is guarded (cancelReply/startReply early-return while
+      // pending), so this is defense-in-depth for any future path that
+      // closes or moves it before the post settles.
+      replyToId = parentId
       errorMsg = friendlyCaughtError(e)
       errorRetryable = false
       liveMessage = 'Reply failed to post'
@@ -437,12 +471,6 @@
       errorRetryable = false
       liveMessage = 'Comment failed to delete'
     }
-  }
-
-  function onAuthorBlur() {
-    // Persist on blur so the pref sticks across opens; empty is valid (clears
-    // the override and the OS-user fallback re-applies on next load).
-    void persistLocalAuthor(composerAuthor.trim())
   }
 
   // Split a comment body into bold / non-bold runs so **bold** renders as
@@ -511,9 +539,10 @@
       <div class="flex items-center gap-1">
         <button
           type="button"
-          class="text-type-2xs font-label-sm text-text-muted hover:text-accent-primary-start transition-colors px-1"
+          class="text-type-2xs font-label-sm text-text-muted hover:text-accent-primary-start transition-colors px-1 disabled:opacity-50 disabled:cursor-not-allowed"
           aria-label="Reply to comment"
           title="Reply"
+          disabled={replyPending || c.pending}
           onclick={(e) => startReply(c, e.currentTarget)}
         >
           Reply
@@ -547,8 +576,9 @@
         <div class="flex items-center justify-end gap-2">
           <button
             type="button"
-            class="px-2 py-0.5 rounded text-type-xs font-label-sm text-text-muted hover:text-text-primary transition-colors"
+            class="px-2 py-0.5 rounded text-type-xs font-label-sm text-text-muted hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             onclick={cancelReply}
+            disabled={replyPending}
           >
             Cancel
           </button>
@@ -660,20 +690,7 @@
     <p id={id(`comment-composer-help-${taskId}`)} class="sr-only">
       Press Enter to post, Shift+Enter for a new line.
     </p>
-    <div class="flex items-center gap-2">
-      <label
-        for={id(`comment-author-${taskId}`)}
-        class="text-type-2xs font-label-sm text-text-muted"
-      >
-        Author
-      </label>
-      <input
-        id={id(`comment-author-${taskId}`)}
-        bind:value={composerAuthor}
-        onblur={onAuthorBlur}
-        aria-label="Default comment author"
-        class="flex-1 rounded border border-surface-card-border bg-surface-card px-2 py-0.5 text-type-xs text-text-primary focus:outline-none focus:border-accent-primary-start"
-      />
+    <div class="flex items-center justify-end gap-2">
       <button
         type="button"
         onclick={() => void submit()}

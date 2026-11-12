@@ -243,6 +243,117 @@ func TestLoad_HappyPath_OverridesDefaults(t *testing.T) {
 	}
 }
 
+func TestLoad_LocalAuthorPresenceSemantics(t *testing.T) {
+	siltTasks := func(cfg SystemConfig) map[string]any {
+		entry, _ := cfg.Plugins.PluginSettings["silt-tasks"].(map[string]any)
+		return entry
+	}
+
+	// Fresh vault: neither Defaults() nor a missing config.yaml may carry
+	// the key — absence is what makes the Settings OS-name prefill
+	// reachable (#1125).
+	if _, has := siltTasks(Defaults())["local_author"]; has {
+		t.Errorf("Defaults() must not seed silt-tasks.local_author")
+	}
+	tmp := t.TempDir()
+	cfg, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load(missing file): %v", err)
+	}
+	if _, has := siltTasks(cfg)["local_author"]; has {
+		t.Errorf("fresh vault Load must not carry silt-tasks.local_author")
+	}
+
+	// Legacy vault: pre-#1125 defaults/scaffolding wrote local_author: ""
+	// into config.yaml; the first Load must strip exactly that empty seed
+	// and stamp the one-shot marker so the pref reads as never-set for
+	// existing vaults too.
+	writeFile(t, ConfigPath(tmp), strings.Join([]string{
+		"plugins:",
+		"  plugin_settings:",
+		"    silt-tasks:",
+		"      local_author: \"\"",
+	}, "\n"))
+	cfg, err = Load(tmp)
+	if err != nil {
+		t.Fatalf("Load(legacy empty seed): %v", err)
+	}
+	if v, has := siltTasks(cfg)["local_author"]; has {
+		t.Errorf(`legacy local_author: "" must load as absent, got %v`, v)
+	}
+	if done, _ := cfg.Plugins.PluginSettings[localAuthorSeedMigratedKey].(bool); !done {
+		t.Errorf("first Load of a legacy seed must stamp %s", localAuthorSeedMigratedKey)
+	}
+	// Persist the migrated snapshot the way any atomic setter does
+	// (mutateConfigFresh: Load → mutate → Save) — the marker must reach
+	// disk with the write.
+	if err := Save(tmp, cfg); err != nil {
+		t.Fatalf("Save(migrated snapshot): %v", err)
+	}
+
+	// One-shot: with the marker persisted, an explicitly cleared "" is a
+	// live value. Simulate the clear through the same Load -> mutate ->
+	// Save cycle UpdatePluginSetting runs, then verify every later Load —
+	// the re-read inside each subsequent atomic write — keeps it
+	// untouched.
+	cfg, err = Load(tmp)
+	if err != nil {
+		t.Fatalf("Load(after migration): %v", err)
+	}
+	siltTasks(cfg)["local_author"] = ""
+	if err := Save(tmp, cfg); err != nil {
+		t.Fatalf("Save(explicit clear): %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		cfg, err = Load(tmp)
+		if err != nil {
+			t.Fatalf("Load #%d after explicit clear: %v", i+1, err)
+		}
+		if v, has := siltTasks(cfg)["local_author"]; !has || v != "" {
+			t.Errorf(`explicitly cleared local_author "" must survive Load #%d, got %v (present=%v)`, i+1, v, has)
+		}
+	}
+
+	// A saved author is a real value and must survive Load untouched.
+	writeFile(t, ConfigPath(tmp), strings.Join([]string{
+		"plugins:",
+		"  plugin_settings:",
+		"    silt-tasks:",
+		"      local_author: Dana",
+	}, "\n"))
+	cfg, err = Load(tmp)
+	if err != nil {
+		t.Fatalf("Load(saved author): %v", err)
+	}
+	if v := siltTasks(cfg)["local_author"]; v != "Dana" {
+		t.Errorf("saved local_author must survive Load, got %v", v)
+	}
+}
+
+func TestSave_StampsLocalAuthorSeedMarkerWithoutLoad(t *testing.T) {
+	// A snapshot can reach Save carrying local_author: "" and no marker
+	// (e.g. a future frontend mirror that drops unknown plugin_settings
+	// keys). Save must stamp the marker itself — mirroring the hotkeys
+	// marker, which self-heals via normalize on both paths — so the next
+	// Load reads the "" as a deliberate clear instead of stripping it as
+	// a legacy seed (which would silently resurrect the OS prefill).
+	tmp := t.TempDir()
+	cfg := Defaults()
+	cfg.Plugins.PluginSettings["silt-tasks"] = map[string]any{"local_author": ""}
+	if err := Save(tmp, cfg); err != nil {
+		t.Fatalf("Save(unmigrated snapshot): %v", err)
+	}
+	loaded, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load(after Save stamp): %v", err)
+	}
+	entry, _ := loaded.Plugins.PluginSettings["silt-tasks"].(map[string]any)
+	if v, has := entry["local_author"]; !has || v != "" {
+		t.Errorf(`Save must stamp %s so "" survives the next Load as a deliberate clear, got %v (present=%v)`,
+			localAuthorSeedMigratedKey, v, has)
+	}
+}
+
 func TestLoad_MalformedYAML_ReturnsError(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, ConfigPath(tmp), "editor:\n  font_family: [unterminated\n  : : :")
@@ -263,8 +374,10 @@ func TestSave_RoundTrip(t *testing.T) {
 	original.Hotkeys["custom_action"] = "Ctrl+Shift+X"
 	original.Plugins.PluginSettings["my-plugin"] = map[string]any{"key": "value"}
 	// Save/Load both run normalize (opt-in disabled seed, nil maps, …). Compare
-	// against the normalized form so seed markers are not a false mismatch.
+	// against the normalized form so seed markers are not a false mismatch,
+	// and apply Load's local-author seed marker for the same reason.
 	original = normalize(original)
+	stripLegacyEmptyLocalAuthor(&original)
 
 	if err := Save(tmp, original); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -499,11 +612,17 @@ func TestDefaults_ContainsSiltTasks(t *testing.T) {
 	for _, key := range []string{
 		"default_display_mode", "default_group_by", "default_sort",
 		"default_scope", "calendar_sub_mode", "columns", "filters",
-		"saved_views", "local_author",
+		"saved_views",
 	} {
 		if _, has := ps[key]; !has {
 			t.Errorf("silt-tasks defaults missing key %q", key)
 		}
+	}
+	// local_author is deliberately unseeded (#1125): it is presence-based
+	// (absent = Settings prefills the OS account name), so Defaults must
+	// not make "" the loaded value for every fresh vault.
+	if _, has := ps["local_author"]; has {
+		t.Errorf("silt-tasks defaults must not seed local_author")
 	}
 	activeIncludes := func(id string) bool {
 		for _, a := range d.Plugins.Active {

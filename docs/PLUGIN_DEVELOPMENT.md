@@ -1057,11 +1057,14 @@ Dataview-style tokens attribute the comment:
 | `ts` | `[ts:: YYYY-MM-DDTHH:MM:SS]` (ISO 8601 local) | `[ts:: 2026-08-03T14:22:00]` |
 
 The Tasks hub renders these NOTE children as a thread inside the task's edit
-drawer (`components/CommentThread.svelte`); adding a comment splices a new
-NOTE child through the canonical write chain (`SaveSubtreeBlocks`). The
-author defaults to the host OS username (`ctx.getLocalAuthor`) on first post
-and is then seeded into the per-vault `local_author` pref so later composers
-open with a stable identity. The `block_meta` SQLite projection hydrates the
-`author`/`ts` tokens on `FetchSubtree` so the thread renders without a second
-round-trip. See SPECS §4.1 ("Comment attribution") for the token contract.
+drawer (`components/CommentThread.svelte`); adding a comment appends a new
+NOTE child atomically (`ctx.addTaskComment` → `PluginAppendTaskComment` —
+one server-side lock hold, not the generic two-step write chain). The
+author comes from the per-vault `local_author` pref, edited in
+Settings → General → Comment author; an absent pref attributes from the
+OS account display name (`ctx.getLocalAuthor()`, display-only — nothing is
+persisted until saved), and an empty pref writes no `[author::]` token. The `block_meta`
+SQLite projection hydrates the `author`/`ts` tokens on `FetchSubtree` so the
+thread renders without a second round-trip. See SPECS §4.1 ("Comment
+attribution") for the token contract.
 

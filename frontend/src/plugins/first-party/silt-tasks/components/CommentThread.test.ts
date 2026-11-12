@@ -1,15 +1,17 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 
-// CommentThread reads the local_author pref via the settings module
-// (loadLocalAuthor, seeded by initTasksSettings) and persists via the SDK's
-// ctx.updatePluginSetting (wrapped by persistLocalAuthor's saveFn). The
-// component doesn't self-init the module, so each test seeds the slice via
-// initTasksSettings(ctx) before mount.
+// CommentThread attributes comments from the configured local_author pref
+// (#1125): a fresh ctx.getPluginSettings() read at mount (Settings writes
+// emit no config:changed, so the hub's cached slice can be stale) with no
+// per-comment Author input. An ABSENT pref falls back to the OS display
+// name via ctx.getLocalAuthor (display-only); a present "" is an explicit
+// clear and posts without an author. The test ctx's getPluginSettings
+// resolves `mocks.tasksSettings`, so each test seeds the slice before
+// mount.
 const mocks = vi.hoisted(() => ({
   updatePluginSetting: vi.fn().mockResolvedValue(true),
-  tasksSettings: {} as Record<string, unknown>,
-  persistLocalAuthor: vi.fn().mockResolvedValue(true)
+  tasksSettings: {} as Record<string, unknown>
 }))
 
 vi.mock('@wailsio/runtime', () => ({
@@ -84,7 +86,6 @@ if (
 import CommentThread from './CommentThread.svelte'
 import type { PluginContext, SubtreeBlock } from '../../../sdk'
 import { v2CtxStubs } from '../../../test-helpers'
-import { initTasksSettings } from '../settings'
 
 interface CommentThreadProps {
   taskId: string
@@ -108,7 +109,6 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     fetchSubtree: vi.fn().mockResolvedValue([]),
     addTaskComment: vi.fn().mockResolvedValue('new-uuid'),
     deleteBlock: vi.fn().mockResolvedValue(true),
-    getLocalAuthor: vi.fn().mockResolvedValue('osuser'),
     getPluginSettings: vi.fn(() => Promise.resolve(mocks.tasksSettings)),
     updatePluginSetting: mocks.updatePluginSetting,
     on: vi.fn(() => () => {}),
@@ -116,12 +116,9 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
   } as unknown as PluginContext
 }
 
-// Seed the settings module's slice + wire saveFn to mocks.updatePluginSetting.
-// CommentThread reads loadLocalAuthor() in onMount, so this must resolve
-// before mount().
-async function seedSettings(slice: Record<string, unknown> = {}) {
+// Control what the component's fresh ctx.getPluginSettings() read resolves.
+function seedSettings(slice: Record<string, unknown> = {}) {
   mocks.tasksSettings = slice
-  await initTasksSettings(makeCtx())
 }
 
 function makeBlock(o: Partial<SubtreeBlock> & { id: string }): SubtreeBlock {
@@ -155,11 +152,11 @@ async function flush() {
 
 describe('CommentThread', () => {
   beforeEach(async () => {
-    // Reset the persisted local_author between tests so the seed-vs-skip
-    // branches are deterministic.
+    // Reset the resolved local_author between tests so the configured-vs-
+    // empty attribution branches are deterministic.
     mocks.updatePluginSetting.mockClear()
     mocks.updatePluginSetting.mockResolvedValue(true)
-    await seedSettings({})
+    seedSettings({})
   })
   afterEach(() => cleanup())
 
@@ -311,7 +308,7 @@ describe('CommentThread', () => {
     expect(addTaskComment).toHaveBeenCalledWith(
       'task-1',
       'hello world',
-      'osuser'
+      undefined
     )
   })
 
@@ -342,7 +339,7 @@ describe('CommentThread', () => {
     expect(addTaskComment).toHaveBeenLastCalledWith(
       'task-1',
       'please retry me',
-      'osuser'
+      undefined
     )
     // Banner cleared after the successful retry.
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
@@ -378,7 +375,10 @@ describe('CommentThread', () => {
     const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
     await fireEvent.input(ta, { target: { value: 'optimistic body' } })
     await fireEvent.keyDown(ta, { key: 'Enter' })
-    // The optimistic comment appears immediately, before the promise resolves.
+    // The optimistic comment appears before addTaskComment resolves (its
+    // promise is still pending here; only the author read's microtasks
+    // ran — the absent pref takes the OS-name fallback hop).
+    await flush()
     expect(screen.getByText('optimistic body')).toBeInTheDocument()
     expect(addTaskComment).toHaveBeenCalled()
     // Resolve to let pending state clear + avoid hanging the test.
@@ -414,49 +414,366 @@ describe('CommentThread', () => {
     expect(screen.getByRole('alert')).toBeInTheDocument()
   })
 
-  it('seeds composerAuthor from ctx.getLocalAuthor when the pref is empty, and persists it', async () => {
-    await seedSettings({}) // pref unset
-    const getLocalAuthor = vi.fn().mockResolvedValue('osuser')
-    const ctx = makeCtx({ getLocalAuthor })
-    mount({ ctx })
-    await flush()
-    expect(getLocalAuthor).toHaveBeenCalled()
-    const authorInput = screen.getByLabelText(
-      'Default comment author'
-    ) as HTMLInputElement
-    expect(authorInput.value).toBe('osuser')
-    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
-      'local_author',
-      'osuser'
-    )
-  })
-
-  it('does NOT call ctx.getLocalAuthor when the local_author pref is already set', async () => {
-    await seedSettings({ local_author: 'saved-name' })
-    const getLocalAuthor = vi.fn()
-    const ctx = makeCtx({ getLocalAuthor })
-    mount({ ctx })
-    await flush()
-    expect(getLocalAuthor).not.toHaveBeenCalled()
-    const authorInput = screen.getByLabelText(
-      'Default comment author'
-    ) as HTMLInputElement
-    expect(authorInput.value).toBe('saved-name')
-  })
-
-  it('changing the author input + blur calls persistLocalAuthor (updatePluginSetting)', async () => {
+  it('renders no per-comment Author input (configured in Settings, #1125)', async () => {
     mount()
     await flush()
-    const authorInput = screen.getByLabelText(
-      'Default comment author'
-    ) as HTMLInputElement
-    mocks.updatePluginSetting.mockClear()
-    await fireEvent.input(authorInput, { target: { value: 'renamed' } })
-    await fireEvent.blur(authorInput)
-    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
-      'local_author',
-      'renamed'
+    expect(screen.queryByLabelText('Default comment author')).toBeNull()
+  })
+
+  it('attributes top-level comments AND replies with the configured author', async () => {
+    seedSettings({ local_author: 'Dana' })
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const ctx = makeCtx({
+      addTaskComment,
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: 'parent comment',
+          author: 'alice',
+          timestamp: '2026-07-01T09:00:00',
+          parent_id: 'task-1'
+        })
+      ])
+    })
+    mount({ ctx })
+    await flush()
+
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'top-level' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    await flush()
+    expect(addTaskComment).toHaveBeenCalledWith('task-1', 'top-level', 'Dana')
+
+    // Two comments now (seeded parent + the just-posted top-level); reply
+    // to the seeded one.
+    const replyBtn = screen.getAllByLabelText('Reply to comment')[0]!
+    await fireEvent.click(replyBtn)
+    await flush()
+    const replyTa = screen.getByLabelText('Reply text') as HTMLTextAreaElement
+    await fireEvent.input(replyTa, { target: { value: 'a reply' } })
+    await fireEvent.keyDown(replyTa, { key: 'Enter' })
+    await flush()
+    expect(addTaskComment).toHaveBeenLastCalledWith(
+      'task-1',
+      'a reply',
+      'Dana',
+      'c1'
     )
+  })
+
+  it('absent pref → posts with the OS display name (display-only, never persisted)', async () => {
+    seedSettings({})
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const getLocalAuthor = vi.fn().mockResolvedValue('OS Name')
+    const ctx = makeCtx({ addTaskComment, getLocalAuthor })
+    mount({ ctx })
+    await flush()
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'auto-attributed' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    await flush()
+    expect(addTaskComment).toHaveBeenCalledWith(
+      'task-1',
+      'auto-attributed',
+      'OS Name'
+    )
+    expect(getLocalAuthor).toHaveBeenCalled()
+    // The fallback is display-only: posting must not persist anything.
+    expect(mocks.updatePluginSetting).not.toHaveBeenCalled()
+  })
+
+  it('present "" pref → author is undefined (explicit clear, no OS fallback)', async () => {
+    seedSettings({ local_author: '' })
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const getLocalAuthor = vi.fn().mockResolvedValue('OS Name')
+    const ctx = makeCtx({ addTaskComment, getLocalAuthor })
+    mount({ ctx })
+    await flush()
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'anon' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    await flush()
+    expect(addTaskComment).toHaveBeenCalledWith('task-1', 'anon', undefined)
+    expect(getLocalAuthor).not.toHaveBeenCalled()
+  })
+
+  it('getPluginSettings rejection still posts (author undefined, non-fatal)', async () => {
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const ctx = makeCtx({
+      addTaskComment,
+      getPluginSettings: vi.fn().mockRejectedValue(new Error('ipc died'))
+    })
+    mount({ ctx })
+    await flush()
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'resilient' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    await flush()
+    // loadAuthor's catch path swallows the rejection at mount AND at the
+    // submit-time re-read — the post carries no author token.
+    expect(addTaskComment).toHaveBeenCalledWith(
+      'task-1',
+      'resilient',
+      undefined
+    )
+  })
+
+  it('keeps the loaded author when only the submit-time re-read fails', async () => {
+    // Mount read succeeds, submit re-read rejects: discarding the
+    // mount-time author would silently downgrade attribution to
+    // "Unknown" over a transient IPC failure.
+    const getPluginSettings = vi
+      .fn()
+      .mockResolvedValueOnce({ local_author: 'Dana' })
+      .mockRejectedValue(new Error('ipc died'))
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const ctx = makeCtx({ addTaskComment, getPluginSettings })
+    mount({ ctx })
+    await flush()
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'keep author' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    await flush()
+    expect(addTaskComment).toHaveBeenCalledWith('task-1', 'keep author', 'Dana')
+  })
+
+  it('whitespace-only pref ("  ") posts with author undefined', async () => {
+    seedSettings({ local_author: '   ' })
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const ctx = makeCtx({ addTaskComment })
+    mount({ ctx })
+    await flush()
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'anon' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    await flush()
+    expect(addTaskComment).toHaveBeenCalledWith('task-1', 'anon', undefined)
+  })
+
+  it('re-reads the author at submit (Settings change after mount wins)', async () => {
+    seedSettings({})
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const ctx = makeCtx({ addTaskComment })
+    mount({ ctx })
+    await flush()
+    // The user sets the author in Settings while this thread stays open;
+    // the submit-time re-read must pick it up.
+    seedSettings({ local_author: 'Dana' })
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'fresh' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    await flush()
+    expect(addTaskComment).toHaveBeenCalledWith('task-1', 'fresh', 'Dana')
+  })
+
+  // Opens the claim-before-await window the pending guard protects: the
+  // settings read pends until the test resolves it, so a second Enter
+  // lands while submit()/submitReply() is still suspended.
+  function deferredSettings() {
+    let resolveSettings!: (v: Record<string, unknown>) => void
+    const pending = new Promise<Record<string, unknown>>((res) => {
+      resolveSettings = res
+    })
+    return {
+      getPluginSettings: vi.fn(() => pending),
+      resolveSettings
+    }
+  }
+
+  it('drops a second Enter during the author re-read (no double post)', async () => {
+    const { getPluginSettings, resolveSettings } = deferredSettings()
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const ctx = makeCtx({ addTaskComment, getPluginSettings })
+    mount({ ctx })
+    await flush()
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'once' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    // Refill the draft so the second Enter falls to the pending guard,
+    // not the empty-text one — pinning the claim-before-await ordering.
+    await fireEvent.input(ta, { target: { value: 'once' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    resolveSettings({ local_author: 'Dana' })
+    await flush()
+    expect(addTaskComment).toHaveBeenCalledTimes(1)
+    expect(addTaskComment).toHaveBeenCalledWith('task-1', 'once', 'Dana')
+  })
+
+  it('drops a second Enter during the reply author re-read (no double post)', async () => {
+    const { getPluginSettings, resolveSettings } = deferredSettings()
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const ctx = makeCtx({
+      addTaskComment,
+      getPluginSettings,
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: 'parent comment',
+          author: 'alice',
+          timestamp: '2026-07-01T09:00:00',
+          parent_id: 'task-1'
+        })
+      ])
+    })
+    mount({ ctx })
+    await flush()
+    const replyBtn = screen.getAllByLabelText('Reply to comment')[0]!
+    await fireEvent.click(replyBtn)
+    await flush()
+    const replyTa = screen.getByLabelText('Reply text') as HTMLTextAreaElement
+    await fireEvent.input(replyTa, { target: { value: 'reply once' } })
+    await fireEvent.keyDown(replyTa, { key: 'Enter' })
+    await fireEvent.input(replyTa, { target: { value: 'reply once' } })
+    await fireEvent.keyDown(replyTa, { key: 'Enter' })
+    resolveSettings({})
+    await flush()
+    expect(addTaskComment).toHaveBeenCalledTimes(1)
+    expect(addTaskComment).toHaveBeenCalledWith(
+      'task-1',
+      'reply once',
+      undefined,
+      'c1'
+    )
+  })
+
+  it('disables reply Cancel while the reply is in flight', async () => {
+    // Canceling mid-flight would close the composer the failure path
+    // restores its draft into; the button (and the Escape route through
+    // cancelReply) must hold until the post settles.
+    const { getPluginSettings, resolveSettings } = deferredSettings()
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const ctx = makeCtx({
+      addTaskComment,
+      getPluginSettings,
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: 'parent comment',
+          author: 'alice',
+          timestamp: '2026-07-01T09:00:00',
+          parent_id: 'task-1'
+        })
+      ])
+    })
+    mount({ ctx })
+    await flush()
+    await fireEvent.click(screen.getAllByLabelText('Reply to comment')[0]!)
+    await flush()
+    const replyTa = screen.getByLabelText('Reply text') as HTMLTextAreaElement
+    await fireEvent.input(replyTa, { target: { value: 'reply' } })
+    await fireEvent.keyDown(replyTa, { key: 'Enter' })
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+    // Per-comment Reply buttons are gated too: starting another comment's
+    // reply mid-flight would move the composer the settle path reuses.
+    expect(screen.getAllByLabelText('Reply to comment')[0]!).toBeDisabled()
+    resolveSettings({})
+    await flush()
+    // Success closes the composer (replyToId resets) — the Cancel button
+    // is gone, not merely re-enabled.
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
+    expect(addTaskComment).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables Reply on a comment whose own post is still in flight', async () => {
+    // The optimistic entry renders with pending: true; replying to it
+    // would carry parentId = "optimistic-…", which the id swap strands:
+    // the composer vanishes and a failed reply restores the draft into
+    // an id that no longer renders.
+    let resolveComment!: (id: string) => void
+    const pendingComment = new Promise<string>((res) => {
+      resolveComment = res
+    })
+    const addTaskComment = vi.fn(() => pendingComment)
+    const ctx = makeCtx({ addTaskComment })
+    mount({ ctx })
+    await flush()
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'top-level' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    await flush()
+    // The optimistic entry is the only comment; its Reply button holds
+    // until the real id replaces the optimistic one.
+    expect(screen.getAllByLabelText('Reply to comment')[0]!).toBeDisabled()
+    resolveComment('real-uuid')
+    await flush()
+    expect(screen.getAllByLabelText('Reply to comment')[0]!).toBeEnabled()
+  })
+
+  it('a failed reply re-opens the composer on the original parent with the draft restored (Escape mid-flight is a no-op)', async () => {
+    // Deferred-then-rejecting post: the failure path must restore the
+    // draft INTO the composer even though Escape was pressed mid-flight —
+    // cancelReply's pending guard kept it open — and re-anchor it to the
+    // original parent.
+    let rejectComment!: (e: Error) => void
+    const pendingComment = new Promise<string>((_, rej) => {
+      rejectComment = rej
+    })
+    const addTaskComment = vi.fn(() => pendingComment)
+    const ctx = makeCtx({
+      addTaskComment,
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: 'parent comment',
+          author: 'alice',
+          timestamp: '2026-07-01T09:00:00',
+          parent_id: 'task-1'
+        }),
+        makeBlock({
+          id: 'c2',
+          clean_text: 'second comment',
+          author: 'bob',
+          timestamp: '2026-07-01T10:00:00',
+          parent_id: 'task-1'
+        })
+      ])
+    })
+    mount({ ctx })
+    await flush()
+    await fireEvent.click(screen.getAllByLabelText('Reply to comment')[0]!)
+    await flush()
+    const replyTa = screen.getByLabelText('Reply text') as HTMLTextAreaElement
+    await fireEvent.input(replyTa, { target: { value: 'flaky reply' } })
+    await fireEvent.keyDown(replyTa, { key: 'Enter' })
+    // Escape mid-flight: cancelReply must hold (guard), composer stays.
+    await fireEvent.keyDown(replyTa, { key: 'Escape' })
+    expect(screen.getByTestId('reply-composer')).toBeInTheDocument()
+    rejectComment(new Error('post failed'))
+    await flush()
+    // Failure restores the draft into the composer re-anchored to the
+    // original parent (c1's article), not the second comment's.
+    const composer = screen.getByTestId('reply-composer')
+    const hostArticle = composer.closest('article')
+    expect(hostArticle).not.toBeNull()
+    expect(hostArticle!.textContent).toContain('parent comment')
+    expect(
+      (screen.getByLabelText('Reply text') as HTMLTextAreaElement).value
+    ).toBe('flaky reply')
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+    expect(addTaskComment).toHaveBeenCalledWith(
+      'task-1',
+      'flaky reply',
+      undefined,
+      'c1'
+    )
+  })
+
+  it('keystrokes typed during the author re-read survive the post', async () => {
+    const { getPluginSettings, resolveSettings } = deferredSettings()
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const ctx = makeCtx({ addTaskComment, getPluginSettings })
+    mount({ ctx })
+    await flush()
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'first' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    // The composer stays editable while the re-read pends; what the user
+    // types now is the start of the next draft, not collateral to wipe.
+    await fireEvent.input(ta, { target: { value: 'second' } })
+    resolveSettings({})
+    await flush()
+    expect(addTaskComment).toHaveBeenCalledWith('task-1', 'first', undefined)
+    expect(ta.value).toBe('second')
   })
 
   it('block:changed event triggers a reload of the thread', async () => {
@@ -633,7 +950,7 @@ describe('CommentThread', () => {
     expect(addTaskComment).toHaveBeenCalledWith(
       'task-1',
       'my reply',
-      'osuser',
+      undefined,
       'c1'
     )
     expect(screen.getByText('my reply')).toBeInTheDocument()
