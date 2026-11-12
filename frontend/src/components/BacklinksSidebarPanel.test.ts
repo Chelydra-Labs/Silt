@@ -114,6 +114,8 @@ function unlinkedMentionWire(partial: {
     section: string
     page: string
   }[]
+  candidates_truncated?: boolean
+  candidates_total?: number
 }) {
   return {
     source: partial.source ?? 'vault',
@@ -125,7 +127,11 @@ function unlinkedMentionWire(partial: {
     match_count: partial.match_count ?? 1,
     title: partial.title ?? 'Research',
     ambiguous: partial.ambiguous ?? false,
-    ...(partial.candidates ? { candidates: partial.candidates } : {})
+    ...(partial.candidates ? { candidates: partial.candidates } : {}),
+    ...(partial.candidates_truncated ? { candidates_truncated: true } : {}),
+    ...(partial.candidates_total != null
+      ? { candidates_total: partial.candidates_total }
+      : {})
   }
 }
 
@@ -1776,6 +1782,70 @@ describe('BacklinksSidebarPanel — row context menu (#1120)', () => {
     return e
   }
 
+  /** Root-level item labels only — a parent's flyout rows are nested. */
+  function rootLabels(): string[] {
+    const root = menu()
+    return Array.from(root.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+      .filter((el) => el.closest('[role="menu"]') === root)
+      .map((el) => {
+        const span = el.querySelector<HTMLSpanElement>(
+          'span:not([aria-hidden])'
+        )
+        return (span ?? el).textContent?.trim() ?? ''
+      })
+  }
+
+  /** The flyout authored as the parent item's sibling (APG placement). */
+  function submenuOf(parent: HTMLElement): HTMLElement {
+    const sib = parent.nextElementSibling
+    if (!(sib instanceof HTMLElement) || sib.getAttribute('role') !== 'menu') {
+      throw new Error('no sibling role="menu" after the parent item')
+    }
+    return sib
+  }
+
+  function flyoutLabels(parent: HTMLElement): string[] {
+    return Array.from(
+      submenuOf(parent).querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).map((el) => el.textContent?.trim() ?? '')
+  }
+
+  /** Ambiguous mention of "Standup" with two leaf candidates on block-7. */
+  async function loadedAmbiguousPanel(
+    extra: {
+      candidates_truncated?: boolean
+      candidates_total?: number
+    } = {}
+  ) {
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue(
+      unlinkedWire({
+        results: [
+          unlinkedMentionWire({
+            source_page: 'Notes',
+            source_section: 'Journal',
+            source_block_ids: ['block-7'],
+            source_snippets: ['Standup notes from today'],
+            title: 'Standup',
+            ambiguous: true,
+            candidates: [
+              { notebook: 'Work', section: 'Journal', page: 'Standup' },
+              { notebook: 'Work', section: 'Log', page: 'Standup' }
+            ],
+            ...extra
+          })
+        ]
+      })
+    )
+    renderPanel()
+    await screen.findByText('1 page mentions this title')
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    return screen.findByRole('button', {
+      name: /Link mention of Standup as Work\/Journal\/Standup/
+    })
+  }
+
   async function loadedPanel() {
     renderPanel()
     await screen.findByText('2 pages link here')
@@ -1942,7 +2012,7 @@ describe('BacklinksSidebarPanel — row context menu (#1120)', () => {
     expect(screen.queryByTestId('backlinks-locator-menu')).toBeNull()
   })
 
-  it('ambiguous mention rows omit Promote (candidate chips stay the flow)', async () => {
+  it('ambiguous mention page headers keep the page-level subset (no Promote)', async () => {
     mocks.getUnlinkedMentionsPaged.mockResolvedValue(
       unlinkedWire({
         results: [
@@ -1977,6 +2047,132 @@ describe('BacklinksSidebarPanel — row context menu (#1120)', () => {
     await tick()
     expect(menuLabels()).toEqual(['Open source page', 'Copy page reference'])
     expect(screen.queryByTestId('backlinks-menu-promote-to-link')).toBeNull()
+  })
+
+  it('ambiguous mention rows offer a Promote flyout of the candidate paths', async () => {
+    const chip = await loadedAmbiguousPanel()
+    await openMenuOn(chip)
+
+    expect(rootLabels()).toEqual([
+      'Promote to link',
+      'Open source page',
+      'Copy page reference'
+    ])
+    const parent = screen.getByTestId('backlinks-menu-promote-to-link')
+    expect(parent).toHaveAttribute('aria-haspopup', 'menu')
+    expect(parent).toHaveAttribute('aria-expanded', 'false')
+
+    await fireEvent.click(parent)
+    await tick()
+    // Opens as a positioned flyout, not the always-present hidden markup.
+    expect(submenuOf(parent).classList.contains('is-open')).toBe(true)
+    expect(parent).toHaveAttribute('aria-expanded', 'true')
+    expect(flyoutLabels(parent)).toEqual([
+      'Work/Journal/Standup',
+      'Work/Log/Standup'
+    ])
+  })
+
+  it('a flyout candidate promotes with its explicit target and closes the menu', async () => {
+    const chip = await loadedAmbiguousPanel()
+    await openMenuOn(chip)
+    await fireEvent.click(screen.getByTestId('backlinks-menu-promote-to-link'))
+
+    await fireEvent.click(
+      screen.getByTestId('backlinks-menu-promote-to-link-candidate-1')
+    )
+    await waitFor(() =>
+      expect(mocks.promoteUnlinkedMention).toHaveBeenCalledWith(
+        'block-7',
+        'Work',
+        'Log',
+        'Standup'
+      )
+    )
+    await waitFor(() =>
+      expect(mocks.pushNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'success',
+          message: expect.stringContaining('as Work/Log/Standup')
+        })
+      )
+    )
+    expect(screen.queryByTestId('backlinks-locator-menu')).toBeNull()
+  })
+
+  it('ArrowRight opens the Promote flyout; ArrowLeft refocuses the parent', async () => {
+    const chip = await loadedAmbiguousPanel()
+    await openMenuOn(chip)
+
+    const parent = screen.getByTestId('backlinks-menu-promote-to-link')
+    parent.focus()
+    await fireEvent.keyDown(parent, { key: 'ArrowRight' })
+    await tick()
+
+    const first = screen.getByTestId(
+      'backlinks-menu-promote-to-link-candidate-0'
+    )
+    expect(document.activeElement).toBe(first)
+
+    await fireEvent.keyDown(first, { key: 'ArrowLeft' })
+    await tick()
+    expect(document.activeElement).toBe(parent)
+    expect(parent).toHaveAttribute('aria-expanded', 'false')
+    // The root menu stays open — only the flyout level closed.
+    expect(menu()).toBeInTheDocument()
+  })
+
+  it('Shift+F10 on an ambiguous chip opens that block’s row menu', async () => {
+    const chip = await loadedAmbiguousPanel()
+    chip.focus()
+
+    await fireEvent.keyDown(chip, { key: 'F10', shiftKey: true })
+    await tick()
+    expect(menu()).toBeInTheDocument()
+    expect(
+      screen.getByTestId('backlinks-menu-promote-to-link')
+    ).toHaveAttribute('aria-haspopup', 'menu')
+  })
+
+  it('drops the Promote flyout while that block is busy (busy-guard parity)', async () => {
+    let resolvePromote!: () => void
+    mocks.promoteUnlinkedMention.mockImplementation(
+      () => new Promise<void>((resolve) => (resolvePromote = resolve))
+    )
+    const chip = await loadedAmbiguousPanel()
+    await fireEvent.click(chip)
+    await waitFor(() => expect(chip).toBeDisabled())
+
+    // jsdom dispatches contextmenu on a disabled control even though real
+    // pointer events leave it inert — this pins the derived guard only.
+    await openMenuOn(chip)
+    expect(rootLabels()).toEqual(['Open source page', 'Copy page reference'])
+    expect(screen.queryByTestId('backlinks-menu-promote-to-link')).toBeNull()
+
+    resolvePromote()
+    await waitFor(() => expect(mocks.promoteUnlinkedMention).toHaveBeenCalled())
+  })
+
+  it('flyout carries a +N more hint when candidates are truncated', async () => {
+    const chip = await loadedAmbiguousPanel({
+      candidates_truncated: true,
+      candidates_total: 40
+    })
+    await openMenuOn(chip)
+    const parent = screen.getByTestId('backlinks-menu-promote-to-link')
+    await fireEvent.click(parent)
+    await tick()
+
+    expect(flyoutLabels(parent)).toEqual([
+      'Work/Journal/Standup',
+      'Work/Log/Standup',
+      '+38 more'
+    ])
+    const hint = screen.getByTestId(
+      'backlinks-menu-promote-to-link-candidates-truncated'
+    )
+    expect(hint).toBeDisabled()
+    expect(hint).toHaveAccessibleName('+38 more matching paths not shown')
   })
 
   it('Shift+F10 on a focused row opens the menu; Escape returns focus', async () => {

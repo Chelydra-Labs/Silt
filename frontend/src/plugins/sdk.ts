@@ -408,15 +408,17 @@ export interface PluginContext {
    */
   fetchSubtree: (blockId: string) => Promise<SubtreeBlock[]>
   /**
-   * The host OS username, used as the default for the per-vault local_author
-   * preference (#430). Returns an empty string if the host can't resolve it
-   * (the comment composer prompts the user on first run rather than seeding
-   * YAML with a placeholder). The user's explicit local_author pref (if set)
+   * The OS account display name (username fallback), used as the prefill for
+   * the per-vault local_author preference (#430) that Settings → General →
+   * Comment author edits. Returns an empty string if the host can't resolve
+   * it (the field then stays empty until the user types a name; nothing is
+   * persisted until saved). The user's explicit local_author pref (if set)
    * always wins over this.
    *
-   * Not capability-gated: the OS username is treated as non-secret (it
-   * already appears in audit events). Revisit if Silt ever hosts untrusted
-   * plugins.
+   * Not capability-gated: the value is treated as non-secret — the
+   * username fallback already appears in audit events, and the display
+   * name is held to the same standard. Revisit if Silt ever hosts
+   * untrusted plugins.
    */
   getLocalAuthor: () => Promise<string>
   /**

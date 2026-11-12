@@ -351,7 +351,6 @@ plugins:
         dueDate: ""
         tags: []
       saved_views: []
-      local_author: ""
 
 # UI Preferences (per-vault)
 ui:

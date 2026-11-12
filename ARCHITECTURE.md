@@ -818,8 +818,9 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   (read-only child sub-tree extraction; also hydrates `block_meta`
   comment attribution for NOTE children) and `SaveSubtreeBlocks` (atomic
   sub-tree splice through the canonical write chain). **Local author**:
-  `GetLocalAuthor` returns the host OS username (the default seed for the
-  per-vault `local_author` pref that attributes Task comment threads).
+  `GetLocalAuthor` returns the OS account display name (username fallback) —
+  the prefill for the per-vault `local_author` pref that attributes Task
+  comment threads, surfaced as the Settings → General → Comment author field.
 - **Navigation CRUD** — `CreateNotebook` / `OpenNotebook` /
   `PickNotebookFolder`, `CreateSection(notebook, parentPath, name)`,
   `CreatePage` / `MovePage` (cross-section; `section` may be `""`),

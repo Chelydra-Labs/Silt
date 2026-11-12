@@ -27,7 +27,7 @@ const mocks = vi.hoisted(() => {
     hotkeys: { open_search: 'Ctrl+P' },
     plugins: { active: [], disabled: [], plugin_settings: {} }
   }
-  return {
+  const m = {
     baseConfig,
     settings: {
       config: baseConfig as typeof baseConfig | null,
@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => {
     },
     saveConfig: vi.fn(async () => true),
     reloadFromBackend: vi.fn(async () => {}),
+    updatePluginSetting: vi.fn(),
     themeState: {
       id: 'cyber_forest',
       name: 'Cyber Forest',
@@ -51,8 +52,29 @@ const mocks = vi.hoisted(() => {
       } as Record<string, string>,
       lightTokens: {} as Record<string, string>,
       error: null as string | null
+    },
+    // Mirrors the real updatePluginSetting (settings/store.svelte.ts): the
+    // single-field write lands in the local config snapshot so the derived
+    // post-save recompute (stored-pref flip + trimmed snap) is exercised.
+    mirrorPluginSetting: async (
+      pluginID: string,
+      key: string,
+      value: unknown
+    ): Promise<boolean> => {
+      const cfg = m.settings.config as typeof baseConfig | null
+      if (cfg) {
+        const ps = (cfg.plugins.plugin_settings ??= {}) as Record<
+          string,
+          Record<string, unknown>
+        >
+        ps[pluginID] ??= {}
+        ps[pluginID][key] = value
+      }
+      return true
     }
   }
+  m.updatePluginSetting.mockImplementation(m.mirrorPluginSetting)
+  return m
 })
 
 const appMocks = vi.hoisted(() =>
@@ -67,6 +89,9 @@ const appMocks = vi.hoisted(() =>
     ImportVault: vi.fn(),
     GetCloseToTray: vi.fn().mockResolvedValue(false),
     SetCloseToTray: vi.fn().mockResolvedValue(undefined),
+    // Comment author (#1125) — OS-account prefill + atomic pref write.
+    GetLocalAuthor: vi.fn().mockResolvedValue(''),
+    UpdatePluginSetting: vi.fn().mockResolvedValue(undefined),
     // Custom dictionary IPC (#196 / #338) — GeneralTab loads the list on mount.
     GetCustomDictionary: vi.fn().mockResolvedValue([]),
     AddCustomDictionaryWord: vi.fn().mockResolvedValue([]),
@@ -107,7 +132,8 @@ vi.mock('@wailsio/runtime', () => ({
 vi.mock('../../settings/store.svelte', () => ({
   settings: mocks.settings,
   saveConfig: mocks.saveConfig,
-  reloadFromBackend: mocks.reloadFromBackend
+  reloadFromBackend: mocks.reloadFromBackend,
+  updatePluginSetting: mocks.updatePluginSetting
 }))
 vi.mock('../../theme/store.svelte', () => ({ themeState: mocks.themeState }))
 
@@ -379,6 +405,222 @@ describe('GeneralTab close-to-tray toggle (#501)', () => {
     expect(appMocks.SetCloseToTray).toHaveBeenCalledTimes(1)
     resolveWrite()
     await tick()
+  })
+})
+
+// Comment author (#1125): stored pref wins, OS-account prefill fills the
+// field only until an explicit save, and saves route through the store's
+// atomic single-field setter (never read-modify-saveConfig).
+describe('GeneralTab comment author (#1125)', () => {
+  const authorInput = () =>
+    screen.getByLabelText('Name on task comments') as HTMLInputElement
+
+  beforeEach(() => {
+    // Fresh config per test: the mirroring setter writes into it, and a
+    // shared baseConfig would leak saved prefs across tests.
+    mocks.settings.config = {
+      ...mocks.baseConfig,
+      plugins: { active: [], disabled: [], plugin_settings: {} }
+    }
+    mocks.updatePluginSetting.mockReset()
+    mocks.updatePluginSetting.mockImplementation(mocks.mirrorPluginSetting)
+    appMocks.GetLocalAuthor.mockReset()
+    appMocks.GetLocalAuthor.mockResolvedValue('')
+  })
+  afterEach(() => cleanup())
+
+  it('renders the stored pref and skips the OS prefill call', async () => {
+    mocks.settings.config = {
+      ...mocks.baseConfig,
+      plugins: {
+        active: [],
+        disabled: [],
+        plugin_settings: {
+          'silt-tasks': { local_author: 'Dana' }
+        }
+      }
+    }
+    render(GeneralTab)
+    await tick()
+    await waitFor(() => {
+      expect(authorInput().value).toBe('Dana')
+    })
+    expect(appMocks.GetLocalAuthor).not.toHaveBeenCalled()
+  })
+
+  it('prefills from GetLocalAuthor when the pref is absent', async () => {
+    appMocks.GetLocalAuthor.mockResolvedValue('Chris Full')
+    render(GeneralTab)
+    await waitFor(() => {
+      expect(authorInput().value).toBe('Chris Full')
+    })
+  })
+
+  it('clearing the field + Enter saves "" and keeps the field empty', async () => {
+    appMocks.GetLocalAuthor.mockResolvedValue('Chris Full')
+    mocks.settings.config = {
+      ...mocks.baseConfig,
+      plugins: {
+        active: [],
+        disabled: [],
+        plugin_settings: {
+          'silt-tasks': { local_author: 'Dana' }
+        }
+      }
+    }
+    render(GeneralTab)
+    await waitFor(() => {
+      expect(authorInput().value).toBe('Dana')
+    })
+    await fireEvent.input(authorInput(), { target: { value: '' } })
+    await fireEvent.keyDown(authorInput(), { key: 'Enter' })
+    await tick()
+    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+      'silt-tasks',
+      'local_author',
+      ''
+    )
+    // The mocked store is a plain object, so the post-save re-sync cannot
+    // observe the mirrored "" — the "field stays empty after a cleared
+    // save" pin lives against the real store in
+    // GeneralTab.external-config.test.ts. What this mock pins is the ""
+    // write itself and the status lifecycle around it.
+    expect(screen.getByText('Saved.')).toBeInTheDocument()
+    // Typing again retires the stale "Saved." status over unsaved edits.
+    await fireEvent.input(authorInput(), { target: { value: 'x' } })
+    await tick()
+    expect(screen.queryByText('Saved.')).toBeNull()
+  })
+
+  it('stored "" pref shows an empty field and skips the OS prefill', async () => {
+    appMocks.GetLocalAuthor.mockResolvedValue('Chris Full')
+    mocks.settings.config = {
+      ...mocks.baseConfig,
+      plugins: {
+        active: [],
+        disabled: [],
+        plugin_settings: {
+          'silt-tasks': { local_author: '' }
+        }
+      }
+    }
+    render(GeneralTab)
+    await tick()
+    // Presence semantics: an explicitly cleared pref is authoritative —
+    // no re-prefill, no GetLocalAuthor round-trip.
+    expect(authorInput().value).toBe('')
+    expect(appMocks.GetLocalAuthor).not.toHaveBeenCalled()
+  })
+
+  it('saving persists the trimmed value through the atomic setter', async () => {
+    appMocks.GetLocalAuthor.mockResolvedValue('Chris Full')
+    render(GeneralTab)
+    await waitFor(() => {
+      expect(authorInput().value).toBe('Chris Full')
+    })
+    await fireEvent.input(authorInput(), { target: { value: '  Renamed  ' } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await tick()
+    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+      'silt-tasks',
+      'local_author',
+      'Renamed'
+    )
+    // The mocked store is a plain object, so the component's derived
+    // refresh can't be observed here; the mirror itself is pinned in
+    // settings/store.svelte.test.ts against the real store.
+  })
+
+  it('shows role=alert when the save fails', async () => {
+    mocks.updatePluginSetting.mockResolvedValue(false)
+    render(GeneralTab)
+    await waitFor(() => {
+      expect(authorInput().value).toBe('')
+    })
+    await fireEvent.input(authorInput(), { target: { value: 'Nope' } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await tick()
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toMatch(/couldn't save the comment author/i)
+    // The error joins the help text in the field's description so
+    // re-querying the input reads the failure, not just the help.
+    expect(authorInput()).toHaveAttribute(
+      'aria-describedby',
+      'general-comment-author-help general-comment-author-error'
+    )
+  })
+
+  it('typing before the prefill IPC resolves keeps the typed text', async () => {
+    let resolveAuthor!: (v: string) => void
+    appMocks.GetLocalAuthor.mockReturnValue(
+      new Promise<string>((res) => {
+        resolveAuthor = res
+      })
+    )
+    render(GeneralTab)
+    await tick()
+    await fireEvent.input(authorInput(), { target: { value: 'Typed' } })
+    resolveAuthor('OS Prefill')
+    await tick()
+    await waitFor(() => {
+      expect(appMocks.GetLocalAuthor).toHaveBeenCalledTimes(1)
+    })
+    // The late IPC must not clobber the in-progress edit.
+    expect(authorInput().value).toBe('Typed')
+  })
+
+  it('Enter-save restores focus to the field once the save lands', async () => {
+    let resolveSave!: (ok: boolean) => void
+    mocks.updatePluginSetting.mockImplementation(
+      () => new Promise<boolean>((res) => (resolveSave = res))
+    )
+    render(GeneralTab)
+    await tick()
+    const input = authorInput()
+    await fireEvent.input(input, { target: { value: 'Dana' } })
+    input.focus()
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await tick()
+    // Disabling the field during the flight moves focus off it; park it
+    // somewhere explicit so the restore below is decisive in jsdom too.
+    expect(input).toBeDisabled()
+    const elsewhere = document.createElement('input')
+    document.body.appendChild(elsewhere)
+    elsewhere.focus()
+    expect(document.activeElement).toBe(elsewhere)
+    resolveSave(true)
+    await waitFor(() => {
+      expect(document.activeElement).toBe(input)
+    })
+    elsewhere.remove()
+  })
+
+  it('Save-button activation restores focus to the button once the save lands', async () => {
+    let resolveSave!: (ok: boolean) => void
+    mocks.updatePluginSetting.mockImplementation(
+      () => new Promise<boolean>((res) => (resolveSave = res))
+    )
+    render(GeneralTab)
+    await tick()
+    const save = screen.getByRole('button', { name: 'Save' })
+    await fireEvent.input(authorInput(), { target: { value: 'Dana' } })
+    // Keyboard activation: the button itself holds focus when Enter/Space
+    // fires it.
+    save.focus()
+    await fireEvent.click(save)
+    await tick()
+    // Disabling the button during the flight moves focus off it; park it
+    // somewhere explicit so the restore below is decisive in jsdom too.
+    expect(save).toBeDisabled()
+    const elsewhere = document.createElement('input')
+    document.body.appendChild(elsewhere)
+    elsewhere.focus()
+    expect(document.activeElement).toBe(elsewhere)
+    resolveSave(true)
+    await waitFor(() => {
+      expect(document.activeElement).toBe(save)
+    })
+    elsewhere.remove()
   })
 })
 

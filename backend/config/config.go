@@ -292,7 +292,13 @@ func Load(vaultPath string) (SystemConfig, error) {
 	data, err := safeio.ReadFileMax(ConfigPath(vaultPath), maxConfigYAMLBytes)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return Defaults(), nil
+			cfg := Defaults()
+			// Stamp the one-shot marker even without a file: a fresh vault's
+			// first explicit clear is saved via mutateConfigFresh (Load →
+			// mutate → Save), and the stamp is what protects that "" from
+			// being read back as a legacy seed on the next Load.
+			stripLegacyEmptyLocalAuthor(&cfg)
+			return cfg, nil
 		}
 		return Defaults(), fmt.Errorf("failed to read config.yaml: %w", err)
 	}
@@ -314,6 +320,7 @@ func Load(vaultPath string) (SystemConfig, error) {
 		return Defaults(), fmt.Errorf("failed to parse config.yaml: %w", err)
 	}
 	migrateLegacyQuickAccessCollapsed(data, &cfg)
+	stripLegacyEmptyLocalAuthor(&cfg)
 	cfg = normalize(cfg)
 	return cfg, nil
 }
@@ -348,6 +355,50 @@ func migrateLegacyQuickAccessCollapsed(data []byte, cfg *SystemConfig) {
 	cfg.UI.SidebarView = &view
 }
 
+// localAuthorSeedMigratedKey is the one-shot marker (top-level in
+// plugin_settings, mirroring hotkeysDefaultsV1MigratedKey) that records a
+// vault has been migrated off the pre-#1125 local_author seed. Presence
+// gates the strip below so it runs at most once per vault.
+const localAuthorSeedMigratedKey = "_local_author_seed_migrated"
+
+// stripLegacyEmptyLocalAuthor removes the `local_author: ""` entry that
+// pre-#1125 Defaults() and the vault scaffold seeded into every silt-tasks
+// plugin-settings map. The pref is presence-based (absent = OS account name
+// attribution), so a migrated snapshot must never carry the empty seed.
+//
+// One-shot via a persisted marker: Load also runs inside every atomic setter
+// (mutateConfigFresh re-reads config.yaml before each targeted write), so an
+// ungated strip would erase a live explicitly-cleared "" on any unrelated
+// config write mid-session. The marker is stamped on every Load result —
+// including a missing file's Defaults() — and on every Save, and persists
+// with the next config write; once on disk it makes every later "" a
+// deliberate clear that Load must leave alone. Scoped to exactly this
+// key: a saved, non-empty author always survives.
+func stripLegacyEmptyLocalAuthor(cfg *SystemConfig) {
+	if _, done := cfg.Plugins.PluginSettings[localAuthorSeedMigratedKey]; done {
+		return
+	}
+	if entry, ok := cfg.Plugins.PluginSettings["silt-tasks"].(map[string]any); ok {
+		if s, isStr := entry["local_author"].(string); isStr && s == "" {
+			delete(entry, "local_author")
+		}
+	}
+	stampLocalAuthorSeedMigrated(cfg)
+}
+
+// stampLocalAuthorSeedMigrated stamps the one-shot marker without touching
+// any value. Save stamps it too, mirroring the hotkeys marker (which lives
+// in normalize and so runs on both Load and Save): every in-app writer
+// Loads first, but a snapshot that reaches Save without passing through
+// Load must not leave the next Load free to re-interpret a "" as a legacy
+// seed and strip it.
+func stampLocalAuthorSeedMigrated(cfg *SystemConfig) {
+	if cfg.Plugins.PluginSettings == nil {
+		cfg.Plugins.PluginSettings = map[string]any{}
+	}
+	cfg.Plugins.PluginSettings[localAuthorSeedMigratedKey] = true
+}
+
 // Save atomically writes cfg to <vault>/.system/config.yaml. Atomicity
 // (temp file + fsync + rename) guarantees the on-disk file is either the
 // previous version or the new one in full, never a half-written file.
@@ -361,6 +412,7 @@ func migrateLegacyQuickAccessCollapsed(data []byte, cfg *SystemConfig) {
 func Save(vaultPath string, cfg SystemConfig) error {
 	cfg = normalize(cfg)
 	stripDefaultHotkeys(&cfg)
+	stampLocalAuthorSeedMigrated(&cfg)
 	out, err := yaml.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal config.yaml: %w", err)

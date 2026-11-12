@@ -344,25 +344,6 @@ export function persistWeekStart(value: WeekStart): Promise<boolean> {
 }
 
 /**
- * Persisted local author for the comment composer (#430). Distinguishes
- * "never set" (undefined) from "explicitly cleared" (''): a cleared pref
- * must be respected, not re-seeded from the OS username on every mount.
- * Returns `undefined` when the key is absent, `''` when the user cleared
- * the input, or the saved name otherwise.
- */
-export function loadLocalAuthor(): string | undefined {
-  const slice = tasksSettings()
-  if (!('local_author' in slice)) return undefined
-  const v = slice['local_author']
-  return typeof v === 'string' ? v : ''
-}
-
-/** Atomically write the local author pref to the vault config. */
-export function persistLocalAuthor(author: string): Promise<boolean> {
-  return saveFn ? saveFn('local_author', author) : Promise.resolve(false)
-}
-
-/**
  * Persisted Board-mode status columns (#421/#437). The Board is the only
  * surface with user-managed columns (every other grouping dimension is
  * data-driven). Accepts legacy string[] and structured {name, wipLimit?}[]
