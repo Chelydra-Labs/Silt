@@ -1540,6 +1540,28 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     ).toMatch(/3h estimated/)
   })
 
+  it('keeps the comment badge and adds notes presence (#1152)', async () => {
+    await renderBoard('status', [
+      row({
+        id: 't1',
+        status: 'TODO',
+        clean_content: 'Discussed',
+        comments_count: 2
+      }),
+      row({ id: 't2', status: 'TODO', clean_content: 'Silent' })
+    ])
+    expect(screen.getByTestId('board-comments-badge-t1').textContent).toContain(
+      '2'
+    )
+    expect(screen.getByTestId('board-notes-badge-t1')).toHaveAttribute(
+      'aria-label',
+      'Has notes (2 comments)'
+    )
+    // Nothing renders without NOTE content.
+    expect(screen.queryByTestId('board-comments-badge-t2')).toBeNull()
+    expect(screen.queryByTestId('board-notes-badge-t2')).toBeNull()
+  })
+
   // #458: a column-shell skeleton renders while the board is loading (replaces
   // the old bare "Loading board…" text). Keep loading=true by never resolving
   // the query, then assert the skeleton testid is present.

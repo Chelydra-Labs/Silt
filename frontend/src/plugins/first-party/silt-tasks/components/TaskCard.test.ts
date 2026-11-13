@@ -169,3 +169,45 @@ describe('TaskCard priority pill', () => {
     expect(onSelect).not.toHaveBeenCalled()
   })
 })
+
+describe('TaskCard comment + notes indicators (#1152)', () => {
+  afterEach(cleanup)
+
+  it('renders the chat_bubble count badge when comments_count > 0', () => {
+    render(TaskCard, makeProps(makeCard({ comments_count: 3 })))
+    const badge = screen.getByTestId('board-comments-badge-c1')
+    expect(badge.textContent).toContain('3')
+    expect(badge).toHaveAttribute('title', '3 comments')
+    expect(badge.querySelector('.material-symbols-outlined')?.textContent).toBe(
+      'chat_bubble'
+    )
+  })
+
+  it('renders no comment badge and no notes indicator at 0', () => {
+    render(TaskCard, makeProps(makeCard({ comments_count: 0 })))
+    expect(screen.queryByTestId('board-comments-badge-c1')).toBeNull()
+    expect(screen.queryByTestId('board-notes-badge-c1')).toBeNull()
+    expect(
+      document.querySelector('[data-card="c1"]')!.getAttribute('aria-label')
+    ).not.toContain('comments')
+  })
+
+  it('has-notes affordance is presence-only with an accessible name', () => {
+    render(TaskCard, makeProps(makeCard({ comments_count: 2 })))
+    const notes = screen.getByTestId('board-notes-badge-c1')
+    expect(notes).toHaveAttribute('role', 'img')
+    expect(notes).toHaveAttribute('aria-label', 'Has notes (2 comments)')
+    expect(notes).toHaveAttribute('title', 'Has notes (2 comments)')
+    // Presence state — never a second numeric glyph repeating the count.
+    expect(notes.textContent?.trim()).toBe('edit_note')
+  })
+
+  it('announces comment presence in the card accessible name', () => {
+    render(TaskCard, makeProps(makeCard({ comments_count: 2 })))
+    expect(
+      screen.getByRole('button', {
+        name: 'Ship the shortlist, To Do, 2 comments.'
+      })
+    ).toBeTruthy()
+  })
+})
