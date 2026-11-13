@@ -993,7 +993,6 @@
   {ctx}
   menu={taskMenu.menu}
   onClose={taskMenu.close}
-  onEditTask={selectCard}
   onOpenSubEditor={(task) => (subEditorCard = task)}
   onError={(message) => (menuError = message)}
 />

@@ -1516,7 +1516,6 @@
   {ctx}
   menu={taskMenu.menu}
   onClose={taskMenu.close}
-  onEditTask={selectTask}
   onOpenSubEditor={openSubEditor}
   onError={(message) => (menuError = message)}
 />

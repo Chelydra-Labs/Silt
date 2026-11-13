@@ -999,7 +999,7 @@ describe('CalendarView — task context menu (#1116)', () => {
     })
   }
 
-  it('right-click on a chip opens the seven-item menu', async () => {
+  it('right-click on a chip opens the six-item menu', async () => {
     await renderCalendarWithMenu([
       row({
         id: 'm1',
@@ -1019,7 +1019,6 @@ describe('CalendarView — task context menu (#1116)', () => {
       'Due date',
       'Priority',
       'Open in sub-editor',
-      'Edit task',
       'Delete task'
     ])
   })
@@ -1184,17 +1183,11 @@ describe('CalendarView — task context menu (#1116)', () => {
     expect(active.isConnected).toBe(true)
   })
 
-  it('Open in sub-editor and Edit task reuse the chip affordance state', async () => {
+  it('Open in sub-editor reuses the chip affordance state', async () => {
     await renderCalendarWithMenu([
       row({ id: 'm1', clean_content: 'Menu chip', due_date: TODAY })
     ])
     const chip = screen.getByText('Menu chip')
-
-    // Drawer first: the sub-editor modal renders a second metadata header,
-    // so the single-element query must run while only the drawer is up.
-    await fireEvent.contextMenu(chip, { clientX: 5, clientY: 5 })
-    await fireEvent.click(screen.getByTestId('task-menu-edit'))
-    expect(screen.getByTestId('task-primary-header')).toBeInTheDocument()
 
     await fireEvent.contextMenu(chip, { clientX: 5, clientY: 5 })
     await fireEvent.click(screen.getByTestId('task-menu-sub-editor'))
