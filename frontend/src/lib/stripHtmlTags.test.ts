@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { stripHtmlTags } from './stripHtmlTags'
 
-const TAG = /<\/?[a-zA-Z][^>]*>/
+// Independent oracle for "a well-formed tag survived stripping": kept in
+// sync with the helper's notion of a tag (incl. quoted-attribute runs).
+const TAG = /<\/?[a-zA-Z](?:[^>"']|"[^"]*"|'[^']*')*>/
 
 describe('stripHtmlTags (#1153 comment display)', () => {
   it('strips a simple paired tag, keeping the inner text', () => {
@@ -20,6 +22,19 @@ describe('stripHtmlTags (#1153 comment display)', () => {
     )
     expect(stripHtmlTags('<br class="x"/>')).toBe('')
     expect(stripHtmlTags('<span data-a=1 data-b=2>text</span>')).toBe('text')
+  })
+
+  it('strips tags whose quoted attribute values contain >', () => {
+    expect(stripHtmlTags('<div title="5 > 3">hello</div>')).toBe('hello')
+    expect(stripHtmlTags("<span data-x='a > b'>t</span>")).toBe('t')
+    const hostile = '<img alt="a > b" src=x onerror=alert(1)>'
+    expect(stripHtmlTags(hostile)).toBe('')
+  })
+
+  it('known tradeoff: eats unspaced prose comparisons (i<n and j>m)', () => {
+    // Pinned heuristic limitation, not a bug: without surrounding spaces the
+    // span reads as a tag. Spaced forms (count < limit, a > b) are spared.
+    expect(stripHtmlTags('for i<n and j>m do x')).toBe('for im do x')
   })
 
   it('strips multi-line block tags, leaving inner text untouched', () => {

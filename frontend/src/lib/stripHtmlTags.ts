@@ -5,7 +5,8 @@
  * whose fenced-code/autolink behavior a tag rule would silently change.
  */
 export function stripHtmlTags(input: string): string {
-  // The leading [a-zA-Z] is what spares stray `<` (as in `count < limit`) and
-  // bare `>` (as in `a > b`); `[^>]*` spans attributes and newlines.
-  return input.replace(/<\/?[a-zA-Z][^>]*>/g, '')
+  // The leading [a-zA-Z] spares stray `<` (count < limit) and bare `>` (a > b);
+  // quoted attribute runs are opaque, so a quoted `>` (title="5 > 3") cannot
+  // end the tag. Tradeoff: unspaced prose like `i<n and j>m` is eaten.
+  return input.replace(/<\/?[a-zA-Z](?:[^>"']|"[^"]*"|'[^']*')*>/g, '')
 }

@@ -889,6 +889,28 @@ describe('CommentThread', () => {
     expect(container.textContent).not.toContain('<b>')
   })
 
+  it('renders markup with a quoted > in an attribute as readable text', async () => {
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: '<div title="5 > 3">hello</div>',
+          author: 'a',
+          timestamp: '2026-07-01T09:00:00'
+        })
+      ])
+    })
+    const { container } = mount({ ctx })
+    await flush()
+    expect(screen.getByText('hello')).toBeInTheDocument()
+    expect(container.textContent).not.toContain('<div')
+    // The old regex stopped at the quoted `>`, leaving ` 3">hello` behind.
+    expect(container.textContent).not.toContain('">')
+    // Belt-and-braces: the tag was not parsed into an element (it would
+    // carry its title attribute if it had been).
+    expect(container.querySelector('[role="comment"] div[title]')).toBeNull()
+  })
+
   it('strips markup from replies too (shared commentBody snippet)', async () => {
     const ctx = makeCtx({
       fetchSubtree: vi.fn().mockResolvedValue([
