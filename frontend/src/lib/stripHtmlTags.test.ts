@@ -15,7 +15,9 @@ describe('stripHtmlTags (#1153 comment display)', () => {
   })
 
   it('strips tags with attributes', () => {
-    expect(stripHtmlTags('<a href="https://x/y" title=\'t\'>label</a>')).toBe('label')
+    expect(stripHtmlTags('<a href="https://x/y" title=\'t\'>label</a>')).toBe(
+      'label'
+    )
     expect(stripHtmlTags('<br class="x"/>')).toBe('')
     expect(stripHtmlTags('<span data-a=1 data-b=2>text</span>')).toBe('text')
   })
@@ -26,7 +28,9 @@ describe('stripHtmlTags (#1153 comment display)', () => {
 
   it('preserves a lone < that does not open a tag', () => {
     expect(stripHtmlTags('count < limit')).toBe('count < limit')
-    expect(stripHtmlTags('if (a < b && b < c) ok')).toBe('if (a < b && b < c) ok')
+    expect(stripHtmlTags('if (a < b && b < c) ok')).toBe(
+      'if (a < b && b < c) ok'
+    )
     expect(stripHtmlTags('5 < 6 > 4')).toBe('5 < 6 > 4')
   })
 
@@ -36,8 +40,12 @@ describe('stripHtmlTags (#1153 comment display)', () => {
   })
 
   it('leaves URLs in prose intact', () => {
-    expect(stripHtmlTags('see https://example.com/r/x now')).toBe('see https://example.com/r/x now')
-    expect(stripHtmlTags('docs: https://a.b/c?d=e&f=g end')).toBe('docs: https://a.b/c?d=e&f=g end')
+    expect(stripHtmlTags('see https://example.com/r/x now')).toBe(
+      'see https://example.com/r/x now'
+    )
+    expect(stripHtmlTags('docs: https://a.b/c?d=e&f=g end')).toBe(
+      'docs: https://a.b/c?d=e&f=g end'
+    )
   })
 
   it('leaves &...; entities alone', () => {
@@ -51,7 +59,7 @@ describe('stripHtmlTags (#1153 comment display)', () => {
       '<b>ship it</b>',
       '<div>Please <b>review</b> the PR</div>',
       'count < limit and a > b',
-      'x <img src=y> z <script>s()</script>',
+      'x <img src=y> z <script>s()</script>'
     ]
     for (const input of inputs) {
       const once = stripHtmlTags(input)
@@ -63,7 +71,7 @@ describe('stripHtmlTags (#1153 comment display)', () => {
     expect(stripHtmlTags('<img src=x onerror=alert(1)>')).toBe('')
     expect(stripHtmlTags('<script>alert(1)</script>')).toBe('alert(1)')
     const combined = stripHtmlTags(
-      'hi <img src=x onerror=alert(1)> there <script>alert(1)</script>.',
+      'hi <img src=x onerror=alert(1)> there <script>alert(1)</script>.'
     )
     expect(combined).not.toMatch(TAG)
     expect(combined).toBe('hi  there alert(1).')
