@@ -650,10 +650,13 @@ func spliceSubtree(blocks []parser.ParsedBlock, parentID string, children []pars
 // carries it or this pass already placed it), so a reply stays under its
 // comment rather than behind an unrelated sibling — spliceSubtree re-derives
 // parentage from depth, and a tail-appended reply would re-parent to whatever
-// block happened to precede it. Relative order within an anchor is file order.
-// Depths are rebased by the anchor's output offset so reply nesting survives
-// while the payload's own depths stay untouched: spliceSubtree derives one
-// delta from the shallowest block, which must remain the payload's base.
+// block happened to precede it. When no ancestor survived, the anchor is the
+// owner itself: the block re-anchors as a direct child of the payload base
+// instead of keeping an indentation that would now attach it to a sibling.
+// Relative order within an anchor is file order. Depths are rebased by the
+// anchor's output offset so reply nesting survives while the payload's own
+// depths stay untouched: spliceSubtree derives one delta from the shallowest
+// block, which must remain the payload's base.
 func preserveTaskComments(blocks []parser.ParsedBlock, taskID string, children []parser.ParsedBlock) []parser.ParsedBlock {
 	current := extractSubtree(blocks, taskID)
 	if len(current) == 0 {
@@ -684,12 +687,6 @@ func preserveTaskComments(blocks []parser.ParsedBlock, taskID string, children [
 		return children
 	}
 
-	curMin := current[0].Depth
-	for _, b := range current[1:] {
-		if b.Depth < curMin {
-			curMin = b.Depth
-		}
-	}
 	// The incoming children's shallowest depth is the base spliceSubtree
 	// normalizes against; preserved depths are expressed relative to it.
 	base := 0
@@ -726,14 +723,12 @@ func preserveTaskComments(blocks []parser.ParsedBlock, taskID string, children [
 	// current is in file order (parents before children), so every anchor is
 	// already placed by the time its reply is handled.
 	for _, b := range preserved {
-		// Root anchor: the whole payload run is the anchor's run, so the block
-		// lands at the tail. Its depth is measured from the sub-tree's
-		// shallowest member, which maps onto the payload base: a root-anchored
-		// comment is a sibling of the payload children, not one level deeper.
+		// Root anchor: no placed ancestor, so the owner itself (the saved task)
+		// is the anchor and the block lands at the tail of the payload run.
 		at := len(out)
 		rootAnchor := true
 		anchorDepth := base
-		origAnchorDepth := curMin
+		var origAnchorDepth int
 		for pid, steps := b.ParentID, 0; pid != "" && pid != taskID && steps <= len(byID); steps++ {
 			if idx, ok := pos[pid]; ok {
 				at = runEnd(idx) + 1
@@ -752,16 +747,23 @@ func preserveTaskComments(blocks []parser.ParsedBlock, taskID string, children [
 			}
 			pid = parent.ParentID
 		}
-		b.Depth = anchorDepth + (b.Depth - origAnchorDepth)
-		// Defensive: a preserved block under a placed anchor stays strictly
-		// deeper than it, or the re-parse would re-parent it to the anchor's
-		// own sibling.
 		if rootAnchor {
-			if b.Depth < anchorDepth {
-				b.Depth = anchorDepth
+			// The anchor is the owner, so the block is a direct child of the
+			// payload base. Reusing its original indentation would land it one
+			// level deeper than the payload's shallowest block whenever its
+			// parent is gone but was not the shallowest sibling (a reply to a
+			// deleted prose NOTE, or gap-indented legacy data); the tail
+			// position would then attach it to the last payload sibling and
+			// move comments_count to that sibling's task.
+			b.Depth = anchorDepth
+		} else {
+			b.Depth = anchorDepth + (b.Depth - origAnchorDepth)
+			// Defensive: a preserved block under a placed anchor stays strictly
+			// deeper than it, or the re-parse would re-parent it to the anchor's
+			// own sibling.
+			if b.Depth <= anchorDepth {
+				b.Depth = anchorDepth + 1
 			}
-		} else if b.Depth <= anchorDepth {
-			b.Depth = anchorDepth + 1
 		}
 		out = append(out, parser.ParsedBlock{})
 		copy(out[at+1:], out[at:])
