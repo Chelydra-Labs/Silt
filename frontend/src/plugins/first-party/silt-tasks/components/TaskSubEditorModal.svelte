@@ -25,6 +25,7 @@
   import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
   import TaskMetadataSidebar from './TaskMetadataSidebar.svelte'
   import { friendlyCaughtError } from '../errors'
+  import { partitionComments } from '../commentBlocks'
   import type { TaskDetail } from '../types'
   import { fetchTaskDetail } from '../query'
   import Dialog from '../../../../components/ui/Dialog.svelte'
@@ -176,14 +177,17 @@
       suppressUpdate = true
       try {
         const safeSubtree = (subtree ?? []) as ParsedBlock[]
-        let normalized = safeSubtree
-        if (safeSubtree.length > 0) {
-          const depths = safeSubtree
+        // Comments belong to CommentThread; keeping them out of the editor
+        // doc is what stops a notes save from rewriting their attribution.
+        const content = partitionComments(safeSubtree).content
+        let normalized = content
+        if (content.length > 0) {
+          const depths = content
             .map((b) => b.depth)
             .filter((d): d is number => typeof d === 'number')
           const minDepth = depths.length ? Math.min(...depths) : 0
           if (minDepth > 0) {
-            normalized = safeSubtree.map((b) => ({
+            normalized = content.map((b) => ({
               ...b,
               depth: Math.max(0, (b.depth ?? minDepth) - minDepth)
             }))
