@@ -6,6 +6,7 @@
   import { motionDuration } from '../motion'
   import ErrorBanner from './ErrorBanner.svelte'
   import { friendlyCaughtError } from '../errors'
+  import { isNoteBlock } from '../commentBlocks'
 
   /**
    * Comment thread for TaskEditDrawer (#430). Each comment is a child NOTE
@@ -130,10 +131,6 @@
       parentId: b.parent_id ?? '',
       replies: []
     }
-  }
-
-  function isNoteBlock(b: SubtreeBlock): boolean {
-    return (b.type ?? '').toUpperCase() === 'NOTE'
   }
 
   function sortComments(list: Comment[]): Comment[] {
