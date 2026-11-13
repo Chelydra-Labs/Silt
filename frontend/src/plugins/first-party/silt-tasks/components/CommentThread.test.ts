@@ -848,6 +848,191 @@ describe('CommentThread', () => {
     expect(strong?.textContent).toContain('very important')
   })
 
+  // #1153: HTML markup in a comment body must never display verbatim. All
+  // stripping below happens at render time only — the composer keeps sending
+  // exactly what the user typed and the stored NOTE body is untouched.
+  it('renders <b>ship it</b> as plain text with no tag text in the DOM', async () => {
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: '<b>ship it</b>',
+          author: 'a',
+          timestamp: '2026-07-01T09:00:00'
+        })
+      ])
+    })
+    const { container } = mount({ ctx })
+    await flush()
+    expect(screen.getByText('ship it')).toBeInTheDocument()
+    expect(container.textContent).not.toContain('<b>')
+    // Belt-and-braces: no tag was parsed into an element either (no
+    // {@html} path anywhere in the thread).
+    expect(container.querySelector('[role="comment"] b')).toBeNull()
+  })
+
+  it('renders block/nested markup as readable text', async () => {
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: '<div>Please <b>review</b> the PR</div>',
+          author: 'a',
+          timestamp: '2026-07-01T09:00:00'
+        })
+      ])
+    })
+    const { container } = mount({ ctx })
+    await flush()
+    expect(screen.getByText('Please review the PR')).toBeInTheDocument()
+    expect(container.textContent).not.toContain('<div>')
+    expect(container.textContent).not.toContain('<b>')
+  })
+
+  it('renders markup with a quoted > in an attribute as readable text', async () => {
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: '<div title="5 > 3">hello</div>',
+          author: 'a',
+          timestamp: '2026-07-01T09:00:00'
+        })
+      ])
+    })
+    const { container } = mount({ ctx })
+    await flush()
+    expect(screen.getByText('hello')).toBeInTheDocument()
+    expect(container.textContent).not.toContain('<div')
+    // The old regex stopped at the quoted `>`, leaving ` 3">hello` behind.
+    expect(container.textContent).not.toContain('">')
+    // Belt-and-braces: the tag was not parsed into an element (it would
+    // carry its title attribute if it had been).
+    expect(container.querySelector('[role="comment"] div[title]')).toBeNull()
+  })
+
+  it('renders markup with an unbalanced quote in the tag as readable text', async () => {
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: '<div class="foo>text</div>',
+          author: 'a',
+          timestamp: '2026-07-01T09:00:00'
+        })
+      ])
+    })
+    const { container } = mount({ ctx })
+    await flush()
+    expect(screen.getByText('text')).toBeInTheDocument()
+    expect(container.textContent).not.toContain('<')
+    expect(container.textContent).not.toContain('class=')
+    // Belt-and-braces: the unterminated tag was not parsed into an element.
+    expect(container.querySelector('[role="comment"] div div')).toBeNull()
+  })
+
+  it('strips markup from replies too (shared commentBody snippet)', async () => {
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'top',
+          clean_text: 'top-level',
+          author: 'alice',
+          timestamp: '2026-07-01T09:00:00',
+          parent_id: 'task-1',
+          depth: 1
+        }),
+        makeBlock({
+          id: 'r1',
+          clean_text: '<div>Please <b>review</b> the PR</div>',
+          author: 'bob',
+          timestamp: '2026-07-01T10:00:00',
+          parent_id: 'top',
+          depth: 2
+        })
+      ])
+    })
+    const { container } = mount({ ctx })
+    await flush()
+    const reply = container.querySelector('[role="comment"].ml-4')
+    expect(reply?.textContent).toContain('Please review the PR')
+    expect(reply?.textContent).not.toContain('<b>')
+  })
+
+  it('strips markup in the drawer layout as well (same snippet)', async () => {
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: '<b>ship it</b>',
+          author: 'a',
+          timestamp: '2026-07-01T09:00:00'
+        })
+      ])
+    })
+    const { container } = mount({ ctx, layout: 'drawer' })
+    await flush()
+    expect(await screen.findByTestId('comment-list-scroll')).toBeInTheDocument()
+    expect(screen.getByText('ship it')).toBeInTheDocument()
+    expect(container.textContent).not.toContain('<b>')
+  })
+
+  it('preserves a lone < in prose (count < limit stays verbatim)', async () => {
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: 'count < limit',
+          author: 'a',
+          timestamp: '2026-07-01T09:00:00'
+        })
+      ])
+    })
+    const { container } = mount({ ctx })
+    await flush()
+    expect(screen.getByText('count < limit')).toBeInTheDocument()
+    expect(container.textContent).toContain('count < limit')
+  })
+
+  it('injects no element and shows no tag text for hostile payloads', async () => {
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: 'nice <img src=x onerror=alert(1)> job',
+          author: 'a',
+          timestamp: '2026-07-01T09:00:00'
+        }),
+        makeBlock({
+          id: 'c2',
+          clean_text: '<script>alert(1)</script>',
+          author: 'b',
+          timestamp: '2026-07-01T10:00:00'
+        })
+      ])
+    })
+    const { container } = mount({ ctx })
+    await flush()
+    expect(container.querySelectorAll('img, script')).toHaveLength(0)
+    expect(container.textContent).not.toContain('<img')
+    expect(container.textContent).not.toContain('<script')
+  })
+
+  it('composing still sends the raw typed text (strip is display-only)', async () => {
+    const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
+    const ctx = makeCtx({ addTaskComment })
+    mount({ ctx })
+    await flush()
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    const raw = 'count < limit and <b>bold</b>'
+    await fireEvent.input(ta, { target: { value: raw } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    await flush()
+    // The stored content must be exactly what the user typed — stripping
+    // lives in the render path, not the write path.
+    expect(addTaskComment).toHaveBeenCalledWith('task-1', raw, undefined)
+  })
+
   it('filters non-NOTE blocks out of the thread', async () => {
     const ctx = makeCtx({
       fetchSubtree: vi.fn().mockResolvedValue([
