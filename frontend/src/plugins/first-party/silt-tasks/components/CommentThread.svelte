@@ -7,6 +7,7 @@
   import ErrorBanner from './ErrorBanner.svelte'
   import { friendlyCaughtError } from '../errors'
   import { isNoteBlock } from '../commentBlocks'
+  import { stripHtmlTags } from '../../../../lib/stripHtmlTags'
 
   /**
    * Comment thread for TaskEditDrawer (#430). Each comment is a child NOTE
@@ -499,7 +500,9 @@
 
 {#snippet commentBody(c: Comment)}
   <div class="text-type-sm text-text-primary leading-snug">
-    {#each splitBold(c.body) as run, runIdx (runIdx)}
+    <!-- Display-layer only (#1153): strip HTML tags for rendering; the stored
+         NOTE body and what the composer sends stay exactly as typed. -->
+    {#each splitBold(stripHtmlTags(c.body)) as run, runIdx (runIdx)}
       {#if run.bold}
         <strong>
           <RichText text={run.text} {notebook} {section} {page} {fileDate} />
