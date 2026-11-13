@@ -651,9 +651,15 @@ func preserveTaskComments(blocks []parser.ParsedBlock, taskID string, children [
 	for _, b := range blocks {
 		byID[b.ID] = b
 	}
+	// Caller-supplied content wins: appending a comment the payload already
+	// carries would trip spliceChildIDCollision on this rule's own injection.
+	incoming := make(map[string]bool, len(children))
+	for _, c := range children {
+		incoming[c.ID] = true
+	}
 	own := make([]parser.ParsedBlock, 0)
 	for _, b := range current {
-		if isTaskOwnComment(byID, b, taskID) {
+		if isTaskOwnComment(byID, b, taskID) && !incoming[b.ID] {
 			own = append(own, b)
 		}
 	}

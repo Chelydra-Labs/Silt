@@ -628,6 +628,83 @@ func TestSaveSubtreeBlocks_CommentTailIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestSaveSubtreeBlocks_CallerSuppliedCommentIsNotDuplicated pins the
+// documented SDK round-trip (fetchSubtree → saveSubtreeBlocks): a payload that
+// still carries this task's comment block must save successfully, with
+// preservation re-adding only what the payload omitted. Otherwise the caller's
+// own block collides with this rule's injection and the whole save is refused.
+func TestSaveSubtreeBlocks_CallerSuppliedCommentIsNotDuplicated(t *testing.T) {
+	app := newTestApp(t)
+	const (
+		taskID    = "ad000061-5555-1111-1111-111111111111"
+		commentID = "ad000062-5555-1111-1111-111111111111"
+		replyID   = "ad000063-5555-1111-1111-111111111111"
+		proseID   = "ad000064-5555-1111-1111-111111111111"
+		subTaskID = "ad000065-5555-1111-1111-111111111111"
+	)
+	content := "- [ ] parent task <!-- id: " + taskID + " -->\n" +
+		"\t- task comment [author:: Dana] [ts:: 2026-07-07T10:00:00] <!-- id: " + commentID + " -->\n" +
+		"\t\t- reply to Dana [author:: Bob] [ts:: 2026-07-07T10:01:00] <!-- id: " + replyID + " -->\n" +
+		"\t- prose note <!-- id: " + proseID + " -->\n" +
+		"\t- [ ] sub-task <!-- id: " + subTaskID + " -->\n"
+	indexTestFile(t, app, "W", "S", "SubtreeCallerComment", "2026-07-01", content)
+
+	// Round-trip payload: the caller serialized the comment block it hydrated
+	// back into the document, but dropped the reply.
+	children := []parser.ParsedBlock{
+		{ID: proseID, Type: parser.BlockNote, Depth: 0, CleanText: "prose note"},
+		{ID: commentID, Type: parser.BlockNote, Depth: 0, CleanText: "task comment", Author: "Dana", Timestamp: "2026-07-07T10:00:00"},
+		{ID: subTaskID, Type: parser.BlockTask, Depth: 0, Status: "TODO", CleanText: "sub-task"},
+	}
+	if ok, err := app.SaveSubtreeBlocks(taskID, children); err != nil || !ok {
+		t.Fatalf("SaveSubtreeBlocks with a caller-supplied comment: ok=%v err=%v", ok, err)
+	}
+
+	sub, err := app.FetchSubtree(taskID)
+	if err != nil {
+		t.Fatalf("FetchSubtree: %v", err)
+	}
+	var order []string
+	for _, b := range sub {
+		order = append(order, b.ID)
+	}
+	want := []string{proseID, commentID, subTaskID, replyID}
+	if len(order) != len(want) {
+		t.Fatalf("subtree = %v, want %v (caller order, then the omitted reply)", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("subtree order = %v, want %v", order, want)
+		}
+	}
+
+	comment := findSubtreeBlock(t, sub, commentID)
+	if comment == nil {
+		t.Fatal("caller-supplied comment missing from the sub-tree")
+	}
+	if comment.CleanText != "task comment" || comment.Author != "Dana" || comment.Timestamp != "2026-07-07T10:00:00" {
+		t.Errorf("comment attribution drifted: text=%q author=%q ts=%q",
+			comment.CleanText, comment.Author, comment.Timestamp)
+	}
+
+	// No duplicate UUIDs on disk: the caller's block is written once, and the
+	// omitted reply is still preserved.
+	s := mustReadTaskFile(t, app, "W", "S", "SubtreeCallerComment")
+	for _, id := range []string{taskID, commentID, replyID, proseID, subTaskID} {
+		if n := strings.Count(s, id); n != 1 {
+			t.Errorf("id %s occurs %d times on disk, want exactly 1:\n%s", id, n, s)
+		}
+	}
+	for _, token := range []string{"[author:: Dana]", "[ts:: 2026-07-07T10:00:00]", "[author:: Bob]"} {
+		if !strings.Contains(s, token) {
+			t.Errorf("on-disk comment lost %q:\n%s", token, s)
+		}
+	}
+	if got := taskCommentsCount(t, app, taskID); got != 2 {
+		t.Errorf("comments_count = %d, want 2 (comment + reply)", got)
+	}
+}
+
 // TestSaveSubtreeBlocks_ProseNotesStayEditable pins that the preserve rule is
 // attribution-based: unattributed NOTE prose is still saved, edited and deleted
 // normally, while a comment beside it survives.
