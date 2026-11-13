@@ -911,6 +911,26 @@ describe('CommentThread', () => {
     expect(container.querySelector('[role="comment"] div[title]')).toBeNull()
   })
 
+  it('renders markup with an unbalanced quote in the tag as readable text', async () => {
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: '<div class="foo>text</div>',
+          author: 'a',
+          timestamp: '2026-07-01T09:00:00'
+        })
+      ])
+    })
+    const { container } = mount({ ctx })
+    await flush()
+    expect(screen.getByText('text')).toBeInTheDocument()
+    expect(container.textContent).not.toContain('<')
+    expect(container.textContent).not.toContain('class=')
+    // Belt-and-braces: the unterminated tag was not parsed into an element.
+    expect(container.querySelector('[role="comment"] div div')).toBeNull()
+  })
+
   it('strips markup from replies too (shared commentBody snippet)', async () => {
     const ctx = makeCtx({
       fetchSubtree: vi.fn().mockResolvedValue([

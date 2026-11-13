@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { stripHtmlTags } from './stripHtmlTags'
 
-// Independent oracle for "a well-formed tag survived stripping": kept in
-// sync with the helper's notion of a tag (incl. quoted-attribute runs).
-const TAG = /<\/?[a-zA-Z](?:[^>"']|"[^"]*"|'[^']*')*>/
-
 describe('stripHtmlTags (#1153 comment display)', () => {
   it('strips a simple paired tag, keeping the inner text', () => {
     expect(stripHtmlTags('<b>bold</b>')).toBe('bold')
@@ -29,6 +25,13 @@ describe('stripHtmlTags (#1153 comment display)', () => {
     expect(stripHtmlTags("<span data-x='a > b'>t</span>")).toBe('t')
     const hostile = '<img alt="a > b" src=x onerror=alert(1)>'
     expect(stripHtmlTags(hostile)).toBe('')
+  })
+
+  it('strips tags whose tag body has an unbalanced quote', () => {
+    expect(stripHtmlTags('<div class="foo>text</div>')).toBe('text')
+    expect(stripHtmlTags('<a href="broken>click me</a>')).toBe('click me')
+    expect(stripHtmlTags('<img src="x onerror=alert(1)>')).toBe('')
+    expect(stripHtmlTags("<p class='x>oops</p>")).toBe('oops')
   })
 
   it('known tradeoff: eats unspaced prose comparisons (i<n and j>m)', () => {
@@ -88,7 +91,11 @@ describe('stripHtmlTags (#1153 comment display)', () => {
     const combined = stripHtmlTags(
       'hi <img src=x onerror=alert(1)> there <script>alert(1)</script>.'
     )
-    expect(combined).not.toMatch(TAG)
+    // Implementation-independent oracle: no markup delimiter or payload
+    // keyword survives at all.
+    expect(combined).not.toContain('<')
+    expect(combined).not.toContain('onerror')
+    expect(combined).not.toContain('script')
     expect(combined).toBe('hi  there alert(1).')
   })
 })
