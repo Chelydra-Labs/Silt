@@ -1,7 +1,15 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
-  import { GetCloseToTray, SetCloseToTray } from '../../../bindings/silt/app.js'
-  import { settings, reloadFromBackend } from '../../settings/store.svelte'
+  import { onMount, tick } from 'svelte'
+  import {
+    GetCloseToTray,
+    SetCloseToTray,
+    GetLocalAuthor
+  } from '../../../bindings/silt/app.js'
+  import {
+    settings,
+    reloadFromBackend,
+    updatePluginSetting
+  } from '../../settings/store.svelte'
   import { themeState } from '../../theme/store.svelte'
   import { loadedPlugins } from '../../plugins/store.svelte'
   import { aiProviderNeedsSetup } from '../../settings/ai-setup'
@@ -58,6 +66,113 @@
       console.error('SetCloseToTray failed:', e)
     } finally {
       closeToTrayInflight = false
+    }
+  }
+
+  // Comment author (#1125): vault-scoped silt-tasks pref that attributes
+  // Task comment threads. The stored pref wins; the OS account name is a
+  // display-only prefill until the user explicitly saves.
+  let commentAuthorInflight = $state(false)
+  let commentAuthorError = $state('')
+  let commentAuthorStatus = $state('')
+  let osAuthorPrefill = $state('')
+  // Set on the first user keystroke; the late prefill IPC must not clobber
+  // an in-progress edit (widest on first use, when the field is empty and
+  // the user is typing their name). $state, not a plain let: the sync gate
+  // below reads it, so retiring the flag after a save must re-trigger the
+  // effect for the field to adopt the persisted (trimmed) mirror and stay
+  // attached to external config changes.
+  let commentAuthorTouched = $state(false)
+  let commentAuthorInputEl = $state<HTMLInputElement | null>(null)
+  let commentAuthorSaveBtn = $state<HTMLButtonElement | null>(null)
+
+  let storedCommentAuthor = $derived.by(() => {
+    const v =
+      settings.config?.plugins?.plugin_settings?.['silt-tasks']?.[
+        'local_author'
+      ]
+    return typeof v === 'string' ? v : undefined
+  })
+  // Presence, not truthiness: "" is an explicitly cleared pref and keeps
+  // winning over the OS prefill; only a never-written key falls back to it.
+  let hasStoredAuthor = $derived(storedCommentAuthor !== undefined)
+
+  // The field's text lives in a local draft (the SettingsForm pattern):
+  // seeded and re-synced from the store in $effect.pre — gated on the
+  // touched flag — rather than captured once in a $state initializer. A
+  // writable $derived was ruled out: the config:changed hot-reload
+  // replaces the whole snapshot for ANY external config.yaml write, which
+  // would invalidate the derived and silently discard in-progress typing
+  // in this field.
+  let commentAuthor = $state('')
+  $effect.pre(() => {
+    if (commentAuthorTouched) return
+    commentAuthor = hasStoredAuthor
+      ? (storedCommentAuthor as string)
+      : osAuthorPrefill
+  })
+
+  // Arm the OS prefill whenever the pref is (or becomes) absent — at mount
+  // for a never-saved vault, and again when a later external snapshot drops
+  // a stored key, which would otherwise blank the field instead of re-arming
+  // the prefill the help text promises. Stored values — including an
+  // explicitly cleared ("") one — never trigger the round-trip.
+  $effect(() => {
+    if (hasStoredAuthor || commentAuthorTouched || osAuthorPrefill !== '')
+      return
+    void (async () => {
+      try {
+        const v = await GetLocalAuthor()
+        // The user's in-progress typing wins over the late IPC, same rule
+        // as the close-to-tray hydrate above.
+        if (!commentAuthorTouched) osAuthorPrefill = v
+      } catch {
+        // Leave the prefill unset; a later absent-edge re-run retries.
+      }
+    })()
+  })
+
+  // "Saved." describes the last save, not the in-progress edit; clear it
+  // (and any stale error) as soon as the field changes again.
+  function handleCommentAuthorInput() {
+    commentAuthorTouched = true
+    commentAuthorStatus = ''
+    commentAuthorError = ''
+  }
+
+  async function saveCommentAuthor() {
+    if (commentAuthorInflight) return
+    // Capture focus before the inflight flag disables the controls, so it
+    // can be handed back when the save lands — Enter-saves and
+    // button-activated saves otherwise dump keyboard users on <body> to
+    // restart Tab traversal from the top.
+    const prevFocus = document.activeElement as HTMLElement | null
+    const hadFocus =
+      prevFocus === commentAuthorInputEl || prevFocus === commentAuthorSaveBtn
+    commentAuthorInflight = true
+    commentAuthorError = ''
+    commentAuthorStatus = ''
+    // Atomic single-field write — never read-modify-saveConfig, which could
+    // clobber a concurrent external config.yaml edit (#120).
+    const ok = await updatePluginSetting(
+      'silt-tasks',
+      'local_author',
+      commentAuthor.trim()
+    )
+    if (ok) {
+      commentAuthorStatus = 'Saved.'
+      // Retire the touched flag so the sync above adopts the persisted
+      // (trimmed) text mirrored into the store by updatePluginSetting.
+      commentAuthorTouched = false
+    } else {
+      commentAuthorError = "Couldn't save the comment author."
+    }
+    commentAuthorInflight = false
+    if (hadFocus) {
+      // Wait for the DOM to re-enable the control first — focus() on a
+      // still-disabled element is a silent no-op.
+      await tick()
+      prevFocus?.focus()
     }
   }
 
@@ -495,6 +610,88 @@
       <p class="text-text-muted text-type-xs font-label-sm mt-1.5">
         Move, copy, back up, or migrate this workspace from the actions menu.
       </p>
+    </section>
+
+    <!-- Comment author (#1125): vault-scoped pref consumed by the Tasks
+         comment composer. -->
+    <section
+      id="general-comment-author"
+      aria-labelledby="general-comment-author-heading"
+      class={ringClass('general-comment-author', ringAnchor)}
+    >
+      <h3
+        id="general-comment-author-heading"
+        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
+      >
+        Comment author
+      </h3>
+      <div
+        class="bg-surface-panel border border-surface-panel-border rounded-lg px-4 py-3 space-y-2"
+      >
+        <label
+          for="general-comment-author-input"
+          class="block text-text-primary text-type-sm font-body-md"
+        >
+          Name on task comments
+        </label>
+        <input
+          id="general-comment-author-input"
+          type="text"
+          bind:value={commentAuthor}
+          bind:this={commentAuthorInputEl}
+          oninput={handleCommentAuthorInput}
+          aria-describedby={commentAuthorError
+            ? 'general-comment-author-help general-comment-author-error'
+            : 'general-comment-author-help'}
+          aria-invalid={commentAuthorError ? 'true' : undefined}
+          disabled={commentAuthorInflight}
+          onkeydown={(e: KeyboardEvent) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              void saveCommentAuthor()
+            }
+          }}
+          class="w-full px-2.5 py-1.5 rounded-lg bg-surface-panel border {commentAuthorError
+            ? 'border-status-danger'
+            : 'border-surface-panel-border'} text-text-primary text-type-md font-body-md focus:outline-none focus:border-accent-primary-start/60 disabled:opacity-50"
+        />
+        <p
+          id="general-comment-author-help"
+          class="text-text-muted text-type-xs font-label-sm leading-relaxed"
+        >
+          The name added to comments you post on tasks. Prefilled from this
+          computer's account name until you save a change.
+        </p>
+        <div class="flex justify-end">
+          <button
+            type="button"
+            bind:this={commentAuthorSaveBtn}
+            onclick={() => void saveCommentAuthor()}
+            disabled={commentAuthorInflight}
+            class="px-3 py-1.5 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start text-type-md font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {commentAuthorInflight ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+        {#if commentAuthorError}
+          <p
+            id="general-comment-author-error"
+            class="text-status-danger text-type-sm font-body-md flex items-center gap-1.5"
+            role="alert"
+          >
+            <span class="material-symbols-outlined text-icon-md">error</span>
+            {commentAuthorError}
+          </p>
+        {/if}
+        {#if commentAuthorStatus}
+          <p
+            class="text-text-muted text-type-xs font-label-sm"
+            aria-live="polite"
+          >
+            {commentAuthorStatus}
+          </p>
+        {/if}
+      </div>
     </section>
 
     <!-- Custom spellcheck dictionary (#196 / #338). Vault-scoped. -->

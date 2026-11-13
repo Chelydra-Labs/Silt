@@ -90,7 +90,7 @@ All prefs live under `plugins.plugin_settings.silt-tasks` in the vault
 | `week_start` | `sunday` / `monday` (defaults to `sunday`; controls all task calendar and week-range boundaries). |
 | `columns` | Status-board lanes: legacy `string[]` or `{ name, wipLimit? }[]` (defaults to TODO/DOING/DONE, unlimited WIP). |
 | `saved_views[]` | User-defined saved views (system views are re-derived from code, never persisted). |
-| `local_author` | Seeded from the OS username (`ctx.getLocalAuthor`) on first comment; the user's override always wins. |
+| `local_author` | Name on task comments (Settings → General → Comment author). Absent = OS account display name (display-only fallback); empty = no `[author::]` token ("Unknown"). |
 
 The `filters` shape (`{ owners, priorities, dueDate, tags, stale?, shortlist? }`)
 is held in hub state and snapshotted into saved views; it is not separately
@@ -136,7 +136,8 @@ Each module has a co-located `*.test.ts`:
   DONE guard, and visible truncated-result notices for capped queries.
 - `Sidebar.test.ts` — smart-list pick, saved-view list, mini-cal, filter
   sync back into hub state.
-- `components/*.test.ts` — drawer, comment thread (incl.
-  `ctx.getLocalAuthor` seeding + persist), dependency picker, sub-editor.
+- `components/*.test.ts` — drawer, comment thread (settings-based
+  `local_author` attribution, empty pref → no token, pending/double-post
+  guard), dependency picker, sub-editor.
 - Backend `app_task_meta_test.go` / `backend/parser/parser_test.go` — priority
   IPC range validation and deliberate legacy missing-priority compatibility.
