@@ -564,6 +564,112 @@ func TestSaveSubtreeBlocks_DeletedSubTaskDropsOnlyItsComments(t *testing.T) {
 	}
 }
 
+// TestSaveSubtreeBlocks_KeptSubTaskKeepsItsComments pins the kept counterpart
+// of D3: a sub-task that survives the parent save owns its comments, so they
+// must survive with it — text, attribution, nesting and derived count intact —
+// even though the sub-editor payload carries no comments at all.
+func TestSaveSubtreeBlocks_KeptSubTaskKeepsItsComments(t *testing.T) {
+	app := newTestApp(t)
+	const (
+		taskID      = "ad000071-5555-1111-1111-111111111111"
+		taskComment = "ad000072-5555-1111-1111-111111111111"
+		subTaskID   = "ad000073-5555-1111-1111-111111111111"
+		subComment  = "ad000074-5555-1111-1111-111111111111"
+		subReply    = "ad000075-5555-1111-1111-111111111111"
+	)
+	content := "- [ ] parent task <!-- id: " + taskID + " -->\n" +
+		"\t- task comment [author:: Dana] [ts:: 2026-07-07T10:00:00] <!-- id: " + taskComment + " -->\n" +
+		"\t- [ ] sub-task <!-- id: " + subTaskID + " -->\n" +
+		"\t\t- sub-task comment [author:: Eve] [ts:: 2026-07-07T10:05:00] <!-- id: " + subComment + " -->\n" +
+		"\t\t\t- reply to Eve [author:: Frank] [ts:: 2026-07-07T10:06:00] <!-- id: " + subReply + " -->\n"
+	indexTestFile(t, app, "W", "S", "SubtreeKeptSubComments", "2026-07-01", content)
+
+	subBefore := taskCommentsCount(t, app, subTaskID)
+	if subBefore != 2 {
+		t.Fatalf("pre-save sub-task comments_count = %d, want 2 (comment + reply)", subBefore)
+	}
+	taskBefore := taskCommentsCount(t, app, taskID)
+	if taskBefore != 1 {
+		t.Fatalf("pre-save task comments_count = %d, want 1 (the task's own comment)", taskBefore)
+	}
+
+	// What the parent's sub-editor sends: the sub-task alone, no comments.
+	children := []parser.ParsedBlock{
+		{ID: subTaskID, Type: parser.BlockTask, Depth: 0, Status: "TODO", CleanText: "sub-task"},
+	}
+	if ok, err := app.SaveSubtreeBlocks(taskID, children); err != nil || !ok {
+		t.Fatalf("SaveSubtreeBlocks: ok=%v err=%v", ok, err)
+	}
+
+	sub, err := app.FetchSubtree(taskID)
+	if err != nil {
+		t.Fatalf("FetchSubtree: %v", err)
+	}
+	var order []string
+	for _, b := range sub {
+		order = append(order, b.ID)
+	}
+	// Each comment block sits directly under its owner: the sub-task's comment
+	// and reply after the sub-task, the task's own comment after the payload.
+	want := []string{subTaskID, subComment, subReply, taskComment}
+	if len(order) != len(want) {
+		t.Fatalf("subtree = %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("subtree order = %v, want %v", order, want)
+		}
+	}
+
+	kept := findSubtreeBlock(t, sub, subComment)
+	if kept == nil {
+		t.Fatalf("sub-task's comment was deleted by the parent save: %+v", sub)
+	}
+	if kept.ParentID != subTaskID {
+		t.Errorf("sub-task comment parent = %q, want %s", kept.ParentID, subTaskID)
+	}
+	if kept.CleanText != "sub-task comment" || kept.Author != "Eve" || kept.Timestamp != "2026-07-07T10:05:00" {
+		t.Errorf("sub-task comment attribution drifted: text=%q author=%q ts=%q",
+			kept.CleanText, kept.Author, kept.Timestamp)
+	}
+
+	reply := findSubtreeBlock(t, sub, subReply)
+	if reply == nil {
+		t.Fatal("sub-task reply was deleted by the parent save")
+	}
+	if reply.ParentID != subComment || reply.Depth != kept.Depth+1 {
+		t.Errorf("sub-task reply nesting drifted: depth=%d parent=%q, want depth %d under %s",
+			reply.Depth, reply.ParentID, kept.Depth+1, subComment)
+	}
+	if reply.Author != "Frank" || reply.Timestamp != "2026-07-07T10:06:00" {
+		t.Errorf("sub-task reply attribution drifted: author=%q ts=%q", reply.Author, reply.Timestamp)
+	}
+
+	// The sub-task's own fetch surfaces the comments it owns.
+	subOnly, err := app.FetchSubtree(subTaskID)
+	if err != nil {
+		t.Fatalf("FetchSubtree(sub-task): %v", err)
+	}
+	if len(subOnly) != 2 || subOnly[0].ID != subComment || subOnly[1].ID != subReply {
+		t.Errorf("sub-task subtree = %+v, want [%s %s]", subOnly, subComment, subReply)
+	}
+
+	if got := taskCommentsCount(t, app, subTaskID); got != subBefore {
+		t.Errorf("sub-task comments_count changed across the parent save: %d → %d", subBefore, got)
+	}
+	if got := taskCommentsCount(t, app, taskID); got != taskBefore {
+		t.Errorf("task comments_count changed across the save: %d → %d", taskBefore, got)
+	}
+
+	// The tokens survive on disk under the surviving sub-task.
+	s := mustReadTaskFile(t, app, "W", "S", "SubtreeKeptSubComments")
+	for _, token := range []string{"[author:: Eve]", "[ts:: 2026-07-07T10:05:00]", "[author:: Frank]", "[author:: Dana]"} {
+		if !strings.Contains(s, token) {
+			t.Errorf("on-disk comment lost %q:\n%s", token, s)
+		}
+	}
+}
+
 // TestSaveSubtreeBlocks_CommentTailIsIdempotent pins D4: a second identical
 // save neither duplicates comments nor drifts their order.
 func TestSaveSubtreeBlocks_CommentTailIsIdempotent(t *testing.T) {
@@ -668,9 +774,11 @@ func TestSaveSubtreeBlocks_CallerSuppliedCommentIsNotDuplicated(t *testing.T) {
 	for _, b := range sub {
 		order = append(order, b.ID)
 	}
-	want := []string{proseID, commentID, subTaskID, replyID}
+	// The omitted reply lands under its comment, not after the payload tail —
+	// tail placement would re-derive its parent as the sub-task.
+	want := []string{proseID, commentID, replyID, subTaskID}
 	if len(order) != len(want) {
-		t.Fatalf("subtree = %v, want %v (caller order, then the omitted reply)", order, want)
+		t.Fatalf("subtree = %v, want %v (caller order, then the omitted reply under its comment)", order, want)
 	}
 	for i := range want {
 		if order[i] != want[i] {
@@ -687,6 +795,17 @@ func TestSaveSubtreeBlocks_CallerSuppliedCommentIsNotDuplicated(t *testing.T) {
 			comment.CleanText, comment.Author, comment.Timestamp)
 	}
 
+	reply := findSubtreeBlock(t, sub, replyID)
+	if reply == nil {
+		t.Fatal("omitted reply missing from the sub-tree")
+	}
+	if reply.ParentID != commentID {
+		t.Errorf("preserved reply re-parented: parent=%q, want %s (its comment, not a sibling task)", reply.ParentID, commentID)
+	}
+	if reply.Depth != comment.Depth+1 {
+		t.Errorf("reply depth = %d, want %d (one deeper than %s)", reply.Depth, comment.Depth+1, commentID)
+	}
+
 	// No duplicate UUIDs on disk: the caller's block is written once, and the
 	// omitted reply is still preserved.
 	s := mustReadTaskFile(t, app, "W", "S", "SubtreeCallerComment")
@@ -700,8 +819,10 @@ func TestSaveSubtreeBlocks_CallerSuppliedCommentIsNotDuplicated(t *testing.T) {
 			t.Errorf("on-disk comment lost %q:\n%s", token, s)
 		}
 	}
-	if got := taskCommentsCount(t, app, taskID); got != 2 {
-		t.Errorf("comments_count = %d, want 2 (comment + reply)", got)
+	// Derived count = every NOTE whose nearest TASK ancestor is this task:
+	// the prose note, the caller-supplied comment, and the preserved reply.
+	if got := taskCommentsCount(t, app, taskID); got != 3 {
+		t.Errorf("comments_count = %d, want 3 (prose note + comment + reply)", got)
 	}
 }
 

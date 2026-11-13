@@ -998,14 +998,22 @@ describe('comment predicates (display/edit asymmetry)', () => {
 
   it.each([
     ['author only', { type: 'NOTE', author: 'Dana' }, true],
-    ['timestamp only', { type: 'NOTE', timestamp: '2026-07-07T14:22:00' }, true],
+    [
+      'timestamp only',
+      { type: 'NOTE', timestamp: '2026-07-07T14:22:00' },
+      true
+    ],
     [
       'author and timestamp',
       { type: 'NOTE', author: 'Dana', timestamp: '2026-07-07T14:22:00' },
       true
     ],
     ['neither token (prose note)', { type: 'NOTE' }, false],
-    ['whitespace attribution', { type: 'NOTE', author: '  ', timestamp: '\t' }, false],
+    [
+      'whitespace attribution',
+      { type: 'NOTE', author: '  ', timestamp: '\t' },
+      false
+    ],
     [
       'attributed TASK is not a comment',
       { type: 'TASK', author: 'Dana', timestamp: '2026-07-07T14:22:00' },
@@ -1020,7 +1028,11 @@ describe('comment predicates (display/edit asymmetry)', () => {
       { type: 'NOTE', clean_text: 'prose' },
       { type: 'NOTE', author: 'Dana', clean_text: 'comment one' },
       { type: 'TASK', clean_text: 'sub-task' },
-      { type: 'NOTE', timestamp: '2026-07-07T14:22:00', clean_text: 'comment two' }
+      {
+        type: 'NOTE',
+        timestamp: '2026-07-07T14:22:00',
+        clean_text: 'comment two'
+      }
     ])
     expect(part.content.map((b) => b.clean_text)).toEqual(['prose', 'sub-task'])
     expect(part.comments.map((b) => b.clean_text)).toEqual([

@@ -156,12 +156,13 @@ func (a *App) PluginSaveSubtreeBlocks(pluginID, sessionToken, blockID string, ch
 // and races no concurrent writer. Returns true when a write occurred.
 //
 // Comments are not part of the sub-editor surface, so before splicing this
-// re-reads the task's own comment blocks (top-level and reply chains, i.e. an
-// ancestor chain of NOTEs up to the task) and appends them as a contiguous
-// tail. A notes save therefore never rewrites their text or attribution,
-// reorders them, or deletes them through the editor — including a comment
-// appended while the modal was open, since the fetch happens under the same
-// write lock as the splice. Comment deletion has its own path (deleteBlock).
+// re-reads every comment block owned by the saved task or by a task the
+// incoming payload keeps (nearest TASK ancestor — see preserveTaskComments)
+// and re-inserts each at its owner's position. A notes save therefore never
+// rewrites their text or attribution, reorders them relative to each other, or
+// deletes them through the editor — including a comment appended while the
+// modal was open, since the fetch happens under the same write lock as the
+// splice. Comment deletion has its own path (deleteBlock).
 func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock, reason string) (bool, error) {
 	if err := validateTaskBlockPriorities(children); err != nil {
 		return false, err
@@ -635,13 +636,24 @@ func spliceSubtree(blocks []parser.ParsedBlock, parentID string, children []pars
 	return out, nil
 }
 
-// preserveTaskComments returns children with this task's own comment blocks
-// appended as a contiguous tail in file order, so the sub-editor splice can
-// never rewrite, reorder or drop them. A comment belongs to the task when its
-// ancestor chain up to the task is NOTE-only (a top-level comment or a reply
-// chain): a comment under a sub-task is that sub-task's, and deleting the
-// sub-task in the editor must take it along instead of reattaching it to a
-// sibling when the re-parse re-derives ParentID from depth.
+// preserveTaskComments returns children with every comment block that belongs
+// to the saved task or to a task the payload keeps re-inserted at its owner's
+// position, so the sub-editor splice can never rewrite, reorder or drop them.
+// Ownership is the nearest TASK ancestor (the same attribution the derived
+// comments_count uses): the saved root always owns its comments, a kept
+// sub-task owns its own, and a comment whose nearest TASK ancestor is absent
+// from the payload is deleted with that sub-task instead of being resurrected
+// onto a sibling.
+//
+// Placement is anchored, not tail-appended: a preserved block goes immediately
+// after its nearest placed ancestor's run (its original parent when the payload
+// carries it or this pass already placed it), so a reply stays under its
+// comment rather than behind an unrelated sibling — spliceSubtree re-derives
+// parentage from depth, and a tail-appended reply would re-parent to whatever
+// block happened to precede it. Relative order within an anchor is file order.
+// Depths are rebased by the anchor's output offset so reply nesting survives
+// while the payload's own depths stay untouched: spliceSubtree derives one
+// delta from the shallowest block, which must remain the payload's base.
 func preserveTaskComments(blocks []parser.ParsedBlock, taskID string, children []parser.ParsedBlock) []parser.ParsedBlock {
 	current := extractSubtree(blocks, taskID)
 	if len(current) == 0 {
@@ -651,32 +663,35 @@ func preserveTaskComments(blocks []parser.ParsedBlock, taskID string, children [
 	for _, b := range blocks {
 		byID[b.ID] = b
 	}
-	// Caller-supplied content wins: appending a comment the payload already
-	// carries would trip spliceChildIDCollision on this rule's own injection.
+	// Caller-supplied content wins: preserving a comment the payload already
+	// carries would trip spliceChildIDCollision on this rule's own injection,
+	// and the caller's text/author/ts are what the round-trip meant to save.
 	incoming := make(map[string]bool, len(children))
+	incomingTasks := make(map[string]bool, len(children))
 	for _, c := range children {
 		incoming[c.ID] = true
-	}
-	own := make([]parser.ParsedBlock, 0)
-	for _, b := range current {
-		if isTaskOwnComment(byID, b, taskID) && !incoming[b.ID] {
-			own = append(own, b)
+		if c.Type == parser.BlockTask {
+			incomingTasks[c.ID] = true
 		}
 	}
-	if len(own) == 0 {
+	preserved := make([]parser.ParsedBlock, 0)
+	for _, b := range current {
+		if !incoming[b.ID] && isTaskComment(byID, b, taskID, incomingTasks) {
+			preserved = append(preserved, b)
+		}
+	}
+	if len(preserved) == 0 {
 		return children
 	}
-	// spliceSubtree derives ONE depth delta from the shallowest entry of the
-	// combined list, so preserved comments must share the incoming children's
-	// base or they would shift the whole editor block range. Rebase them to a
-	// 0-based offset off the current sub-tree's shallowest member, then onto
-	// the incoming base; clamp defensively.
+
 	curMin := current[0].Depth
 	for _, b := range current[1:] {
 		if b.Depth < curMin {
 			curMin = b.Depth
 		}
 	}
+	// The incoming children's shallowest depth is the base spliceSubtree
+	// normalizes against; preserved depths are expressed relative to it.
 	base := 0
 	if len(children) > 0 {
 		base = children[0].Depth
@@ -686,22 +701,88 @@ func preserveTaskComments(blocks []parser.ParsedBlock, taskID string, children [
 			}
 		}
 	}
-	out := make([]parser.ParsedBlock, 0, len(children)+len(own))
-	out = append(out, children...)
-	for _, c := range own {
-		c.Depth = c.Depth - curMin + base
-		if c.Depth < 0 {
-			c.Depth = 0
+
+	out := make([]parser.ParsedBlock, len(children))
+	copy(out, children)
+	pos := make(map[string]int, len(children)+len(preserved))
+	for i, c := range out {
+		pos[c.ID] = i
+	}
+	// runEnd is the last index of a placed block's sub-tree run: depths are
+	// consistent (payload as given, preserved as rebased), so a run ends at the
+	// first following block that is not strictly deeper.
+	runEnd := func(i int) int {
+		end := i
+		for j := i + 1; j < len(out); j++ {
+			if out[j].Depth > out[i].Depth {
+				end = j
+			} else {
+				break
+			}
 		}
-		out = append(out, c)
+		return end
+	}
+
+	// current is in file order (parents before children), so every anchor is
+	// already placed by the time its reply is handled.
+	for _, b := range preserved {
+		// Root anchor: the whole payload run is the anchor's run, so the block
+		// lands at the tail. Its depth is measured from the sub-tree's
+		// shallowest member, which maps onto the payload base: a root-anchored
+		// comment is a sibling of the payload children, not one level deeper.
+		at := len(out)
+		rootAnchor := true
+		anchorDepth := base
+		origAnchorDepth := curMin
+		for pid, steps := b.ParentID, 0; pid != "" && pid != taskID && steps <= len(byID); steps++ {
+			if idx, ok := pos[pid]; ok {
+				at = runEnd(idx) + 1
+				rootAnchor = false
+				anchorDepth = out[idx].Depth
+				if orig, ok := byID[pid]; ok {
+					origAnchorDepth = orig.Depth
+				} else {
+					origAnchorDepth = anchorDepth
+				}
+				break
+			}
+			parent, ok := byID[pid]
+			if !ok || parent.ParentID == pid {
+				break
+			}
+			pid = parent.ParentID
+		}
+		b.Depth = anchorDepth + (b.Depth - origAnchorDepth)
+		// Defensive: a preserved block under a placed anchor stays strictly
+		// deeper than it, or the re-parse would re-parent it to the anchor's
+		// own sibling.
+		if rootAnchor {
+			if b.Depth < anchorDepth {
+				b.Depth = anchorDepth
+			}
+		} else if b.Depth <= anchorDepth {
+			b.Depth = anchorDepth + 1
+		}
+		out = append(out, parser.ParsedBlock{})
+		copy(out[at+1:], out[at:])
+		out[at] = b
+		for id, p := range pos {
+			if p >= at {
+				pos[id] = p + 1
+			}
+		}
+		pos[b.ID] = at
 	}
 	return out
 }
 
-// isTaskOwnComment reports whether b is a comment block of taskID: b carries
-// attribution, and walking b's ParentID chain to taskID crosses NOTE blocks
-// only. The step cap mirrors hasAncestor's cyclic-graph guard.
-func isTaskOwnComment(byID map[string]parser.ParsedBlock, b parser.ParsedBlock, taskID string) bool {
+// isTaskComment reports whether b is a comment owned by the saved task or by a
+// task the payload keeps: b carries attribution and the nearest TASK ancestor
+// of b's ParentID chain is taskID or a task in incomingTasks. A nearer TASK
+// ancestor outside the payload means the comment belongs to a sub-task the
+// editor deleted, so it goes away with it. The step cap mirrors hasAncestor's
+// cyclic-graph guard.
+func isTaskComment(byID map[string]parser.ParsedBlock, b parser.ParsedBlock, taskID string, incomingTasks map[string]bool) bool {
 	if !parser.IsCommentBlock(b) {
 		return false
 	}
@@ -711,8 +792,11 @@ func isTaskOwnComment(byID map[string]parser.ParsedBlock, b parser.ParsedBlock, 
 			return true
 		}
 		parent, ok := byID[pid]
-		if !ok || parent.Type != parser.BlockNote || parent.ParentID == pid {
+		if !ok || parent.ParentID == pid {
 			return false
+		}
+		if parent.Type == parser.BlockTask {
+			return incomingTasks[parent.ID]
 		}
 		pid = parent.ParentID
 	}
