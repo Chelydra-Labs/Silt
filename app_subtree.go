@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"silt/backend/db"
 	"silt/backend/parser"
@@ -153,6 +154,14 @@ func (a *App) PluginSaveSubtreeBlocks(pluginID, sessionToken, blockID string, ch
 // because RenderFileContent re-serializes the full slice. Holds both
 // LockBlockWrite(parentID) and LockFileWrite(filePath) so the splice is atomic
 // and races no concurrent writer. Returns true when a write occurred.
+//
+// Comments are not part of the sub-editor surface, so before splicing this
+// re-reads the task's own comment blocks (top-level and reply chains, i.e. an
+// ancestor chain of NOTEs up to the task) and appends them as a contiguous
+// tail. A notes save therefore never rewrites their text or attribution,
+// reorders them, or deletes them through the editor — including a comment
+// appended while the modal was open, since the fetch happens under the same
+// write lock as the splice. Comment deletion has its own path (deleteBlock).
 func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock, reason string) (bool, error) {
 	if err := validateTaskBlockPriorities(children); err != nil {
 		return false, err
@@ -218,7 +227,7 @@ func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock, r
 				return
 			}
 
-			merged, err := spliceSubtree(parsedBlocks, blockID, children)
+			merged, err := spliceSubtree(parsedBlocks, blockID, preserveTaskComments(parsedBlocks, blockID, children))
 			if err != nil {
 				writeErr = fmt.Errorf("splice sub-tree under %s in %s: %w", blockID, filePath, err)
 				return
@@ -293,9 +302,10 @@ func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock, r
 //
 // Returns the freshly-minted block id of the new NOTE comment. `author` and
 // `ts` are the NOTE-block comment-attribution tokens ([author:: NAME] /
-// [ts:: YYYY-MM-DDTHH:MM:SS]); pass empty to omit either (nullable per
+// [ts:: YYYY-MM-DDTHH:MM:SS]); `author` may be empty (nullable per
 // ARCHITECTURE.md §2.2). The SDK generates `ts` client-side and passes it
-// through; the binding is a pure transport so the caller controls attribution.
+// through; when it is empty the binding stamps the current local time so every
+// app-written comment stays classifiable by parser.IsCommentBlock.
 //
 // parentCommentID nests the new NOTE under an existing comment (#438). Empty
 // keeps the historical top-level behavior (direct child of the task). When
@@ -343,6 +353,12 @@ func (a *App) appendTaskComment(taskID, text, author, ts, parentCommentID, reaso
 	// intent obvious. Mirrors setTaskTitle's empty-input contract guard.
 	if strings.TrimSpace(text) == "" {
 		return "", fmt.Errorf("comment text must not be empty")
+	}
+	// An app-written comment must always be classifiable by the attribution
+	// predicate (backend/parser.IsCommentBlock), never mistaken for editable
+	// prose: the SDK supplies ts, but stamp one here when a caller omits it.
+	if strings.TrimSpace(ts) == "" {
+		ts = time.Now().Format("2006-01-02T15:04:05")
 	}
 	a.wg.Add(1)
 	defer a.wg.Done()
@@ -617,6 +633,84 @@ func spliceSubtree(blocks []parser.ParsedBlock, parentID string, children []pars
 		}
 	}
 	return out, nil
+}
+
+// preserveTaskComments returns children with this task's own comment blocks
+// appended as a contiguous tail in file order, so the sub-editor splice can
+// never rewrite, reorder or drop them. A comment belongs to the task when its
+// ancestor chain up to the task is NOTE-only (a top-level comment or a reply
+// chain): a comment under a sub-task is that sub-task's, and deleting the
+// sub-task in the editor must take it along instead of reattaching it to a
+// sibling when the re-parse re-derives ParentID from depth.
+func preserveTaskComments(blocks []parser.ParsedBlock, taskID string, children []parser.ParsedBlock) []parser.ParsedBlock {
+	current := extractSubtree(blocks, taskID)
+	if len(current) == 0 {
+		return children
+	}
+	byID := make(map[string]parser.ParsedBlock, len(blocks))
+	for _, b := range blocks {
+		byID[b.ID] = b
+	}
+	own := make([]parser.ParsedBlock, 0)
+	for _, b := range current {
+		if isTaskOwnComment(byID, b, taskID) {
+			own = append(own, b)
+		}
+	}
+	if len(own) == 0 {
+		return children
+	}
+	// spliceSubtree derives ONE depth delta from the shallowest entry of the
+	// combined list, so preserved comments must share the incoming children's
+	// base or they would shift the whole editor block range. Rebase them to a
+	// 0-based offset off the current sub-tree's shallowest member, then onto
+	// the incoming base; clamp defensively.
+	curMin := current[0].Depth
+	for _, b := range current[1:] {
+		if b.Depth < curMin {
+			curMin = b.Depth
+		}
+	}
+	base := 0
+	if len(children) > 0 {
+		base = children[0].Depth
+		for _, c := range children[1:] {
+			if c.Depth < base {
+				base = c.Depth
+			}
+		}
+	}
+	out := make([]parser.ParsedBlock, 0, len(children)+len(own))
+	out = append(out, children...)
+	for _, c := range own {
+		c.Depth = c.Depth - curMin + base
+		if c.Depth < 0 {
+			c.Depth = 0
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// isTaskOwnComment reports whether b is a comment block of taskID: b carries
+// attribution, and walking b's ParentID chain to taskID crosses NOTE blocks
+// only. The step cap mirrors hasAncestor's cyclic-graph guard.
+func isTaskOwnComment(byID map[string]parser.ParsedBlock, b parser.ParsedBlock, taskID string) bool {
+	if !parser.IsCommentBlock(b) {
+		return false
+	}
+	pid := b.ParentID
+	for steps := 0; pid != "" && steps <= len(byID); steps++ {
+		if pid == taskID {
+			return true
+		}
+		parent, ok := byID[pid]
+		if !ok || parent.Type != parser.BlockNote || parent.ParentID == pid {
+			return false
+		}
+		pid = parent.ParentID
+	}
+	return false
 }
 
 // spliceChildIDCollision reports an incoming child id that would render twice
