@@ -2526,7 +2526,7 @@ describe('BoardView — task context menu (#1116)', () => {
     })
   }
 
-  it('right-click on a card opens the seven-item menu', async () => {
+  it('right-click on a card opens the six-item menu', async () => {
     await renderBoardWithMenu([
       row({ id: 'm1', clean_content: 'Menu card', priority: 2 })
     ])
@@ -2541,7 +2541,6 @@ describe('BoardView — task context menu (#1116)', () => {
       'Due date',
       'Priority',
       'Open in sub-editor',
-      'Edit task',
       'Delete task'
     ])
   })
@@ -2599,13 +2598,9 @@ describe('BoardView — task context menu (#1116)', () => {
     expect(mocks.setTaskPriority).toHaveBeenCalledWith('m1', 1)
   })
 
-  it('Open in sub-editor and Edit task reuse the card affordance state', async () => {
+  it('Open in sub-editor reuses the card affordance state', async () => {
     await renderBoardWithMenu([row({ id: 'm1', clean_content: 'Menu card' })])
     const card = cardByText('Menu card')
-
-    await fireEvent.contextMenu(card, { clientX: 5, clientY: 5 })
-    await fireEvent.click(screen.getByTestId('task-menu-edit'))
-    expect(screen.getByTestId('task-primary-header')).toBeInTheDocument()
 
     await fireEvent.contextMenu(card, { clientX: 5, clientY: 5 })
     await fireEvent.click(screen.getByTestId('task-menu-sub-editor'))

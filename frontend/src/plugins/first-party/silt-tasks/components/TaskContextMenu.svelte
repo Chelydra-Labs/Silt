@@ -22,16 +22,14 @@
    * rows, Board cards, Calendar chips). Every mutation goes through the
    * PluginContext SDK exactly as TaskMetadataSidebar does and is wrapped in
    * trackTaskUndoWrite so the hub's undo affordance tracks the write. The
-   * host keeps ownership of navigation state: drawer / sub-editor opens are
-   * pre-bound callbacks, so this component stays stateless about views.
+   * host keeps ownership of navigation state: sub-editor opens are pre-bound
+   * callbacks, so this component stays stateless about views.
    */
   interface Props {
     ctx: PluginContext
     /** Headless menu state from useTaskContextMenu; null = closed. */
     menu: TaskContextMenuState | null
     onClose: () => void
-    /** Drawer parity: focus the task in the host's edit drawer. */
-    onEditTask: (task: TaskDetail) => void
     /** Shift+Enter parity: open the host's sub-editor for the task. */
     onOpenSubEditor: (task: TaskDetail) => void
     /**
@@ -42,8 +40,7 @@
     onError?: (message: string) => void
   }
 
-  let { ctx, menu, onClose, onEditTask, onOpenSubEditor, onError }: Props =
-    $props()
+  let { ctx, menu, onClose, onOpenSubEditor, onError }: Props = $props()
 
   let writeError = $state('')
   let writeErrorTimer: ReturnType<typeof setTimeout> | null = null
@@ -157,11 +154,6 @@
   function openSubEditorFor(task: TaskDetail): void {
     onClose()
     onOpenSubEditor(task)
-  }
-
-  function editTask(task: TaskDetail): void {
-    onClose()
-    onEditTask(task)
   }
 
   function requestDelete(task: TaskDetail): void {
@@ -315,17 +307,6 @@
         >edit_note</span
       >
       <span>Open in sub-editor</span>
-    </button>
-    <button
-      type="button"
-      role="menuitem"
-      onclick={() => editTask(task)}
-      data-testid="task-menu-edit"
-    >
-      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
-        >edit</span
-      >
-      <span>Edit task</span>
     </button>
     <button
       type="button"

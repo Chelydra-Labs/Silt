@@ -3210,7 +3210,7 @@ describe('ListView — task context menu (#1116)', () => {
     })
   }
 
-  it('right-click on a row opens the seven-item menu anchored to the row', async () => {
+  it('right-click on a row opens the six-item menu anchored to the row', async () => {
     await renderWithMenuTask()
     const row = document.querySelector('[data-block-id="m1"]') as HTMLElement
     await fireEvent.contextMenu(row, { clientX: 40, clientY: 40 })
@@ -3221,7 +3221,6 @@ describe('ListView — task context menu (#1116)', () => {
       'Due date',
       'Priority',
       'Open in sub-editor',
-      'Edit task',
       'Delete task'
     ])
   })
@@ -3301,7 +3300,7 @@ describe('ListView — task context menu (#1116)', () => {
     expect(ctx.setTaskPriority).toHaveBeenCalledWith('m1', 1)
   })
 
-  it('Open in sub-editor and Edit task reuse the row affordance state', async () => {
+  it('Open in sub-editor reuses the row affordance state', async () => {
     await renderWithMenuTask()
     const row = document.querySelector('[data-block-id="m1"]') as HTMLElement
 
@@ -3310,11 +3309,6 @@ describe('ListView — task context menu (#1116)', () => {
     expect(
       document.querySelector('[aria-labelledby="sub-editor-title"]')
     ).toBeInTheDocument()
-
-    await fireEvent.contextMenu(row, { clientX: 5, clientY: 5 })
-    await fireEvent.click(screen.getByTestId('task-menu-edit'))
-    // Drawer parity: the metadata sidebar header surfaces for the task.
-    expect(screen.getByTestId('task-primary-header')).toBeInTheDocument()
   })
 
   it('delete confirms first; cancel leaves the task untouched', async () => {

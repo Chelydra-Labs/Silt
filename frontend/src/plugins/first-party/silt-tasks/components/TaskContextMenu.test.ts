@@ -92,19 +92,17 @@ function menuState(task: TaskDetail): TaskContextMenuState {
 
 function renderMenu(task: TaskDetail, ctx = makeCtx(), handlers = {}) {
   const onClose = vi.fn()
-  const onEditTask = vi.fn()
   const onOpenSubEditor = vi.fn()
   render(TaskContextMenu, {
     props: {
       ctx,
       menu: menuState(task),
       onClose,
-      onEditTask,
       onOpenSubEditor,
       ...handlers
     }
   })
-  return { ctx, onClose, onEditTask, onOpenSubEditor }
+  return { ctx, onClose, onOpenSubEditor }
 }
 
 /** Root-level items only (submenu entries live in nested [role=menu] flyouts). */
@@ -132,7 +130,7 @@ describe('TaskContextMenu (#1116)', () => {
   })
   afterEach(cleanup)
 
-  it('renders the seven root items for an open task', () => {
+  it('renders the six root items for an open task', () => {
     renderMenu(makeTask())
     expect(rootItems().map(labelOf)).toEqual([
       'Mark done',
@@ -140,7 +138,6 @@ describe('TaskContextMenu (#1116)', () => {
       'Due date',
       'Priority',
       'Open in sub-editor',
-      'Edit task',
       'Delete task'
     ])
   })
@@ -250,13 +247,11 @@ describe('TaskContextMenu (#1116)', () => {
     expect(undoMocks.trackTaskUndoWrite).toHaveBeenCalled()
   })
 
-  it('sub-editor and edit items delegate to the host callbacks', async () => {
+  it('sub-editor item delegates to the host callback', async () => {
     const task = makeTask()
-    const { onEditTask, onOpenSubEditor } = renderMenu(task)
+    const { onOpenSubEditor } = renderMenu(task)
     await fireEvent.click(screen.getByTestId('task-menu-sub-editor'))
     expect(onOpenSubEditor).toHaveBeenCalledWith(task)
-    await fireEvent.click(screen.getByTestId('task-menu-edit'))
-    expect(onEditTask).toHaveBeenCalledWith(task)
   })
 
   it('delete confirms before writing; cancel leaves the task untouched', async () => {
