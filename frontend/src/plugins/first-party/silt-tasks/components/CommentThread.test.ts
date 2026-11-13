@@ -86,6 +86,11 @@ if (
 import CommentThread from './CommentThread.svelte'
 import type { PluginContext, SubtreeBlock } from '../../../sdk'
 import { v2CtxStubs } from '../../../test-helpers'
+import {
+  isCommentBlock,
+  isNoteBlock,
+  partitionComments
+} from '../commentBlocks'
 
 interface CommentThreadProps {
   taskId: string
@@ -980,5 +985,81 @@ describe('CommentThread', () => {
     await flush()
     expect(screen.queryByLabelText('Reply text')).toBeNull()
     expect(document.activeElement).toBe(replyButton)
+  })
+})
+
+describe('comment predicates (display/edit asymmetry)', () => {
+  it('isNoteBlock is a type test only', () => {
+    expect(isNoteBlock({ type: 'NOTE' })).toBe(true)
+    expect(isNoteBlock({ type: 'note' })).toBe(true)
+    expect(isNoteBlock({ type: 'TASK' })).toBe(false)
+    expect(isNoteBlock({})).toBe(false)
+  })
+
+  it.each([
+    ['author only', { type: 'NOTE', author: 'Dana' }, true],
+    [
+      'timestamp only',
+      { type: 'NOTE', timestamp: '2026-07-07T14:22:00' },
+      true
+    ],
+    [
+      'author and timestamp',
+      { type: 'NOTE', author: 'Dana', timestamp: '2026-07-07T14:22:00' },
+      true
+    ],
+    ['neither token (prose note)', { type: 'NOTE' }, false],
+    [
+      'whitespace attribution',
+      { type: 'NOTE', author: '  ', timestamp: '\t' },
+      false
+    ],
+    [
+      'attributed TASK is not a comment',
+      { type: 'TASK', author: 'Dana', timestamp: '2026-07-07T14:22:00' },
+      false
+    ]
+  ])('isCommentBlock: %s', (_name, block, want) => {
+    expect(isCommentBlock(block)).toBe(want)
+  })
+
+  it('partitionComments keeps comments and content in original order', () => {
+    const part = partitionComments([
+      { type: 'NOTE', clean_text: 'prose' },
+      { type: 'NOTE', author: 'Dana', clean_text: 'comment one' },
+      { type: 'TASK', clean_text: 'sub-task' },
+      {
+        type: 'NOTE',
+        timestamp: '2026-07-07T14:22:00',
+        clean_text: 'comment two'
+      }
+    ])
+    expect(part.content.map((b) => b.clean_text)).toEqual(['prose', 'sub-task'])
+    expect(part.comments.map((b) => b.clean_text)).toEqual([
+      'comment one',
+      'comment two'
+    ])
+  })
+
+  it('the thread still renders legacy token-less NOTEs (display side stays type-only)', async () => {
+    // Regression guard: the editor drops attributed comments, but the thread
+    // must keep showing every NOTE descendant — including legacy ones, which
+    // render as Unknown/Undated.
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: 'attributed comment',
+          author: 'alice',
+          timestamp: '2026-07-01T09:00:00'
+        }),
+        makeBlock({ id: 'legacy', clean_text: 'legacy prose note' })
+      ])
+    })
+    mount({ ctx })
+    await flush()
+    expect(document.querySelectorAll('[role="comment"]').length).toBe(2)
+    expect(screen.getByText('attributed comment')).toBeInTheDocument()
+    expect(screen.getByText('legacy prose note')).toBeInTheDocument()
   })
 })

@@ -375,6 +375,103 @@ describe('TaskSubEditorModal (#304)', () => {
     })
   })
 
+  it('keeps comment blocks out of the editor doc and the save payload (#1151)', async () => {
+    mocks.fetchSubtree.mockResolvedValue([
+      {
+        id: 'comment-1',
+        parent_id: 'task-1',
+        type: 'NOTE',
+        depth: 1,
+        raw_text: '- Comment from Dana',
+        clean_text: 'Comment from Dana',
+        author: 'Dana',
+        timestamp: '2026-07-07T14:22:00',
+        line_number: 2,
+        file_date: '2026-07-01'
+      },
+      {
+        id: 'prose-1',
+        parent_id: 'task-1',
+        type: 'NOTE',
+        depth: 1,
+        raw_text: '- Prose paragraph',
+        clean_text: 'Prose paragraph',
+        line_number: 3,
+        file_date: '2026-07-01'
+      },
+      {
+        id: 'subtask-1',
+        parent_id: 'task-1',
+        type: 'TASK',
+        depth: 1,
+        raw_text: '- [ ] Sub-task title',
+        clean_text: 'Sub-task title',
+        status: 'TODO',
+        line_number: 4,
+        file_date: '2026-07-01'
+      },
+      {
+        // Owned by the surviving sub-task, not by the saved task: still not
+        // editor content, but the sub-task itself must stay in the payload.
+        id: 'subtask-comment-1',
+        parent_id: 'subtask-1',
+        type: 'NOTE',
+        depth: 2,
+        raw_text: '- Sub-task comment from Eve',
+        clean_text: 'Sub-task comment from Eve',
+        author: 'Eve',
+        timestamp: '2026-07-07T14:23:00',
+        line_number: 5,
+        file_date: '2026-07-01'
+      }
+    ])
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+    await flush()
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement & {
+      editor: {
+        getJSON: () => unknown
+        commands: { insertContent: (s: string) => void }
+      }
+    }
+    const loadedDoc = JSON.stringify(pm.editor.getJSON())
+    // Attributed comments (and their tokens) never enter the TipTap doc…
+    expect(loadedDoc).not.toContain('Comment from Dana')
+    expect(loadedDoc).not.toContain('Sub-task comment from Eve')
+    expect(loadedDoc).not.toContain('[author::')
+    expect(loadedDoc).not.toContain('[ts::')
+    // …while unattributed prose and sub-tasks still hydrate.
+    expect(loadedDoc).toContain('Prose paragraph')
+    expect(loadedDoc).toContain('Sub-task title')
+
+    // Arm the autosave with a real editor transaction, then inspect the payload.
+    pm.editor.commands.insertContent(' tail edit')
+    await vi.waitFor(() => expect(mocks.saveSubtreeBlocks).toHaveBeenCalled())
+    const saved = mocks.saveSubtreeBlocks.mock.calls[0]?.[1] as Array<{
+      id?: string
+      type?: string
+      clean_text?: string
+      author?: string
+      timestamp?: string
+    }>
+    expect(saved.some((b) => b.id === 'comment-1')).toBe(false)
+    expect(saved.some((b) => b.id === 'subtask-comment-1')).toBe(false)
+    expect(saved.some((b) => b.clean_text === 'Comment from Dana')).toBe(false)
+    expect(
+      saved.some((b) => b.clean_text === 'Sub-task comment from Eve')
+    ).toBe(false)
+    expect(saved.some((b) => b.author || b.timestamp)).toBe(false)
+    expect(saved.some((b) => b.id === 'prose-1')).toBe(true)
+    expect(saved.some((b) => b.id === 'subtask-1')).toBe(true)
+  })
+
   it('calls fetchSubtree with the block id on mount', async () => {
     render(TaskSubEditorModal, {
       ...BASE_PROPS,
