@@ -164,6 +164,70 @@ func TestQueryBlocksByTag_PrefixSemantics(t *testing.T) {
 	}
 }
 
+// TestQueryBlocksByTag_HydratesDerivedCounts pins the #1161 tag-query half: a
+// task carrying comments and a body reference comes back with both derived
+// counts populated, while a non-task block on the same tag comes back with
+// zeros (the LEFT JOIN's COALESCE), not NULL-mangled values.
+func TestQueryBlocksByTag_HydratesDerivedCounts(t *testing.T) {
+	dm := newTestDB(t)
+
+	taskID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	commentOne := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	commentTwo := "cccccccc-cccc-cccc-cccc-cccccccccccc"
+	plainNote := "dddddddd-dddd-dddd-dddd-dddddddddddd"
+
+	task := sampleTaskBlock(taskID, 1)
+	task.RawText = "- [ ] sample task #work/derived ((aaaaaaaa-1111-1111-1111-111111111111)) <!-- id: " + taskID + " -->"
+
+	c1 := sampleNoteBlock(commentOne, 2)
+	c1.ParentID = taskID
+	c1.Depth = 1
+	c2 := sampleNoteBlock(commentTwo, 3)
+	c2.ParentID = taskID
+	c2.Depth = 1
+
+	// Same tag, no task row: every t.* column is NULL through the LEFT JOIN.
+	plain := sampleNoteBlock(plainNote, 4)
+	plain.RawText = "plain note #work/derived <!-- id: " + plainNote + " -->"
+
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily",
+		[]parser.ParsedBlock{task, c1, c2, plain}, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+
+	res, err := dm.QueryBlocksByTag("work/derived")
+	if err != nil {
+		t.Fatalf("QueryBlocksByTag: %v", err)
+	}
+	if len(res) != 2 {
+		t.Fatalf("expected the task and the plain note, got %d results", len(res))
+	}
+	byID := make(map[string]parser.TaskResult, len(res))
+	for _, r := range res {
+		byID[r.ID] = r
+	}
+
+	taskRow, ok := byID[taskID]
+	if !ok {
+		t.Fatalf("task %s missing from tag results", taskID)
+	}
+	if taskRow.CommentsCount != 2 {
+		t.Errorf("task comments_count=%d want 2", taskRow.CommentsCount)
+	}
+	if taskRow.LinksCount != 1 {
+		t.Errorf("task links_count=%d want 1", taskRow.LinksCount)
+	}
+
+	noteRow, ok := byID[plainNote]
+	if !ok {
+		t.Fatalf("plain note %s missing from tag results", plainNote)
+	}
+	if noteRow.CommentsCount != 0 || noteRow.LinksCount != 0 {
+		t.Errorf("non-task block counts = (%d, %d), want (0, 0)",
+			noteRow.CommentsCount, noteRow.LinksCount)
+	}
+}
+
 func TestQueryTasksWithFilters_EmptyNonNil(t *testing.T) {
 	dm := newTestDB(t)
 	// No tasks indexed — zero-match filter must still return non-nil empty
