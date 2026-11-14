@@ -11,6 +11,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -443,6 +444,100 @@ func TestSaveFileBlocks_RefusedSaveResolvePreservesCommentAttribution(t *testing
 	}
 	if got := taskCommentsCount(t, app, taskID); got != 1 {
 		t.Errorf("comments_count = %d, want 1", got)
+	}
+}
+
+// TestSaveFileBlocks_RefusedSaveResolveKeepTheirsCopiesMine covers the other
+// consumer of the resolved payload: keep_theirs settles theirs on the original
+// path and writes my stashed buffer to the conflict copy. That copy is the
+// user's surviving version, so it must carry the attribution the replay
+// reconstructed from disk (#1160).
+func TestSaveFileBlocks_RefusedSaveResolveKeepTheirsCopiesMine(t *testing.T) {
+	app := newTestApp(t)
+	const (
+		taskID    = "ae180001-6666-1111-1111-111111111111"
+		commentID = "ae180002-6666-1111-1111-111111111111"
+		extID     = "ae180003-6666-1111-1111-111111111111"
+		page      = "PageAttributionKeepTheirs"
+		fileDate  = "2026-07-01"
+	)
+	content := "- [ ] parent task <!-- id: " + taskID + " -->\n" +
+		"\t- looks good [author:: Dana] [ts:: 2026-07-07T10:00:00] <!-- id: " + commentID + " -->\n"
+	indexTestFile(t, app, pageAttrNotebook, pageAttrSection, page, fileDate, content)
+
+	// Fetching the page captures the load baseline the gate compares against.
+	payload := pageEditorPayload(t, app, page)
+	// My buffer's edit makes the two versions distinguishable: the copy must
+	// carry mine, the original path must still carry theirs.
+	edited := false
+	for i := range payload {
+		if payload[i].ID == commentID {
+			payload[i].CleanText = "edited through the page editor"
+			edited = true
+		}
+	}
+	if !edited {
+		t.Fatal("comment block missing from the page payload fixture")
+	}
+
+	// An external tool appends a line while the editor holds its buffer.
+	external := content + "- external line <!-- id: " + extID + " -->\n"
+	if err := os.WriteFile(conflictPagePath(app, pageAttrNotebook, pageAttrSection, page),
+		[]byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	requireConflict(t, app.SaveFileBlocks(pageAttrNotebook, pageAttrSection, page, payload))
+
+	copyPage, err := app.ResolveExternalConflict(pageAttrNotebook, pageAttrSection, page, conflictResolutionKeepTheirs)
+	if err != nil {
+		t.Fatalf("ResolveExternalConflict(keep_theirs): %v", err)
+	}
+	sibling := findConflictSibling(t, app, pageAttrNotebook, pageAttrSection, page)
+	if want := copyPage + ".md"; filepath.Base(sibling) != want {
+		t.Fatalf("resolution reported copy %q, sibling on disk is %q", copyPage, sibling)
+	}
+
+	// The original path keeps theirs, tokens included.
+	original := mustReadTaskFile(t, app, pageAttrNotebook, pageAttrSection, page)
+	if !strings.Contains(original, extID) || !strings.Contains(original, "[author:: Dana]") {
+		t.Errorf("keep_theirs must leave the external version on the original path:\n%s", original)
+	}
+	if strings.Contains(original, "edited through the page editor") {
+		t.Errorf("keep_theirs wrote my buffer over theirs:\n%s", original)
+	}
+
+	// The copy carries my body edit plus the merged attribution.
+	sibBytes, err := os.ReadFile(sibling)
+	if err != nil {
+		t.Fatalf("read sibling: %v", err)
+	}
+	sib := string(sibBytes)
+	for _, want := range []string{
+		"edited through the page editor", "[author:: Dana]", "[ts:: 2026-07-07T10:00:00]",
+	} {
+		if !strings.Contains(sib, want) {
+			t.Errorf("conflict copy is missing %q:\n%s", want, sib)
+		}
+	}
+	if strings.Contains(sib, extID) {
+		t.Errorf("conflict copy must hold my buffer, not the external line:\n%s", sib)
+	}
+
+	// The copy is a real page on disk. The block rows for these ids re-home to
+	// the original when theirs settles last, so re-parsing the copy's bytes is
+	// the assertion of record for what the user's version contains.
+	comment := savedBlock(t, app, copyPage, fileDate, commentID)
+	if comment == nil {
+		t.Fatal("comment missing from the conflict copy")
+	}
+	if comment.CleanText != "edited through the page editor" {
+		t.Errorf("conflict copy body = %q, want the editor's edit", comment.CleanText)
+	}
+	if comment.Author != "Dana" || comment.Timestamp != "2026-07-07T10:00:00" {
+		t.Errorf("conflict copy dropped attribution: author=%q ts=%q", comment.Author, comment.Timestamp)
+	}
+	if task := savedBlock(t, app, copyPage, fileDate, taskID); task == nil {
+		t.Error("conflict copy lost the parent task block")
 	}
 }
 
