@@ -30,6 +30,10 @@ export function isCommentBlock(b: NoteLike): boolean {
   return isNoteBlock(b) && Boolean(b.author?.trim() || b.timestamp?.trim())
 }
 
+// 64 is the cap comments_count walks too (backend/db/indexing.go), so a
+// deeper chain can never render a note the task's badge does not count.
+const OWNERSHIP_WALK_LIMIT = 64
+
 /**
  * Ownership: a NOTE belongs to `taskId` when walking its parent chain reaches
  * `taskId` without passing through a nearer TASK. This is the same rule
@@ -47,8 +51,8 @@ export function isNoteOwnedByTask(
     if (b.id) byId.set(b.id, b)
   }
   let pid = note.parent_id ?? ''
-  // Step cap mirrors the Go walk's cyclic-graph guard.
-  for (let steps = 0; pid && steps <= byId.size; steps++) {
+  // Bounded so a cyclic or pathologically deep graph terminates like the count.
+  for (let steps = 0; pid && steps < OWNERSHIP_WALK_LIMIT; steps++) {
     if (pid === taskId) return true
     const parent = byId.get(pid)
     if (!parent || parent.parent_id === pid) return false

@@ -164,17 +164,21 @@
       return b.parent_id === taskId
     }
 
-    /** Walk parent_id until a top-level NOTE; null if none found. */
+    /** Walk parent_id to the thread root NOTE; null if the chain has none. */
     function topLevelAncestorId(b: SubtreeBlock): string | null {
       let pid = b.parent_id
       let guard = 0
+      // Highest NOTE below the task: when a non-NOTE block is the task's direct
+      // child, that NOTE is the thread root, so its replies still attach to it.
+      let highestNoteId: string | null = null
       while (pid && pid !== taskId && guard++ < 64) {
         const parent = byId.get(pid)
         if (!parent) return null
-        if (isTopLevel(parent)) return isNoteBlock(parent) ? parent.id : null
+        if (isNoteBlock(parent)) highestNoteId = parent.id
+        if (isTopLevel(parent)) return highestNoteId
         pid = parent.parent_id
       }
-      return null
+      return highestNoteId
     }
 
     const tops: Comment[] = []
@@ -189,8 +193,8 @@
       }
       const topId = topLevelAncestorId(b)
       if (!topId) {
-        // Owned by this task yet not nested under a comment (a non-NOTE
-        // ancestor such as a heading): still counts, so still shows.
+        // Owned by this task yet no NOTE on the chain to nest under (a heading
+        // parent, say): it still counts, so it still shows.
         tops.push(c)
         continue
       }

@@ -1157,6 +1157,53 @@ describe('CommentThread', () => {
     expect(screen.getByLabelText('1 comments')).toHaveTextContent('1')
   })
 
+  it('renders an owned NOTE under a non-NOTE ancestor as a top-level comment', async () => {
+    // The #1163 render path: a heading parent is not a comment, so there is no
+    // thread for the note to nest under — it must still render (and count)
+    // instead of keying into a heading id that never renders.
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'h1',
+          type: 'HEADING',
+          clean_text: 'Section',
+          parent_id: 'task-1',
+          depth: 1
+        }),
+        makeBlock({
+          id: 'n1',
+          clean_text: 'note under a heading',
+          author: 'alice',
+          timestamp: '2026-07-01T09:00:00',
+          parent_id: 'h1',
+          depth: 2
+        }),
+        makeBlock({
+          id: 'r1',
+          clean_text: 'reply to that note',
+          author: 'bob',
+          timestamp: '2026-07-01T10:00:00',
+          parent_id: 'n1',
+          depth: 3
+        })
+      ])
+    })
+    mount({ ctx })
+    await flush()
+
+    expect(screen.getByText('note under a heading')).toBeInTheDocument()
+    expect(screen.getByText('reply to that note')).toBeInTheDocument()
+    const noteArticle = screen
+      .getByText('note under a heading')
+      .closest('article')
+    expect(noteArticle).not.toBeNull()
+    expect(noteArticle!.className).not.toMatch(/ml-4/)
+    // One indented article: the reply nests under the promoted note.
+    expect(document.querySelectorAll('[role="comment"].ml-4')).toHaveLength(1)
+    // Header count == comments_count for this task (both notes are owned).
+    expect(screen.getByLabelText('2 comments')).toHaveTextContent('2')
+  })
+
   it('nests replies under their parent and flattens deeper nesting', async () => {
     const ctx = makeCtx({
       fetchSubtree: vi.fn().mockResolvedValue([
@@ -1407,6 +1454,26 @@ describe('comment predicates (display/edit asymmetry)', () => {
       const region = { id: 'code', type: 'CODE', parent_id: 'task-1' }
       const note = { id: 'c1', type: 'NOTE', parent_id: 'code' }
       expect(isNoteOwnedByTask([task, region, note], note, 'task-1')).toBe(true)
+    })
+
+    it('stops at the same 64-step cap as comments_count', () => {
+      // Boundary is shared with the Go count: one hop past it must read as
+      // unowned, or the thread would show a note the badge does not count.
+      const chain = (depth: number) => {
+        const links = Array.from({ length: depth }, (_, i) => ({
+          id: `n${i}`,
+          type: 'NOTE',
+          parent_id: i === 0 ? 'task-1' : `n${i - 1}`
+        }))
+        const leaf = { id: 'leaf', type: 'NOTE', parent_id: `n${depth - 1}` }
+        return { blocks: [...links, task, leaf], leaf }
+      }
+      const owned = chain(63)
+      expect(isNoteOwnedByTask(owned.blocks, owned.leaf, 'task-1')).toBe(true)
+      const tooDeep = chain(64)
+      expect(isNoteOwnedByTask(tooDeep.blocks, tooDeep.leaf, 'task-1')).toBe(
+        false
+      )
     })
   })
 })
