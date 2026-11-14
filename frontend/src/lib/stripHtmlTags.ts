@@ -12,7 +12,7 @@ export function stripHtmlTags(input: string): string {
     input
       .replace(/<!--[\s\S]*?-->/g, '')
       .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
-      .replace(/<!doctype[^>]*>/gi, '')
+      .replace(/<!doctype(?:[^>"']|"[^"]*"|'[^']*')*>/gi, '')
       // Pass 1 reads quoted runs (straight or typographic) as opaque, so a
       // quoted `>` cannot end the tag; pass 2 sweeps openers stranded by an
       // unbalanced quote. Leading [a-zA-Z] spares prose (count < limit).

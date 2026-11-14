@@ -67,6 +67,15 @@ describe('stripHtmlTags (#1153 comment display)', () => {
     expect(stripHtmlTags('a <!DoCtYpE html> b')).toBe('a  b')
   })
 
+  it('strips a doctype whose quoted identifier contains >', () => {
+    // Same quote-aware rule the element passes use: a `>` inside a quoted run
+    // must not end the declaration and leak the tail into the rendered text.
+    const out = stripHtmlTags('<!doctype html PUBLIC "a>b">')
+    expect(out).toBe('')
+    expect(out).not.toContain('b">')
+    expect(stripHtmlTags("<!DOCTYPE html SYSTEM 'x>y'>t")).toBe('t')
+  })
+
   it('strips tags whose attribute quotes are typographic', () => {
     expect(stripHtmlTags('<div class=\u201Cfoo\u201D>text</div>')).toBe('text')
     expect(stripHtmlTags('<p title=\u2018a > b\u2019>t</p>')).toBe('t')
@@ -115,7 +124,8 @@ describe('stripHtmlTags (#1153 comment display)', () => {
       'count < limit and a > b',
       'x <img src=y> z <script>s()</script>',
       '<!-- note -->',
-      '<![CDATA[x]]>'
+      '<![CDATA[x]]>',
+      '<!doctype html PUBLIC "a>b">'
     ]
     for (const input of inputs) {
       const once = stripHtmlTags(input)
