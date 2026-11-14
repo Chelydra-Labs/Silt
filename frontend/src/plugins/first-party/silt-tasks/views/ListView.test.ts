@@ -1900,6 +1900,8 @@ describe('ListView — comment badge + has-notes affordance (#1152)', () => {
     await flush()
     const badge = screen.getByTestId('tasks-comment-badge-c1')
     expect(badge.textContent).toContain('2')
+    // aria-label on a role-less span is dropped by AT — role is what exposes it.
+    expect(badge).toHaveAttribute('role', 'img')
     expect(badge).toHaveAttribute('title', '2 comments')
     expect(badge).toHaveAttribute('aria-label', '2 comments')
   })

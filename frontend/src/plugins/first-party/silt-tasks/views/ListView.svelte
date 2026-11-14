@@ -1024,6 +1024,7 @@
            numeric badge — the notes state lives on the edit_note button. -->
       <span
         class="inline-flex items-center gap-0.5 text-type-2xs text-text-muted font-label-sm flex-shrink-0"
+        role="img"
         data-testid={`tasks-comment-badge-${item.id}`}
         title={`${item.comments_count} comments`}
         aria-label={`${item.comments_count} comments`}
