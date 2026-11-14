@@ -23,7 +23,7 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 	baseQuery := `
 		SELECT b.id, b.parent_id, b.source, b.notebook, b.section, b.page, b.file_date, b.depth, b.raw_content, b.clean_content, b.line_number,
 		       t.status, t.owner, t.start_date, t.due_date, t.priority, t.pinned, t.shortlist_rank, t.recur, t.created_at, t.completed_at, t.manual_order,
-		       t.modified_at, t.estimate_minutes, t.subtask_total, t.subtask_done
+		       t.modified_at, t.estimate_minutes, t.subtask_total, t.subtask_done, t.comments_count, t.links_count
 		FROM blocks b
 		INNER JOIN tasks t ON b.id = t.block_id
 		WHERE 1=1
@@ -95,12 +95,12 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 		var pinned sql.NullInt64
 		var shortlistRank sql.NullInt64
 		var createdAt, completedAt, modifiedAt interface{}
-		var manualOrder, estimateMinutes, subtaskTotal, subtaskDone sql.NullInt64
+		var manualOrder, estimateMinutes, subtaskTotal, subtaskDone, commentsCount, linksCount sql.NullInt64
 
 		err := rows.Scan(
 			&r.ID, &parentID, &r.Source, &r.Notebook, &r.Section, &r.Page, &r.FileDate, &r.Depth, &r.RawContent, &r.CleanContent, &r.LineNumber,
 			&status, &owner, &start, &due, &priority, &pinned, &shortlistRank, &recur, &createdAt, &completedAt, &manualOrder,
-			&modifiedAt, &estimateMinutes, &subtaskTotal, &subtaskDone,
+			&modifiedAt, &estimateMinutes, &subtaskTotal, &subtaskDone, &commentsCount, &linksCount,
 		)
 		if err != nil {
 			return nil, err
@@ -162,6 +162,14 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 		}
 		if subtaskDone.Valid {
 			r.SubtaskDone = int(subtaskDone.Int64)
+		}
+		// Derived counts (#1161): NOTE-descendant and block-ref rollups cached
+		// on the task row. NULL (pre-migration row) stays 0.
+		if commentsCount.Valid {
+			r.CommentsCount = int(commentsCount.Int64)
+		}
+		if linksCount.Valid {
+			r.LinksCount = int(linksCount.Int64)
 		}
 
 		results = append(results, r)

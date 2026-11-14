@@ -143,7 +143,8 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 	query := `
 		SELECT b.id, b.parent_id, b.source, b.notebook, b.section, b.page, b.file_date, b.depth, b.raw_content, b.clean_content, b.line_number,
 		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0),
-		       t.created_at, t.completed_at, t.manual_order, t.modified_at, t.estimate_minutes, t.shortlist_rank, t.subtask_total, t.subtask_done
+		       t.created_at, t.completed_at, t.manual_order, t.modified_at, t.estimate_minutes, t.shortlist_rank, t.subtask_total, t.subtask_done,
+		       COALESCE(t.comments_count, 0), COALESCE(t.links_count, 0)
 		FROM blocks b
 		LEFT JOIN tasks t ON b.id = t.block_id
 		WHERE b.id IN (SELECT block_id FROM tags WHERE raw_path = ? OR raw_path LIKE ?)
@@ -165,10 +166,11 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 		var status, owner, start, due string
 		var priority int
 		var createdAt, completedAt, modifiedAt sql.NullString
-		var manualOrder, estimateMinutes, shortlistRank, subtaskTotal, subtaskDone sql.NullInt64
+		var manualOrder, estimateMinutes, shortlistRank, subtaskTotal, subtaskDone, commentsCount, linksCount sql.NullInt64
 		if err := rows.Scan(
 			&r.ID, &parentID, &r.Source, &r.Notebook, &r.Section, &r.Page, &r.FileDate, &r.Depth, &r.RawContent, &r.CleanContent, &r.LineNumber,
 			&status, &owner, &start, &due, &priority, &createdAt, &completedAt, &manualOrder, &modifiedAt, &estimateMinutes, &shortlistRank, &subtaskTotal, &subtaskDone,
+			&commentsCount, &linksCount,
 		); err != nil {
 			return nil, err
 		}
@@ -206,6 +208,13 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 		}
 		if subtaskDone.Valid {
 			r.SubtaskDone = int(subtaskDone.Int64)
+		}
+		// Derived counts (#1161); COALESCE covers non-task blocks (LEFT JOIN).
+		if commentsCount.Valid {
+			r.CommentsCount = int(commentsCount.Int64)
+		}
+		if linksCount.Valid {
+			r.LinksCount = int(linksCount.Int64)
 		}
 		results = append(results, r)
 	}
