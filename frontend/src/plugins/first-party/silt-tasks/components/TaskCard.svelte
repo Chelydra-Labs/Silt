@@ -74,7 +74,7 @@
     aria-grabbed={dragging ? 'true' : 'false'}
     aria-current={selected ? 'true' : undefined}
     aria-keyshortcuts="Enter Shift+Enter Shift+F10"
-    aria-label={`${card.clean_content}, ${colLabel}${card.owner ? `, owner ${card.owner}` : ''}${card.due_date ? `, due ${card.due_date}` : ''}${card.pinned ? ', pinned' : ''}${card.shortlist_rank != null ? `, shortlist rank ${card.shortlist_rank}` : ''}${card.recurrence ? `, recurring ${card.recurrence}` : ''}${card.is_blocked ? ', blocked by unfinished prerequisite' : ''}${card.subtask_total > 0 ? `, ${card.subtask_done} of ${card.subtask_total} subtasks done` : ''}.${dndEnabled ? ' Arrow keys change ' + groupBy + '.' : ''}`}
+    aria-label={`${card.clean_content}, ${colLabel}${card.owner ? `, owner ${card.owner}` : ''}${card.due_date ? `, due ${card.due_date}` : ''}${card.pinned ? ', pinned' : ''}${card.shortlist_rank != null ? `, shortlist rank ${card.shortlist_rank}` : ''}${card.recurrence ? `, recurring ${card.recurrence}` : ''}${card.is_blocked ? ', blocked by unfinished prerequisite' : ''}${card.subtask_total > 0 ? `, ${card.subtask_done} of ${card.subtask_total} subtasks done` : ''}${card.comments_count > 0 ? `, ${card.comments_count} comments` : ''}.${dndEnabled ? ' Arrow keys change ' + groupBy + '.' : ''}`}
     draggable={dndEnabled ? 'true' : 'false'}
     class="task-card group relative overflow-hidden rounded-lg border border-surface-card-border bg-surface-card p-3 pl-3.5 shadow-sm transition-all duration-200 hover:-translate-y-px hover:border-border-active hover:bg-hover hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-border-focus {dndEnabled
       ? 'cursor-grab active:cursor-grabbing'
@@ -175,6 +175,7 @@
         {#if card.subtask_total > 0}
           <span
             class="text-type-3xs text-text-muted font-label-sm"
+            role="img"
             data-testid={`board-subtask-badge-${card.id}`}
             title={`${card.subtask_done} of ${card.subtask_total} subtasks done`}
             aria-label={`${card.subtask_done} of ${card.subtask_total} subtasks done`}
@@ -195,12 +196,28 @@
         {#if card.comments_count > 0}
           <span
             class="text-type-3xs text-text-muted font-label-sm flex items-center gap-0.5"
+            data-testid={`board-comments-badge-${card.id}`}
             title="{card.comments_count} comments"
           >
             <span class="material-symbols-outlined text-icon-xs"
               >chat_bubble</span
             >
             {card.comments_count}
+          </span>
+          <!-- Has-notes state of the sub-editor affordance: the card exposes
+               the sub-editor via keyboard/menu only, so presence rides the
+               badge row instead of a second count. -->
+          <span
+            class="text-accent-primary-start flex items-center"
+            role="img"
+            data-testid={`board-notes-badge-${card.id}`}
+            title="Has notes"
+            aria-label="Has notes"
+          >
+            <span
+              class="material-symbols-outlined text-icon-xs"
+              aria-hidden="true">edit_note</span
+            >
           </span>
         {/if}
         {#if card.links_count > 0}

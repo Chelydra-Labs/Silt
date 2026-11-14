@@ -177,6 +177,7 @@ interface TaskRow {
   pinned?: boolean
   manual_order?: number
   shortlist_rank?: number | null
+  comments_count: number
 }
 
 function task(
@@ -199,6 +200,7 @@ function task(
     start_date: '',
     due_date: today,
     priority: 0,
+    comments_count: 0,
     ...overrides
   }
 }
@@ -1866,6 +1868,112 @@ describe('ListView — subtask badge (#434)', () => {
     await flush()
     expect(screen.getByTestId('tasks-subtask-badge-p1').textContent).toContain(
       '[1/3]'
+    )
+  })
+})
+
+describe('ListView — comment badge + has-notes affordance (#1152)', () => {
+  beforeEach(() => {
+    resetTaskHubState()
+    mocks.sqliteQuery.mockReset()
+    mocks.blockChangedCallbacks.length = 0
+  })
+  afterEach(cleanup)
+
+  function notesButton(id: string): HTMLElement {
+    return document.querySelector(
+      `[data-block-id="${id}"] button[aria-label^="Edit notes for"]`
+    ) as HTMLElement
+  }
+
+  it('renders a comment badge with count, title and aria-label when present', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [task('c1', 'Discussed task', { comments_count: 2 })],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    const badge = screen.getByTestId('tasks-comment-badge-c1')
+    expect(badge.textContent).toContain('2')
+    // aria-label on a role-less span is dropped by AT — role is what exposes it.
+    expect(badge).toHaveAttribute('role', 'img')
+    expect(badge).toHaveAttribute('title', '2 comments')
+    expect(badge).toHaveAttribute('aria-label', '2 comments')
+  })
+
+  it('renders no badge and keeps the quiet notes affordance at 0', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return { rows: [task('c1', 'Silent task')], truncated: false }
+      }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    expect(screen.queryByTestId('tasks-comment-badge-c1')).toBeNull()
+    const notes = notesButton('c1')
+    expect(notes.getAttribute('aria-label')).toBe('Edit notes for Silent task')
+    // Token-boundary match: hover:opacity-100 would substring-match a plain
+    // contains() even in the resting state.
+    expect(notes.className).toMatch(/(^|\s)opacity-40(\s|$)/)
+    expect(notes.className).not.toMatch(/(^|\s)opacity-100(\s|$)/)
+  })
+
+  it('edit_note affordance carries a visible has-notes state and named count', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [task('c1', 'Discussed task', { comments_count: 2 })],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    const notes = notesButton('c1')
+    expect(notes.getAttribute('aria-label')).toBe(
+      'Edit notes for Discussed task (2 comments)'
+    )
+    // Active at rest, not only hover-brightened.
+    expect(notes.className).toMatch(/(^|\s)opacity-100(\s|$)/)
+    expect(notes.className).toMatch(/(^|\s)text-accent-primary-start(\s|$)/)
+    expect(notes.className).not.toMatch(/(^|\s)opacity-40(\s|$)/)
+  })
+
+  it('tracks comment mutations through the block:changed reload', async () => {
+    let count = 2
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [task('c1', 'Discussed task', { comments_count: count })],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    expect(screen.getByTestId('tasks-comment-badge-c1').textContent).toContain(
+      '2'
+    )
+
+    // A comment landed from another surface; the debounced block:changed
+    // reload re-queries — the badge follows without any manual refresh.
+    count = 5
+    mocks.blockChangedCallbacks.forEach((cb) => cb())
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    await flush()
+    expect(screen.getByTestId('tasks-comment-badge-c1').textContent).toContain(
+      '5'
+    )
+    expect(notesButton('c1').getAttribute('aria-label')).toBe(
+      'Edit notes for Discussed task (5 comments)'
     )
   })
 })

@@ -996,23 +996,45 @@
     <button
       type="button"
       title="Open sub-editor (Shift+Enter)"
-      aria-label={`Edit notes for ${item.clean_content}`}
+      aria-label={`Edit notes for ${item.clean_content}${
+        item.comments_count ? ` (${item.comments_count} comments)` : ''
+      }`}
       onclick={(e) => {
         e.stopPropagation()
         openSubEditor(item)
       }}
-      class="hidden opacity-40 hover:opacity-100 focus-visible:opacity-100 text-text-muted hover:text-accent-primary-start transition-all p-1 rounded border-none bg-transparent cursor-pointer flex-shrink-0 sm:block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
+      class="hidden {item.comments_count
+        ? 'opacity-100 text-accent-primary-start'
+        : 'opacity-40 hover:opacity-100 focus-visible:opacity-100 text-text-muted'} hover:text-accent-primary-start transition-all p-1 rounded border-none bg-transparent cursor-pointer flex-shrink-0 sm:block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
     >
       <span class="material-symbols-outlined text-icon-md">edit_note</span>
     </button>
     {#if item.subtask_total > 0}
       <span
         class="text-type-2xs text-text-muted font-label-sm flex-shrink-0"
+        role="img"
         data-testid={`tasks-subtask-badge-${item.id}`}
         title={`${item.subtask_done} of ${item.subtask_total} subtasks done`}
         aria-label={`${item.subtask_done} of ${item.subtask_total} subtasks done`}
         >[{item.subtask_done}/{item.subtask_total}]</span
       >
+    {/if}
+    {#if item.comments_count > 0}
+      <!-- Same NOTE-descendant count as the board's chat_bubble badge (#1152):
+           comments_count doubles as the has-notes signal, so it stays the only
+           numeric badge — the notes state lives on the edit_note button. -->
+      <span
+        class="inline-flex items-center gap-0.5 text-type-2xs text-text-muted font-label-sm flex-shrink-0"
+        role="img"
+        data-testid={`tasks-comment-badge-${item.id}`}
+        title={`${item.comments_count} comments`}
+        aria-label={`${item.comments_count} comments`}
+      >
+        <span class="material-symbols-outlined text-icon-xs" aria-hidden="true"
+          >chat_bubble</span
+        >
+        {item.comments_count}
+      </span>
     {/if}
     {#if item.shortlist_rank != null}
       <span
