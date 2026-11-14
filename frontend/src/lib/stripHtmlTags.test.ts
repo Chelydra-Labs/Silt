@@ -125,7 +125,8 @@ describe('stripHtmlTags (#1153 comment display)', () => {
       'x <img src=y> z <script>s()</script>',
       '<!-- note -->',
       '<![CDATA[x]]>',
-      '<!doctype html PUBLIC "a>b">'
+      '<!doctype html PUBLIC "a>b">',
+      '<div class=“pretty”>text</div>'
     ]
     for (const input of inputs) {
       const once = stripHtmlTags(input)
