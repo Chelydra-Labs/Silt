@@ -44,6 +44,42 @@ describe('stripHtmlTags (#1153 comment display)', () => {
     expect(stripHtmlTags('<div>\nfoo\n</div>')).toBe('\nfoo\n')
   })
 
+  it('strips HTML comments, delimiters and body alike', () => {
+    expect(stripHtmlTags('<!-- note -->')).toBe('')
+    expect(stripHtmlTags('<!-- multi\nline\nnote -->done')).toBe('done')
+  })
+
+  it('strips an HTML comment whose body contains > (no early stop)', () => {
+    // A greedy body match would stop at the inner `>` and leave `b -->` as
+    // visible text; the lazy body must run to the real `-->`.
+    expect(stripHtmlTags('a <!-- 1 > 0 --> b')).toBe('a  b')
+    expect(stripHtmlTags('x <!-- a > b --> y')).toBe('x  y')
+  })
+
+  it('strips CDATA delimiters, keeping the inner text', () => {
+    expect(stripHtmlTags('<![CDATA[x]]>')).toBe('x')
+    expect(stripHtmlTags('a <![CDATA[5 > 3]]> b')).toBe('a 5 > 3 b')
+  })
+
+  it('strips a doctype declaration, case-insensitively', () => {
+    expect(stripHtmlTags('<!doctype html>')).toBe('')
+    expect(stripHtmlTags('<!DOCTYPE html>text')).toBe('text')
+    expect(stripHtmlTags('a <!DoCtYpE html> b')).toBe('a  b')
+  })
+
+  it('strips tags whose attribute quotes are typographic', () => {
+    expect(stripHtmlTags('<div class=\u201Cfoo\u201D>text</div>')).toBe('text')
+    expect(stripHtmlTags('<p title=\u2018a > b\u2019>t</p>')).toBe('t')
+    expect(stripHtmlTags('<span data-x=\u201C5 > 3\u201D>t</span>')).toBe('t')
+  })
+
+  it('terminates on an adversarial <a flood', () => {
+    // Guards the cost note in the PR: a nested quantifier would hang here.
+    // Asserts completion + output only — never a timing threshold.
+    const flood = '<a'.repeat(8000)
+    expect(stripHtmlTags(flood)).toBe(flood)
+  })
+
   it('preserves a lone < that does not open a tag', () => {
     expect(stripHtmlTags('count < limit')).toBe('count < limit')
     expect(stripHtmlTags('if (a < b && b < c) ok')).toBe(
@@ -77,7 +113,9 @@ describe('stripHtmlTags (#1153 comment display)', () => {
       '<b>ship it</b>',
       '<div>Please <b>review</b> the PR</div>',
       'count < limit and a > b',
-      'x <img src=y> z <script>s()</script>'
+      'x <img src=y> z <script>s()</script>',
+      '<!-- note -->',
+      '<![CDATA[x]]>'
     ]
     for (const input of inputs) {
       const once = stripHtmlTags(input)

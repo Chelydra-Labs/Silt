@@ -931,6 +931,32 @@ describe('CommentThread', () => {
     expect(container.querySelector('[role="comment"] div div')).toBeNull()
   })
 
+  it('renders an HTML-comment-bearing body as readable text (no tag syntax, no node)', async () => {
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: 'note <!-- internal: a > b, do not ship --> done',
+          author: 'a',
+          timestamp: '2026-07-01T09:00:00'
+        })
+      ])
+    })
+    const { container } = mount({ ctx })
+    await flush()
+    const article = container.querySelector('[role="comment"]') as HTMLElement
+    const body = article.querySelector('header + div') as HTMLElement
+    expect(body.textContent?.replace(/\s+/g, ' ').trim()).toBe('note done')
+    // Body and delimiters are gone, including the `b` the old passes would
+    // have left behind after stopping at the inner `>`.
+    expect(article.textContent).not.toContain('<!--')
+    expect(article.textContent).not.toContain('-->')
+    expect(article.textContent).not.toContain('internal')
+    expect(article.textContent).not.toContain('<')
+    // Belt-and-braces: no node was injected from the comment syntax.
+    expect(body.querySelector('b, strong, img, script')).toBeNull()
+  })
+
   it('strips markup from replies too (shared commentBody snippet)', async () => {
     const ctx = makeCtx({
       fetchSubtree: vi.fn().mockResolvedValue([
