@@ -1,13 +1,20 @@
 /**
- * The comment thread displays every NOTE descendant (legacy token-less NOTEs
- * included, shown as Unknown/Undated), while the sub-notes editor excludes only
- * provably-attributed comments so unattributed prose stays editable. Keep both
- * predicates here rather than "aligning" them — the asymmetry is deliberate.
+ * The comment thread displays every NOTE descendant owned by the task (legacy
+ * token-less NOTEs included, shown as Unknown/Undated), while the sub-notes
+ * editor excludes only provably-attributed comments so unattributed prose stays
+ * editable. Keep both predicates here rather than "aligning" them — the
+ * asymmetry is deliberate.
  */
 export interface NoteLike {
   type?: string
   author?: string
   timestamp?: string
+}
+
+/** Just enough hierarchy to walk ownership: a block id and its parent link. */
+export interface HierarchyNoteLike extends NoteLike {
+  id?: string
+  parent_id?: string
 }
 
 /** Display-side type test: is this block a NOTE at all? */
@@ -21,6 +28,34 @@ export function isNoteBlock(b: NoteLike): boolean {
  */
 export function isCommentBlock(b: NoteLike): boolean {
   return isNoteBlock(b) && Boolean(b.author?.trim() || b.timestamp?.trim())
+}
+
+/**
+ * Ownership: a NOTE belongs to `taskId` when walking its parent chain reaches
+ * `taskId` without passing through a nearer TASK. This is the same rule
+ * comment preservation (isTaskComment) and comments_count derive, so the
+ * thread's header count can never disagree with the task's badge.
+ */
+export function isNoteOwnedByTask(
+  blocks: readonly HierarchyNoteLike[],
+  note: HierarchyNoteLike,
+  taskId: string
+): boolean {
+  if (!isNoteBlock(note)) return false
+  const byId = new Map<string, HierarchyNoteLike>()
+  for (const b of blocks) {
+    if (b.id) byId.set(b.id, b)
+  }
+  let pid = note.parent_id ?? ''
+  // Step cap mirrors the Go walk's cyclic-graph guard.
+  for (let steps = 0; pid && steps <= byId.size; steps++) {
+    if (pid === taskId) return true
+    const parent = byId.get(pid)
+    if (!parent || parent.parent_id === pid) return false
+    if ((parent.type ?? '').toUpperCase() === 'TASK') return false
+    pid = parent.parent_id ?? ''
+  }
+  return false
 }
 
 export interface CommentPartition<T> {
