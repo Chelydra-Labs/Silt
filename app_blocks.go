@@ -741,6 +741,31 @@ func (a *App) writePageFileLocked(filePath, source, notebook, section, page stri
 	return nil
 }
 
+// preserveCommentAttribution copies [author::]/[ts::] from the on-disk block
+// with the same id: the page editor's schema has no attribution fields, so its
+// save would otherwise rewrite comments as unattributed prose (#1160).
+// Caller-supplied values win, and a block with no on-disk id match stays
+// unattributed.
+func preserveCommentAttribution(disk, incoming []parser.ParsedBlock) []parser.ParsedBlock {
+	byID := make(map[string]parser.ParsedBlock, len(disk))
+	for _, b := range disk {
+		byID[b.ID] = b
+	}
+	out := make([]parser.ParsedBlock, len(incoming))
+	copy(out, incoming)
+	for i := range out {
+		b := &out[i]
+		if b.Type != parser.BlockNote || b.ID == "" || b.Author != "" || b.Timestamp != "" {
+			continue
+		}
+		if orig, ok := byID[b.ID]; ok {
+			b.Author = orig.Author
+			b.Timestamp = orig.Timestamp
+		}
+	}
+	return out
+}
+
 // externalEditGateMode selects which half of the external-edit gate a
 // blocks-funnel save runs (#1005).
 type externalEditGateMode int
@@ -972,6 +997,24 @@ func (a *App) saveFileBlocksWithGate(notebook, section, page string, blocks []pa
 					writeErr = err
 					return
 				}
+			}
+			// The whole-page editor cannot carry comment attribution, so its
+			// save would rewrite every comment as unattributed prose (#1160).
+			// Merge it by id from the bytes read under this same file lock;
+			// plugin and stash funnels are excluded so they keep their
+			// deliberate attribution clears.
+			if funnel == funnelEditorBlocks {
+				contentBytes, err := os.ReadFile(filePath)
+				if err != nil {
+					writeErr = fmt.Errorf("read page for comment attribution: %w", err)
+					return
+				}
+				diskBlocks, _, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileOrDefaultDate(filePath), a.spacesPerTab)
+				if parseErr != nil {
+					writeErr = fmt.Errorf("parse page for comment attribution: %w", parseErr)
+					return
+				}
+				blocks = preserveCommentAttribution(diskBlocks, blocks)
 			}
 			writeErr = a.writePageFileLocked(filePath, source, safeNotebook, safeSection, safePage, blocks, reason)
 			// Strict RMW (#1005) for every gate, not just update_blocks:
