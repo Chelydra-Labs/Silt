@@ -155,8 +155,9 @@ func TestIndex_LifecycleRecoveryFromMarkdown(t *testing.T) {
 }
 
 // TestIndexFileBlocks_ModifiedEstimateSubtasks verifies [modified::],
-// [estimate::] minutes projection, descendant comments_count, and direct
-// subtask_total/subtask_done rollups (#434/#439/#440).
+// [estimate::] minutes projection, descendant comments_count / body
+// links_count, and direct subtask_total/subtask_done rollups
+// (#434/#439/#440), including their projection onto TaskResult (#1161).
 func TestIndexFileBlocks_ModifiedEstimateSubtasks(t *testing.T) {
 	dm := newTestDB(t)
 
@@ -170,6 +171,8 @@ func TestIndexFileBlocks_ModifiedEstimateSubtasks(t *testing.T) {
 	parent := sampleTaskBlock(parentID, 1)
 	parent.ModifiedAt = "2026-07-06T10:00:00"
 	parent.Estimate = "2h"
+	// One ((uuid)) body ref so the derived links_count cache is non-zero.
+	parent.RawText = "- [ ] sample task [owner:: Alice] ((aaaaaaaa-1111-1111-1111-111111111111)) <!-- id: " + parentID + " -->"
 
 	subDone := sampleTaskBlock(childDone, 2)
 	subDone.ParentID = parentID
@@ -208,11 +211,11 @@ func TestIndexFileBlocks_ModifiedEstimateSubtasks(t *testing.T) {
 
 	var modified sql.NullString
 	var estMins sql.NullInt64
-	var comments, subTotal, subDoneCount int
+	var comments, links, subTotal, subDoneCount int
 	if err := dm.SQLDB().QueryRow(
-		`SELECT modified_at, estimate_minutes, comments_count, subtask_total, subtask_done
+		`SELECT modified_at, estimate_minutes, comments_count, links_count, subtask_total, subtask_done
 		 FROM tasks WHERE block_id = ?`, parentID,
-	).Scan(&modified, &estMins, &comments, &subTotal, &subDoneCount); err != nil {
+	).Scan(&modified, &estMins, &comments, &links, &subTotal, &subDoneCount); err != nil {
 		t.Fatalf("select parent: %v", err)
 	}
 	if !modified.Valid || modified.String != "2026-07-06T10:00:00" {
@@ -223,6 +226,9 @@ func TestIndexFileBlocks_ModifiedEstimateSubtasks(t *testing.T) {
 	}
 	if comments != 3 {
 		t.Errorf("comments_count=%d want 3 (descendant NOTES)", comments)
+	}
+	if links != 1 {
+		t.Errorf("links_count=%d want 1 (one ((uuid)) body ref)", links)
 	}
 	if subTotal != 2 {
 		t.Errorf("subtask_total=%d want 2", subTotal)
@@ -264,5 +270,13 @@ func TestIndexFileBlocks_ModifiedEstimateSubtasks(t *testing.T) {
 	}
 	if r.SubtaskTotal != 2 || r.SubtaskDone != 1 {
 		t.Errorf("TaskResult subtasks total=%d done=%d", r.SubtaskTotal, r.SubtaskDone)
+	}
+	// Derived counts (#1161): the cache columns must reach the query payload,
+	// not just the raw SQL row.
+	if r.CommentsCount != 3 {
+		t.Errorf("TaskResult.CommentsCount=%d want 3", r.CommentsCount)
+	}
+	if r.LinksCount != 1 {
+		t.Errorf("TaskResult.LinksCount=%d want 1", r.LinksCount)
 	}
 }
