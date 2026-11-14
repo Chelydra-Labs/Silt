@@ -196,8 +196,9 @@ describe('TaskCard comment + notes indicators (#1152)', () => {
     render(TaskCard, makeProps(makeCard({ comments_count: 2 })))
     const notes = screen.getByTestId('board-notes-badge-c1')
     expect(notes).toHaveAttribute('role', 'img')
-    expect(notes).toHaveAttribute('aria-label', 'Has notes (2 comments)')
-    expect(notes).toHaveAttribute('title', 'Has notes (2 comments)')
+    // Presence-only name — the card root name already announces the count.
+    expect(notes).toHaveAttribute('aria-label', 'Has notes')
+    expect(notes).toHaveAttribute('title', 'Has notes')
     // Presence state — never a second numeric glyph repeating the count.
     expect(notes.textContent?.trim()).toBe('edit_note')
   })

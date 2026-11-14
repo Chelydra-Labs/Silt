@@ -175,6 +175,7 @@
         {#if card.subtask_total > 0}
           <span
             class="text-type-3xs text-text-muted font-label-sm"
+            role="img"
             data-testid={`board-subtask-badge-${card.id}`}
             title={`${card.subtask_done} of ${card.subtask_total} subtasks done`}
             aria-label={`${card.subtask_done} of ${card.subtask_total} subtasks done`}
@@ -207,11 +208,11 @@
                the sub-editor via keyboard/menu only, so presence rides the
                badge row instead of a second count. -->
           <span
-            class="text-text-muted flex items-center"
+            class="text-accent-primary-start flex items-center"
             role="img"
             data-testid={`board-notes-badge-${card.id}`}
-            title="Has notes ({card.comments_count} comments)"
-            aria-label="Has notes ({card.comments_count} comments)"
+            title="Has notes"
+            aria-label="Has notes"
           >
             <span
               class="material-symbols-outlined text-icon-xs"

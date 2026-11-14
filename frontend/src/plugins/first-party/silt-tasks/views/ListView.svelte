@@ -1012,6 +1012,7 @@
     {#if item.subtask_total > 0}
       <span
         class="text-type-2xs text-text-muted font-label-sm flex-shrink-0"
+        role="img"
         data-testid={`tasks-subtask-badge-${item.id}`}
         title={`${item.subtask_done} of ${item.subtask_total} subtasks done`}
         aria-label={`${item.subtask_done} of ${item.subtask_total} subtasks done`}

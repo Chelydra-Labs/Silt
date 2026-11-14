@@ -1555,7 +1555,7 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     )
     expect(screen.getByTestId('board-notes-badge-t1')).toHaveAttribute(
       'aria-label',
-      'Has notes (2 comments)'
+      'Has notes'
     )
     // Nothing renders without NOTE content.
     expect(screen.queryByTestId('board-comments-badge-t2')).toBeNull()
