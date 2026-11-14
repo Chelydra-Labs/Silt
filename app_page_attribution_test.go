@@ -10,6 +10,7 @@ package main
 // with the same id is the only proof that a payload block IS that comment.
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -369,5 +370,115 @@ func TestSaveFileBlocks_ConsecutiveSavesAreStable(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("block order drifted: %v, want %v", got, want)
 		}
+	}
+}
+
+// TestSaveFileBlocks_RefusedSaveResolvePreservesCommentAttribution drives the
+// real refusal path: the page is loaded, an external write lands, the editor's
+// whole-page save is refused (payload stashed), and the resolution replays it.
+// The replay skips saveFileBlocksWithGate's merge, so the resolver must merge
+// from the on-disk version itself (#1160).
+func TestSaveFileBlocks_RefusedSaveResolvePreservesCommentAttribution(t *testing.T) {
+	app := newTestApp(t)
+	const (
+		taskID    = "ae160001-6666-1111-1111-111111111111"
+		commentID = "ae160002-6666-1111-1111-111111111111"
+		extID     = "ae160003-6666-1111-1111-111111111111"
+		page      = "PageAttributionResolve"
+		fileDate  = "2026-07-01"
+	)
+	content := "- [ ] parent task <!-- id: " + taskID + " -->\n" +
+		"\t- looks good [author:: Dana] [ts:: 2026-07-07T10:00:00] <!-- id: " + commentID + " -->\n"
+	indexTestFile(t, app, pageAttrNotebook, pageAttrSection, page, fileDate, content)
+
+	// Fetching the page captures the load baseline the gate compares against.
+	payload := pageEditorPayload(t, app, page)
+
+	// An external tool appends a line while the editor holds its buffer.
+	external := content + "- external line <!-- id: " + extID + " -->\n"
+	if err := os.WriteFile(conflictPagePath(app, pageAttrNotebook, pageAttrSection, page),
+		[]byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	requireConflict(t, app.SaveFileBlocks(pageAttrNotebook, pageAttrSection, page, payload))
+
+	copyPage, err := app.ResolveExternalConflict(pageAttrNotebook, pageAttrSection, page, conflictResolutionKeepMine)
+	if err != nil {
+		t.Fatalf("ResolveExternalConflict(keep_mine): %v", err)
+	}
+	if copyPage == "" {
+		t.Fatal("resolution must report the conflict copy it created")
+	}
+
+	saved := mustReadTaskFile(t, app, pageAttrNotebook, pageAttrSection, page)
+	for _, token := range []string{"[author:: Dana]", "[ts:: 2026-07-07T10:00:00]"} {
+		if !strings.Contains(saved, token) {
+			t.Errorf("conflict replay dropped %q from the comment:\n%s", token, saved)
+		}
+	}
+	if strings.Contains(saved, extID) {
+		t.Errorf("keep_mine must land the editor payload, not the external line:\n%s", saved)
+	}
+	// The external version survives in the conflict copy.
+	sibling := findConflictSibling(t, app, pageAttrNotebook, pageAttrSection, page)
+	sibBytes, err := os.ReadFile(sibling)
+	if err != nil {
+		t.Fatalf("read sibling: %v", err)
+	}
+	if !strings.Contains(string(sibBytes), extID) {
+		t.Errorf("conflict copy must carry the external version:\n%s", sibBytes)
+	}
+
+	sub, err := app.FetchSubtree(taskID)
+	if err != nil {
+		t.Fatalf("FetchSubtree: %v", err)
+	}
+	comment := findSubtreeBlock(t, sub, commentID)
+	if comment == nil {
+		t.Fatalf("comment missing from the sub-tree after the resolution: %+v", sub)
+	}
+	if comment.Author != "Dana" || comment.Timestamp != "2026-07-07T10:00:00" {
+		t.Errorf("comment attribution drifted on FetchSubtree: author=%q ts=%q",
+			comment.Author, comment.Timestamp)
+	}
+	if got := taskCommentsCount(t, app, taskID); got != 1 {
+		t.Errorf("comments_count = %d, want 1", got)
+	}
+}
+
+// TestSaveFileBlocks_RefusedSaveResolveKeepsProgrammaticAttributionClear pins
+// the funnel boundary: a programmatic payload's deliberate attribution clear is
+// authoritative, so its replay must write exactly what was stashed (D2).
+func TestSaveFileBlocks_RefusedSaveResolveKeepsProgrammaticAttributionClear(t *testing.T) {
+	app := newTestApp(t)
+	const (
+		taskID    = "ae170001-6666-1111-1111-111111111111"
+		commentID = "ae170002-6666-1111-1111-111111111111"
+		extID     = "ae170003-6666-1111-1111-111111111111"
+		page      = "PageAttributionProgrammatic"
+		fileDate  = "2026-07-01"
+	)
+	content := "- [ ] parent task <!-- id: " + taskID + " -->\n" +
+		"\t- looks good [author:: Dana] [ts:: 2026-07-07T10:00:00] <!-- id: " + commentID + " -->\n"
+	indexTestFile(t, app, pageAttrNotebook, pageAttrSection, page, fileDate, content)
+
+	payload := pageEditorPayload(t, app, page)
+	external := content + "- external line <!-- id: " + extID + " -->\n"
+	if err := os.WriteFile(conflictPagePath(app, pageAttrNotebook, pageAttrSection, page),
+		[]byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	requireConflict(t, app.SaveFileBlocksProgrammatic(pageAttrNotebook, pageAttrSection, page, payload))
+
+	if _, err := app.ResolveExternalConflict(pageAttrNotebook, pageAttrSection, page, conflictResolutionKeepMine); err != nil {
+		t.Fatalf("ResolveExternalConflict(keep_mine): %v", err)
+	}
+
+	saved := mustReadTaskFile(t, app, pageAttrNotebook, pageAttrSection, page)
+	if strings.Contains(saved, "[author:: Dana]") || strings.Contains(saved, "[ts:: 2026-07-07T10:00:00]") {
+		t.Errorf("programmatic replay re-attributed comments the payload cleared:\n%s", saved)
+	}
+	if !strings.Contains(saved, "looks good") {
+		t.Errorf("programmatic replay dropped the comment block:\n%s", saved)
 	}
 }

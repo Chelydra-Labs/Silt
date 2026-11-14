@@ -254,6 +254,11 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 	if err != nil {
 		return "", fmt.Errorf("read current page version: %w", err)
 	}
+	// This replay bypasses saveFileBlocksWithGate's merge, so the stashed
+	// pre-merge editor payload would strip [author::]/[ts::] for good (#1160).
+	if rw.funnel == funnelEditorBlocks && rw.blocks != nil {
+		rw.blocks = a.preserveStashedCommentAttribution(filePath, theirs, rw)
+	}
 	dir := filepath.Dir(filePath)
 	now := time.Now()
 	sibling, err := uniqueConflictSibling(dir, rw.page, now)
@@ -374,6 +379,19 @@ func (a *App) adoptOriginalBytesLocked(filePath, source, notebook, section, page
 			notebook, section, page, idxErr)
 	}
 	a.commitPostWriteState(filePath, content)
+}
+
+// preserveStashedCommentAttribution carries comment attribution from the
+// resolution's already-read current bytes onto a refused editor payload — the
+// same by-id merge the save funnel applies before writing. Parse failure only
+// costs attribution, never the resolution's write.
+func (a *App) preserveStashedCommentAttribution(filePath string, diskBytes []byte, rw refusedPageWrite) []parser.ParsedBlock {
+	diskBlocks, _, _, _, err := parser.ParseFileContent(string(diskBytes), rw.notebook, rw.section, rw.page, fileOrDefaultDate(filePath), a.spacesPerTab)
+	if err != nil {
+		log.Printf("resolve conflict: parse current version for comment attribution failed (writing the payload unmerged): %v", err)
+		return rw.blocks
+	}
+	return preserveCommentAttribution(diskBlocks, rw.blocks)
 }
 
 // replayMineLocked writes my stashed save onto the original path — the
