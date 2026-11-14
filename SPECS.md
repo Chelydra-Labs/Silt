@@ -484,6 +484,8 @@ Any combination of display mode, grouping, sort, scope, filters, and column set 
 
 Comments are not part of the sub-notes editor surface: the editor hydrates only non-comment blocks, and a sub-tree save preserves every comment block whose nearest TASK ancestor is the saved task or a sub-task the payload keeps — each follows its owner, so notes edits never rewrite their text or attribution, reorder them relative to each other within one owner, or delete them through the editor. Interleaved legacy data normalizes under its owner on the first save, and a comment under a sub-task the editor deletes goes away with that sub-task.
 
+A whole-page save preserves an existing comment block's `[author::]`/`[ts::]` by block id, so an ordinary page edit does not strip attribution; it cannot attribute a block that has none, so a NOTE typed directly into the page stays unattributed prose.
+
 Because the `.silt` notebook is hidden, any navigation that would open a `.silt/tasks` tab (search jump, tag click, backlink) routes to the Tasks hub instead, scrolling the target task into view.
 
 4.2 Editor Input Paths
