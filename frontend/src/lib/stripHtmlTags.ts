@@ -5,10 +5,21 @@
  * whose fenced-code/autolink behavior a tag rule would silently change.
  */
 export function stripHtmlTags(input: string): string {
-  // Pass 1 reads quoted attribute runs as opaque, so a quoted `>` cannot end
-  // the tag (title="5 > 3"); pass 2 sweeps openers stranded by an unbalanced
-  // quote. Leading [a-zA-Z] spares prose (count < limit); `i<n and j>m` is eaten.
-  return input
-    .replace(/<\/?[a-zA-Z](?:[^>"']|"[^"]*"|'[^']*')*>/g, '')
-    .replace(/<\/?[a-zA-Z][^>]*>/g, '')
+  // Non-element forms go first because their bodies may contain `>`; the lazy
+  // body keeps `<!-- a > b -->` whole. An unterminated `<!--` or CDATA opener
+  // stays as typed — there is no close delimiter to anchor on.
+  return (
+    input
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+      .replace(/<!doctype(?:[^>"']|"[^"]*"|'[^']*')*>/gi, '')
+      // Pass 1 reads quoted runs (straight or typographic) as opaque, so a
+      // quoted `>` cannot end the tag; pass 2 sweeps openers stranded by an
+      // unbalanced quote. Leading [a-zA-Z] spares prose (count < limit).
+      .replace(
+        /<\/?[a-zA-Z](?:[^>"'\u201C\u201D\u2018\u2019]|"[^"]*"|'[^']*'|\u201C[^\u201C\u201D]*\u201D|\u2018[^\u2018\u2019]*\u2019)*>/g,
+        ''
+      )
+      .replace(/<\/?[a-zA-Z][^>]*>/g, '')
+  )
 }
