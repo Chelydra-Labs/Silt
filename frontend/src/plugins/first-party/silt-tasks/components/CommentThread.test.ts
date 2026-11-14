@@ -130,6 +130,8 @@ function makeBlock(o: Partial<SubtreeBlock> & { id: string }): SubtreeBlock {
   return {
     type: 'NOTE',
     depth: 1,
+    // Direct child of the mounted task unless the case supplies a parent.
+    parent_id: 'task-1',
     raw_text: '',
     clean_text: '',
     line_number: 0,
