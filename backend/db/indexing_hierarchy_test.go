@@ -50,6 +50,44 @@ func TestTaskDerivedCounts_IndentedNoteReply(t *testing.T) {
 	})
 }
 
+// TestTaskDerivedCounts_SubtaskOwnsItsComments pins the ownership rule the
+// comment thread now mirrors (D3 of the #1163 series): each NOTE counts toward
+// its nearest TASK ancestor, so a commented sub-task never inflates the
+// parent's count and the thread cannot show more comments than the badge.
+func TestTaskDerivedCounts_SubtaskOwnsItsComments(t *testing.T) {
+	const (
+		parentTaskID  = "5f0c0a11-0000-4000-8000-000000000010"
+		subTaskID     = "5f0c0a11-0000-4000-8000-000000000011"
+		parentNoteID  = "5f0c0a11-0000-4000-8000-000000000012"
+		parentReplyID = "5f0c0a11-0000-4000-8000-000000000013"
+		subNoteID     = "5f0c0a11-0000-4000-8000-000000000014"
+	)
+	doc := "- [ ] parent task <!-- id: " + parentTaskID + " -->\n" +
+		"    - parent comment <!-- id: " + parentNoteID + " -->\n" +
+		"        - parent reply <!-- id: " + parentReplyID + " -->\n" +
+		"    - [ ] sub task <!-- id: " + subTaskID + " -->\n" +
+		"        - sub comment <!-- id: " + subNoteID + " -->\n"
+	blocks, _, _, _, err := parser.ParseFileContent(doc, "nb", "sec", "pg", "2026-01-01", 4)
+	if err != nil {
+		t.Fatalf("ParseFileContent failed: %v", err)
+	}
+	comments, _, _ := taskDerivedCounts(blocks)
+	if got := comments[parentTaskID]; got != 2 {
+		t.Errorf("comments[%s] = %d, want 2 (its own comment + reply, not the sub-task's)", parentTaskID, got)
+	}
+	if got := comments[subTaskID]; got != 1 {
+		t.Errorf("comments[%s] = %d, want 1 (the sub-task owns its own comment)", subTaskID, got)
+	}
+	// Every NOTE has exactly one owner: no double count, none dropped.
+	total := 0
+	for _, n := range comments {
+		total += n
+	}
+	if total != 3 {
+		t.Errorf("total comments across tasks = %d, want 3", total)
+	}
+}
+
 func blockParentID(blocks []parser.ParsedBlock, id string) string {
 	for _, b := range blocks {
 		if b.ID == id {

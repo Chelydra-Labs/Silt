@@ -89,6 +89,7 @@ import { v2CtxStubs } from '../../../test-helpers'
 import {
   isCommentBlock,
   isNoteBlock,
+  isNoteOwnedByTask,
   partitionComments
 } from '../commentBlocks'
 
@@ -130,6 +131,8 @@ function makeBlock(o: Partial<SubtreeBlock> & { id: string }): SubtreeBlock {
   return {
     type: 'NOTE',
     depth: 1,
+    // Direct child of the mounted task unless the case supplies a parent.
+    parent_id: 'task-1',
     raw_text: '',
     clean_text: '',
     line_number: 0,
@@ -1086,6 +1089,121 @@ describe('CommentThread', () => {
     expect(document.querySelectorAll('[role="comment"]')).toHaveLength(1)
   })
 
+  it('keeps sub-task-owned comments out of the parent thread and its count', async () => {
+    // Mirrors the backend invariant: comments_count attributes each NOTE to
+    // its nearest TASK ancestor, so the parent owns 2 (comment + reply) and
+    // the sub-task owns 1. The thread must show the same split.
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'parent-comment',
+          clean_text: 'parent thread comment',
+          author: 'alice',
+          timestamp: '2026-07-01T09:00:00',
+          parent_id: 'task-1',
+          depth: 1
+        }),
+        makeBlock({
+          id: 'parent-reply',
+          clean_text: 'parent thread reply',
+          author: 'bob',
+          timestamp: '2026-07-01T10:00:00',
+          parent_id: 'parent-comment',
+          depth: 2
+        }),
+        makeBlock({
+          id: 'sub-task',
+          type: 'TASK',
+          clean_text: 'sub task',
+          parent_id: 'task-1',
+          depth: 2
+        }),
+        makeBlock({
+          id: 'sub-comment',
+          clean_text: 'sub-task comment',
+          author: 'carol',
+          timestamp: '2026-07-02T09:00:00',
+          parent_id: 'sub-task',
+          depth: 3
+        })
+      ])
+    })
+    const { rerender } = mount({ ctx })
+    await flush()
+
+    // Parent thread: its own comment + reply, no sub-task comment.
+    expect(screen.getByText('parent thread comment')).toBeInTheDocument()
+    expect(screen.getByText('parent thread reply')).toBeInTheDocument()
+    expect(screen.queryByText('sub-task comment')).toBeNull()
+    expect(document.querySelectorAll('[role="comment"]')).toHaveLength(2)
+    // Reply-ness is unchanged: one indented article.
+    expect(document.querySelectorAll('[role="comment"].ml-4')).toHaveLength(1)
+    // Header count == the parent's comments_count (2).
+    expect(screen.getByLabelText('2 comments')).toHaveTextContent('2')
+
+    // The mirror image for the sub-task: it owns only its own comment.
+    await rerender({
+      taskId: 'sub-task',
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      fileDate: '2026-07-01',
+      ctx
+    })
+    await flush()
+    expect(screen.getByText('sub-task comment')).toBeInTheDocument()
+    expect(screen.queryByText('parent thread comment')).toBeNull()
+    expect(document.querySelectorAll('[role="comment"]')).toHaveLength(1)
+    expect(screen.getByLabelText('1 comments')).toHaveTextContent('1')
+  })
+
+  it('renders an owned NOTE under a non-NOTE ancestor as a top-level comment', async () => {
+    // The #1163 render path: a heading parent is not a comment, so there is no
+    // thread for the note to nest under — it must still render (and count)
+    // instead of keying into a heading id that never renders.
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'h1',
+          type: 'HEADING',
+          clean_text: 'Section',
+          parent_id: 'task-1',
+          depth: 1
+        }),
+        makeBlock({
+          id: 'n1',
+          clean_text: 'note under a heading',
+          author: 'alice',
+          timestamp: '2026-07-01T09:00:00',
+          parent_id: 'h1',
+          depth: 2
+        }),
+        makeBlock({
+          id: 'r1',
+          clean_text: 'reply to that note',
+          author: 'bob',
+          timestamp: '2026-07-01T10:00:00',
+          parent_id: 'n1',
+          depth: 3
+        })
+      ])
+    })
+    mount({ ctx })
+    await flush()
+
+    expect(screen.getByText('note under a heading')).toBeInTheDocument()
+    expect(screen.getByText('reply to that note')).toBeInTheDocument()
+    const noteArticle = screen
+      .getByText('note under a heading')
+      .closest('article')
+    expect(noteArticle).not.toBeNull()
+    expect(noteArticle!.className).not.toMatch(/ml-4/)
+    // One indented article: the reply nests under the promoted note.
+    expect(document.querySelectorAll('[role="comment"].ml-4')).toHaveLength(1)
+    // Header count == comments_count for this task (both notes are owned).
+    expect(screen.getByLabelText('2 comments')).toHaveTextContent('2')
+  })
+
   it('nests replies under their parent and flattens deeper nesting', async () => {
     const ctx = makeCtx({
       fetchSubtree: vi.fn().mockResolvedValue([
@@ -1252,19 +1370,37 @@ describe('comment predicates (display/edit asymmetry)', () => {
     ])
   })
 
-  it('the thread still renders legacy token-less NOTEs (display side stays type-only)', async () => {
-    // Regression guard: the editor drops attributed comments, but the thread
-    // must keep showing every NOTE descendant — including legacy ones, which
-    // render as Unknown/Undated.
+  it('the thread renders legacy token-less NOTEs it owns (display side stays type-only)', async () => {
+    // Regression guard: the editor drops only attributed comments, so an owned
+    // NOTE with no tokens still shows as Unknown/Undated in the thread — while
+    // a sub-task's token-less prose stays out. Ownership, not type, is the gate.
     const ctx = makeCtx({
       fetchSubtree: vi.fn().mockResolvedValue([
         makeBlock({
           id: 'c1',
           clean_text: 'attributed comment',
           author: 'alice',
-          timestamp: '2026-07-01T09:00:00'
+          timestamp: '2026-07-01T09:00:00',
+          parent_id: 'task-1'
         }),
-        makeBlock({ id: 'legacy', clean_text: 'legacy prose note' })
+        makeBlock({
+          id: 'legacy',
+          clean_text: 'legacy prose note',
+          parent_id: 'task-1'
+        }),
+        makeBlock({
+          id: 'sub-task',
+          type: 'TASK',
+          clean_text: 'sub task',
+          parent_id: 'task-1',
+          depth: 2
+        }),
+        makeBlock({
+          id: 'sub-prose',
+          clean_text: 'sub-task prose',
+          parent_id: 'sub-task',
+          depth: 3
+        })
       ])
     })
     mount({ ctx })
@@ -1272,5 +1408,72 @@ describe('comment predicates (display/edit asymmetry)', () => {
     expect(document.querySelectorAll('[role="comment"]').length).toBe(2)
     expect(screen.getByText('attributed comment')).toBeInTheDocument()
     expect(screen.getByText('legacy prose note')).toBeInTheDocument()
+    expect(screen.getByText('Unknown')).toBeInTheDocument()
+    expect(screen.getByText('Undated')).toBeInTheDocument()
+    expect(screen.queryByText('sub-task prose')).toBeNull()
+    expect(screen.getByLabelText('2 comments')).toHaveTextContent('2')
+  })
+
+  describe('isNoteOwnedByTask', () => {
+    const task = { id: 'task-1', type: 'TASK', parent_id: '' }
+
+    it('owns a direct child NOTE', () => {
+      const note = { id: 'c1', type: 'NOTE', parent_id: 'task-1' }
+      expect(isNoteOwnedByTask([task, note], note, 'task-1')).toBe(true)
+    })
+
+    it('owns a reply whose NOTE-only chain reaches the task', () => {
+      const top = { id: 'c1', type: 'NOTE', parent_id: 'task-1' }
+      const reply = { id: 'r1', type: 'NOTE', parent_id: 'c1' }
+      expect(isNoteOwnedByTask([task, top, reply], reply, 'task-1')).toBe(true)
+    })
+
+    it('owns a deeper NOTE chain (flattened in the UI, still counted)', () => {
+      const top = { id: 'c1', type: 'NOTE', parent_id: 'task-1' }
+      const r1 = { id: 'r1', type: 'NOTE', parent_id: 'c1' }
+      const r2 = { id: 'r2', type: 'NOTE', parent_id: 'r1' }
+      expect(isNoteOwnedByTask([task, top, r1, r2], r2, 'task-1')).toBe(true)
+    })
+
+    it('does not own a NOTE whose nearest TASK ancestor is a sub-task', () => {
+      const sub = { id: 'sub', type: 'TASK', parent_id: 'task-1' }
+      const note = { id: 'c1', type: 'NOTE', parent_id: 'sub' }
+      expect(isNoteOwnedByTask([task, sub, note], note, 'task-1')).toBe(false)
+    })
+
+    it('does not own a NOTE whose parent chain is broken', () => {
+      const note = { id: 'c1', type: 'NOTE', parent_id: 'gone' }
+      expect(isNoteOwnedByTask([task, note], note, 'task-1')).toBe(false)
+    })
+
+    it('does not own a TASK block', () => {
+      expect(isNoteOwnedByTask([task], task, 'task-1')).toBe(false)
+    })
+
+    it('walks through a non-NOTE intermediate like the Go count does', () => {
+      const region = { id: 'code', type: 'CODE', parent_id: 'task-1' }
+      const note = { id: 'c1', type: 'NOTE', parent_id: 'code' }
+      expect(isNoteOwnedByTask([task, region, note], note, 'task-1')).toBe(true)
+    })
+
+    it('stops at the same 64-step cap as comments_count', () => {
+      // Boundary is shared with the Go count: one hop past it must read as
+      // unowned, or the thread would show a note the badge does not count.
+      const chain = (depth: number) => {
+        const links = Array.from({ length: depth }, (_, i) => ({
+          id: `n${i}`,
+          type: 'NOTE',
+          parent_id: i === 0 ? 'task-1' : `n${i - 1}`
+        }))
+        const leaf = { id: 'leaf', type: 'NOTE', parent_id: `n${depth - 1}` }
+        return { blocks: [...links, task, leaf], leaf }
+      }
+      const owned = chain(63)
+      expect(isNoteOwnedByTask(owned.blocks, owned.leaf, 'task-1')).toBe(true)
+      const tooDeep = chain(64)
+      expect(isNoteOwnedByTask(tooDeep.blocks, tooDeep.leaf, 'task-1')).toBe(
+        false
+      )
+    })
   })
 })

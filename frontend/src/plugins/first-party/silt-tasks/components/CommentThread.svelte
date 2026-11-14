@@ -6,7 +6,7 @@
   import { motionDuration } from '../motion'
   import ErrorBanner from './ErrorBanner.svelte'
   import { friendlyCaughtError } from '../errors'
-  import { isNoteBlock } from '../commentBlocks'
+  import { isNoteBlock, isNoteOwnedByTask } from '../commentBlocks'
   import { stripHtmlTags } from '../../../../lib/stripHtmlTags'
 
   /**
@@ -147,30 +147,38 @@
   }
 
   /**
-   * Build a two-level thread from flat NOTE blocks (#438). Top-level =
-   * parent_id === taskId (or missing parent). Replies attach under their
-   * top-level ancestor; deeper nesting is flattened into that first reply
-   * list so the UI stays two levels deep.
+   * Build a two-level thread from the NOTE blocks this task owns (#438).
+   * Top-level = parent_id === taskId; replies attach under their top-level
+   * ancestor, deeper nesting is flattened so the UI stays two levels deep.
    */
   function buildThread(blocks: SubtreeBlock[], taskId: string): Comment[] {
-    const notes = (blocks ?? []).filter(isNoteBlock)
-    const byId = new Map(notes.map((b) => [b.id, b]))
+    const all = blocks ?? []
+    // Ownership is shared with comments_count, so the header count cannot
+    // disagree with the task's badge (a sub-task owns its own comments).
+    const notes = all.filter(
+      (b) => isNoteBlock(b) && isNoteOwnedByTask(all, b, taskId)
+    )
+    const byId = new Map(all.map((b) => [b.id, b]))
 
     function isTopLevel(b: SubtreeBlock): boolean {
-      return !b.parent_id || b.parent_id === taskId
+      return b.parent_id === taskId
     }
 
-    /** Walk parent_id until a top-level NOTE; null if none found. */
+    /** Walk parent_id to the thread root NOTE; null if the chain has none. */
     function topLevelAncestorId(b: SubtreeBlock): string | null {
       let pid = b.parent_id
       let guard = 0
+      // Highest NOTE below the task: when a non-NOTE block is the task's direct
+      // child, that NOTE is the thread root, so its replies still attach to it.
+      let highestNoteId: string | null = null
       while (pid && pid !== taskId && guard++ < 64) {
         const parent = byId.get(pid)
         if (!parent) return null
-        if (isTopLevel(parent)) return parent.id
+        if (isNoteBlock(parent)) highestNoteId = parent.id
+        if (isTopLevel(parent)) return highestNoteId
         pid = parent.parent_id
       }
-      return null
+      return highestNoteId
     }
 
     const tops: Comment[] = []
@@ -185,8 +193,8 @@
       }
       const topId = topLevelAncestorId(b)
       if (!topId) {
-        // Orphan / non-NOTE parent chain — treat as top-level so it still
-        // renders rather than vanishing from the thread.
+        // Owned by this task yet no NOTE on the chain to nest under (a heading
+        // parent, say): it still counts, so it still shows.
         tops.push(c)
         continue
       }
