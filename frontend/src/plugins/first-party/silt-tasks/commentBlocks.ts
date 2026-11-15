@@ -4,10 +4,10 @@
  * ([author::]/[ts::], the permanent legacy fallback). The comment thread and
  * the task's comments_count both derive from this predicate; the sub-notes
  * editor is its complement, so no block is ever both an editable sub-note and
- * a thread item. An unmarked, unattributed NOTE is prose — the editor
- * serializes every paragraph that way — and classification changes only
- * through the explicit, reversible conversion affordance (which discards
- * attribution when converting back to a sub-note).
+ * a thread item. An unmarked, unattributed NOTE is prose. In the app,
+ * conversion is the only path between the shapes (it discards attribution
+ * converting back to a sub-note), but the tokens are the file format: a typed
+ * or hand-edited [comment::] reclassifies on the next parse identically.
  */
 export interface NoteLike {
   type?: string

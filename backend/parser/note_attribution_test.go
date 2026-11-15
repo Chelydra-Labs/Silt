@@ -8,8 +8,10 @@ import (
 // TestParseLine_NoteAttributionTokens covers the NOTE-block comment-
 // attribution tokens `[author::]` / `[ts::]` (#418): they parse into the
 // dedicated ParsedBlock fields (NOT ExtraTokens), CleanText strips them, and
-// a NOTE without the tokens leaves the fields empty. These model comment
-// attribution — child NOTE blocks under a TASK are "comments."
+// a NOTE without the tokens leaves the fields empty. Attribution is one half
+// of the comment predicate, the [comment::] marker the other: a NOTE carrying
+// these tokens is a comment, while a token-less NOTE under a TASK is prose,
+// not a comment by indentation.
 //
 // NOTE-only by construction: scanTaskTokens (TASK blocks) has no author/ts
 // cases, so the task and NOTE token spaces are disjoint (see
