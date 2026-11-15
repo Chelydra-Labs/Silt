@@ -161,6 +161,10 @@ type ParsedBlock struct {
 	// FileDate, which is date-only and anchors the block to its note file.
 	// File-resident; SQLite caches in block_meta.
 	Timestamp string `json:"timestamp,omitempty"`
+	// IsComment marks a NOTE as a comment via the explicit [comment::] token
+	// (#1159). Absence is the default (sub-note); attribution stays a permanent
+	// fallback so comments written before the marker remain classified.
+	IsComment bool `json:"is_comment,omitempty"`
 	// ExtraTokens preserves unknown [key:: value] Dataview tokens that the
 	// parser doesn't recognise (e.g. `[project:: alpha]`). These round-trip
 	// through parse → render so files stay interoperable with

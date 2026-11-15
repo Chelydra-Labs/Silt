@@ -148,6 +148,9 @@ func TestRenderBlock_NoteAttributionOmitWhenEmpty(t *testing.T) {
 	if strings.Contains(out, "[ts::") {
 		t.Errorf("expected no [ts::] token, got: %s", out)
 	}
+	if strings.Contains(out, "[comment::") {
+		t.Errorf("expected no [comment::] token, got: %s", out)
+	}
 }
 
 // TestNoteAttribution_Isolation_TaskAuthorGoesToExtraTokens is the critical
@@ -241,5 +244,60 @@ func TestRenderBlock_NoteTimestampSanitized(t *testing.T) {
 	}
 	if !strings.Contains(out, "9999aaaa") {
 		t.Errorf("block identity comment should survive, got: %s", out)
+	}
+}
+
+// TestParseLine_NoteCommentMarkerStripsOnlyTheMarker pins the #1159 marker's
+// text handling: [comment::] is consumed into IsComment and removed from
+// CleanText, while other unknown [key::] text stays in the body verbatim — the
+// documented NOTE behavior (NOTE has no ExtraTokens path; arbitrary Dataview
+// tokens round-trip through CleanText).
+func TestParseLine_NoteCommentMarkerStripsOnlyTheMarker(t *testing.T) {
+	line := "- note body [comment::] [project:: alpha] <!-- id: aaaa1111-2222-3333-4444-555555555555 -->"
+	block, _, _ := ParseLine(line, 1, 4)
+	if !block.IsComment {
+		t.Fatal("expected IsComment=true")
+	}
+	if block.CleanText != "note body [project:: alpha]" {
+		t.Errorf("expected marker stripped and unknown token kept, got %q", block.CleanText)
+	}
+	if len(block.ExtraTokens) != 0 {
+		t.Errorf("NOTE blocks have no ExtraTokens path, got %v", block.ExtraTokens)
+	}
+}
+
+// TestRenderBlock_NoteCommentMarkerCanonicalOrder is the marker's byte-stable
+// round-trip invariant: the parser accepts the tokens in any order, but render
+// emits the canonical [comment::] [author::] [ts::] order, so parse → render →
+// parse → render is idempotent and author/ts never get reordered around it.
+func TestRenderBlock_NoteCommentMarkerCanonicalOrder(t *testing.T) {
+	const id = "bbbb1111-2222-3333-4444-555555555555"
+	line := "- text [ts:: 2026-07-06T15:30:00] [comment::] [author:: Alice] <!-- id: " + id + " -->"
+
+	parsed, _, _ := ParseLine(line, 1, 4)
+	if !parsed.IsComment || parsed.Author != "Alice" || parsed.Timestamp != "2026-07-06T15:30:00" {
+		t.Fatalf("initial parse wrong: isComment=%v author=%q ts=%q",
+			parsed.IsComment, parsed.Author, parsed.Timestamp)
+	}
+
+	rendered := renderBlock(parsed, 4)
+	want := "- text [comment::] [author:: Alice] [ts:: 2026-07-06T15:30:00] <!-- id: " + id + " -->"
+	if rendered != want {
+		t.Errorf("canonical render mismatch\n got: %s\nwant: %s", rendered, want)
+	}
+
+	reparsed, _, _ := ParseLine(rendered, 1, 4)
+	if reparsed.IsComment != parsed.IsComment {
+		t.Errorf("IsComment drifted: %v → %v", parsed.IsComment, reparsed.IsComment)
+	}
+	if reparsed.Author != parsed.Author {
+		t.Errorf("Author drifted: %q → %q", parsed.Author, reparsed.Author)
+	}
+	if reparsed.Timestamp != parsed.Timestamp {
+		t.Errorf("Timestamp drifted: %q → %q", parsed.Timestamp, reparsed.Timestamp)
+	}
+
+	if rendered2 := renderBlock(reparsed, 4); rendered2 != rendered {
+		t.Errorf("render is not byte-stable across two passes\n--- pass1 ---\n%s\n--- pass2 ---\n%s", rendered, rendered2)
 	}
 }

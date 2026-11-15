@@ -372,28 +372,34 @@ func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priorit
 	return
 }
 
-// scanNoteTokens extracts the NOTE-block comment-attribution tokens from a
-// note line's clean text (#418). It recognises ONLY two keys — `author` and
-// `ts` — and is invoked exclusively from the NOTE branch of ParseLine. The
-// task and NOTE token spaces are DISJOINT BY DESIGN: `scanTaskTokens` (TASK
-// blocks only) has no `author`/`ts` cases, so task queries (the `tasks`
-// table) never pick up comment attribution, and this function has no task
-// keys (owner/due/etc.), so NOTE blocks never absorb task metadata. An
-// `[author::]` or `[ts::]` on a TASK line falls through to ExtraTokens.
+// scanNoteTokens extracts the NOTE-block comment tokens from a note line's
+// clean text (#418, #1159). It recognises three keys — `comment`, `author`
+// and `ts` — and is invoked exclusively from the NOTE branch of ParseLine.
+// `comment` is a valueless marker: any `[comment:: ...]` occurrence means
+// "this NOTE is a comment". The task and NOTE token spaces are DISJOINT BY
+// DESIGN: `scanTaskTokens` (TASK blocks only) has no `comment`/`author`/`ts`
+// cases, so task queries (the `tasks` table) never pick up comment metadata,
+// and this function has no task keys (owner/due/etc.), so NOTE blocks never
+// absorb task metadata. A `[comment::]`, `[author::]` or `[ts::]` on a TASK
+// line falls through to ExtraTokens.
 //
-// Returns the parsed fields plus the description with ONLY the two
-// recognized tokens stripped. Other `[key:: value]` text on a NOTE line is
-// left in CleanText verbatim — this matches the pre-#418 behavior (NOTE
-// blocks never ran the task-token scanner) and preserves byte-for-byte
-// round-trip for notes carrying arbitrary Dataview tokens (e.g. a hand-typed
+// Returns the parsed fields plus the description with ONLY the recognized
+// tokens stripped. Other `[key:: value]` text on a NOTE line is left in
+// CleanText verbatim — this matches the pre-#418 behavior (NOTE blocks never
+// ran the task-token scanner) and preserves byte-for-byte round-trip for
+// notes carrying arbitrary Dataview tokens (e.g. a hand-typed
 // `[project:: alpha]` on a note stays in the rendered text, not ExtraTokens,
-// since NOTE has no ExtraTokens path).
-func scanNoteTokens(cleanText string) (author, timestamp, description string) {
+// since NOTE has no ExtraTokens path). The marker MUST be stripped because
+// an unhandled token would render as literal body text in both editors.
+func scanNoteTokens(cleanText string) (author, timestamp, description string, isComment bool) {
 	description = cleanText
 	for _, m := range TaskTokenRegex.FindAllStringSubmatch(cleanText, -1) {
 		key := strings.ToLower(m[1])
 		val := strings.TrimSpace(m[2])
 		switch key {
+		case "comment":
+			isComment = true
+			description = strings.Replace(description, m[0], "", 1)
 		case "author":
 			author = val
 			description = strings.Replace(description, m[0], "", 1)
@@ -508,12 +514,12 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 		rawCleaned = bulletBase[len(m):]
 	}
 
-	// NOTE-block comment attribution (#418): scan the cleaned text for
-	// [author::] / [ts::] tokens (NOTE-only — scanTaskTokens stays
-	// TASK-only, so the token spaces are disjoint). The recognized tokens
-	// are stripped from CleanText and mapped to dedicated fields; they do
-	// NOT fall through to ExtraTokens.
-	author, timestamp, noteDescription := scanNoteTokens(strings.TrimSpace(rawCleaned))
+	// NOTE-block comment metadata (#418, #1159): scan the cleaned text for
+	// [comment::] / [author::] / [ts::] tokens (NOTE-only — scanTaskTokens
+	// stays TASK-only, so the token spaces are disjoint). The recognized
+	// tokens are stripped from CleanText and mapped to dedicated fields;
+	// they do NOT fall through to ExtraTokens.
+	author, timestamp, noteDescription, isComment := scanNoteTokens(strings.TrimSpace(rawCleaned))
 
 	return ParsedBlock{
 		ID:         blockID,
@@ -523,6 +529,7 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 		CleanText:  noteDescription,
 		Author:     author,
 		Timestamp:  timestamp,
+		IsComment:  isComment,
 		LineNumber: lineNumber,
 		FileDate:   blockFileDate,
 	}, newLine, modified
@@ -1564,17 +1571,22 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 				prefix = ""
 			}
 		}
-		// NOTE-block comment attribution (#418): emit [author::]/[ts::]
-		// when populated, omit-when-empty (mirrors the task-token pattern).
-		// Fixed order — author then ts — so the parse → render round-trip
-		// is byte-stable regardless of the order the parser saw. NOTE-only
-		// by construction: TASK blocks use the task render path above.
-		// Both values are sanitized before rendering: a ']' would truncate the
-		// token and a newline would split the NOTE block across lines (breaking
-		// the parse on next read). The SDK always passes a well-formed
-		// YYYY-MM-DDTHH:MM:SS ts, but a buggy/hostile plugin calling the
-		// append-comment binding directly can't corrupt the token stream.
+		// NOTE-block comment metadata (#418, #1159): emit [comment::] first,
+		// then [author::]/[ts::], each when populated, omit-when-empty
+		// (mirrors the task-token pattern). Fixed order so the parse → render
+		// round-trip is byte-stable regardless of the order the parser saw —
+		// the parser accepts any order, but only this canonical order is
+		// pinned. NOTE-only by construction: TASK blocks use the task render
+		// path above. Attribution values are sanitized before rendering: a ']'
+		// would truncate the token and a newline would split the NOTE block
+		// across lines (breaking the parse on next read). The SDK always passes
+		// a well-formed YYYY-MM-DDTHH:MM:SS ts, but a buggy/hostile plugin
+		// calling the append-comment binding directly can't corrupt the token
+		// stream.
 		var noteTokens []string
+		if block.IsComment {
+			noteTokens = append(noteTokens, "[comment::]")
+		}
 		if block.Author != "" {
 			author := strings.ReplaceAll(block.Author, "]", "")
 			author = strings.ReplaceAll(author, "\n", " ")
