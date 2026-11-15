@@ -815,9 +815,10 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   it has failed three attempts — so one dead entry never blocks the older
   mutations in the session journal. **Sub-editor**:
   `FetchSubtree`
-  (read-only child sub-tree extraction; also hydrates `block_meta`
-  comment attribution for NOTE children) and `SaveSubtreeBlocks` (atomic
-  sub-tree splice through the canonical write chain). **Local author**:
+  (read-only child sub-tree extraction parsed from the page's markdown, so
+  comment attribution comes from each block's own tokens) and
+  `SaveSubtreeBlocks` (atomic sub-tree splice through the canonical write
+  chain). **Local author**:
   `GetLocalAuthor` returns the OS account display name (username fallback) —
   the prefill for the per-vault `local_author` pref that attributes Task
   comment threads, surfaced as the Settings → General → Comment author field.
