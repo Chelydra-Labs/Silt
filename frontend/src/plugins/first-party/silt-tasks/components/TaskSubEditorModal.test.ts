@@ -608,6 +608,142 @@ describe('TaskSubEditorModal (#304)', () => {
     expect(mocks.saveSubtreeBlocks).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps the editor read-only and unsaveable when the initial load fails', async () => {
+    // The empty doc does not match disk, so an autosave from it would splice a
+    // near-empty subtree over the task's real on-disk sub-notes.
+    mocks.fetchSubtree.mockRejectedValueOnce(new Error('ipc down'))
+    const onClose = vi.fn()
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+    await flush()
+
+    expect(screen.getAllByText(/Load failed: ipc down/).length).toBeGreaterThan(
+      0
+    )
+    const pm = document.querySelector('.ProseMirror') as HTMLElement & {
+      editor: {
+        isEditable: boolean
+        commands: { insertContent: (s: string) => void }
+      }
+    }
+    expect(pm.editor.isEditable).toBe(false)
+
+    // Even the programmatic edit path (the one commands/tests can still take)
+    // must never reach disk over the real sub-notes.
+    pm.editor.commands.insertContent('replacement note')
+    await new Promise((r) => setTimeout(r, 800))
+    expect(mocks.saveSubtreeBlocks).not.toHaveBeenCalled()
+
+    // Nothing in a doc that never loaded is saveable, so close must not stall.
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await flush()
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(mocks.saveSubtreeBlocks).not.toHaveBeenCalled()
+  })
+
+  it('restores editability and saving after a successful reload from a failed load', async () => {
+    mocks.fetchSubtree
+      .mockRejectedValueOnce(new Error('ipc down'))
+      .mockResolvedValueOnce([])
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+    await flush()
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement & {
+      editor: { isEditable: boolean }
+    }
+    expect(pm.editor.isEditable).toBe(false)
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Reload sub-notes' })
+    )
+    await vi.waitFor(() => expect(pm.editor.isEditable).toBe(true))
+    expect(screen.queryByText(/Load failed/)).toBeNull()
+
+    pm.textContent = 'fresh note'
+    pm.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    await vi.waitFor(() =>
+      expect(mocks.saveSubtreeBlocks).toHaveBeenCalledTimes(1)
+    )
+    const saved = mocks.saveSubtreeBlocks.mock.calls[0]?.[1]
+    expect(JSON.stringify(saved)).toContain('fresh note')
+  })
+
+  it('keeps the modal open when a keystroke lands during the in-flight close save', async () => {
+    // Regression: the save's success handler used to clear the unsaved flag
+    // unconditionally, so an edit typed while the close drain was in flight was
+    // dropped — the modal closed as if everything had landed.
+    const onClose = vi.fn()
+    let resolveSave!: () => void
+    const payloads: unknown[] = []
+    mocks.saveSubtreeBlocks.mockImplementation(
+      (_id: string, children: unknown) => {
+        payloads.push(children)
+        if (payloads.length === 1) {
+          return new Promise<void>((r) => (resolveSave = r)).then(
+            () => undefined
+          )
+        }
+        return Promise.resolve()
+      }
+    )
+
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement & {
+      editor: { commands: { insertContent: (s: string) => void } }
+    }
+    pm.textContent = 'edited content'
+    pm.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    // ProseMirror lands the DOM mutation on the next macrotask.
+    await flush()
+
+    // Close before the debounce fires so the close drain owns the first save.
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await vi.waitFor(() => expect(payloads.length).toBe(1))
+
+    // A keystroke lands while that save is in flight. Its payload predates the
+    // edit, so completing it must not vouch for the newer doc.
+    pm.editor.commands.insertContent(' trailing edit')
+    resolveSave()
+    await flush()
+
+    expect(onClose).not.toHaveBeenCalled()
+    expect(
+      screen.getByText(/the latest edits could not be confirmed/)
+    ).toBeInTheDocument()
+
+    // Retry re-issues the save with the trailing edit; only then may it close.
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry save' }))
+    await vi.waitFor(() => expect(payloads.length).toBe(2))
+    expect(JSON.stringify(payloads[1])).toContain('trailing edit')
+    await flush()
+    expect(onClose).not.toHaveBeenCalled()
+
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await flush()
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
   it('flushes a pending snapshot when unmounted during an in-flight save (no data loss)', async () => {
     // Regression: unmount-without-close used to drop edits made during an
     // in-flight save because the retry was gated on a live editor, which

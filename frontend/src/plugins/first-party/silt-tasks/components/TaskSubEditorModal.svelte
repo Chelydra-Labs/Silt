@@ -92,14 +92,21 @@
   let unsavedChanges = $state(false)
   let saveError = $state('')
   let saving = $state(false)
-  // Set when a conversion wrote to disk but the following reload failed. The
-  // editor doc then still holds the converted block as unmarked prose, and
-  // saving it would splice that copy over the marker on disk (caller-supplied
-  // content wins), silently undoing the conversion.
-  let docStaleAfterConvert = $state(false)
+  // Set whenever the editor doc does not match disk: the initial load failed
+  // (empty doc, subtree unknown) or a conversion wrote to disk and the reload
+  // that followed failed (doc still holds the converted block as unmarked
+  // prose). Saving either splices it over the file (caller-supplied content
+  // wins) — losing the task's sub-notes, or undoing the conversion. Read-only
+  // plus a persist() veto until a reload succeeds.
+  let docStale = $state(false)
   let saveTimer: ReturnType<typeof setTimeout> | null = null
   let saveRequested = false
   let pendingSnapshot: ParsedBlock[] | null = null
+  let pendingSnapshotVersion = -1
+  // Monotonic doc-version, bumped on every user edit. A save only owns the
+  // unsaved flag it started with: an edit landing during the IPC flight bumps
+  // this, and the completion must then leave the flag set.
+  let docVersion = 0
   let inFlight: Promise<void> = Promise.resolve()
 
   let suppressUpdate = false
@@ -163,6 +170,7 @@
         // Fold toggles are content now that `open` is disk state (#1123) —
         // collapsing a section arms the unsaved-changes prompt like any edit.
         if (suppressUpdate) return
+        docVersion += 1
         unsavedChanges = true
         saveError = ''
         scheduleSave()
@@ -212,11 +220,16 @@
         suppressUpdate = false
       }
       unsavedChanges = false
-      // The doc matches disk again, so a stale-after-conversion doc is no
-      // longer a save hazard.
-      docStaleAfterConvert = false
+      // The doc matches disk again, so a stale doc (failed initial load or
+      // failed post-conversion reload) is no longer a save hazard.
+      docStale = false
       return true
     } catch (e) {
+      // A failed load leaves a doc that does not match disk: empty on the
+      // initial load, stale after a conversion. It must not be editable or
+      // saveable until a reload succeeds.
+      docStale = true
+      applyEditable()
       loadError = e instanceof Error ? e.message : String(e)
       return false
     } finally {
@@ -244,35 +257,37 @@
 
   async function persist() {
     // Single veto for every save trigger (debounce, close drain, retry): a doc
-    // left stale by a failed post-conversion reload must never reach disk.
-    if (docStaleAfterConvert) return
+    // that disagrees with disk must never reach it.
+    if (docStale) return
     if (!editorInstance || editorInstance.isDestroyed) return
     if (saving) {
       saveRequested = true
       pendingSnapshot = docToBlocks(editorInstance.getJSON())
+      pendingSnapshotVersion = docVersion
       return
     }
     const edited = docToBlocks(editorInstance.getJSON())
+    const version = docVersion
     saving = true
     inFlight = (async () => {
       try {
         await ctx.saveSubtreeBlocks(blockId, edited)
-        unsavedChanges = false
-        saveError = ''
+        settleSave(version)
       } catch (e) {
         saveError = friendlyCaughtError(e)
       } finally {
         saving = false
         if (saveRequested && pendingSnapshot) {
           const next = pendingSnapshot
+          const nextVersion = pendingSnapshotVersion
           saveRequested = false
           pendingSnapshot = null
+          pendingSnapshotVersion = -1
           saving = true
           inFlight = (async () => {
             try {
               await ctx.saveSubtreeBlocks(blockId, next)
-              unsavedChanges = false
-              saveError = ''
+              settleSave(nextVersion)
             } catch (e) {
               saveError = friendlyCaughtError(e)
             } finally {
@@ -283,6 +298,16 @@
       }
     })()
     await inFlight
+  }
+
+  // A save only vouches for the doc it snapshotted. If an edit landed while the
+  // write was in flight the doc-version moved on, so the flag stays set and the
+  // close path re-checks (keeping the modal open) instead of discarding the
+  // trailing edit.
+  function settleSave(version: number) {
+    if (docVersion !== version) return
+    unsavedChanges = false
+    saveError = ''
   }
 
   async function drainSave(): Promise<void> {
@@ -298,11 +323,11 @@
   }
 
   async function attemptClose() {
-    // A doc left stale by a failed post-conversion reload is known to disagree
-    // with disk, and persist() vetoes every write from it — so whatever the
-    // unsaved flag says, there is nothing recoverable to keep the modal open
-    // for. Close explicitly rather than letting the flag dead-end the X/Esc.
-    if (docStaleAfterConvert) {
+    // A stale doc is known to disagree with disk, and persist() vetoes every
+    // write from it — so whatever the unsaved flag says, there is nothing
+    // recoverable to keep the modal open for. Close explicitly rather than
+    // letting the flag dead-end the X/Esc.
+    if (docStale) {
       await drainSave()
       onClose()
       return
@@ -312,8 +337,11 @@
       // A failed final save keeps the modal open so the user can retry or
       // explicitly discard the edits instead of losing them on close.
       if (unsavedChanges || saveError) {
-        // The Discard/Retry row renders only behind saveError; without one the
-        // close would be inert with no explanation, so surface the block.
+        // The Discard/Retry row renders only behind saveError. Without one the
+        // close would be inert with no explanation, so surface the block. This
+        // fires when an edit landed while the final save was in flight: the
+        // save settles but cannot vouch for the newer doc (settleSave), so the
+        // flag is still set and no error exists yet.
         if (!saveError) {
           saveError = 'the latest edits could not be confirmed on disk'
         }
@@ -324,7 +352,7 @@
   }
 
   function retrySave(): void {
-    if (saving || docStaleAfterConvert) return
+    if (saving || docStale) return
     saveError = ''
     void persist()
   }
@@ -337,6 +365,7 @@
     }
     saveRequested = false
     pendingSnapshot = null
+    pendingSnapshotVersion = -1
     unsavedChanges = false
     saveError = ''
     onClose()
@@ -384,10 +413,10 @@
 
   // Why the action is unavailable: used as the tooltip and read out through the
   // aria-describedby hint, so a disabled control still states its reason. A
-  // stale doc still holds the converted block as prose, so a second conversion
-  // would target a block that is already a comment on disk.
+  // stale doc is not the disk state (its converted block still reads as prose,
+  // or it never loaded), so converting from it could target the wrong block.
   let convertDisabledReason = $derived(
-    docStaleAfterConvert
+    docStale
       ? 'Reload the sub-notes before converting again'
       : activeNoteId
         ? 'Move this note to the task comment thread'
@@ -409,7 +438,7 @@
   // Read-only is the visible half of the stale guard: the doc must not accept
   // keystrokes while it disagrees with disk.
   function applyEditable() {
-    setEditorEditable(!docStaleAfterConvert)
+    setEditorEditable(!docStale)
   }
 
   // The way out of a failed load/conversion reload: re-read the subtree. On
@@ -425,7 +454,7 @@
 
   async function convertActiveNoteToComment() {
     const noteId = activeNoteId
-    if (!noteId || converting || docStaleAfterConvert) return
+    if (!noteId || converting || docStale) return
     converting = true
     convertError = ''
     convertMessage = ''
@@ -450,7 +479,9 @@
       // leaves the block in the doc as unmarked prose, so that doc must be
       // reported as a failure rather than a success.
       if (!(await loadSubtree())) {
-        docStaleAfterConvert = true
+        // loadSubtree's catch marks the doc stale; set it again for the
+        // torn-down-editor false path, which is likewise not a disk match.
+        docStale = true
         convertError = changed
           ? 'Note converted to a comment on disk, but the editor could not refresh. Saving from this view would undo the conversion — reload the sub-notes, or reopen the sub-editor.'
           : 'The editor could not refresh after the conversion. Saving from this view would undo its comment state — reload the sub-notes, or reopen the sub-editor.'
@@ -533,7 +564,7 @@
       // Drain before clearing the stale flag: persist() vetoes on it, so
       // clearing first could let a stale doc reach disk on the way out.
       void drainSave().finally(() => {
-        docStaleAfterConvert = false
+        docStale = false
       })
       document.body.style.overflow = prevOverflow
       if (previouslyFocused?.isConnected) previouslyFocused.focus?.()
@@ -706,7 +737,7 @@
           <button
             type="button"
             class="text-type-2xs font-label-sm text-text-muted hover:text-accent-primary-start transition-colors px-1 rounded whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={!activeNoteId || converting || docStaleAfterConvert}
+            disabled={!activeNoteId || converting || docStale}
             aria-label="Convert the note at the cursor to a comment"
             aria-describedby="sub-editor-convert-note-hint"
             title={convertDisabledReason}
@@ -717,7 +748,7 @@
           <span id="sub-editor-convert-note-hint" class="sr-only">
             Converts the note your cursor is in; it moves to the task's comment
             thread.
-            {#if docStaleAfterConvert}
+            {#if docStale}
               Unavailable until the sub-notes are reloaded.
             {/if}
           </span>
