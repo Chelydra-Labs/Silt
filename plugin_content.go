@@ -2,13 +2,16 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"reflect"
 	"silt/backend/core"
+	"silt/backend/db"
 	"silt/backend/parser"
 	"silt/backend/plugins"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -123,6 +126,163 @@ func (a *App) PluginMoveBlock(pluginID, sessionToken, blockID, afterID, notebook
 		Section:  section,
 		Page:     page,
 	}}, historyReasonPlugin)
+}
+
+// PluginSetBlockCommentClassification converts a NOTE block between prose
+// sub-note and explicit comment (#1159). asComment=true writes [comment::];
+// false clears the marker AND [author::]/[ts::] — attribution is a permanent
+// comment fallback (D4), so a sub-note must carry none (D7: the author and
+// date are deliberately discarded). Returns false without writing when the
+// block already has the requested classification, so a repeat is a no-op.
+// Gated by content-mutate (#156). Session-token verified (#151).
+func (a *App) PluginSetBlockCommentClassification(pluginID, sessionToken, blockID string, asComment bool) (bool, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return false, err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
+		return false, err
+	}
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.db == nil {
+		return false, fmt.Errorf("vault database not loaded")
+	}
+	if blockID == "" {
+		return false, fmt.Errorf("blockId is required")
+	}
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+	return a.setBlockCommentClassification(blockID, asComment)
+}
+
+// setBlockCommentClassification is the one canonical classification mutation:
+// read → parse → mutate the target NOTE by id → render → write, on the same
+// lock chain as app_blocks.go's writeBlockText (the caller holds vaultMu).
+// Only the classification fields change; body, order, ids and neighbours are
+// left untouched. An unchanged classification skips render, write and reindex.
+func (a *App) setBlockCommentClassification(blockID string, asComment bool) (bool, error) {
+	var loc db.BlockLocation
+	err := a.coordinator.WithDBReadResult(func() error {
+		var e error
+		loc, e = a.db.GetBlockLocation(blockID)
+		return e
+	})
+	if err != nil {
+		return false, fmt.Errorf("block %s not found in SQLite: %w", blockID, err)
+	}
+	safeNotebook := sanitizePathSegment(loc.Notebook)
+	safeSection, secErr := historySection(loc.Section)
+	if secErr != nil {
+		return false, invalidNavigationPath(secErr)
+	}
+	safePage := sanitizePathSegment(loc.Page)
+	if safeNotebook == "" || safePage == "" {
+		return false, fmt.Errorf("invalid file metadata for block %s", blockID)
+	}
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, loc.Source)
+	if err != nil {
+		return false, fmt.Errorf("resolve notebook dir for block %s: %w", blockID, err)
+	}
+	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
+	if !isPathWithinRoot(filePath, notebookDir) {
+		return false, fmt.Errorf("resolved file path %q escapes notebook root %q", filePath, notebookDir)
+	}
+
+	var writeErr error
+	changed := false
+	a.coordinator.LockBlockWrite(blockID, func() {
+		a.coordinator.LockFileWrite(filePath, func() {
+			if a.watcher != nil && a.watcher.IsFocusLocked(filePath) {
+				writeErr = blockBeingEditedError()
+				return
+			}
+			// Fail closed after waiting for the locks: the page may have been
+			// renamed or deleted while we queued (same typed sentinel as
+			// writeBlockText / SaveFileBlocks, #691).
+			if _, err := os.Stat(filePath); err != nil {
+				if os.IsNotExist(err) {
+					writeErr = errPageMovedOrDeleted(filePath)
+				} else {
+					writeErr = err
+				}
+				return
+			}
+			contentBytes, err := os.ReadFile(filePath)
+			if err != nil {
+				writeErr = err
+				return
+			}
+			fileDate := fileOrDefaultDate(filePath)
+			parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
+			if parseErr != nil {
+				writeErr = fmt.Errorf("failed to parse file for classification: %w", parseErr)
+				return
+			}
+
+			found := false
+			for i := range parsedBlocks {
+				b := &parsedBlocks[i]
+				if b.ID != blockID {
+					continue
+				}
+				found = true
+				// The parsed block is authoritative: the SQLite row is a cache.
+				if b.Type != parser.BlockNote {
+					writeErr = fmt.Errorf("block %s is not a NOTE", blockID)
+					return
+				}
+				if asComment {
+					if !b.IsComment {
+						b.IsComment = true
+						changed = true
+					}
+				} else if b.IsComment || b.Author != "" || b.Timestamp != "" {
+					b.IsComment = false
+					b.Author = ""
+					b.Timestamp = ""
+					changed = true
+				}
+				break
+			}
+			if !found {
+				writeErr = fmt.Errorf("block %s not found in file %s", blockID, filePath)
+				return
+			}
+			if !changed {
+				// Idempotent repeat: the file is already in the requested state.
+				return
+			}
+
+			frontmatter, body := parser.SplitFrontmatter(string(contentBytes))
+			if frontmatter == "" {
+				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(time.Now().Format("2006-01-02")))
+			}
+			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
+			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), historyReasonPlugin)
+			if err := a.trackedPageWrite(filePath, []byte(newContent)); err != nil {
+				writeErr = err
+				return
+			}
+
+			// Re-parse what actually landed and reindex, so the cache reflects
+			// the canonical render (same chain as writeBlockText).
+			reblocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
+			if err == nil {
+				if idxErr := a.indexFile(loc.Source, remeta.Notebook, remeta.Section, remeta.Page, reblocks, remeta, remeta.Warnings...); idxErr != nil {
+					log.Printf("setBlockCommentClassification: indexFile failed for %s/%s/%s/%s: %v", remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, idxErr)
+				}
+			}
+		})
+	})
+	if writeErr != nil {
+		return false, writeErr
+	}
+	if !changed {
+		return false, nil
+	}
+	a.emitBlockChanged(blockID, safeNotebook, safeSection, safePage, "")
+	return true, nil
 }
 
 // PluginApplyBlocks applies a batch of create/delete/move ops, coalescing per-
