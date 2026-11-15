@@ -1632,5 +1632,33 @@ describe('comment predicates (display/edit asymmetry)', () => {
       expect(screen.getByText('Comment failed to convert')).toBeInTheDocument()
       confirmSpy.mockRestore()
     })
+
+    it('does not announce success when the post-conversion refresh fails', async () => {
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+      const setBlockCommentClassification = vi.fn().mockResolvedValue(true)
+      const fetchSubtree = vi
+        .fn()
+        .mockResolvedValueOnce(threaded())
+        .mockRejectedValueOnce(new Error('ipc down'))
+      mount({
+        ctx: makeCtx({ fetchSubtree, setBlockCommentClassification })
+      })
+      await flush()
+
+      await fireEvent.click(screen.getAllByLabelText(CONVERT_LABEL)[0]!)
+      await flush()
+
+      // The write landed, but the list still shows the attribution the user
+      // was just told would be discarded — claiming success over it would
+      // contradict the error banner and the stale rows.
+      expect(setBlockCommentClassification).toHaveBeenCalledWith('c1', false)
+      expect(
+        screen.getByText('Comment converted, but the thread could not refresh')
+      ).toBeInTheDocument()
+      expect(screen.queryByText('Comment converted to a sub-note')).toBeNull()
+      expect(screen.getByTestId('comment-thread-error')).toBeInTheDocument()
+      expect(screen.getByText('ipc down')).toBeInTheDocument()
+      confirmSpy.mockRestore()
+    })
   })
 })

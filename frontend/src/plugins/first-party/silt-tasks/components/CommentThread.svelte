@@ -232,15 +232,20 @@
     return list.reduce((n, c) => n + 1 + c.replies.length, 0)
   }
 
-  async function load() {
+  // Returns whether the thread now reflects disk: callers that announce a
+  // mutation's success must not infer it from a resolved promise, because a
+  // fetch failure is captured in errorMsg and leaves the rendered rows stale.
+  async function load(): Promise<boolean> {
     loading = true
     errorMsg = ''
     try {
       const subtree = await ctx.fetchSubtree(taskId)
       comments = buildThread(subtree ?? [], taskId)
+      return true
     } catch (e) {
       errorMsg = friendlyCaughtError(e)
       errorRetryable = false
+      return false
     } finally {
       loading = false
     }
@@ -514,8 +519,14 @@
     errorRetryable = false
     try {
       await ctx.setBlockCommentClassification(comment.id, false)
-      await load()
+      // The write is on disk either way, so the host still re-queries its
+      // count; the success announcement needs the thread to reflect it first,
+      // or the row keeps showing the attribution just declared discarded.
       onCommentsChanged?.()
+      if (!(await load())) {
+        liveMessage = 'Comment converted, but the thread could not refresh'
+        return
+      }
       liveMessage = 'Comment converted to a sub-note'
     } catch (e) {
       errorMsg = friendlyCaughtError(e)

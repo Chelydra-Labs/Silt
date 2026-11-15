@@ -298,11 +298,27 @@
   }
 
   async function attemptClose() {
+    // A doc left stale by a failed post-conversion reload is known to disagree
+    // with disk, and persist() vetoes every write from it — so whatever the
+    // unsaved flag says, there is nothing recoverable to keep the modal open
+    // for. Close explicitly rather than letting the flag dead-end the X/Esc.
+    if (docStaleAfterConvert) {
+      await drainSave()
+      onClose()
+      return
+    }
     if (unsavedChanges || saving) {
       await drainSave()
       // A failed final save keeps the modal open so the user can retry or
       // explicitly discard the edits instead of losing them on close.
-      if (unsavedChanges || saveError) return
+      if (unsavedChanges || saveError) {
+        // The Discard/Retry row renders only behind saveError; without one the
+        // close would be inert with no explanation, so surface the block.
+        if (!saveError) {
+          saveError = 'the latest edits could not be confirmed on disk'
+        }
+        return
+      }
     }
     onClose()
   }
@@ -366,15 +382,34 @@
 
   let activeNoteId = $derived(findActiveNoteId(selectionVersion))
 
-  // Read-only is the visible half of the stale guard: the doc must not accept
-  // keystrokes while it disagrees with disk. The flip is silent (no update
-  // event): the doc did not change, so it must not arm an autosave.
-  function applyEditable() {
+  // Why the action is unavailable: used as the tooltip and read out through the
+  // aria-describedby hint, so a disabled control still states its reason. A
+  // stale doc still holds the converted block as prose, so a second conversion
+  // would target a block that is already a comment on disk.
+  let convertDisabledReason = $derived(
+    docStaleAfterConvert
+      ? 'Reload the sub-notes before converting again'
+      : activeNoteId
+        ? 'Move this note to the task comment thread'
+        : 'Put the cursor in a note first'
+  )
+
+  // Single place that flips the editor's read-only state. Every flip is silent
+  // (emitUpdate=false): the doc itself did not change, so it must never mark
+  // it dirty or arm an autosave. TipTap's default emitUpdate=true would fire
+  // onUpdate, and on the conversion path that would save the pre-conversion
+  // doc over the marker the server just wrote.
+  function setEditorEditable(editable: boolean) {
     const ed = editorInstance
     if (!ed || ed.isDestroyed) return
-    const editable = !docStaleAfterConvert
     if (ed.isEditable === editable) return
     ed.setEditable(editable, false)
+  }
+
+  // Read-only is the visible half of the stale guard: the doc must not accept
+  // keystrokes while it disagrees with disk.
+  function applyEditable() {
+    setEditorEditable(!docStaleAfterConvert)
   }
 
   // The way out of a failed load/conversion reload: re-read the subtree. On
@@ -390,14 +425,15 @@
 
   async function convertActiveNoteToComment() {
     const noteId = activeNoteId
-    if (!noteId || converting) return
-    const ed = editorInstance
+    if (!noteId || converting || docStaleAfterConvert) return
     converting = true
     convertError = ''
     convertMessage = ''
     // Freeze the doc: a keystroke landing between the flush and the reload
     // below would be overwritten by loadSubtree (the block leaves the doc).
-    ed?.setEditable(false)
+    // Silent (setEditorEditable), so the freeze does not itself dirty the doc
+    // and trigger a redundant subtree write.
+    setEditorEditable(false)
     try {
       // Flush the debounced autosave FIRST: the conversion re-reads the file
       // on the server, so unsaved editor content must land before it or the
@@ -670,12 +706,10 @@
           <button
             type="button"
             class="text-type-2xs font-label-sm text-text-muted hover:text-accent-primary-start transition-colors px-1 rounded whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={!activeNoteId || converting}
+            disabled={!activeNoteId || converting || docStaleAfterConvert}
             aria-label="Convert the note at the cursor to a comment"
             aria-describedby="sub-editor-convert-note-hint"
-            title={activeNoteId
-              ? 'Move this note to the task comment thread'
-              : 'Put the cursor in a note first'}
+            title={convertDisabledReason}
             onclick={() => void convertActiveNoteToComment()}
           >
             Convert note to comment
@@ -683,6 +717,9 @@
           <span id="sub-editor-convert-note-hint" class="sr-only">
             Converts the note your cursor is in; it moves to the task's comment
             thread.
+            {#if docStaleAfterConvert}
+              Unavailable until the sub-notes are reloaded.
+            {/if}
           </span>
           {#if convertMessage}
             <span

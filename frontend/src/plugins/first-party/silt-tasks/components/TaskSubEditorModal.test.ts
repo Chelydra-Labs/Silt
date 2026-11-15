@@ -1102,6 +1102,160 @@ describe('convert note to comment (#1159)', () => {
     ).toBeInTheDocument()
   })
 
+  it('does not write the subtree when converting a note with no pending edits', async () => {
+    // Regression: the pre-conversion freeze must stay silent. TipTap's default
+    // setEditable() emits `update`, which dirties the doc and makes the flush
+    // write the whole subtree — and when the reload is slower than the
+    // debounce, that pre-conversion copy can land after the marker the server
+    // wrote and silently revert it.
+    mocks.fetchSubtree
+      .mockResolvedValueOnce([PROSE_NOTE])
+      .mockResolvedValueOnce([])
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => {
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    })
+    await flush()
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement &
+      SubEditorHandle
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+
+    const convert = screen.getByRole('button', {
+      name: 'Convert the note at the cursor to a comment'
+    })
+    await vi.waitFor(() => expect(convert).not.toBeDisabled())
+    await fireEvent.click(convert)
+
+    await vi.waitFor(() =>
+      expect(mocks.setBlockCommentClassification).toHaveBeenCalledWith(
+        'prose-1',
+        true
+      )
+    )
+    expect(
+      await screen.findByText(/Note converted to a comment/)
+    ).toBeInTheDocument()
+    // Wait past the autosave debounce: a freeze-armed save would have fired.
+    await new Promise((r) => setTimeout(r, 800))
+    expect(mocks.saveSubtreeBlocks).not.toHaveBeenCalled()
+  })
+
+  it('closes after a failed post-conversion reload without writing the stale doc', async () => {
+    mocks.fetchSubtree
+      .mockResolvedValueOnce([PROSE_NOTE])
+      .mockRejectedValueOnce(new Error('ipc down'))
+    const onClose = vi.fn()
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose
+    })
+    await vi.waitFor(() => {
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    })
+    await flush()
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement &
+      SubEditorHandle
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+    const convert = screen.getByRole('button', {
+      name: 'Convert the note at the cursor to a comment'
+    })
+    await vi.waitFor(() => expect(convert).not.toBeDisabled())
+    await fireEvent.click(convert)
+    await vi.waitFor(() =>
+      expect(mocks.setBlockCommentClassification).toHaveBeenCalledWith(
+        'prose-1',
+        true
+      )
+    )
+    expect(await screen.findByText(/could not refresh/)).toBeInTheDocument()
+
+    // Reproduce the wedge: commands still dispatch on a frozen doc, so a stray
+    // transaction leaves unsavedChanges set with no saveError (the Discard /
+    // Retry row is gated on saveError, so it never renders). Closing must not
+    // dead-end on that flag — nothing in a stale doc is saveable.
+    pm.editor.commands.insertContent(' stale keystroke')
+    await new Promise((r) => setTimeout(r, 800))
+    expect(mocks.saveSubtreeBlocks).not.toHaveBeenCalled()
+
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await flush()
+    expect(onClose).toHaveBeenCalledTimes(1)
+    // Closing still never writes the stale doc (the drain is vetoed).
+    expect(mocks.saveSubtreeBlocks).not.toHaveBeenCalled()
+  })
+
+  it('disables the convert action while stale and restores it after a successful reload', async () => {
+    mocks.fetchSubtree
+      .mockResolvedValueOnce([PROSE_NOTE])
+      .mockRejectedValueOnce(new Error('ipc down'))
+      // The retry sees the original block as a comment (partitioned out) and
+      // one untouched prose note, so there is something convertible again.
+      .mockResolvedValueOnce([
+        { ...PROSE_NOTE, is_comment: true },
+        {
+          ...PROSE_NOTE,
+          id: 'prose-2',
+          raw_text: '- Untouched',
+          clean_text: 'Untouched'
+        }
+      ])
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => {
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    })
+    await flush()
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement &
+      SubEditorHandle
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+    const convert = screen.getByRole('button', {
+      name: 'Convert the note at the cursor to a comment'
+    })
+    await vi.waitFor(() => expect(convert).not.toBeDisabled())
+    await fireEvent.click(convert)
+    await vi.waitFor(() => {
+      expect(screen.getByText(/could not refresh/)).toBeInTheDocument()
+    })
+
+    // Put the caret in the stale note: it still resolves as "active", so the
+    // disable must come from the stale state itself, not from an empty caret.
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+    await flush()
+    expect(convert).toBeDisabled()
+    expect(convert).toHaveAttribute(
+      'title',
+      'Reload the sub-notes before converting again'
+    )
+    // The reason is also in the accessible description, not only the tooltip.
+    expect(
+      screen.getByText(/Unavailable until the sub-notes are reloaded/)
+    ).toBeInTheDocument()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Reload sub-notes' })
+    )
+    await vi.waitFor(() => expect(pm.editor.isEditable).toBe(true))
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+    await flush()
+    expect(convert).not.toBeDisabled()
+  })
+
   it('is disabled while the cursor is outside a note', async () => {
     const pm = await mountWithNote({
       id: 'subtask-1',
