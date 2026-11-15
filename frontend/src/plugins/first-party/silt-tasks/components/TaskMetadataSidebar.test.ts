@@ -440,6 +440,43 @@ describe('TaskMetadataSidebar', () => {
     expect(updateTaskMeta).toHaveBeenCalledWith('task-1', { pinned: true })
   })
 
+  it('adopts the shared pin toggle and exposes its structural pinned cue', () => {
+    render(TaskMetadataSidebar, {
+      props: { task: makeTask({ pinned: false }), ctx: makeCtx() }
+    })
+    const unpinned = screen.getByRole('button', { name: 'Pin task' })
+    expect(unpinned).toHaveAttribute('aria-pressed', 'false')
+    expect(unpinned).toHaveAttribute('data-pinned', 'false')
+    expect(screen.queryByTestId('pin-state-mark')).not.toBeInTheDocument()
+
+    cleanup()
+
+    render(TaskMetadataSidebar, {
+      props: { task: makeTask({ pinned: true }), ctx: makeCtx() }
+    })
+    const pinned = screen.getByRole('button', { name: 'Unpin task' })
+    expect(pinned).toHaveAttribute('aria-pressed', 'true')
+    expect(pinned).toHaveAttribute('data-pinned', 'true')
+    expect(screen.getByTestId('pin-state-mark')).toBeInTheDocument()
+  })
+
+  it('turns the pin cue back off and reports the write failure', async () => {
+    const updateTaskMeta = vi.fn().mockRejectedValue(new Error('lock held'))
+    render(TaskMetadataSidebar, {
+      props: { task: makeTask(), ctx: makeCtx({ updateTaskMeta }) }
+    })
+    await fireEvent.click(screen.getByRole('button', { name: 'Pin task' }))
+    await flush()
+
+    expect(updateTaskMeta).toHaveBeenCalledWith('task-1', { pinned: true })
+    const pinBtn = screen.getByRole('button', { name: 'Pin task' })
+    expect(pinBtn).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByTestId('pin-state-mark')).not.toBeInTheDocument()
+    expect(screen.getByTestId('task-meta-error')).toHaveTextContent(
+      "Couldn't save: lock held"
+    )
+  })
+
   it('fires onMetaChanged after a successful metadata write', async () => {
     const onMetaChanged = vi.fn()
     const updateBlockState = vi
