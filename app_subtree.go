@@ -304,9 +304,11 @@ func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock, r
 // Returns the freshly-minted block id of the new NOTE comment. `author` and
 // `ts` are the NOTE-block comment-attribution tokens ([author:: NAME] /
 // [ts:: YYYY-MM-DDTHH:MM:SS]); `author` may be empty (nullable per
-// ARCHITECTURE.md §2.2). The SDK generates `ts` client-side and passes it
-// through; when it is empty the binding stamps the current local time so every
-// app-written comment stays classifiable by parser.IsCommentBlock.
+// ARCHITECTURE.md §2.2). The new block also carries the explicit [comment::]
+// marker, so it is classified by the marker rather than attribution alone. The
+// SDK generates `ts` client-side and passes it through; when it is empty the
+// binding stamps the current local time (pre-marker comments rely on that
+// attribution fallback).
 //
 // parentCommentID nests the new NOTE under an existing comment (#438). Empty
 // keeps the historical top-level behavior (direct child of the task). When
@@ -333,11 +335,11 @@ func (a *App) PluginAppendTaskComment(pluginID, sessionToken, taskID, text, auth
 // appendTaskComment is the shared core for the app-level and plugin-level
 // entry points. Read-modify-write under one LockBlockWrite+LockFileWrite hold:
 // parse the file, collect the existing child sub-tree, build a new NOTE block
-// with a fresh UUID + the author/ts attribution tokens, splice the updated
-// sub-tree back through spliceSubtree (the same helper SaveSubtreeBlocks uses),
-// then run the canonical write chain. The append is atomic with respect to
-// other comment posts and other task setters because the per-file write lock
-// serializes the whole read-modify-write.
+// with a fresh UUID, the [comment::] marker and the author/ts attribution
+// tokens, splice the updated sub-tree back through spliceSubtree (the same
+// helper SaveSubtreeBlocks uses), then run the canonical write chain. The
+// append is atomic with respect to other comment posts and other task setters
+// because the per-file write lock serializes the whole read-modify-write.
 //
 // parentCommentID empty → top-level NOTE child of the task (depth taskDepth+1).
 // parentCommentID set → nested reply under that NOTE (depth parentDepth+1),
@@ -355,9 +357,10 @@ func (a *App) appendTaskComment(taskID, text, author, ts, parentCommentID, reaso
 	if strings.TrimSpace(text) == "" {
 		return "", fmt.Errorf("comment text must not be empty")
 	}
-	// An app-written comment must always be classifiable by the attribution
-	// predicate (backend/parser.IsCommentBlock), never mistaken for editable
-	// prose: the SDK supplies ts, but stamp one here when a caller omits it.
+	// An app-written comment must always be classifiable by
+	// parser.IsCommentBlock, never mistaken for editable prose: the block
+	// carries the explicit marker, and ts is stamped here when a caller omits
+	// it so the attribution fallback also holds for pre-marker readers.
 	if strings.TrimSpace(ts) == "" {
 		ts = time.Now().Format("2006-01-02T15:04:05")
 	}
@@ -442,6 +445,7 @@ func (a *App) appendTaskComment(taskID, text, author, ts, parentCommentID, reaso
 				CleanText: text,
 				Author:    author,
 				Timestamp: ts,
+				IsComment: true,
 			}
 
 			var newSubtree []parser.ParsedBlock

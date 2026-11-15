@@ -284,8 +284,10 @@ func rowsPinnedFingerprint(rows []parser.ParsedBlock) (FileFingerprint, bool) {
 // drift — and, on the disk-parse side, so parse-derived context (ParentID,
 // LineNumber, FileDate) is ignored for the same reason the cross-page drift
 // gate ignores it. [pin::]/[blocked_by::]/unknown tokens hydrate from the raw
-// line (queries_blocks.go), so they are carried like-with-like. Known blind
-// spot: a region block's Language (code-fence info string) and FileDate have
+// line (queries_blocks.go), so they are carried like-with-like. Comment
+// metadata (marker + attribution) has no row storage, so it is zeroed too and
+// never reads as drift. Known blind spot: a region block's Language (code-fence
+// info string) and FileDate have
 // NO storage anywhere on the row and stay zeroed — a fence-info-only external
 // edit inside the re-index debounce compares equal and can be reverted by the
 // next save instead of surfacing as a conflict. Closing that needs a schema
@@ -297,6 +299,7 @@ func hydratableBlockFields(b parser.ParsedBlock) parser.ParsedBlock {
 	b.FileDate = ""
 	b.Author = ""
 	b.Timestamp = ""
+	b.IsComment = false
 	b.Language = ""
 	return b
 }

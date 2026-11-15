@@ -741,11 +741,12 @@ func (a *App) writePageFileLocked(filePath, source, notebook, section, page stri
 	return nil
 }
 
-// preserveCommentAttribution copies [author::]/[ts::] from the on-disk block
-// with the same id: the page editor's schema has no attribution fields, so its
-// save would otherwise rewrite comments as unattributed prose (#1160).
-// Caller-supplied values win, and a block with no on-disk id match stays
-// unattributed.
+// preserveCommentAttribution copies [comment::], [author::] and [ts::] from the
+// on-disk block with the same id: the page editor's schema has no comment
+// metadata, so its save would otherwise rewrite comments as unmarked,
+// unattributed prose (#1160, #1159). Caller-supplied values win — a payload
+// block that already carries the marker or attribution is left alone — and a
+// block with no on-disk id match stays unmarked.
 func preserveCommentAttribution(disk, incoming []parser.ParsedBlock) []parser.ParsedBlock {
 	byID := make(map[string]parser.ParsedBlock, len(disk))
 	for _, b := range disk {
@@ -755,12 +756,13 @@ func preserveCommentAttribution(disk, incoming []parser.ParsedBlock) []parser.Pa
 	copy(out, incoming)
 	for i := range out {
 		b := &out[i]
-		if b.Type != parser.BlockNote || b.ID == "" || b.Author != "" || b.Timestamp != "" {
+		if b.Type != parser.BlockNote || b.ID == "" || b.IsComment || b.Author != "" || b.Timestamp != "" {
 			continue
 		}
 		if orig, ok := byID[b.ID]; ok {
 			b.Author = orig.Author
 			b.Timestamp = orig.Timestamp
+			b.IsComment = orig.IsComment
 		}
 	}
 	return out
@@ -998,11 +1000,11 @@ func (a *App) saveFileBlocksWithGate(notebook, section, page string, blocks []pa
 					return
 				}
 			}
-			// The whole-page editor cannot carry comment attribution, so its
-			// save would rewrite every comment as unattributed prose (#1160).
-			// Merge it by id from the bytes read under this same file lock;
-			// plugin and stash funnels are excluded so they keep their
-			// deliberate attribution clears.
+			// The whole-page editor cannot carry comment metadata (marker or
+			// attribution), so its save would rewrite every comment as
+			// unmarked prose (#1160, #1159). Merge it by id from the bytes read
+			// under this same file lock; plugin and stash funnels are excluded
+			// so they keep their deliberate clears.
 			if funnel == funnelEditorBlocks {
 				contentBytes, err := os.ReadFile(filePath)
 				if err != nil {

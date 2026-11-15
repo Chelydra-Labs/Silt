@@ -381,10 +381,10 @@ func (a *App) adoptOriginalBytesLocked(filePath, source, notebook, section, page
 	a.commitPostWriteState(filePath, content)
 }
 
-// preserveStashedCommentAttribution carries comment attribution from the
-// resolution's already-read current bytes onto a refused editor payload — the
-// same by-id merge the save funnel applies before writing. Parse failure only
-// costs attribution, never the resolution's write.
+// preserveStashedCommentAttribution carries comment metadata (marker and
+// attribution) from the resolution's already-read current bytes onto a refused
+// editor payload — the same by-id merge the save funnel applies before writing.
+// Parse failure only costs that metadata, never the resolution's write.
 func (a *App) preserveStashedCommentAttribution(filePath string, diskBytes []byte, rw refusedPageWrite) []parser.ParsedBlock {
 	diskBlocks, _, _, _, err := parser.ParseFileContent(string(diskBytes), rw.notebook, rw.section, rw.page, fileOrDefaultDate(filePath), a.spacesPerTab)
 	if err != nil {

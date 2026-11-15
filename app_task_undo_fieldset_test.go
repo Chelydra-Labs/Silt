@@ -55,6 +55,7 @@ var undoNeverRestoredFields = map[string]string{
 	"CreatedAt":   "creation provenance, not a task setter",
 	"Author":      "NOTE-only comment attribution, not task state",
 	"Timestamp":   "NOTE-only comment attribution, not task state",
+	"IsComment":   "NOTE-only comment classification, not task state",
 	"ExtraTokens": "unknown tokens round-trip verbatim through parse/render; shortlist-keyed extras dropped by SetTaskShortlistRank stay dropped (undo restores task state, not bytes)",
 	"Language":    "code-fence info string, not task state",
 }
