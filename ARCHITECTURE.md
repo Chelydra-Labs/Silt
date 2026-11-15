@@ -285,6 +285,7 @@ CREATE TABLE tasks (
     progress INTEGER DEFAULT 0,       -- 0-100; cached from [progress:: N] markdown token; forced to 100 when the task is marked DONE
     recur TEXT,                       -- recurrence rule (e.g. 'every week'); NULL for one-off tasks; cached from [recur:: RULE] token
     comments_count INTEGER DEFAULT 0, -- derived: comment blocks under the task ([comment::] marker or attribution; NOTE descendants that are prose do not count)
+    has_subnotes INTEGER DEFAULT 0,   -- derived: 1 when the task owns a NOTE descendant that is not a comment (the predicate's complement); presence only, no count (#1173)
     links_count INTEGER DEFAULT 0,    -- derived: ((uuid)) references in body
     created_at TEXT,                  -- ISO 8601 local [created::] timestamp; NULL when absent (no backfill); reproducible from markdown
     completed_at TEXT,                -- ISO 8601 local [completed::] timestamp; NULL when not DONE (no backfill); reproducible from markdown
