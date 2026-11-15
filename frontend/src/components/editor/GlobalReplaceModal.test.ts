@@ -58,9 +58,14 @@ import GlobalReplaceModal from './GlobalReplaceModal.svelte'
 import { wailsIPCError } from '../../lib/testing/wailsIpcError'
 
 // Shared block factory: keep raw_text equal to clean_text so the snapshot
-// shape matches what the component actually persists.
-function block(id: string, clean_text: string) {
-  return { id, clean_text, raw_text: clean_text }
+// shape matches what the component actually persists. Comment metadata is the
+// backend's hydrated addition (#1167) and must ride through untouched.
+function block(
+  id: string,
+  clean_text: string,
+  comment: { author?: string; timestamp?: string; is_comment?: boolean } = {}
+) {
+  return { id, clean_text, raw_text: clean_text, ...comment }
 }
 
 // Render, fill Find/Replace, click Preview, and wait until the Replace
@@ -200,6 +205,64 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
     }>
     expect(restored[0].clean_text).toBe('foo bar')
     expect(restored[1].clean_text).toBe('foo baz')
+  })
+
+  // #1167: the backend hydrates comment metadata onto the fetched rows so a
+  // rows-echo save cannot rewrite comments as prose. The modal mutates only
+  // clean_text and must echo that metadata back on apply AND on undo.
+  it('echoes hydrated comment metadata on apply and undo (#1167)', async () => {
+    const metadata = {
+      author: 'Dana',
+      timestamp: '2026-07-07T10:00:00',
+      is_comment: true
+    }
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: 'b1',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'page1',
+          snippet: 'foo bar'
+        }
+      ],
+      total: 1,
+      offset: 0,
+      limit: 200,
+      has_more: false
+    })
+    mocks.FetchPageBlocksProgrammatic.mockResolvedValue([
+      block('b1', 'foo bar', metadata)
+    ])
+    mocks.SaveFileBlocksProgrammatic.mockResolvedValue(undefined)
+
+    await renderAndPreview('foo', 'qux')
+    await fireEvent.click(screen.getByRole('button', { name: /^Replace/ }))
+    await waitFor(
+      () => {
+        expect(mocks.SaveFileBlocksProgrammatic).toHaveBeenCalledTimes(1)
+      },
+      { timeout: 2000 }
+    )
+    const applied = mocks.SaveFileBlocksProgrammatic.mock.calls[0][3] as Array<
+      { clean_text: string } & typeof metadata
+    >
+    expect(applied[0]).toMatchObject({ clean_text: 'qux bar', ...metadata })
+
+    const restoreBtn = await screen.findByRole('button', {
+      name: /Restore last apply/
+    })
+    await fireEvent.click(restoreBtn)
+    await waitFor(
+      () => {
+        expect(mocks.SaveFileBlocksProgrammatic).toHaveBeenCalledTimes(2)
+      },
+      { timeout: 2000 }
+    )
+    const undone = mocks.SaveFileBlocksProgrammatic.mock.calls[1][3] as Array<
+      { clean_text: string } & typeof metadata
+    >
+    expect(undone[0]).toMatchObject({ clean_text: 'foo bar', ...metadata })
   })
 
   it('editing findText after Preview marks the preview stale and disables Apply', async () => {
