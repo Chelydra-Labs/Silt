@@ -301,3 +301,64 @@ func TestRenderBlock_NoteCommentMarkerCanonicalOrder(t *testing.T) {
 		t.Errorf("render is not byte-stable across two passes\n--- pass1 ---\n%s\n--- pass2 ---\n%s", rendered, rendered2)
 	}
 }
+
+// TestParseLine_NoteCommentMarkerWithAlignmentRoundTrip guards the interaction
+// between the #1159 marker and block alignment (#173). Alignment lives at the
+// END of CleanText as `<!-- silt-align: … -->`; render appends [comment::]
+// AFTER cleanOut, so the on-disk line interposes the marker between the align
+// comment and the id comment. The display path only works because the parser
+// strips [comment::] on re-parse, leaving the align marker terminal — the
+// frontend's ALIGN_MARKER_RE is end-anchored. A render-order change or a strip
+// regression would leave the align comment in the body, where it becomes
+// visible text in both the thread and the page editor.
+func TestParseLine_NoteCommentMarkerWithAlignmentRoundTrip(t *testing.T) {
+	const id = "cccc1111-2222-3333-4444-555555555555"
+	const alignMarker = "<!-- silt-align: center -->"
+	line := "- comment body " + alignMarker + " [comment::] <!-- id: " + id + " -->"
+
+	parsed, _, _ := ParseLine(line, 1, 4)
+	if !parsed.IsComment {
+		t.Fatal("expected IsComment=true")
+	}
+	if parsed.CleanText != "comment body "+alignMarker {
+		t.Fatalf("expected marker stripped and alignment kept terminal, got %q", parsed.CleanText)
+	}
+	if n := strings.Count(parsed.CleanText, "<!-- silt-align:"); n != 1 {
+		t.Fatalf("expected exactly one align marker in CleanText, got %d in %q", n, parsed.CleanText)
+	}
+	if !strings.HasSuffix(parsed.CleanText, alignMarker) {
+		t.Fatalf("align marker must be terminal in CleanText (end-anchored frontend regex), got %q", parsed.CleanText)
+	}
+
+	rendered := renderBlock(parsed, 4)
+	if strings.Count(rendered, "<!-- silt-align:") != 1 {
+		t.Errorf("expected exactly one align marker in rendered line, got %q", rendered)
+	}
+	if strings.Count(rendered, "[comment::]") != 1 {
+		t.Errorf("expected exactly one [comment::] marker in rendered line, got %q", rendered)
+	}
+	if rendered != line {
+		t.Errorf("canonical render mismatch\n got: %s\nwant: %s", rendered, line)
+	}
+
+	// Re-parse: the marker is consumed again, and the align marker is still
+	// the last thing in CleanText — not a stray body comment.
+	reparsed, _, _ := ParseLine(rendered, 1, 4)
+	if !reparsed.IsComment {
+		t.Errorf("IsComment drifted: %v → %v", parsed.IsComment, reparsed.IsComment)
+	}
+	if strings.Count(reparsed.CleanText, "<!-- silt-align:") != 1 {
+		t.Errorf("align marker leaked or duplicated on re-parse: %q", reparsed.CleanText)
+	}
+	if !strings.HasSuffix(reparsed.CleanText, alignMarker) {
+		t.Errorf("align marker must stay terminal after re-parse, got %q", reparsed.CleanText)
+	}
+	if reparsed.CleanText != parsed.CleanText {
+		t.Errorf("CleanText drifted across round-trip: %q → %q", parsed.CleanText, reparsed.CleanText)
+	}
+
+	// Second render must be byte-identical to the first (idempotent output).
+	if rendered2 := renderBlock(reparsed, 4); rendered2 != rendered {
+		t.Errorf("render is not byte-stable across two passes\n--- pass1 ---\n%s\n--- pass2 ---\n%s", rendered, rendered2)
+	}
+}
