@@ -10,6 +10,7 @@ package db
 // the columns together on re-index.
 
 import (
+	"fmt"
 	"testing"
 
 	"silt/backend/parser"
@@ -156,6 +157,71 @@ func TestTaskDerivedCounts_CyclicParentGraphTerminates(t *testing.T) {
 	}
 	if len(subnotes) != 0 {
 		t.Errorf("subnotes = %v, want none (the cycle has no TASK ancestor)", subnotes)
+	}
+}
+
+// TestTaskDerivedCounts_DepthCapBoundary pins the inclusive end of the shared
+// ownership walk's cap: the 64th ancestor is examined, the 65th is not, and
+// both NOTE-side caches must flip together because they ride that one walk.
+func TestTaskDerivedCounts_DepthCapBoundary(t *testing.T) {
+	const (
+		proseLeafID   = "c0de0201-2222-4222-8222-222222222222"
+		commentLeafID = "c0de0202-2222-4222-8222-222222222222"
+		deepTaskID    = "c0de0203-2222-4222-8222-222222222222"
+	)
+	tests := []struct {
+		name      string
+		taskDepth int // 1-based ancestor position of the TASK below the leaves
+		wantOwned bool
+	}{
+		{name: "TASK at the 64th ancestor", taskDepth: 64, wantOwned: true},
+		{name: "TASK at the 65th ancestor", taskDepth: 65, wantOwned: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			chain := make([]string, tc.taskDepth)
+			for i := range chain {
+				chain[i] = fmt.Sprintf("c0de1%03d-2222-4222-8222-222222222222", i)
+			}
+			chain[len(chain)-1] = deepTaskID
+
+			// One prose leaf and one comment leaf share the chain so both
+			// derived columns are exercised at the boundary.
+			blocks := []parser.ParsedBlock{
+				{ID: proseLeafID, Type: parser.BlockNote, ParentID: chain[0], RawText: "prose", CleanText: "prose"},
+				{ID: commentLeafID, Type: parser.BlockNote, ParentID: chain[0], IsComment: true, RawText: "marked", CleanText: "marked"},
+			}
+			// Inert ancestors: only their ParentID edges matter, and a non-NOTE
+			// type keeps them out of the derived caches themselves.
+			for i, id := range chain {
+				hop := parser.ParsedBlock{ID: id, Type: parser.BlockHeader, RawText: "hop", CleanText: "hop"}
+				if i+1 < len(chain) {
+					hop.ParentID = chain[i+1]
+				} else {
+					hop.Type = parser.BlockTask
+				}
+				blocks = append(blocks, hop)
+			}
+
+			comments, _, _, subnotes := taskDerivedCounts(blocks)
+			wantComments, wantSubnotes := 0, 0
+			if tc.wantOwned {
+				wantComments, wantSubnotes = 1, 1
+			}
+			if got := comments[deepTaskID]; got != wantComments {
+				t.Errorf("comments[%s] = %d, want %d", deepTaskID, got, wantComments)
+			}
+			if got := subnotes[deepTaskID]; got != wantSubnotes {
+				t.Errorf("subnotes[%s] = %d, want %d", deepTaskID, got, wantSubnotes)
+			}
+			// No other owner may exist, so a shifted cap cannot hide behind the
+			// task's own cell.
+			if len(comments) != wantComments || len(subnotes) != wantSubnotes {
+				t.Errorf("owners = %v / %v, want %d comment and %d subnote owner(s)",
+					comments, subnotes, wantComments, wantSubnotes)
+			}
+		})
 	}
 }
 
