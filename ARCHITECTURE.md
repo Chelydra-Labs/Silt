@@ -284,7 +284,7 @@ CREATE TABLE tasks (
     pinned INTEGER DEFAULT 0,         -- NULL/0/1 tri-state cache: NULL=no [pin::] token, 0=[pin:: false], 1=[pin:: true]; reproducible from markdown
     progress INTEGER DEFAULT 0,       -- 0-100; cached from [progress:: N] markdown token; forced to 100 when the task is marked DONE
     recur TEXT,                       -- recurrence rule (e.g. 'every week'); NULL for one-off tasks; cached from [recur:: RULE] token
-    comments_count INTEGER DEFAULT 0, -- derived: NOTE descendants under the task
+    comments_count INTEGER DEFAULT 0, -- derived: comment blocks under the task ([comment::] marker or attribution; NOTE descendants that are prose do not count)
     links_count INTEGER DEFAULT 0,    -- derived: ((uuid)) references in body
     created_at TEXT,                  -- ISO 8601 local [created::] timestamp; NULL when absent (no backfill); reproducible from markdown
     completed_at TEXT,                -- ISO 8601 local [completed::] timestamp; NULL when not DONE (no backfill); reproducible from markdown
