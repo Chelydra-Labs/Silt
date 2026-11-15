@@ -531,6 +531,12 @@
       convertMessage = changed
         ? 'Note converted to a comment; it now shows in the comment thread.'
         : 'This note was already a comment.'
+      if (changed && task) {
+        // comments_count counts only comment blocks now (#1159), so the
+        // conversion moves it. The host's card badge refreshes from the
+        // block:changed the server emitted.
+        task = { ...task, comments_count: task.comments_count + 1 }
+      }
     } catch (e) {
       convertError = friendlyCaughtError(e)
     } finally {

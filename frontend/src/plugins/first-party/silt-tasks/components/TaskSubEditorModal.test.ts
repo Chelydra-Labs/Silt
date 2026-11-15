@@ -204,6 +204,18 @@ const BASE_PROPS = {
   parentTaskText: 'Ship the feature'
 }
 
+type SubEditorHandle = {
+  editor: {
+    isEditable: boolean
+    commands: {
+      focus: () => void
+      setTextSelection: (pos: number) => void
+      insertContent: (s: string) => void
+    }
+    getJSON: () => unknown
+  }
+}
+
 describe('TaskSubEditorModal (#304)', () => {
   beforeEach(() => {
     mocks.fetchSubtree.mockReset().mockResolvedValue([])
@@ -1135,6 +1147,59 @@ describe('TaskSubEditorModal — metadata sidebar (#780 / #826)', () => {
     expect(widePrimaryHeader).toHaveClass('sticky')
   })
 
+  it('refreshes the Activity comment count after a conversion', async () => {
+    // comments_count counts only comment blocks (#1159), so converting prose
+    // moves it; the sidebar summary must agree with the thread that just
+    // reloaded. The host's card badge refreshes from the emitted block:changed.
+    mocks.fetchSubtree.mockResolvedValue([
+      {
+        id: 'prose-1',
+        parent_id: 'task-1',
+        type: 'NOTE',
+        depth: 1,
+        raw_text: '- Prose paragraph',
+        clean_text: 'Prose paragraph',
+        line_number: 3,
+        file_date: '2026-07-01'
+      }
+    ])
+    mocks.setBlockCommentClassification.mockResolvedValue(true)
+    mocks.sqliteQuery.mockReset().mockResolvedValue({
+      rows: [makeTaskRow({ comments_count: 4 })],
+      truncated: false
+    })
+
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => {
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    })
+    await vi.waitFor(() =>
+      expect(
+        screen.getByText('4 comments · 0 links · timestamps')
+      ).toBeInTheDocument()
+    )
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement &
+      SubEditorHandle
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+    const convert = screen.getByRole('button', {
+      name: 'Convert the note at the cursor to a comment'
+    })
+    await vi.waitFor(() => expect(convert).not.toBeDisabled())
+    await fireEvent.click(convert)
+
+    await vi.waitFor(() =>
+      expect(
+        screen.getByText('5 comments · 0 links · timestamps')
+      ).toBeInTheDocument()
+    )
+  })
+
   it('keeps the modal open when Escape dismisses a nested metadata popover', async () => {
     const onClose = vi.fn()
     render(TaskSubEditorModal, {
@@ -1438,18 +1503,6 @@ describe('convert note to comment (#1159)', () => {
     clean_text: 'Prose paragraph',
     line_number: 3,
     file_date: '2026-07-01'
-  }
-
-  type SubEditorHandle = {
-    editor: {
-      isEditable: boolean
-      commands: {
-        focus: () => void
-        setTextSelection: (pos: number) => void
-        insertContent: (s: string) => void
-      }
-      getJSON: () => unknown
-    }
   }
 
   async function mountWithNote(note: Record<string, unknown> = PROSE_NOTE) {
