@@ -55,6 +55,17 @@ func sampleNoteBlock(id string, line int) parser.ParsedBlock {
 	}
 }
 
+// sampleCommentBlock is sampleNoteBlock classified as a comment by the shared
+// predicate (#1159): the explicit [comment::] marker, no attribution. An
+// unmarked, unattributed NOTE is a prose sub-note and does not count.
+func sampleCommentBlock(id string, line int) parser.ParsedBlock {
+	b := sampleNoteBlock(id, line)
+	b.IsComment = true
+	b.RawText = "a comment [comment::] <!-- id: " + id + " -->"
+	b.CleanText = "a comment"
+	return b
+}
+
 // TestFindPageByLeaf_CaseInsensitive pins relation bare-name resolution via
 // page_fold: a case-variant leaf returns the canonical page spelling so
 // callers can look up page_types with the exact indexed key.

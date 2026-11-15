@@ -259,6 +259,8 @@ export const AUDIT_PAGE_BLOCKS = [
     language: ''
   },
   {
+    // Prose sub-note: no [comment::] marker and no attribution, so neither the
+    // comment thread nor comments_count includes it (#1159).
     id: 'blk-note-1',
     parent_id: '',
     type: 'NOTE',
@@ -732,6 +734,8 @@ export const AUDIT_SEARCH_RESULTS = {
   has_more: false
 }
 
+// comments_count is the derived comment-block count (marker or attribution),
+// not a NOTE count (#1159).
 export const AUDIT_TASKS_ROWS = [
   {
     id: 'blk-task-1',

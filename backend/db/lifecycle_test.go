@@ -184,18 +184,18 @@ func TestIndexFileBlocks_ModifiedEstimateSubtasks(t *testing.T) {
 	subTodo.Status = "TODO"
 	subTodo.Depth = 1
 
-	// Direct NOTE under parent.
-	n1 := sampleNoteBlock(noteDirect, 4)
+	// Direct comment under parent.
+	n1 := sampleCommentBlock(noteDirect, 4)
 	n1.ParentID = parentID
 	n1.Depth = 1
 
-	// Nested reply: NOTE under NOTE under parent — still counts as comment.
-	n2 := sampleNoteBlock(noteNested, 5)
+	// Nested reply: comment under comment under parent — still counts.
+	n2 := sampleCommentBlock(noteNested, 5)
 	n2.ParentID = noteDirect
 	n2.Depth = 2
 
 	// Another nested level under n2.
-	n3 := sampleNoteBlock(noteOnNote, 6)
+	n3 := sampleCommentBlock(noteOnNote, 6)
 	n3.ParentID = noteNested
 	n3.Depth = 3
 
@@ -225,7 +225,7 @@ func TestIndexFileBlocks_ModifiedEstimateSubtasks(t *testing.T) {
 		t.Errorf("estimate_minutes=%v want 120", estMins)
 	}
 	if comments != 3 {
-		t.Errorf("comments_count=%d want 3 (descendant NOTES)", comments)
+		t.Errorf("comments_count=%d want 3 (descendant comment blocks)", comments)
 	}
 	if links != 1 {
 		t.Errorf("links_count=%d want 1 (one ((uuid)) body ref)", links)

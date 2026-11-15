@@ -284,7 +284,7 @@ CREATE TABLE tasks (
     pinned INTEGER DEFAULT 0,         -- NULL/0/1 tri-state cache: NULL=no [pin::] token, 0=[pin:: false], 1=[pin:: true]; reproducible from markdown
     progress INTEGER DEFAULT 0,       -- 0-100; cached from [progress:: N] markdown token; forced to 100 when the task is marked DONE
     recur TEXT,                       -- recurrence rule (e.g. 'every week'); NULL for one-off tasks; cached from [recur:: RULE] token
-    comments_count INTEGER DEFAULT 0, -- derived: NOTE descendants under the task
+    comments_count INTEGER DEFAULT 0, -- derived: comment blocks under the task ([comment::] marker or attribution; NOTE descendants that are prose do not count)
     links_count INTEGER DEFAULT 0,    -- derived: ((uuid)) references in body
     created_at TEXT,                  -- ISO 8601 local [created::] timestamp; NULL when absent (no backfill); reproducible from markdown
     completed_at TEXT,                -- ISO 8601 local [completed::] timestamp; NULL when not DONE (no backfill); reproducible from markdown
@@ -815,9 +815,10 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   it has failed three attempts — so one dead entry never blocks the older
   mutations in the session journal. **Sub-editor**:
   `FetchSubtree`
-  (read-only child sub-tree extraction; also hydrates `block_meta`
-  comment attribution for NOTE children) and `SaveSubtreeBlocks` (atomic
-  sub-tree splice through the canonical write chain). **Local author**:
+  (read-only child sub-tree extraction parsed from the page's markdown, so
+  comment attribution comes from each block's own tokens) and
+  `SaveSubtreeBlocks` (atomic sub-tree splice through the canonical write
+  chain). **Local author**:
   `GetLocalAuthor` returns the OS account display name (username fallback) —
   the prefill for the per-vault `local_author` pref that attributes Task
   comment threads, surfaced as the Settings → General → Comment author field.

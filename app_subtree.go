@@ -783,8 +783,9 @@ func preserveTaskComments(blocks []parser.ParsedBlock, taskID string, children [
 }
 
 // isTaskComment reports whether b is a comment owned by the saved task or by a
-// task the payload keeps: b carries attribution and the nearest TASK ancestor
-// of b's ParentID chain is taskID or a task in incomingTasks. A nearer TASK
+// task the payload keeps: b classifies as a comment (parser.IsCommentBlock —
+// the [comment::] marker or attribution) and the nearest TASK ancestor of b's
+// ParentID chain is taskID or a task in incomingTasks. A nearer TASK
 // ancestor outside the payload means the comment belongs to a sub-task the
 // editor deleted, so it goes away with it. The step cap mirrors hasAncestor's
 // cyclic-graph guard.

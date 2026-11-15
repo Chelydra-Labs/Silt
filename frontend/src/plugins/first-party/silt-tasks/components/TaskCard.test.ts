@@ -9,6 +9,8 @@ import userEvent from '@testing-library/user-event'
 import TaskCard from './TaskCard.svelte'
 import type { TaskDetail } from '../types'
 
+// comments_count is the derived count of comment blocks (marker or
+// attribution; #1159), not every NOTE descendant.
 function makeCard(overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {
     id: 'c1',
@@ -170,7 +172,7 @@ describe('TaskCard priority pill', () => {
   })
 })
 
-describe('TaskCard comment + notes indicators (#1152)', () => {
+describe('TaskCard comment indicator (#1152)', () => {
   afterEach(cleanup)
 
   it('renders the chat_bubble count badge when comments_count > 0', () => {
@@ -183,24 +185,25 @@ describe('TaskCard comment + notes indicators (#1152)', () => {
     )
   })
 
-  it('renders no comment badge and no notes indicator at 0', () => {
+  it('renders no comment badge at 0', () => {
     render(TaskCard, makeProps(makeCard({ comments_count: 0 })))
     expect(screen.queryByTestId('board-comments-badge-c1')).toBeNull()
-    expect(screen.queryByTestId('board-notes-badge-c1')).toBeNull()
     expect(
       document.querySelector('[data-card="c1"]')!.getAttribute('aria-label')
     ).not.toContain('comments')
   })
 
-  it('has-notes affordance is presence-only with an accessible name', () => {
+  it('never claims a notes state — comments get only the count badge', () => {
     render(TaskCard, makeProps(makeCard({ comments_count: 2 })))
-    const notes = screen.getByTestId('board-notes-badge-c1')
-    expect(notes).toHaveAttribute('role', 'img')
-    // Presence-only name — the card root name already announces the count.
-    expect(notes).toHaveAttribute('aria-label', 'Has notes')
-    expect(notes).toHaveAttribute('title', 'Has notes')
-    // Presence state — never a second numeric glyph repeating the count.
-    expect(notes.textContent?.trim()).toBe('edit_note')
+    // Prose sub-notes contribute no count, so "Has notes" derived from
+    // comments_count would be false for a comments-only task.
+    expect(screen.queryByTestId('board-notes-badge-c1')).toBeNull()
+    expect(document.querySelector('[title="Has notes"]')).toBeNull()
+    expect(screen.queryByText('edit_note')).toBeNull()
+    // The count badge is what carries the comment information.
+    expect(screen.getByTestId('board-comments-badge-c1').textContent).toContain(
+      '2'
+    )
   })
 
   it('announces comment presence in the card accessible name', () => {

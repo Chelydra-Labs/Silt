@@ -546,12 +546,13 @@ export interface PluginContext {
     page?: string
   }) => Promise<string>
   /**
-   * Append a timestamped comment to a task (#430). Composes a NOTE block with
-   * the body text plus [author:: NAME] and [ts:: YYYY-MM-DDTHH:MM:SS]
-   * attribution, spliced into the task's child sub-tree (so fetchSubtree
-   * re-hydrates author/timestamp on subsequent loads via the block_meta
-   * projection from #418/#37). Returns the new block's UUID. Gated by
-   * content-mutate (#156).
+   * Append a comment to a task (#430). Composes a NOTE block with the body
+   * text, the explicit [comment::] marker, [ts:: YYYY-MM-DDTHH:MM:SS] and —
+   * when an author is supplied — [author:: NAME], and splices it into the
+   * task's child sub-tree. `fetchSubtree` parses the page markdown, so later
+   * loads read author/timestamp from each block's own tokens; `block_meta` is
+   * not involved. Returns the new block's UUID. Gated by content-mutate
+   * (#156).
    *
    * parentCommentId nests the NOTE under an existing comment (#438). Omit or
    * pass undefined/empty for a top-level comment (direct child of the task).

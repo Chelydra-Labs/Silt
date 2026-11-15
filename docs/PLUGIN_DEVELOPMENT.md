@@ -1047,24 +1047,27 @@ the one-time migration writes them into `saved_views[]`.
 
 ### 9.2 Comment threads
 
-A child NOTE block indented under a TASK is that task's **comment** — the same
-parent/child hierarchy that powers the `comments_count` cache. Two
-Dataview-style tokens attribute the comment:
+A NOTE block is a **comment** when it carries the explicit `[comment::]`
+marker or comment attribution (`[author::]` and/or `[ts::]`, the permanent
+legacy fallback); every other NOTE block is a prose sub-note. Indentation
+does not classify — the hierarchy only decides which task owns the block:
 
 | Key | Format | Example |
 |---|---|---|
+| `comment` | `[comment::]` (marker) | `[comment::]` |
 | `author` | `[author:: NAME]` (free-form name) | `[author:: Dana]` |
 | `ts` | `[ts:: YYYY-MM-DDTHH:MM:SS]` (ISO 8601 local) | `[ts:: 2026-08-03T14:22:00]` |
 
-The Tasks hub renders these NOTE children as a thread inside the task's edit
-drawer (`components/CommentThread.svelte`); adding a comment appends a new
-NOTE child atomically (`ctx.addTaskComment` → `PluginAppendTaskComment` —
-one server-side lock hold, not the generic two-step write chain). The
-author comes from the per-vault `local_author` pref, edited in
-Settings → General → Comment author; an absent pref attributes from the
-OS account display name (`ctx.getLocalAuthor()`, display-only — nothing is
-persisted until saved), and an empty pref writes no `[author::]` token. The `block_meta`
-SQLite projection hydrates the `author`/`ts` tokens on `FetchSubtree` so the
-thread renders without a second round-trip. See SPECS §4.1 ("Comment
-attribution") for the token contract.
+The Tasks hub renders the comment blocks a task owns as a thread inside the
+task's edit drawer (`components/CommentThread.svelte`); adding a comment
+appends a new NOTE child atomically (`ctx.addTaskComment` →
+`PluginAppendTaskComment` — one server-side lock hold, not the generic
+two-step write chain) and marks it. The author comes from the per-vault
+`local_author` pref, edited in Settings → General → Comment author; an absent
+pref attributes from the OS account display name (`ctx.getLocalAuthor()`,
+display-only — nothing is persisted until saved), and an empty pref writes no
+`[author::]` token. Classification is reversible per block through
+`ctx.setBlockCommentClassification`; converting back to a sub-note clears the
+marker and the attribution. See SPECS §4.1 ("Comment classification") for the
+token contract and the count/thread parity rule.
 

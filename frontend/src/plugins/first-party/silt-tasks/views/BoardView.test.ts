@@ -200,6 +200,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
 // A row factory covering every TaskDetail field the query projects
 // (shortlist_rank included) so the card richness markup (priority stripe,
 // owner badge, blocked indicator) renders without coercion holes.
+// comments_count is the derived comment-block count (#1159), not a NOTE count.
 function row(p: Partial<Record<string, unknown>>): Record<string, unknown> {
   return {
     id: 'r',
@@ -1540,7 +1541,7 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     ).toMatch(/3h estimated/)
   })
 
-  it('keeps the comment badge and adds notes presence (#1152)', async () => {
+  it('keeps the comment badge without claiming notes presence (#1152)', async () => {
     await renderBoard('status', [
       row({
         id: 't1',
@@ -1553,11 +1554,9 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     expect(screen.getByTestId('board-comments-badge-t1').textContent).toContain(
       '2'
     )
-    expect(screen.getByTestId('board-notes-badge-t1')).toHaveAttribute(
-      'aria-label',
-      'Has notes'
-    )
-    // Nothing renders without NOTE content.
+    // Nothing renders without comment blocks (prose sub-notes add no count),
+    // and comments alone must not be dressed up as a notes state.
+    expect(screen.queryByTestId('board-notes-badge-t1')).toBeNull()
     expect(screen.queryByTestId('board-comments-badge-t2')).toBeNull()
     expect(screen.queryByTestId('board-notes-badge-t2')).toBeNull()
   })

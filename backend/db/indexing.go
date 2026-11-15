@@ -50,12 +50,15 @@ func firstBlockOccurrences(blocks []parser.ParsedBlock) []parser.ParsedBlock {
 
 // taskDerivedCounts precomputes per-task derived cache columns for one file's
 // block slice (#434 / #439 / comments descendants):
-//   - comments: ALL NOTE descendants under a task (walk ParentID until TASK)
+//   - comments: NOTE descendants under a task (walk ParentID until TASK) that
+//     parser.IsCommentBlock classifies as comments — the marker or the
+//     attribution fallback; unmarked, unattributed prose is a sub-note (#1159)
 //   - subtaskTotal / subtaskDone: direct TASK children only
 //
 // It is a pure consumer of the ParentID the parser's single validated
 // derivation (parser.DeriveHierarchy) assigned — no independent hierarchy
-// computation happens here.
+// computation happens here. The comment thread filters with the same
+// predicate, so comments_count and the thread's item set agree by construction.
 func taskDerivedCounts(blocks []parser.ParsedBlock) (comments, subtaskTotal, subtaskDone map[string]int) {
 	parentOf := make(map[string]string, len(blocks))
 	typeOf := make(map[string]parser.BlockType, len(blocks))
@@ -69,6 +72,10 @@ func taskDerivedCounts(blocks []parser.ParsedBlock) (comments, subtaskTotal, sub
 	for _, b := range blocks {
 		switch b.Type {
 		case parser.BlockNote:
+			if !parser.IsCommentBlock(b) {
+				// Prose sub-notes are editor content, not comments (#1159).
+				continue
+			}
 			// Nested replies: walk up until a TASK ancestor (or root).
 			// Depth-capped to match CommentThread's frontend guard and to
 			// survive a cyclic ParentID graph from SaveSubtreeBlocks /

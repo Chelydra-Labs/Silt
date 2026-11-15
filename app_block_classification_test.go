@@ -82,12 +82,31 @@ func TestSetBlockCommentClassification_ProseNoteBecomesComment(t *testing.T) {
 	classificationPage(t, app, page)
 	tok := classificationSession(t, app)
 
+	// The fixture's two attributed comments count; the prose note does not.
+	if got := taskCommentsCount(t, app, classTaskID); got != 2 {
+		t.Fatalf("pre-conversion comments_count = %d, want 2 (the marked + legacy comments, not the prose note)", got)
+	}
+	// The conversion emits block:changed, which is what makes the host
+	// re-query comments_count and refresh the badge without a reopen.
+	emitted := 0
+	app.eventEmit = func(name string, data ...any) {
+		if name == string(EventBlockChanged) {
+			emitted++
+		}
+	}
+
 	changed, err := app.PluginSetBlockCommentClassification("silt-tasks", tok, classNoteID, true)
 	if err != nil {
 		t.Fatalf("PluginSetBlockCommentClassification: %v", err)
 	}
 	if !changed {
 		t.Fatal("expected changed=true for a prose note converted to a comment")
+	}
+	if emitted != 1 {
+		t.Errorf("conversion emitted %d block:changed events, want 1 (the badge refresh path)", emitted)
+	}
+	if got := taskCommentsCount(t, app, classTaskID); got != 3 {
+		t.Errorf("post-conversion comments_count = %d, want 3 (the converted note now counts)", got)
 	}
 
 	disk := savedBlock(t, app, page, classifyFileDate, classNoteID)
@@ -134,12 +153,20 @@ func TestSetBlockCommentClassification_CommentBecomesProse(t *testing.T) {
 	classificationPage(t, app, page)
 	tok := classificationSession(t, app)
 
+	// Both attributed comments count before the reverse conversion.
+	if got := taskCommentsCount(t, app, classTaskID); got != 2 {
+		t.Fatalf("pre-conversion comments_count = %d, want 2 (the marked + legacy comments)", got)
+	}
+
 	changed, err := app.PluginSetBlockCommentClassification("silt-tasks", tok, classMarkedID, false)
 	if err != nil {
 		t.Fatalf("PluginSetBlockCommentClassification: %v", err)
 	}
 	if !changed {
 		t.Fatal("expected changed=true for a comment converted to a sub-note")
+	}
+	if got := taskCommentsCount(t, app, classTaskID); got != 1 {
+		t.Errorf("post-conversion comments_count = %d, want 1 (the converted comment no longer counts)", got)
 	}
 
 	disk := savedBlock(t, app, page, classifyFileDate, classMarkedID)
@@ -199,6 +226,10 @@ func TestSetBlockCommentClassification_AttributionOnlyCommentBecomesProse(t *tes
 	if parser.IsCommentBlock(*disk) {
 		t.Error("attribution-only comment still classifies as a comment after conversion")
 	}
+	// The marked comment is now the only counted one.
+	if got := taskCommentsCount(t, app, classTaskID); got != 1 {
+		t.Errorf("comments_count = %d, want 1 (only the marked comment remains)", got)
+	}
 }
 
 // Attribution-only comment + asComment=true is the one shape where the marker
@@ -237,6 +268,11 @@ func TestSetBlockCommentClassification_AttributionOnlyCommentGainsMarker(t *test
 		t.Errorf("marker not written alongside the surviving attribution:\n%s", saved)
 	}
 	wantPageOrder(t, app, page)
+
+	// It was a comment by attribution before and after, so the count is stable.
+	if got := taskCommentsCount(t, app, classTaskID); got != 2 {
+		t.Errorf("comments_count = %d, want 2 (the block already counted; the prose note does not)", got)
+	}
 
 	// A repeat is a no-op: the marker is explicit now, so nothing is rewritten.
 	sentinel := time.Now().Add(-2 * time.Hour).Truncate(time.Second)

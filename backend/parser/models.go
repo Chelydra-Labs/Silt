@@ -149,11 +149,12 @@ type ParsedBlock struct {
 	// into tasks.estimate_minutes; the raw string is the source of truth.
 	Estimate string `json:"estimate,omitempty"`
 	// Author is the comment attribution name on a NOTE block
-	// (`[author:: NAME]`, #418). NOTE-only: child NOTE blocks under a TASK
-	// model "comments" and this field records who wrote each one. Distinct
-	// from Owner (the task assignee) — `scanTaskTokens` has no `author` case
-	// by design so task queries never pick up comment attribution (disjoint
-	// token spaces). File-resident; SQLite caches in block_meta (#418).
+	// (`[author:: NAME]`, #418). NOTE-only, and half of the comment
+	// predicate: a NOTE carrying author and/or ts is a comment (the
+	// [comment::] marker is the other half). Distinct from Owner (the task
+	// assignee) — `scanTaskTokens` has no `author` case by design so task
+	// queries never pick up comment attribution (disjoint token spaces).
+	// File-resident; SQLite caches in block_meta (#418).
 	Author string `json:"author,omitempty"`
 	// Timestamp is the comment-attribution time on a NOTE block
 	// (`[ts:: YYYY-MM-DDTHH:MM:SS]`, ISO 8601 local, no timezone, #418).
@@ -464,10 +465,10 @@ type TaskResult struct {
 	// without the tokens (disjoint from the task-only Owner field).
 	Author    string `json:"author,omitempty"`
 	Timestamp string `json:"timestamp,omitempty"`
-	// CommentsCount is the number of indented child NOTE blocks beneath
-	// this task (the "comments on a task" UX from the Stitch reference).
-	// It is computed at index time from `blocks.parent_id` and cached on
-	// the task row in SQLite so the Kanban query can serve it in O(1).
+	// CommentsCount is the number of comment blocks beneath this task: NOTE
+	// descendants that IsCommentBlock classifies (marker or attribution) and
+	// whose nearest TASK ancestor is this task. Computed at index time and
+	// cached on the task row so the Kanban query can serve it in O(1).
 	CommentsCount int `json:"comments_count,omitempty"`
 	// LinksCount is the number of `((uuid))` block references in this
 	// task's body. Computed at index time from `blocks.raw_content` and
