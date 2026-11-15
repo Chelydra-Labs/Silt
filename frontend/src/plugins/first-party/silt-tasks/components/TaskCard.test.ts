@@ -29,6 +29,7 @@ function makeCard(overrides: Partial<TaskDetail> = {}): TaskDetail {
     progress: 0,
     recurrence: '',
     comments_count: 0,
+    has_subnotes: false,
     links_count: 0,
     created_at: '',
     completed_at: '',
@@ -213,5 +214,63 @@ describe('TaskCard comment indicator (#1152)', () => {
         name: 'Ship the shortlist, To Do, 2 comments.'
       })
     ).toBeTruthy()
+  })
+})
+
+describe('TaskCard sub-notes presence (#1173)', () => {
+  afterEach(cleanup)
+
+  function cardLabel(): string {
+    return document
+      .querySelector('[data-card="c1"]')!
+      .getAttribute('aria-label')!
+  }
+
+  it('renders a presence-only note glyph when the task has prose sub-notes', () => {
+    render(TaskCard, makeProps(makeCard({ has_subnotes: true })))
+    const badge = screen.getByTestId('board-subnotes-badge-c1')
+    // aria-label on a role-less span is dropped by AT — role is what exposes it.
+    expect(badge).toHaveAttribute('role', 'img')
+    expect(badge).toHaveAttribute('title', 'Has sub-notes')
+    expect(badge).toHaveAttribute('aria-label', 'Has sub-notes')
+    // Presence only: a glyph, never a number (the ligature name's digit aside).
+    expect(badge.textContent?.trim()).toBe('sticky_note_2')
+    expect(badge.textContent?.replace('sticky_note_2', '').trim()).toBe('')
+    const icon = badge.querySelector('.material-symbols-outlined')!
+    expect(icon).toHaveAttribute('aria-hidden', 'true')
+    // Shape carries the meaning: a note glyph, not the chat_bubble count cue.
+    expect(icon.textContent).toBe('sticky_note_2')
+    expect(cardLabel()).toBe('Ship the shortlist, To Do, has sub-notes.')
+  })
+
+  it('renders nothing when the task has no prose sub-notes', () => {
+    render(TaskCard, makeProps(makeCard({ has_subnotes: false })))
+    expect(screen.queryByTestId('board-subnotes-badge-c1')).toBeNull()
+    expect(cardLabel()).not.toContain('sub-notes')
+  })
+
+  it('comments alone keep the count badge and claim no sub-notes', () => {
+    render(TaskCard, makeProps(makeCard({ comments_count: 2 })))
+    const comments = screen.getByTestId('board-comments-badge-c1')
+    expect(comments.textContent).toContain('chat_bubble')
+    expect(comments.textContent).toContain('2')
+    expect(screen.queryByTestId('board-subnotes-badge-c1')).toBeNull()
+    expect(cardLabel()).toBe('Ship the shortlist, To Do, 2 comments.')
+  })
+
+  it('both present: both cues, distinct glyphs, count stays on the comment badge', () => {
+    render(
+      TaskCard,
+      makeProps(makeCard({ comments_count: 2, has_subnotes: true }))
+    )
+    const comments = screen.getByTestId('board-comments-badge-c1')
+    const notes = screen.getByTestId('board-subnotes-badge-c1')
+    expect(comments.textContent).toContain('chat_bubble')
+    expect(comments.textContent).toContain('2')
+    expect(notes.textContent?.trim()).toBe('sticky_note_2')
+    expect(notes.textContent?.replace('sticky_note_2', '').trim()).toBe('')
+    expect(cardLabel()).toBe(
+      'Ship the shortlist, To Do, 2 comments, has sub-notes.'
+    )
   })
 })

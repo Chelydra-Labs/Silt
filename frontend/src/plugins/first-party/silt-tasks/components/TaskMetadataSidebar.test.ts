@@ -114,6 +114,7 @@ function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
     progress: 0,
     recurrence: '',
     comments_count: 0,
+    has_subnotes: false,
     links_count: 0,
     created_at: '',
     completed_at: '',

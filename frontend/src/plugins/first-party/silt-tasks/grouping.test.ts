@@ -23,6 +23,7 @@ function row(overrides: Partial<TaskDetail> & { id: string }): TaskDetail {
     progress: overrides.progress ?? 0,
     recurrence: overrides.recurrence ?? '',
     comments_count: overrides.comments_count ?? 0,
+    has_subnotes: overrides.has_subnotes ?? false,
     links_count: overrides.links_count ?? 0,
     created_at: overrides.created_at ?? '',
     completed_at: overrides.completed_at ?? '',

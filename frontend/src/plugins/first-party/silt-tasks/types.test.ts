@@ -28,3 +28,22 @@ describe('coerceTaskRow — shortlist_rank (#1092)', () => {
     expect(row.shortlist_rank == null ? null : row.shortlist_rank).toBeNull()
   })
 })
+
+// has_subnotes is a 0/1 derived cache (#1173); TaskDetail exposes a real
+// boolean so views never render "presence" off a truthy SQL artefact.
+describe('coerceTaskRow — has_subnotes (#1173)', () => {
+  it('normalizes the SQL 1 to true', () => {
+    expect(coerceTaskRow({ id: 'a', has_subnotes: 1 }).has_subnotes).toBe(true)
+  })
+
+  it('normalizes the SQL 0 to false', () => {
+    expect(coerceTaskRow({ id: 'b', has_subnotes: 0 }).has_subnotes).toBe(false)
+  })
+
+  it('normalizes an absent/NULL column to false', () => {
+    expect(coerceTaskRow({ id: 'c' }).has_subnotes).toBe(false)
+    expect(coerceTaskRow({ id: 'd', has_subnotes: null }).has_subnotes).toBe(
+      false
+    )
+  })
+})

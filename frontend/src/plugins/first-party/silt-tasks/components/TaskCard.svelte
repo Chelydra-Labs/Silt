@@ -74,7 +74,7 @@
     aria-grabbed={dragging ? 'true' : 'false'}
     aria-current={selected ? 'true' : undefined}
     aria-keyshortcuts="Enter Shift+Enter Shift+F10"
-    aria-label={`${card.clean_content}, ${colLabel}${card.owner ? `, owner ${card.owner}` : ''}${card.due_date ? `, due ${card.due_date}` : ''}${card.pinned ? ', pinned' : ''}${card.shortlist_rank != null ? `, shortlist rank ${card.shortlist_rank}` : ''}${card.recurrence ? `, recurring ${card.recurrence}` : ''}${card.is_blocked ? ', blocked by unfinished prerequisite' : ''}${card.subtask_total > 0 ? `, ${card.subtask_done} of ${card.subtask_total} subtasks done` : ''}${card.comments_count > 0 ? `, ${card.comments_count} comments` : ''}.${dndEnabled ? ' Arrow keys change ' + groupBy + '.' : ''}`}
+    aria-label={`${card.clean_content}, ${colLabel}${card.owner ? `, owner ${card.owner}` : ''}${card.due_date ? `, due ${card.due_date}` : ''}${card.pinned ? ', pinned' : ''}${card.shortlist_rank != null ? `, shortlist rank ${card.shortlist_rank}` : ''}${card.recurrence ? `, recurring ${card.recurrence}` : ''}${card.is_blocked ? ', blocked by unfinished prerequisite' : ''}${card.subtask_total > 0 ? `, ${card.subtask_done} of ${card.subtask_total} subtasks done` : ''}${card.comments_count > 0 ? `, ${card.comments_count} comments` : ''}${card.has_subnotes ? ', has sub-notes' : ''}.${dndEnabled ? ' Arrow keys change ' + groupBy + '.' : ''}`}
     draggable={dndEnabled ? 'true' : 'false'}
     class="task-card group relative overflow-hidden rounded-lg border border-surface-card-border bg-surface-card p-3 pl-3.5 shadow-sm transition-all duration-200 hover:-translate-y-px hover:border-border-active hover:bg-hover hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-border-focus {dndEnabled
       ? 'cursor-grab active:cursor-grabbing'
@@ -203,6 +203,22 @@
               >chat_bubble</span
             >
             {card.comments_count}
+          </span>
+        {/if}
+        {#if card.has_subnotes}
+          <!-- Presence only — no count, and a note glyph so it can't be read
+               as the counted chat_bubble comment badge. -->
+          <span
+            class="text-type-3xs text-text-muted font-label-sm flex items-center gap-0.5"
+            role="img"
+            data-testid={`board-subnotes-badge-${card.id}`}
+            title="Has sub-notes"
+            aria-label="Has sub-notes"
+          >
+            <span
+              class="material-symbols-outlined text-icon-xs"
+              aria-hidden="true">sticky_note_2</span
+            >
           </span>
         {/if}
         {#if card.links_count > 0}

@@ -112,6 +112,7 @@ func (dm *DatabaseManager) initSchema() error {
 		progress INTEGER DEFAULT 0,         -- 0-100; file-resident user intent (cached for query speed)
 		recur TEXT,                         -- recurrence rule (e.g. 'every week'); NULL for one-off tasks (#296)
 		comments_count INTEGER DEFAULT 0,   -- count of NOTE descendants under the task that parser.IsCommentBlock classifies as comments (marker or attribution; derived cache) (#1159)
+		has_subnotes INTEGER DEFAULT 0,     -- 1 = the task owns at least one prose NOTE descendant under the nearest-TASK ownership rule (the comment predicate's complement; derived cache) (#1173)
 		links_count INTEGER DEFAULT 0,      -- count of ((uuid)) refs in raw_content (derived cache)
 		created_at TEXT,                    -- ISO 8601 local [created::] timestamp; NULL when absent (no backfill) (#417)
 		completed_at TEXT,                  -- ISO 8601 local [completed::] timestamp; NULL when not DONE (no backfill) (#417)
@@ -139,6 +140,10 @@ func (dm *DatabaseManager) initSchema() error {
 		{"recur", "TEXT"}, // nullable, no default — NULL for one-off tasks
 		{"comments_count", "INTEGER DEFAULT 0"},
 		{"links_count", "INTEGER DEFAULT 0"},
+		// #1173 prose sub-note presence: the complement of the comments
+		// predicate, derived from the same nearest-TASK walk. 0 means
+		// "no prose note" for pre-migration rows; a re-index repopulates it.
+		{"has_subnotes", "INTEGER DEFAULT 0"},
 		// #417 task lifecycle metadata: nullable caches re-derivable from
 		// the [created::], [completed::], [order::] markdown tokens. NULL
 		// means "token absent" (no backfill of pre-existing tasks). The

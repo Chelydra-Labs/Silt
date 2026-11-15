@@ -32,7 +32,7 @@ func TestTaskDerivedCounts_IndentedNoteReply(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ParseFileContent failed: %v", err)
 		}
-		comments, _, _ := taskDerivedCounts(blocks)
+		comments, _, _, _ := taskDerivedCounts(blocks)
 		if got := comments[hierarchyTaskID]; got != 1 {
 			t.Errorf("comments[%s] = %d, want 1 (the indented comment reply)", hierarchyTaskID, got)
 		}
@@ -42,7 +42,7 @@ func TestTaskDerivedCounts_IndentedNoteReply(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ParseFileContent failed: %v", err)
 		}
-		comments, _, _ := taskDerivedCounts(blocks)
+		comments, _, _, _ := taskDerivedCounts(blocks)
 		if got := comments[hierarchyTaskID]; got != 1 {
 			t.Errorf("comments[%s] = %d, want 1 (orphan reply must resolve to the task), reply ParentID = %q",
 				hierarchyTaskID, got, blockParentID(blocks, hierarchyReplyID))
@@ -76,7 +76,7 @@ func TestTaskDerivedCounts_SubtaskOwnsItsComments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseFileContent failed: %v", err)
 	}
-	comments, _, _ := taskDerivedCounts(blocks)
+	comments, _, _, _ := taskDerivedCounts(blocks)
 	if got := comments[parentTaskID]; got != 2 {
 		t.Errorf("comments[%s] = %d, want 2 (its own attributed comment + marked reply, not the sub-task's, not the prose note)", parentTaskID, got)
 	}
@@ -113,7 +113,7 @@ func TestTaskDerivedCounts_ClassifiesByPredicate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseFileContent failed: %v", err)
 	}
-	comments, _, _ := taskDerivedCounts(blocks)
+	comments, _, _, _ := taskDerivedCounts(blocks)
 	if got := comments[taskID]; got != 3 {
 		t.Errorf("comments[%s] = %d, want 3 (marker + both attribution fallbacks; the prose note is a sub-note)", taskID, got)
 	}
@@ -146,7 +146,7 @@ func TestTaskDerivedCounts_RegionUnderTaskUnaffected(t *testing.T) {
 	if got := blockParentID(blocks, regionID); got != hierarchyTaskID {
 		t.Fatalf("region ParentID = %q, want the task %q (the region is in the task's sub-tree)", got, hierarchyTaskID)
 	}
-	comments, subtaskTotal, _ := taskDerivedCounts(blocks)
+	comments, subtaskTotal, _, _ := taskDerivedCounts(blocks)
 	if got := comments[hierarchyTaskID]; got != 1 {
 		t.Errorf("comments[%s] = %d, want 1 (the NOTE reply only — the CODE region is not a comment)", hierarchyTaskID, got)
 	}

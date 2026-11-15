@@ -106,6 +106,7 @@ function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
     progress: 0,
     recurrence: '',
     comments_count: 0,
+    has_subnotes: false,
     links_count: 0,
     // #417: new [created::]/[completed::]/[order::] fields default to
     // empty/0 (the pre-existing-task case).

@@ -178,9 +178,11 @@ interface TaskRow {
   manual_order?: number
   shortlist_rank?: number | null
   comments_count: number
+  has_subnotes?: number
 }
 
-// comments_count is the derived comment-block count (#1159), not a NOTE count.
+// comments_count is the derived comment-block count (#1159); has_subnotes is
+// the presence-only complement — prose sub-notes, not comments (#1173).
 function task(
   id: string,
   content: string,
@@ -1986,6 +1988,142 @@ describe('ListView — comment badge + edit_note affordance (#1152)', () => {
     expect(notesButton('c1').getAttribute('aria-label')).toBe(
       'Edit notes for Discussed task'
     )
+  })
+})
+
+describe('ListView — sub-notes presence (#1173)', () => {
+  beforeEach(() => {
+    resetTaskHubState()
+    mocks.sqliteQuery.mockReset()
+    mocks.blockChangedCallbacks.length = 0
+  })
+  afterEach(cleanup)
+
+  async function renderRows(rows: TaskRow[]): Promise<void> {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) return { rows, truncated: false }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+  }
+
+  it('marks the notes affordance present without hover or a breakpoint gate', async () => {
+    await renderRows([task('n1', 'Noted task', { has_subnotes: 1 })])
+    const notes = screen.getByTestId('tasks-notes-n1')
+    // The row no longer hides the affordance below `sm`, so presence is
+    // perceivable at every width the row serves.
+    expect(notes.className).not.toMatch(/(^|\s)hidden(\s|$)/)
+    expect(notes.className).not.toMatch(/(^|\s)sm:block(\s|$)/)
+    // Presence reads at rest: full ink plus owned chrome, no hover required.
+    expect(notes).toHaveAttribute('data-has-subnotes', 'true')
+    expect(notes.className).toMatch(/(^|\s)opacity-100(\s|$)/)
+    expect(notes.className).toMatch(/(^|\s)bg-surface-panel(\s|$)/)
+    expect(notes.className).toMatch(/(^|\s)text-text-primary(\s|$)/)
+    // Action name keeps its verb and gains truthful state.
+    expect(notes.getAttribute('aria-label')).toBe(
+      'Edit notes for Noted task, has sub-notes'
+    )
+    expect(notes.getAttribute('title')).toContain('has sub-notes')
+    // Presence only — never a count.
+    expect(notes.textContent?.trim()).toBe('edit_note')
+    expect(notes.textContent).not.toMatch(/\d/)
+    const icon = notes.querySelector('.material-symbols-outlined')!
+    expect(icon).toHaveAttribute('aria-hidden', 'true')
+    // The presence is carried by owned chrome (ring + panel fill) at rest,
+    // not by hover or color alone.
+    expect(notes.className).toMatch(/(^|\s)ring-1(\s|$)/)
+  })
+
+  it('keeps the affordance quiet when the task has no sub-notes', async () => {
+    await renderRows([task('n2', 'Plain task')])
+    const notes = screen.getByTestId('tasks-notes-n2')
+    expect(notes.className).toMatch(/(^|\s)opacity-40(\s|$)/)
+    expect(notes.className).not.toMatch(/(^|\s)opacity-100(\s|$)/)
+    expect(notes).not.toHaveAttribute('data-has-subnotes')
+    expect(notes.getAttribute('aria-label')).toBe('Edit notes for Plain task')
+    expect(notes.getAttribute('title')).toBe('Open sub-editor (Shift+Enter)')
+    expect(
+      document.querySelector('[data-block-id="n2"]')!.innerHTML
+    ).not.toContain('sub-notes')
+  })
+
+  it('comments alone show the count badge and claim no sub-notes', async () => {
+    await renderRows([task('n3', 'Discussed task', { comments_count: 2 })])
+    const badge = screen.getByTestId('tasks-comment-badge-n3')
+    expect(badge.textContent).toContain('chat_bubble')
+    expect(badge.textContent).toContain('2')
+    const notes = screen.getByTestId('tasks-notes-n3')
+    expect(notes).not.toHaveAttribute('data-has-subnotes')
+    expect(notes.getAttribute('aria-label')).toBe(
+      'Edit notes for Discussed task'
+    )
+    expect(
+      document.querySelector('[data-block-id="n3"]')!.innerHTML
+    ).not.toContain('sub-notes')
+  })
+
+  it('both present: both cues, distinct glyphs, count stays on the badge', async () => {
+    await renderRows([
+      task('n4', 'Noted and discussed', { comments_count: 3, has_subnotes: 1 })
+    ])
+    const badge = screen.getByTestId('tasks-comment-badge-n4')
+    const notes = screen.getByTestId('tasks-notes-n4')
+    expect(badge).toHaveAttribute('role', 'img')
+    expect(badge.textContent).toContain('chat_bubble')
+    expect(badge.textContent).toContain('3')
+    expect(notes.tagName).toBe('BUTTON')
+    expect(notes).toHaveAttribute('data-has-subnotes', 'true')
+    expect(notes.getAttribute('aria-label')).toBe(
+      'Edit notes for Noted and discussed, has sub-notes'
+    )
+    // The note affordance stays numeral-free; the badge owns the count.
+    expect(notes.textContent).not.toMatch(/\d/)
+    expect(badge.textContent).not.toContain('edit_note')
+  })
+
+  describe('completed rows', () => {
+    // The done query is the canonical projection too, so presence survives the
+    // cast into the narrower CompletedTaskItem and must render in history.
+    async function renderCompleted(rows: TaskRow[]): Promise<void> {
+      mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+        if (isDoneSql(sql)) return { rows, truncated: false }
+        return { rows: [], truncated: false }
+      })
+      render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+      await flush()
+      await fireEvent.click(screen.getByTestId('tasks-completed-toggle'))
+      await flush()
+    }
+
+    it('renders the presence cue on a completed row with sub-notes', async () => {
+      await renderCompleted([
+        task('d1', 'done with notes', { status: 'DONE', has_subnotes: 1 })
+      ])
+      const cue = screen.getByTestId('tasks-completed-subnotes-d1')
+      expect(cue).toHaveAttribute('role', 'img')
+      expect(cue).toHaveAttribute('aria-label', 'Has sub-notes')
+      expect(cue).toHaveAttribute('title', 'Has sub-notes')
+      const icon = cue.querySelector('.material-symbols-outlined')!
+      expect(icon).toHaveAttribute('aria-hidden', 'true')
+      // Presence only — the cue is the bare glyph, never a count.
+      expect(cue.textContent?.trim()).toBe('sticky_note_2')
+      // Distinct from any comment badge.
+      expect(cue.textContent).not.toContain('chat_bubble')
+      const row = document.querySelector<HTMLElement>('[data-block-id="d1"]')!
+      expect(row.contains(cue)).toBe(true)
+    })
+
+    it('renders no presence cue on a completed row without sub-notes', async () => {
+      await renderCompleted([
+        task('d2', 'done plain', { status: 'DONE', has_subnotes: 0 })
+      ])
+      expect(screen.queryByTestId('tasks-completed-subnotes-d2')).toBeNull()
+      const row = document.querySelector<HTMLElement>('[data-block-id="d2"]')!
+      expect(row).toBeInTheDocument()
+      expect(row.querySelector('[title="Has sub-notes"]')).toBeNull()
+      expect(row.innerHTML).not.toContain('sticky_note_2')
+    })
   })
 })
 

@@ -365,6 +365,66 @@ func TestSetBlockCommentClassification_IdempotentRepeatDoesNotRewrite(t *testing
 	}
 }
 
+// taskHasSubnotes reads the derived has_subnotes cache for a task row (the
+// presence half of the comment/sub-note derivation).
+func taskHasSubnotes(t *testing.T, app *App, taskID string) bool {
+	t.Helper()
+	var n int
+	if err := app.db.SQLDB().QueryRow(
+		`SELECT has_subnotes FROM tasks WHERE block_id = ?`, taskID,
+	).Scan(&n); err != nil {
+		t.Fatalf("query has_subnotes for %s: %v", taskID, err)
+	}
+	return n != 0
+}
+
+// A conversion is a classification move, so the two derived caches must flip in
+// opposite directions together: they are the two halves of one predicate read
+// in one index pass (AC4). The explicit re-index at the end pins that both
+// columns are a pure function of the classification, not of the write path.
+func TestSetBlockCommentClassification_FlipsDerivedCachesTogether(t *testing.T) {
+	app := newTestApp(t)
+	page := "ClassifyFlipBoth"
+	classificationPage(t, app, page)
+	tok := classificationSession(t, app)
+
+	// Fixture: two comments and one prose note under the task.
+	if got, sub := taskCommentsCount(t, app, classTaskID), taskHasSubnotes(t, app, classTaskID); got != 2 || !sub {
+		t.Fatalf("pre-conversion comments_count=%d has_subnotes=%v, want 2/true", got, sub)
+	}
+
+	// Prose → comment: the block leaves the sub-notes column and joins the
+	// comment count.
+	if changed, err := app.PluginSetBlockCommentClassification("silt-tasks", tok, classNoteID, true); err != nil || !changed {
+		t.Fatalf("convert to comment: changed=%v err=%v", changed, err)
+	}
+	if got, sub := taskCommentsCount(t, app, classTaskID), taskHasSubnotes(t, app, classTaskID); got != 3 || sub {
+		t.Errorf("after convert-to-comment: comments_count=%d has_subnotes=%v, want 3/false", got, sub)
+	}
+
+	// Comment → sub-note: the inverse, with neither column left stale.
+	if changed, err := app.PluginSetBlockCommentClassification("silt-tasks", tok, classNoteID, false); err != nil || !changed {
+		t.Fatalf("convert back to sub-note: changed=%v err=%v", changed, err)
+	}
+	if got, sub := taskCommentsCount(t, app, classTaskID), taskHasSubnotes(t, app, classTaskID); got != 2 || !sub {
+		t.Errorf("after convert-to-sub-note: comments_count=%d has_subnotes=%v, want 2/true", got, sub)
+	}
+
+	// Re-index the page as a rescan would: the caches agree with the markdown
+	// source of truth rather than with whatever the last write left behind.
+	content := mustReadTaskFile(t, app, classifyNotebook, classifySection, page)
+	blocks, meta, _, _, err := parser.ParseFileContent(content, classifyNotebook, classifySection, page, classifyFileDate, app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+	if got, sub := taskCommentsCount(t, app, classTaskID), taskHasSubnotes(t, app, classTaskID); got != 2 || !sub {
+		t.Errorf("after re-index: comments_count=%d has_subnotes=%v, want 2/true", got, sub)
+	}
+}
+
 func TestSetBlockCommentClassification_RejectsNonNote(t *testing.T) {
 	app := newTestApp(t)
 	page := "ClassifyNonNote"

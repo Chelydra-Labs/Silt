@@ -76,7 +76,9 @@
   }: Props = $props()
 
   // Completed rows are display-only; a narrower shape than the open-task
-  // TaskDetail (which the edit drawer requires).
+  // TaskDetail (which the edit drawer requires). The done query is the same
+  // canonical projection, so presence rides along as the raw SQLite 0/1 (these
+  // rows are cast, not run through coerceTaskRow).
   interface CompletedTaskItem {
     id: string
     notebook: string
@@ -85,6 +87,7 @@
     file_date: string
     clean_content: string
     status: string
+    has_subnotes?: number
   }
 
   let openItems = $state<TaskDetail[]>([])
@@ -995,15 +998,23 @@
     />
     <button
       type="button"
-      title="Open sub-editor (Shift+Enter)"
-      aria-label={`Edit notes for ${item.clean_content}`}
+      title={item.has_subnotes
+        ? 'Open sub-editor (Shift+Enter) — has sub-notes'
+        : 'Open sub-editor (Shift+Enter)'}
+      aria-label={`Edit notes for ${item.clean_content}${item.has_subnotes ? ', has sub-notes' : ''}`}
       onclick={(e) => {
         e.stopPropagation()
         openSubEditor(item)
       }}
-      class="hidden opacity-40 hover:opacity-100 focus-visible:opacity-100 text-text-muted hover:text-accent-primary-start transition-all p-1 rounded border-none bg-transparent cursor-pointer flex-shrink-0 sm:block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
+      class="flex-shrink-0 cursor-pointer rounded-md border-none p-1 transition-all hover:text-accent-primary-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus {item.has_subnotes
+        ? 'bg-surface-panel text-text-primary opacity-100 ring-1 ring-surface-panel-border'
+        : 'bg-transparent text-text-muted opacity-40 hover:opacity-100 focus-visible:opacity-100'}"
+      data-has-subnotes={item.has_subnotes ? 'true' : undefined}
+      data-testid={`tasks-notes-${item.id}`}
     >
-      <span class="material-symbols-outlined text-icon-md">edit_note</span>
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >edit_note</span
+      >
     </button>
     {#if item.subtask_total > 0}
       <span
@@ -1016,9 +1027,8 @@
       >
     {/if}
     {#if item.comments_count > 0}
-      <!-- The derived comment count is this list's only NOTE-side indicator.
-           The edit_note button above is action-only: prose sub-notes contribute
-           no count, so keying it off this column would claim notes falsely. -->
+      <!-- This badge is the comment count only. Prose sub-notes have no count;
+           their presence shows on the edit_note affordance above. -->
       <span
         class="inline-flex items-center gap-0.5 text-type-2xs text-text-muted font-label-sm flex-shrink-0"
         role="img"
@@ -1427,6 +1437,22 @@
                           </div>
                         {/if}
                       </div>
+                      {#if item.has_subnotes}
+                        <!-- Presence only (no count), and a note glyph so it
+                             can't be read as the counted chat_bubble badge. -->
+                        <span
+                          class="text-type-2xs text-text-muted font-label-sm flex items-center gap-0.5 flex-shrink-0"
+                          role="img"
+                          data-testid={`tasks-completed-subnotes-${item.id}`}
+                          title="Has sub-notes"
+                          aria-label="Has sub-notes"
+                        >
+                          <span
+                            class="material-symbols-outlined text-icon-xs"
+                            aria-hidden="true">sticky_note_2</span
+                          >
+                        </span>
+                      {/if}
                       <span
                         class="text-type-2xs text-text-muted font-label-sm flex-shrink-0"
                         >{item.file_date}</span
