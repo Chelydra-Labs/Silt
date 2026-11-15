@@ -568,6 +568,19 @@ export interface PluginContext {
     opts: { after?: string; notebook?: string; section?: string; page?: string }
   ) => Promise<boolean>
   /**
+   * Classify a NOTE block explicitly (#1159). `asComment` true writes the
+   * `[comment::]` marker (prose sub-note → comment); false removes the marker
+   * AND the `[author::]`/`[ts::]` attribution, because attribution is a
+   * permanent comment fallback — converting back to a sub-note discards who
+   * wrote the comment and when. Only NOTE blocks are accepted. Returns false
+   * (and writes nothing) when the block already has that classification.
+   * Gated by content-mutate (#156).
+   */
+  setBlockCommentClassification: (
+    uuid: string,
+    asComment: boolean
+  ) => Promise<boolean>
+  /**
    * Apply a batch of create/delete/move ops in a single coalesced write pass.
    * Gated by content-mutate (#156). Each op mirrors createBlock/deleteBlock/
    * moveBlock. Returns true on success.

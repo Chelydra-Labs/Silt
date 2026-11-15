@@ -42,6 +42,7 @@ import {
   PluginCreateBlock,
   PluginDeleteBlock,
   PluginMoveBlock,
+  PluginSetBlockCommentClassification,
   PluginApplyBlocks,
   PluginCreatePage,
   PluginCreateSection,
@@ -573,6 +574,16 @@ export function makePluginContext(
         opts.section ?? '',
         opts.page ?? ''
       ).then(() => true),
+    // Explicit NOTE classification (#1159). The reverse direction clears the
+    // marker and [author::]/[ts::] server-side — attribution is a permanent
+    // comment fallback, so a sub-note cannot keep it.
+    setBlockCommentClassification: (uuid, asComment) =>
+      PluginSetBlockCommentClassification(
+        pluginID,
+        sessionToken ?? '',
+        uuid,
+        asComment
+      ),
 
     // --- Batch block ops (#104) — gated by content-mutate (#156) ------------
     applyBlocks: (ops) =>
