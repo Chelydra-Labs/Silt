@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within
+} from '@testing-library/svelte'
 import { tick } from 'svelte'
 import SidebarQuickAccess from './SidebarQuickAccess.svelte'
 
@@ -76,6 +82,57 @@ describe('SidebarQuickAccess', () => {
       props: { ...baseProps, loading: true }
     })
     expect(screen.getByText('Loading saved pages…')).toBeInTheDocument()
+  })
+
+  it('exposes pressed state and a structural mark only for pinned rows', () => {
+    const pinnedPage = { notebook: 'Work', section: '', page: 'Pinned page' }
+    const pinnedRecent = {
+      notebook: 'Work',
+      section: '',
+      page: 'Inbox',
+      opened_at: 10
+    }
+    const unpinnedRecent = {
+      notebook: 'Work',
+      section: '',
+      page: 'Loose',
+      opened_at: 9
+    }
+    render(SidebarQuickAccess, {
+      props: {
+        ...baseProps,
+        favorites: [pinnedPage, pinnedRecent],
+        recents: [pinnedRecent, unpinnedRecent]
+      }
+    })
+
+    const staticPin = screen.getByRole('button', {
+      name: 'Unpin Pinned page from Quick Access'
+    })
+    expect(staticPin).toHaveAttribute('aria-pressed', 'true')
+    expect(
+      within(staticPin).getByTestId('quick-access-pin-mark')
+    ).toBeInTheDocument()
+
+    // The recent row and its Pinned-section twin share an accessible name.
+    const recentPins = screen.getAllByRole('button', {
+      name: 'Unpin Inbox from Quick Access'
+    })
+    expect(recentPins).toHaveLength(2)
+    for (const btn of recentPins) {
+      expect(btn).toHaveAttribute('aria-pressed', 'true')
+      expect(btn).toHaveAttribute('data-pinned', 'true')
+      expect(
+        within(btn).getByTestId('quick-access-pin-mark')
+      ).toBeInTheDocument()
+    }
+
+    const unpinned = screen.getByRole('button', {
+      name: 'Pin Loose to Quick Access'
+    })
+    expect(unpinned).toHaveAttribute('aria-pressed', 'false')
+    expect(unpinned).toHaveAttribute('data-pinned', 'false')
+    expect(within(unpinned).queryByTestId('quick-access-pin-mark')).toBeNull()
   })
 
   it('announces an error and retries without replacing the panel', async () => {
