@@ -201,6 +201,86 @@ func TestSetBlockCommentClassification_AttributionOnlyCommentBecomesProse(t *tes
 	}
 }
 
+// Attribution-only comment + asComment=true is the one shape where the marker
+// field and the shared IsCommentBlock predicate disagree: the block already
+// classifies as a comment, but the explicit [comment::] marker is still
+// missing, so this must be a real write that adds the marker and keeps the
+// attribution — not a no-op. Pinned because switching the idempotency check to
+// the predicate would silently drop the write (and with it the sub-editor's
+// "the block leaves the doc" guarantee).
+func TestSetBlockCommentClassification_AttributionOnlyCommentGainsMarker(t *testing.T) {
+	app := newTestApp(t)
+	page := "ClassifyLegacyToComment"
+	path := classificationPage(t, app, page)
+	tok := classificationSession(t, app)
+
+	changed, err := app.PluginSetBlockCommentClassification("silt-tasks", tok, classLegacyID, true)
+	if err != nil || !changed {
+		t.Fatalf("attribution-only + asComment=true: changed=%v err=%v (want true, nil)", changed, err)
+	}
+
+	disk := savedBlock(t, app, page, classifyFileDate, classLegacyID)
+	if disk == nil {
+		t.Fatal("converted block missing from disk")
+	}
+	if !disk.IsComment {
+		t.Error("expected the [comment::] marker on disk")
+	}
+	if disk.Author != "Ash" || disk.Timestamp != "2026-07-06T09:00:00" {
+		t.Errorf("attribution changed: author=%q ts=%q", disk.Author, disk.Timestamp)
+	}
+	if disk.CleanText != "legacy body" {
+		t.Errorf("body changed: %q", disk.CleanText)
+	}
+	saved := mustReadTaskFile(t, app, classifyNotebook, classifySection, page)
+	if !strings.Contains(saved, "[comment::] [author:: Ash] [ts:: 2026-07-06T09:00:00]") {
+		t.Errorf("marker not written alongside the surviving attribution:\n%s", saved)
+	}
+	wantPageOrder(t, app, page)
+
+	// A repeat is a no-op: the marker is explicit now, so nothing is rewritten.
+	sentinel := time.Now().Add(-2 * time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(path, sentinel, sentinel); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+	changed, err = app.PluginSetBlockCommentClassification("silt-tasks", tok, classLegacyID, true)
+	if err != nil || changed {
+		t.Fatalf("repeat: changed=%v err=%v (want false, nil)", changed, err)
+	}
+	if after := mustReadTaskFile(t, app, classifyNotebook, classifySection, page); after != saved {
+		t.Errorf("repeat rewrote the file:\nbefore:\n%s\nafter:\n%s", saved, after)
+	}
+	if stat, err := os.Stat(path); err != nil || !stat.ModTime().Equal(sentinel) {
+		t.Errorf("repeat touched the file: mtime=%v err=%v want %v", stat, err, sentinel)
+	}
+}
+
+// Marker-only comment + asComment=true is already a comment by both readings:
+// (false, nil) and no write.
+func TestSetBlockCommentClassification_MarkedCommentRepeatIsNoOp(t *testing.T) {
+	app := newTestApp(t)
+	page := "ClassifyMarkedRepeat"
+	path := classificationPage(t, app, page)
+	tok := classificationSession(t, app)
+
+	sentinel := time.Now().Add(-2 * time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(path, sentinel, sentinel); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+	before := mustReadTaskFile(t, app, classifyNotebook, classifySection, page)
+
+	changed, err := app.PluginSetBlockCommentClassification("silt-tasks", tok, classMarkedID, true)
+	if err != nil || changed {
+		t.Fatalf("marked comment + asComment=true: changed=%v err=%v (want false, nil)", changed, err)
+	}
+	if after := mustReadTaskFile(t, app, classifyNotebook, classifySection, page); after != before {
+		t.Errorf("no-op rewrote the file:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	if stat, err := os.Stat(path); err != nil || !stat.ModTime().Equal(sentinel) {
+		t.Errorf("no-op touched the file: mtime=%v err=%v want %v", stat, err, sentinel)
+	}
+}
+
 // A repeat is a no-op: (false, nil) and the file is not rewritten (mtime is
 // left at the sentinel we set, so a rewrite cannot hide behind coarse
 // filesystem timestamps).

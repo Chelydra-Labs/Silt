@@ -92,6 +92,11 @@
   let unsavedChanges = $state(false)
   let saveError = $state('')
   let saving = $state(false)
+  // Set when a conversion wrote to disk but the following reload failed. The
+  // editor doc then still holds the converted block as unmarked prose, and
+  // saving it would splice that copy over the marker on disk (caller-supplied
+  // content wins), silently undoing the conversion.
+  let docStaleAfterConvert = $state(false)
   let saveTimer: ReturnType<typeof setTimeout> | null = null
   let saveRequested = false
   let pendingSnapshot: ParsedBlock[] | null = null
@@ -171,12 +176,16 @@
     })
   )
 
-  async function loadSubtree() {
+  // Returns whether the editor document now reflects disk. Callers that act on
+  // the reload (the conversion) must not infer success from a resolved promise:
+  // the fetch failure is captured in loadError, and a torn-down editor skips
+  // the update entirely.
+  async function loadSubtree(): Promise<boolean> {
     loading = true
     loadError = ''
     try {
       const subtree = await ctx.fetchSubtree(blockId)
-      if (!editorInstance || editorInstance.isDestroyed) return
+      if (!editorInstance || editorInstance.isDestroyed) return false
       suppressUpdate = true
       try {
         const safeSubtree = (subtree ?? []) as ParsedBlock[]
@@ -203,8 +212,13 @@
         suppressUpdate = false
       }
       unsavedChanges = false
+      // The doc matches disk again, so a stale-after-conversion doc is no
+      // longer a save hazard.
+      docStaleAfterConvert = false
+      return true
     } catch (e) {
       loadError = e instanceof Error ? e.message : String(e)
+      return false
     } finally {
       loading = false
     }
@@ -229,6 +243,9 @@
   }
 
   async function persist() {
+    // Single veto for every save trigger (debounce, close drain, retry): a doc
+    // left stale by a failed post-conversion reload must never reach disk.
+    if (docStaleAfterConvert) return
     if (!editorInstance || editorInstance.isDestroyed) return
     if (saving) {
       saveRequested = true
@@ -291,7 +308,7 @@
   }
 
   function retrySave(): void {
-    if (saving) return
+    if (saving || docStaleAfterConvert) return
     saveError = ''
     void persist()
   }
@@ -349,6 +366,28 @@
 
   let activeNoteId = $derived(findActiveNoteId(selectionVersion))
 
+  // Read-only is the visible half of the stale guard: the doc must not accept
+  // keystrokes while it disagrees with disk. The flip is silent (no update
+  // event): the doc did not change, so it must not arm an autosave.
+  function applyEditable() {
+    const ed = editorInstance
+    if (!ed || ed.isDestroyed) return
+    const editable = !docStaleAfterConvert
+    if (ed.isEditable === editable) return
+    ed.setEditable(editable, false)
+  }
+
+  // The way out of a failed load/conversion reload: re-read the subtree. On
+  // success loadSubtree clears the stale flag and loadError, and editing
+  // resumes on a doc that matches disk.
+  async function retryLoad() {
+    if (loading) return
+    if (await loadSubtree()) {
+      convertError = ''
+    }
+    applyEditable()
+  }
+
   async function convertActiveNoteToComment() {
     const noteId = activeNoteId
     if (!noteId || converting) return
@@ -371,8 +410,16 @@
       }
       const changed = await ctx.setBlockCommentClassification(noteId, true)
       // Reload so the converted block leaves the editor document; it now
-      // belongs to the task's comment thread.
-      await loadSubtree()
+      // belongs to the task's comment thread. A failed or skipped reload
+      // leaves the block in the doc as unmarked prose, so that doc must be
+      // reported as a failure rather than a success.
+      if (!(await loadSubtree())) {
+        docStaleAfterConvert = true
+        convertError = changed
+          ? 'Note converted to a comment on disk, but the editor could not refresh. Saving from this view would undo the conversion — reload the sub-notes, or reopen the sub-editor.'
+          : 'The editor could not refresh after the conversion. Saving from this view would undo its comment state — reload the sub-notes, or reopen the sub-editor.'
+        return
+      }
       convertMessage = changed
         ? 'Note converted to a comment; it now shows in the comment thread.'
         : 'This note was already a comment.'
@@ -380,7 +427,7 @@
       convertError = friendlyCaughtError(e)
     } finally {
       converting = false
-      if (ed && !ed.isDestroyed) ed.setEditable(true)
+      applyEditable()
     }
   }
 
@@ -447,7 +494,11 @@
     document.body.style.overflow = 'hidden'
     if (!initialTask) void loadTaskDetail()
     return () => {
-      void drainSave()
+      // Drain before clearing the stale flag: persist() vetoes on it, so
+      // clearing first could let a stale doc reach disk on the way out.
+      void drainSave().finally(() => {
+        docStaleAfterConvert = false
+      })
       document.body.style.overflow = prevOverflow
       if (previouslyFocused?.isConnected) previouslyFocused.focus?.()
     }
@@ -580,8 +631,16 @@
             <div class="text-text-muted font-body-md">Loading sub-notes…</div>
           </div>
         {:else if loadError}
-          <div class="text-status-danger text-center py-10 font-body-md">
-            Load failed: {loadError}
+          <div class="flex flex-col items-center gap-3 py-10">
+            <div class="text-status-danger text-center font-body-md">
+              Load failed: {loadError}
+            </div>
+            <button
+              type="button"
+              class="text-type-xs font-label-sm text-text-muted hover:text-text-primary transition-colors px-2 py-1 rounded"
+              disabled={loading}
+              onclick={() => void retryLoad()}>Reload sub-notes</button
+            >
           </div>
         {/if}
         {#if $editorStore}

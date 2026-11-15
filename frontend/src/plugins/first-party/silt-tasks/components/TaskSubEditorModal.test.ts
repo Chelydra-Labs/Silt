@@ -1013,6 +1013,7 @@ describe('convert note to comment (#1159)', () => {
 
   type SubEditorHandle = {
     editor: {
+      isEditable: boolean
       commands: {
         focus: () => void
         setTextSelection: (pos: number) => void
@@ -1142,6 +1143,110 @@ describe('convert note to comment (#1159)', () => {
     expect(mocks.setBlockCommentClassification).not.toHaveBeenCalled()
     // The unsaved text is still in the editor, not silently dropped.
     expect(JSON.stringify(pm.editor.getJSON())).toContain('unsaved edit')
+  })
+
+  it('reports failure and freezes the doc when the post-conversion reload fails', async () => {
+    // The classification write succeeds but the reload that would drop the
+    // block from the editor fails: the doc still holds it as unmarked prose,
+    // so claiming success (and saving that doc) would revert the conversion.
+    mocks.fetchSubtree
+      .mockResolvedValueOnce([PROSE_NOTE])
+      .mockRejectedValueOnce(new Error('ipc down'))
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => {
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    })
+    await flush()
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement &
+      SubEditorHandle
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+    pm.editor.commands.insertContent(' tail edit')
+
+    const convert = screen.getByRole('button', {
+      name: 'Convert the note at the cursor to a comment'
+    })
+    await vi.waitFor(() => expect(convert).not.toBeDisabled())
+    await fireEvent.click(convert)
+
+    await vi.waitFor(() =>
+      expect(mocks.setBlockCommentClassification).toHaveBeenCalledWith(
+        'prose-1',
+        true
+      )
+    )
+    // No success is claimed; the reload failure is surfaced as the stale doc.
+    expect(await screen.findByText(/could not refresh/)).toBeInTheDocument()
+    expect(screen.queryByText(/Note converted to a comment;/)).toBeNull()
+    // The footer status and the editor body both carry the load failure.
+    expect(screen.getAllByText(/Load failed: ipc down/)).not.toHaveLength(0)
+    // The block is still in the doc (the reload never landed)…
+    expect(JSON.stringify(pm.editor.getJSON())).toContain('Prose paragraph')
+    // …so the editor stays read-only instead of re-enabling on a stale doc.
+    expect(pm.editor.isEditable).toBe(false)
+    expect(pm).toHaveAttribute('contenteditable', 'false')
+
+    // Arming the autosave on the stale doc must not reach disk. (Commands
+    // still dispatch while frozen, so this drives the real save path.)
+    const savesBefore = mocks.saveSubtreeBlocks.mock.calls.length
+    pm.editor.commands.insertContent(' stale keystroke')
+    await new Promise((r) => setTimeout(r, 800))
+    expect(mocks.saveSubtreeBlocks).toHaveBeenCalledTimes(savesBefore)
+    expect(JSON.stringify(pm.editor.getJSON())).toContain('Prose paragraph')
+  })
+
+  it('recovers from a failed post-conversion reload once the reload succeeds', async () => {
+    mocks.fetchSubtree
+      .mockResolvedValueOnce([PROSE_NOTE])
+      .mockRejectedValueOnce(new Error('ipc down'))
+      // The retry sees the block as a comment, so it is partitioned out.
+      .mockResolvedValueOnce([{ ...PROSE_NOTE, is_comment: true }])
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => {
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    })
+    await flush()
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement &
+      SubEditorHandle
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+    const convert = screen.getByRole('button', {
+      name: 'Convert the note at the cursor to a comment'
+    })
+    await vi.waitFor(() => expect(convert).not.toBeDisabled())
+    await fireEvent.click(convert)
+    await vi.waitFor(() => {
+      expect(screen.getByText(/could not refresh/)).toBeInTheDocument()
+    })
+    expect(pm.editor.isEditable).toBe(false)
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Reload sub-notes' })
+    )
+
+    await vi.waitFor(() => expect(mocks.fetchSubtree).toHaveBeenCalledTimes(3))
+    await vi.waitFor(() =>
+      expect(screen.queryByText(/could not refresh/)).toBeNull()
+    )
+    // The retry clears the load failure and resumes editing…
+    expect(screen.queryByText(/Load failed:/)).toBeNull()
+    expect(pm.editor.isEditable).toBe(true)
+    // …on a doc that reflects disk: the converted block is a comment now.
+    await vi.waitFor(() =>
+      expect(JSON.stringify(pm.editor.getJSON())).not.toContain(
+        'Prose paragraph'
+      )
+    )
   })
 })
 
