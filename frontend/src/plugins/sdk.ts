@@ -197,6 +197,9 @@ export interface SubtreeBlock {
   // fields are NOTE-only by parser construction.
   author?: string
   timestamp?: string
+  // Sub-tree NOTE children may also carry the explicit [comment::] marker
+  // (#1159). Absent means "sub-note" unless attribution classifies it.
+  is_comment?: boolean
 }
 
 /**

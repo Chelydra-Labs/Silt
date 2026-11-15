@@ -255,7 +255,8 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 		return "", fmt.Errorf("read current page version: %w", err)
 	}
 	// This replay bypasses saveFileBlocksWithGate's merge, so the stashed
-	// pre-merge editor payload would strip [author::]/[ts::] for good (#1160).
+	// pre-merge editor payload would strip the comment's marker and attribution
+	// for good (attribution merge: #1160; marker: #1159).
 	if rw.funnel == funnelEditorBlocks && rw.blocks != nil {
 		rw.blocks = a.preserveStashedCommentAttribution(filePath, theirs, rw)
 	}
@@ -381,10 +382,10 @@ func (a *App) adoptOriginalBytesLocked(filePath, source, notebook, section, page
 	a.commitPostWriteState(filePath, content)
 }
 
-// preserveStashedCommentAttribution carries comment attribution from the
-// resolution's already-read current bytes onto a refused editor payload — the
-// same by-id merge the save funnel applies before writing. Parse failure only
-// costs attribution, never the resolution's write.
+// preserveStashedCommentAttribution carries comment metadata (marker and
+// attribution) from the resolution's already-read current bytes onto a refused
+// editor payload — the same by-id merge the save funnel applies before writing.
+// Parse failure only costs that metadata, never the resolution's write.
 func (a *App) preserveStashedCommentAttribution(filePath string, diskBytes []byte, rw refusedPageWrite) []parser.ParsedBlock {
 	diskBlocks, _, _, _, err := parser.ParseFileContent(string(diskBytes), rw.notebook, rw.section, rw.page, fileOrDefaultDate(filePath), a.spacesPerTab)
 	if err != nil {

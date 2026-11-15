@@ -1,14 +1,16 @@
 /**
- * The comment thread displays every NOTE descendant owned by the task (legacy
- * token-less NOTEs included, shown as Unknown/Undated), while the sub-notes
- * editor excludes only provably-attributed comments so unattributed prose stays
- * editable. Keep both predicates here rather than "aligning" them — the
- * asymmetry is deliberate.
+ * The comment thread still displays every NOTE descendant owned by the task
+ * (type-only), while the sub-notes editor excludes comment blocks — a NOTE
+ * carrying the explicit [comment::] marker or comment attribution. Unattributed,
+ * unmarked prose stays editable. The count/thread rule change to this predicate
+ * lands in a later PR; keep the asymmetry deliberate until then.
  */
 export interface NoteLike {
   type?: string
   author?: string
   timestamp?: string
+  /** Explicit [comment::] marker on the NOTE block. */
+  is_comment?: boolean
 }
 
 /** Just enough hierarchy to walk ownership: a block id and its parent link. */
@@ -23,11 +25,16 @@ export function isNoteBlock(b: NoteLike): boolean {
 }
 
 /**
- * Edit-side predicate: a NOTE carrying comment attribution. Type alone is not
- * enough — the editor serializes every prose paragraph as an unattributed NOTE.
+ * Edit-side predicate: a NOTE carrying the explicit [comment::] marker or
+ * comment attribution. Type alone is not enough — the editor serializes every
+ * prose paragraph as an unmarked, unattributed NOTE. Mirrors the Go
+ * parser.IsCommentBlock predicate.
  */
 export function isCommentBlock(b: NoteLike): boolean {
-  return isNoteBlock(b) && Boolean(b.author?.trim() || b.timestamp?.trim())
+  return (
+    isNoteBlock(b) &&
+    (Boolean(b.is_comment) || Boolean(b.author?.trim() || b.timestamp?.trim()))
+  )
 }
 
 // 64 is the cap comments_count walks too (backend/db/indexing.go), so a
@@ -65,7 +72,7 @@ export function isNoteOwnedByTask(
 export interface CommentPartition<T> {
   /** Blocks that belong to the editor surface (prose, tasks, regions, …). */
   content: T[]
-  /** Attributed NOTE comments, in their original order. */
+  /** Comment blocks (marked or attributed), in their original order. */
   comments: T[]
 }
 

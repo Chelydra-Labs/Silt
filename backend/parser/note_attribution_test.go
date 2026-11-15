@@ -148,6 +148,9 @@ func TestRenderBlock_NoteAttributionOmitWhenEmpty(t *testing.T) {
 	if strings.Contains(out, "[ts::") {
 		t.Errorf("expected no [ts::] token, got: %s", out)
 	}
+	if strings.Contains(out, "[comment::") {
+		t.Errorf("expected no [comment::] token, got: %s", out)
+	}
 }
 
 // TestNoteAttribution_Isolation_TaskAuthorGoesToExtraTokens is the critical
@@ -241,5 +244,121 @@ func TestRenderBlock_NoteTimestampSanitized(t *testing.T) {
 	}
 	if !strings.Contains(out, "9999aaaa") {
 		t.Errorf("block identity comment should survive, got: %s", out)
+	}
+}
+
+// TestParseLine_NoteCommentMarkerStripsOnlyTheMarker pins the #1159 marker's
+// text handling: [comment::] is consumed into IsComment and removed from
+// CleanText, while other unknown [key::] text stays in the body verbatim — the
+// documented NOTE behavior (NOTE has no ExtraTokens path; arbitrary Dataview
+// tokens round-trip through CleanText).
+func TestParseLine_NoteCommentMarkerStripsOnlyTheMarker(t *testing.T) {
+	line := "- note body [comment::] [project:: alpha] <!-- id: aaaa1111-2222-3333-4444-555555555555 -->"
+	block, _, _ := ParseLine(line, 1, 4)
+	if !block.IsComment {
+		t.Fatal("expected IsComment=true")
+	}
+	if block.CleanText != "note body [project:: alpha]" {
+		t.Errorf("expected marker stripped and unknown token kept, got %q", block.CleanText)
+	}
+	if len(block.ExtraTokens) != 0 {
+		t.Errorf("NOTE blocks have no ExtraTokens path, got %v", block.ExtraTokens)
+	}
+}
+
+// TestRenderBlock_NoteCommentMarkerCanonicalOrder is the marker's byte-stable
+// round-trip invariant: the parser accepts the tokens in any order, but render
+// emits the canonical [comment::] [author::] [ts::] order, so parse → render →
+// parse → render is idempotent and author/ts never get reordered around it.
+func TestRenderBlock_NoteCommentMarkerCanonicalOrder(t *testing.T) {
+	const id = "bbbb1111-2222-3333-4444-555555555555"
+	line := "- text [ts:: 2026-07-06T15:30:00] [comment::] [author:: Alice] <!-- id: " + id + " -->"
+
+	parsed, _, _ := ParseLine(line, 1, 4)
+	if !parsed.IsComment || parsed.Author != "Alice" || parsed.Timestamp != "2026-07-06T15:30:00" {
+		t.Fatalf("initial parse wrong: isComment=%v author=%q ts=%q",
+			parsed.IsComment, parsed.Author, parsed.Timestamp)
+	}
+
+	rendered := renderBlock(parsed, 4)
+	want := "- text [comment::] [author:: Alice] [ts:: 2026-07-06T15:30:00] <!-- id: " + id + " -->"
+	if rendered != want {
+		t.Errorf("canonical render mismatch\n got: %s\nwant: %s", rendered, want)
+	}
+
+	reparsed, _, _ := ParseLine(rendered, 1, 4)
+	if reparsed.IsComment != parsed.IsComment {
+		t.Errorf("IsComment drifted: %v → %v", parsed.IsComment, reparsed.IsComment)
+	}
+	if reparsed.Author != parsed.Author {
+		t.Errorf("Author drifted: %q → %q", parsed.Author, reparsed.Author)
+	}
+	if reparsed.Timestamp != parsed.Timestamp {
+		t.Errorf("Timestamp drifted: %q → %q", parsed.Timestamp, reparsed.Timestamp)
+	}
+
+	if rendered2 := renderBlock(reparsed, 4); rendered2 != rendered {
+		t.Errorf("render is not byte-stable across two passes\n--- pass1 ---\n%s\n--- pass2 ---\n%s", rendered, rendered2)
+	}
+}
+
+// TestParseLine_NoteCommentMarkerWithAlignmentRoundTrip guards the interaction
+// between the #1159 marker and block alignment (#173). Alignment lives at the
+// END of CleanText as `<!-- silt-align: … -->`; render appends [comment::]
+// AFTER cleanOut, so the on-disk line interposes the marker between the align
+// comment and the id comment. The display path only works because the parser
+// strips [comment::] on re-parse, leaving the align marker terminal — the
+// frontend's ALIGN_MARKER_RE is end-anchored. A render-order change or a strip
+// regression would leave the align comment in the body, where it becomes
+// visible text in both the thread and the page editor.
+func TestParseLine_NoteCommentMarkerWithAlignmentRoundTrip(t *testing.T) {
+	const id = "cccc1111-2222-3333-4444-555555555555"
+	const alignMarker = "<!-- silt-align: center -->"
+	line := "- comment body " + alignMarker + " [comment::] <!-- id: " + id + " -->"
+
+	parsed, _, _ := ParseLine(line, 1, 4)
+	if !parsed.IsComment {
+		t.Fatal("expected IsComment=true")
+	}
+	if parsed.CleanText != "comment body "+alignMarker {
+		t.Fatalf("expected marker stripped and alignment kept terminal, got %q", parsed.CleanText)
+	}
+	if n := strings.Count(parsed.CleanText, "<!-- silt-align:"); n != 1 {
+		t.Fatalf("expected exactly one align marker in CleanText, got %d in %q", n, parsed.CleanText)
+	}
+	if !strings.HasSuffix(parsed.CleanText, alignMarker) {
+		t.Fatalf("align marker must be terminal in CleanText (end-anchored frontend regex), got %q", parsed.CleanText)
+	}
+
+	rendered := renderBlock(parsed, 4)
+	if strings.Count(rendered, "<!-- silt-align:") != 1 {
+		t.Errorf("expected exactly one align marker in rendered line, got %q", rendered)
+	}
+	if strings.Count(rendered, "[comment::]") != 1 {
+		t.Errorf("expected exactly one [comment::] marker in rendered line, got %q", rendered)
+	}
+	if rendered != line {
+		t.Errorf("canonical render mismatch\n got: %s\nwant: %s", rendered, line)
+	}
+
+	// Re-parse: the marker is consumed again, and the align marker is still
+	// the last thing in CleanText — not a stray body comment.
+	reparsed, _, _ := ParseLine(rendered, 1, 4)
+	if !reparsed.IsComment {
+		t.Errorf("IsComment drifted: %v → %v", parsed.IsComment, reparsed.IsComment)
+	}
+	if strings.Count(reparsed.CleanText, "<!-- silt-align:") != 1 {
+		t.Errorf("align marker leaked or duplicated on re-parse: %q", reparsed.CleanText)
+	}
+	if !strings.HasSuffix(reparsed.CleanText, alignMarker) {
+		t.Errorf("align marker must stay terminal after re-parse, got %q", reparsed.CleanText)
+	}
+	if reparsed.CleanText != parsed.CleanText {
+		t.Errorf("CleanText drifted across round-trip: %q → %q", parsed.CleanText, reparsed.CleanText)
+	}
+
+	// Second render must be byte-identical to the first (idempotent output).
+	if rendered2 := renderBlock(reparsed, 4); rendered2 != rendered {
+		t.Errorf("render is not byte-stable across two passes\n--- pass1 ---\n%s\n--- pass2 ---\n%s", rendered, rendered2)
 	}
 }
