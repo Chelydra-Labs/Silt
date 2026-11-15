@@ -69,7 +69,34 @@ func (a *App) FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBl
 // behind the editor's back and let its next autosave silently clobber the
 // external bytes (#1005; see pageLoadCapture).
 func (a *App) FetchPageBlocksProgrammatic(notebook, section, page string) ([]parser.ParsedBlock, error) {
-	return a.fetchPageBlocks(notebook, section, page, captureNone)
+	blocks, err := a.fetchPageBlocks(notebook, section, page, captureNone)
+	if err != nil {
+		return nil, err
+	}
+	// Global replace mutates these rows in place and writes them back through
+	// this funnel, which the editor merge excludes by design — the payload
+	// (and its undo snapshot) must carry the comment metadata itself (#1167).
+	hydrateNoteCommentMetadata(blocks, a.spacesPerTab)
+	return blocks, nil
+}
+
+// hydrateNoteCommentMetadata fills NOTE comment metadata from each row's raw
+// line: the shared page-block SELECT hydrates none of it, so a rows-echo save
+// would rewrite comments as plain prose (#1167).
+func hydrateNoteCommentMetadata(blocks []parser.ParsedBlock, spacesPerTab int) {
+	for i := range blocks {
+		b := &blocks[i]
+		if b.Type != parser.BlockNote {
+			continue
+		}
+		pb, _, _ := parser.ParseLine(b.RawText, 0, spacesPerTab)
+		if pb.Type != parser.BlockNote || pb.ID != b.ID {
+			continue
+		}
+		b.Author = pb.Author
+		b.Timestamp = pb.Timestamp
+		b.IsComment = pb.IsComment
+	}
 }
 
 func (a *App) fetchPageBlocks(notebook, section, page string, capture pageLoadCapture) ([]parser.ParsedBlock, error) {
