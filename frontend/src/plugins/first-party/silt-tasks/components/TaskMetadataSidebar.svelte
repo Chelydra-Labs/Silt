@@ -9,6 +9,7 @@
   import { useBlockedDoneGuard } from '../shared.svelte'
   import { trackTaskUndoWrite } from '../undo.svelte'
   import ErrorBanner from './ErrorBanner.svelte'
+  import PinToggle from './PinToggle.svelte'
 
   import type { TaskDetail } from '../types'
   import { PRIORITY_LABELS, formatEstimateMinutes, laneLabel } from '../types'
@@ -245,8 +246,10 @@
   // Mirror the busy state up to the host so its window Esc handler can avoid
   // closing while a popover or the BlockedDoneDialog is open.
   $effect(() => {
-    busy =
+    const next =
       recurrenceOpen || dueDateOpen || startDateOpen || !!blockedGuard.pending
+    // Write-only bindable: reading it keeps no-op writes off the host binding.
+    if (untrack(() => busy) !== next) busy = next
   })
 
   $effect(() => {
@@ -320,11 +323,6 @@
     }
     metaError = ''
   })
-
-  async function togglePin() {
-    if (!task || pinField.pending) return
-    await pinField.commit(!pinField.value)
-  }
 
   let progressSeq = 0
   function onProgressChange(e: Event) {
@@ -835,21 +833,16 @@
           }
         }}
       />
-      <button
-        type="button"
-        onclick={togglePin}
+      <PinToggle
+        pinned={pinField.value}
         disabled={pinField.pending}
-        aria-pressed={pinField.value}
-        aria-label={pinField.value ? 'Unpin task' : 'Pin task'}
-        title={pinField.value ? 'Unpin task' : 'Pin task'}
-        class="pin-button shrink-0 rounded p-1 transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start disabled:cursor-not-allowed disabled:opacity-50 {pinField.value
-          ? 'text-accent-primary-start'
-          : 'text-text-muted'}"
-      >
-        <span class="material-symbols-outlined pin-icon" aria-hidden="true"
-          >push_pin</span
-        >
-      </button>
+        onToggle={async (next) => {
+          // The host field reports its own friendly error and resolves false;
+          // throw so the toggle's optimistic flip reverts with it.
+          if (!(await pinField.commit(next)))
+            throw new Error('pin write failed')
+        }}
+      />
       {#if onClose}
         <button
           type="button"
@@ -1559,21 +1552,5 @@
     .field-pair {
       grid-template-columns: 1fr;
     }
-  }
-  /* Filled-vs-outlined push_pin mirrors SidebarQuickAccess.svelte: the glyph
-     fill tracks aria-pressed so the "pinned" cue is shape, not color alone. */
-  .pin-icon {
-    font-variation-settings:
-      'FILL' 0,
-      'wght' 400,
-      'GRAD' 0,
-      'opsz' 20;
-  }
-  .pin-button[aria-pressed='true'] .pin-icon {
-    font-variation-settings:
-      'FILL' 1,
-      'wght' 400,
-      'GRAD' 0,
-      'opsz' 20;
   }
 </style>

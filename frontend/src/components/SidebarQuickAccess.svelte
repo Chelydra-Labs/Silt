@@ -186,13 +186,19 @@
               <button
                 type="button"
                 class="pin-toggle hover-only pinned"
+                aria-pressed="true"
+                data-pinned="true"
                 aria-label={'Unpin ' + ref.page + ' from Quick Access'}
                 title="Unpin"
                 onclick={() => onToggleFavorite(ref)}
               >
                 <span
                   class="material-symbols-outlined pin-icon"
-                  aria-hidden="true">push_pin</span
+                  aria-hidden="true"
+                  >push_pin<span
+                    class="pin-state-mark absolute inset-x-px bottom-0 h-0.5 rounded-full bg-current"
+                    data-testid="quick-access-pin-mark"
+                  ></span></span
                 >
               </button>
             </div>
@@ -256,6 +262,8 @@
                 type="button"
                 class="pin-toggle hover-only"
                 class:pinned
+                aria-pressed={pinned}
+                data-pinned={pinned}
                 aria-label={pinned
                   ? 'Unpin ' + ref.page + ' from Quick Access'
                   : 'Pin ' + ref.page + ' to Quick Access'}
@@ -264,8 +272,11 @@
               >
                 <span
                   class="material-symbols-outlined pin-icon"
-                  class:pin-outline={!pinned}
-                  aria-hidden="true">push_pin</span
+                  aria-hidden="true"
+                  >push_pin{#if pinned}<span
+                      class="pin-state-mark absolute inset-x-px bottom-0 h-0.5 rounded-full bg-current"
+                      data-testid="quick-access-pin-mark"
+                    ></span>{/if}</span
                 >
               </button>
             </div>
@@ -389,26 +400,14 @@
     background: var(--color-hover);
     color: var(--color-accent-primary-start);
   }
+  /* The bundled icon font is static (no FILL axis), so pinned state rides on a
+     base bar inside the glyph box — readable without hue. */
   .pin-icon {
+    position: relative;
     font-size: 13px !important;
     width: 13px;
     height: 13px;
     line-height: 13px;
-  }
-  /* Outline weight for unpinned; filled when pinned (Material Symbols default). */
-  .pin-outline {
-    font-variation-settings:
-      'FILL' 0,
-      'wght' 250,
-      'GRAD' 0,
-      'opsz' 20;
-  }
-  .pin-toggle.pinned .pin-icon {
-    font-variation-settings:
-      'FILL' 1,
-      'wght' 350,
-      'GRAD' 0,
-      'opsz' 20;
   }
   .retry {
     margin-top: 0.3rem;
