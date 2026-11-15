@@ -470,6 +470,13 @@ type TaskResult struct {
 	// whose nearest TASK ancestor is this task. Computed at index time and
 	// cached on the task row so the Kanban query can serve it in O(1).
 	CommentsCount int `json:"comments_count,omitempty"`
+	// HasSubnotes reports whether this task owns at least one prose NOTE
+	// descendant — a sub-note in the task's notes editor. Derived at index
+	// time as the complement of the IsCommentBlock predicate under the same
+	// nearest-TASK ownership rule as CommentsCount, so converting a block
+	// between the two shapes flips both consistently on re-index. Presence
+	// only; false for tasks with no sub-notes and for pre-migration rows.
+	HasSubnotes bool `json:"has_subnotes,omitempty"`
 	// LinksCount is the number of `((uuid))` block references in this
 	// task's body. Computed at index time from `blocks.raw_content` and
 	// cached on the task row; re-derivable from the markdown on every

@@ -48,18 +48,46 @@ func firstBlockOccurrences(blocks []parser.ParsedBlock) []parser.ParsedBlock {
 	return uniq
 }
 
+// nearestTaskOwner resolves the TASK that owns a NOTE block: it walks the
+// block's ParentID up until a TASK ancestor (or the root of the chain). Empty
+// means the note has no TASK ancestor and belongs to no task's caches.
+//
+// Depth-capped to match CommentThread's frontend guard and to survive a cyclic
+// ParentID graph from SaveSubtreeBlocks / hand-edited markdown (a self-loop
+// check alone is not enough for A→B→A). Both NOTE-side caches in
+// taskDerivedCounts share this one walk, so a comment and a prose sub-note can
+// never disagree about ownership.
+func nearestTaskOwner(parentID string, parentOf map[string]string, typeOf map[string]parser.BlockType) string {
+	pid := parentID
+	for steps := 0; pid != "" && steps < 64; steps++ {
+		if typeOf[pid] == parser.BlockTask {
+			return pid
+		}
+		next := parentOf[pid]
+		if next == "" || next == pid {
+			return ""
+		}
+		pid = next
+	}
+	return ""
+}
+
 // taskDerivedCounts precomputes per-task derived cache columns for one file's
 // block slice (#434 / #439 / comments descendants):
-//   - comments: NOTE descendants under a task (walk ParentID until TASK) that
-//     parser.IsCommentBlock classifies as comments — the marker or the
-//     attribution fallback; unmarked, unattributed prose is a sub-note (#1159)
+//   - comments: NOTE descendants whose nearest TASK ancestor is the task and
+//     that parser.IsCommentBlock classifies as comments — the marker or the
+//     attribution fallback (#1159)
+//   - hasSubnotes: 1 for the same owners when the NOTE is not a comment, i.e.
+//     prose written in the sub-notes editor (#1173). Presence only — the count
+//     is the editor's business, not the index's.
 //   - subtaskTotal / subtaskDone: direct TASK children only
 //
 // It is a pure consumer of the ParentID the parser's single validated
 // derivation (parser.DeriveHierarchy) assigned — no independent hierarchy
 // computation happens here. The comment thread filters with the same
-// predicate, so comments_count and the thread's item set agree by construction.
-func taskDerivedCounts(blocks []parser.ParsedBlock) (comments, subtaskTotal, subtaskDone map[string]int) {
+// predicate, so comments_count and the thread's item set agree by construction,
+// and the two NOTE-side caches partition one owner resolution.
+func taskDerivedCounts(blocks []parser.ParsedBlock) (comments, subtaskTotal, subtaskDone, hasSubnotes map[string]int) {
 	parentOf := make(map[string]string, len(blocks))
 	typeOf := make(map[string]parser.BlockType, len(blocks))
 	for _, b := range blocks {
@@ -69,28 +97,21 @@ func taskDerivedCounts(blocks []parser.ParsedBlock) (comments, subtaskTotal, sub
 	comments = make(map[string]int)
 	subtaskTotal = make(map[string]int)
 	subtaskDone = make(map[string]int)
+	hasSubnotes = make(map[string]int)
 	for _, b := range blocks {
 		switch b.Type {
 		case parser.BlockNote:
-			if !parser.IsCommentBlock(b) {
-				// Prose sub-notes are editor content, not comments (#1159).
+			owner := nearestTaskOwner(b.ParentID, parentOf, typeOf)
+			if owner == "" {
+				// No TASK ancestor (page-level note, or a hand-edited
+				// parent chain that leaves the file): no task owns it.
 				continue
 			}
-			// Nested replies: walk up until a TASK ancestor (or root).
-			// Depth-capped to match CommentThread's frontend guard and to
-			// survive a cyclic ParentID graph from SaveSubtreeBlocks /
-			// hand-edited markdown (self-loop alone is not enough for A→B→A).
-			pid := b.ParentID
-			for steps := 0; pid != "" && steps < 64; steps++ {
-				if typeOf[pid] == parser.BlockTask {
-					comments[pid]++
-					break
-				}
-				next := parentOf[pid]
-				if next == "" || next == pid {
-					break
-				}
-				pid = next
+			if parser.IsCommentBlock(b) {
+				comments[owner]++
+			} else {
+				// The predicate's complement: editor prose, not a comment.
+				hasSubnotes[owner] = 1
 			}
 		case parser.BlockTask:
 			if b.ParentID != "" && typeOf[b.ParentID] == parser.BlockTask {
@@ -101,7 +122,7 @@ func taskDerivedCounts(blocks []parser.ParsedBlock) (comments, subtaskTotal, sub
 			}
 		}
 	}
-	return comments, subtaskTotal, subtaskDone
+	return comments, subtaskTotal, subtaskDone, hasSubnotes
 }
 
 // taskEstimateMinutes returns the nullable estimate_minutes projection for a
@@ -232,7 +253,7 @@ func prepareBlockIndexStmts(tx *sql.Tx) (*blockIndexStmts, error) {
 	if s.block, err = tx.Prepare("INSERT INTO blocks (id, parent_id, source, notebook, section, page, page_fold, file_date, depth, type, raw_content, clean_content, line_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"); err != nil {
 		return nil, err
 	}
-	if s.task, err = tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority, pinned, shortlist_rank, progress, recur, comments_count, links_count, created_at, completed_at, manual_order, modified_at, estimate_minutes, subtask_total, subtask_done) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"); err != nil {
+	if s.task, err = tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority, pinned, shortlist_rank, progress, recur, comments_count, links_count, has_subnotes, created_at, completed_at, manual_order, modified_at, estimate_minutes, subtask_total, subtask_done) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"); err != nil {
 		return nil, err
 	}
 	// task_dependencies edges: one row per [blocked_by:: ((uuid))] ref on a
@@ -337,12 +358,12 @@ func isBlocksIDConstraint(err error) bool {
 // (attached to the first parsed block); logTag prefixes diagnostic logs so
 // failures stay attributable to the originating indexer.
 func (s *blockIndexStmts) indexBlocks(source, notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, logTag string, dups *duplicateIDCollector) error {
-	// Derived task caches: descendant NOTE comments, direct subtask rollups
-	// (#434), plus modified_at / estimate_minutes projections (#439/#440).
-	// Deduped first-occurrence-wins to mirror the insert loop's duplicate
-	// skip below: a skipped occurrence writes no row, so its descendants
-	// must not inflate the surviving row's caches.
-	commentsByTask, subtaskTotalByTask, subtaskDoneByTask := taskDerivedCounts(firstBlockOccurrences(blocks))
+	// Derived task caches: descendant NOTE comments + prose sub-note presence,
+	// direct subtask rollups (#434), plus modified_at / estimate_minutes
+	// projections (#439/#440). Deduped first-occurrence-wins to mirror the
+	// insert loop's duplicate skip below: a skipped occurrence writes no row,
+	// so its descendants must not inflate the surviving row's caches.
+	commentsByTask, subtaskTotalByTask, subtaskDoneByTask, subnotesByTask := taskDerivedCounts(firstBlockOccurrences(blocks))
 
 	for blockIdx, block := range blocks {
 		// 1. Insert into blocks — each block carries its own file_date.
@@ -439,7 +460,7 @@ func (s *blockIndexStmts) indexBlocks(source, notebook, section, page string, bl
 				shortlistRankVal = sql.NullInt64{Int64: int64(*block.ShortlistRank), Valid: true}
 			}
 			linksCount := len(parser.BlockRefRegex.FindAllString(block.RawText, -1))
-			if _, err := s.task.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority, pinnedVal, shortlistRankVal, block.Progress, recurVal, commentsByTask[block.ID], linksCount, createdAtVal, completedAtVal, manualOrderVal, modifiedAtVal, estimateMinsVal, subtaskTotalByTask[block.ID], subtaskDoneByTask[block.ID]); err != nil {
+			if _, err := s.task.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority, pinnedVal, shortlistRankVal, block.Progress, recurVal, commentsByTask[block.ID], linksCount, subnotesByTask[block.ID], createdAtVal, completedAtVal, manualOrderVal, modifiedAtVal, estimateMinsVal, subtaskTotalByTask[block.ID], subtaskDoneByTask[block.ID]); err != nil {
 				return fmt.Errorf("failed to insert task for block %s: %w", block.ID, err)
 			}
 		}
