@@ -74,7 +74,6 @@
     task,
     ctx,
     onMetaChanged,
-    // eslint-disable-next-line no-useless-assignment -- $bindable() needs a default; only the host reads it
     busy = $bindable(),
     stickyPrimary = false,
     onClose,
@@ -247,8 +246,10 @@
   // Mirror the busy state up to the host so its window Esc handler can avoid
   // closing while a popover or the BlockedDoneDialog is open.
   $effect(() => {
-    busy =
+    const next =
       recurrenceOpen || dueDateOpen || startDateOpen || !!blockedGuard.pending
+    // Write-only bindable: reading it keeps no-op writes off the host binding.
+    if (untrack(() => busy) !== next) busy = next
   })
 
   $effect(() => {
