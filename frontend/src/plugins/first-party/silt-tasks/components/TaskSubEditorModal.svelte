@@ -386,6 +386,12 @@
 
   function retrySave(): void {
     if (saving || docStale) return
+    // The retry writes the newest doc itself, so a still-armed debounce would
+    // only duplicate that write.
+    if (saveTimer) {
+      clearTimeout(saveTimer)
+      saveTimer = null
+    }
     saveError = ''
     // Explicit retry is a fresh decision about closing: never auto-close on it.
     closePending = false

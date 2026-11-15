@@ -744,6 +744,66 @@ describe('TaskSubEditorModal (#304)', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  it('saves the retried doc exactly once while a debounce is still armed', async () => {
+    // The held close leaves the trailing edit's autosave armed. An explicit
+    // retry inside that window writes the newest doc immediately, so the
+    // superseded timer must not fire a second, identical write behind it.
+    const onClose = vi.fn()
+    let resolveFirst!: () => void
+    const payloads: unknown[] = []
+    mocks.saveSubtreeBlocks.mockImplementation(
+      (_id: string, children: unknown) => {
+        payloads.push(children)
+        if (payloads.length === 1) {
+          return new Promise<void>((r) => (resolveFirst = r)).then(
+            () => undefined
+          )
+        }
+        return Promise.resolve()
+      }
+    )
+
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement & {
+      editor: { commands: { insertContent: (s: string) => void } }
+    }
+    pm.textContent = 'edited content'
+    pm.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    await flush()
+
+    // Close before the debounce fires so the close drain owns the first save.
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await vi.waitFor(() => expect(payloads.length).toBe(1))
+
+    // The trailing edit lands during the write, re-arming the debounce; the
+    // write cannot vouch for it, so the close is held with the Retry row.
+    pm.editor.commands.insertContent(' trailing edit')
+    resolveFirst()
+    await flush()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(
+      screen.getByText(/the latest edits could not be confirmed/)
+    ).toBeInTheDocument()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry save' }))
+    await vi.waitFor(() => expect(payloads.length).toBe(2))
+    expect(JSON.stringify(payloads[1])).toContain('trailing edit')
+
+    // Past the debounce window: the retry superseded that timer, so the doc is
+    // written once, not twice.
+    await new Promise((r) => setTimeout(r, 800))
+    expect(payloads.length).toBe(2)
+    expect(onClose).not.toHaveBeenCalled()
+  }, 10000)
+
   it('starts a save requested during the queued save and drains to the newest doc', async () => {
     // Regression: only the first queued request was ever started. A persist
     // arriving during the second write left the request armed with nothing
