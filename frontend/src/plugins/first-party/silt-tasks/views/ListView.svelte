@@ -76,7 +76,9 @@
   }: Props = $props()
 
   // Completed rows are display-only; a narrower shape than the open-task
-  // TaskDetail (which the edit drawer requires).
+  // TaskDetail (which the edit drawer requires). The done query is the same
+  // canonical projection, so presence rides along as the raw SQLite 0/1 (these
+  // rows are cast, not run through coerceTaskRow).
   interface CompletedTaskItem {
     id: string
     notebook: string
@@ -85,6 +87,7 @@
     file_date: string
     clean_content: string
     status: string
+    has_subnotes?: number
   }
 
   let openItems = $state<TaskDetail[]>([])
@@ -1434,6 +1437,22 @@
                           </div>
                         {/if}
                       </div>
+                      {#if item.has_subnotes}
+                        <!-- Presence only (no count), and a note glyph so it
+                             can't be read as the counted chat_bubble badge. -->
+                        <span
+                          class="text-type-2xs text-text-muted font-label-sm flex items-center gap-0.5 flex-shrink-0"
+                          role="img"
+                          data-testid={`tasks-completed-subnotes-${item.id}`}
+                          title="Has sub-notes"
+                          aria-label="Has sub-notes"
+                        >
+                          <span
+                            class="material-symbols-outlined text-icon-xs"
+                            aria-hidden="true">sticky_note_2</span
+                          >
+                        </span>
+                      {/if}
                       <span
                         class="text-type-2xs text-text-muted font-label-sm flex-shrink-0"
                         >{item.file_date}</span

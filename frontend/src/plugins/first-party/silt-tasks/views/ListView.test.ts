@@ -2081,6 +2081,50 @@ describe('ListView — sub-notes presence (#1173)', () => {
     expect(notes.textContent).not.toMatch(/\d/)
     expect(badge.textContent).not.toContain('edit_note')
   })
+
+  describe('completed rows', () => {
+    // The done query is the canonical projection too, so presence survives the
+    // cast into the narrower CompletedTaskItem and must render in history.
+    async function renderCompleted(rows: TaskRow[]): Promise<void> {
+      mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+        if (isDoneSql(sql)) return { rows, truncated: false }
+        return { rows: [], truncated: false }
+      })
+      render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+      await flush()
+      await fireEvent.click(screen.getByTestId('tasks-completed-toggle'))
+      await flush()
+    }
+
+    it('renders the presence cue on a completed row with sub-notes', async () => {
+      await renderCompleted([
+        task('d1', 'done with notes', { status: 'DONE', has_subnotes: 1 })
+      ])
+      const cue = screen.getByTestId('tasks-completed-subnotes-d1')
+      expect(cue).toHaveAttribute('role', 'img')
+      expect(cue).toHaveAttribute('aria-label', 'Has sub-notes')
+      expect(cue).toHaveAttribute('title', 'Has sub-notes')
+      const icon = cue.querySelector('.material-symbols-outlined')!
+      expect(icon).toHaveAttribute('aria-hidden', 'true')
+      // Presence only — the cue is the bare glyph, never a count.
+      expect(cue.textContent?.trim()).toBe('sticky_note_2')
+      // Distinct from any comment badge.
+      expect(cue.textContent).not.toContain('chat_bubble')
+      const row = document.querySelector<HTMLElement>('[data-block-id="d1"]')!
+      expect(row.contains(cue)).toBe(true)
+    })
+
+    it('renders no presence cue on a completed row without sub-notes', async () => {
+      await renderCompleted([
+        task('d2', 'done plain', { status: 'DONE', has_subnotes: 0 })
+      ])
+      expect(screen.queryByTestId('tasks-completed-subnotes-d2')).toBeNull()
+      const row = document.querySelector<HTMLElement>('[data-block-id="d2"]')!
+      expect(row).toBeInTheDocument()
+      expect(row.querySelector('[title="Has sub-notes"]')).toBeNull()
+      expect(row.innerHTML).not.toContain('sticky_note_2')
+    })
+  })
 })
 
 describe('ListView — shortlist badge + filter (#1092)', () => {
