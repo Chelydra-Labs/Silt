@@ -1337,7 +1337,23 @@ describe('comment predicates (display/edit asymmetry)', () => {
       { type: 'NOTE', author: 'Dana', timestamp: '2026-07-07T14:22:00' },
       true
     ],
+    ['explicit marker only', { type: 'NOTE', is_comment: true }, true],
+    [
+      'marker and attribution',
+      {
+        type: 'NOTE',
+        is_comment: true,
+        author: 'Dana',
+        timestamp: '2026-07-07T14:22:00'
+      },
+      true
+    ],
     ['neither token (prose note)', { type: 'NOTE' }, false],
+    [
+      'explicit false with no attribution',
+      { type: 'NOTE', is_comment: false },
+      false
+    ],
     [
       'whitespace attribution',
       { type: 'NOTE', author: '  ', timestamp: '\t' },
@@ -1346,6 +1362,11 @@ describe('comment predicates (display/edit asymmetry)', () => {
     [
       'attributed TASK is not a comment',
       { type: 'TASK', author: 'Dana', timestamp: '2026-07-07T14:22:00' },
+      false
+    ],
+    [
+      'marker on a TASK is not a comment',
+      { type: 'TASK', is_comment: true },
       false
     ]
   ])('isCommentBlock: %s', (_name, block, want) => {
@@ -1368,6 +1389,15 @@ describe('comment predicates (display/edit asymmetry)', () => {
       'comment one',
       'comment two'
     ])
+  })
+
+  it('partitionComments treats a marker-carrying prose note as a comment', () => {
+    const part = partitionComments([
+      { type: 'NOTE', clean_text: 'prose' },
+      { type: 'NOTE', is_comment: true, clean_text: 'marked comment' }
+    ])
+    expect(part.content.map((b) => b.clean_text)).toEqual(['prose'])
+    expect(part.comments.map((b) => b.clean_text)).toEqual(['marked comment'])
   })
 
   it('the thread renders legacy token-less NOTEs it owns (display side stays type-only)', async () => {
