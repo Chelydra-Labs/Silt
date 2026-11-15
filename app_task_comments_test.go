@@ -479,6 +479,55 @@ func TestSaveSubtreeBlocks_PreservesTaskComments(t *testing.T) {
 	}
 }
 
+// TestSaveSubtreeBlocks_PreservesMarkerOnlyComment pins the marker half of the
+// preserve rule: a [comment::] comment with no attribution is still partitioned
+// out of the editor and re-inserted by the notes save, while the prose note
+// beside it stays editable.
+func TestSaveSubtreeBlocks_PreservesMarkerOnlyComment(t *testing.T) {
+	app := newTestApp(t)
+	const (
+		taskID    = "ad000201-5555-1111-1111-111111111111"
+		commentID = "ad000202-5555-1111-1111-111111111111"
+		proseID   = "ad000203-5555-1111-1111-111111111111"
+	)
+	content := "- [ ] parent task <!-- id: " + taskID + " -->\n" +
+		"\t- marked comment [comment::] <!-- id: " + commentID + " -->\n" +
+		"\t- prose note <!-- id: " + proseID + " -->\n"
+	indexTestFile(t, app, "W", "S", "SubtreeMarkerOnly", "2026-07-01", content)
+
+	if before := taskCommentsCount(t, app, taskID); before != 1 {
+		t.Fatalf("pre-save comments_count = %d, want 1 (the marked comment only)", before)
+	}
+
+	edited := []parser.ParsedBlock{
+		{ID: proseID, Type: parser.BlockNote, Depth: 0, CleanText: "edited prose"},
+	}
+	if ok, err := app.SaveSubtreeBlocks(taskID, edited); err != nil || !ok {
+		t.Fatalf("SaveSubtreeBlocks: ok=%v err=%v", ok, err)
+	}
+
+	sub, err := app.FetchSubtree(taskID)
+	if err != nil {
+		t.Fatalf("FetchSubtree: %v", err)
+	}
+	comment := findSubtreeBlock(t, sub, commentID)
+	if comment == nil {
+		t.Fatal("marker-only comment was dropped by the notes save")
+	}
+	if !parser.IsCommentBlock(*comment) || comment.CleanText != "marked comment" {
+		t.Errorf("marker-only comment drifted: %+v", *comment)
+	}
+	if prose := findSubtreeBlock(t, sub, proseID); prose == nil || prose.CleanText != "edited prose" {
+		t.Errorf("prose note not editable across the save: %+v", prose)
+	}
+	if got := taskCommentsCount(t, app, taskID); got != 1 {
+		t.Errorf("comments_count after the notes save = %d, want 1", got)
+	}
+	if s := mustReadTaskFile(t, app, "W", "S", "SubtreeMarkerOnly"); !strings.Contains(s, "[comment::]") {
+		t.Errorf("notes save dropped the marker from disk:\n%s", s)
+	}
+}
+
 // TestSaveSubtreeBlocks_RootAnchoredCommentStaysWithTask pins the deleted-parent
 // shape: a reply whose unattributed NOTE parent the user removed from the editor
 // (the note is editor content, the reply is not) must re-anchor as a direct child
