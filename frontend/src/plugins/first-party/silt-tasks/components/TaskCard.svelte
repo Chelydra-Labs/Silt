@@ -204,21 +204,6 @@
             >
             {card.comments_count}
           </span>
-          <!-- Has-notes state of the sub-editor affordance: the card exposes
-               the sub-editor via keyboard/menu only, so presence rides the
-               badge row instead of a second count. -->
-          <span
-            class="text-accent-primary-start flex items-center"
-            role="img"
-            data-testid={`board-notes-badge-${card.id}`}
-            title="Has notes"
-            aria-label="Has notes"
-          >
-            <span
-              class="material-symbols-outlined text-icon-xs"
-              aria-hidden="true">edit_note</span
-            >
-          </span>
         {/if}
         {#if card.links_count > 0}
           <span

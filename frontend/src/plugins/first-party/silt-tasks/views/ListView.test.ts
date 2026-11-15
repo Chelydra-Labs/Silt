@@ -1873,7 +1873,7 @@ describe('ListView — subtask badge (#434)', () => {
   })
 })
 
-describe('ListView — comment badge + has-notes affordance (#1152)', () => {
+describe('ListView — comment badge + edit_note affordance (#1152)', () => {
   beforeEach(() => {
     resetTaskHubState()
     mocks.sqliteQuery.mockReset()
@@ -1907,7 +1907,7 @@ describe('ListView — comment badge + has-notes affordance (#1152)', () => {
     expect(badge).toHaveAttribute('aria-label', '2 comments')
   })
 
-  it('renders no badge and keeps the quiet notes affordance at 0', async () => {
+  it('renders no badge and keeps the edit_note affordance quiet at 0', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
       if (isOpenSql(sql)) {
         return { rows: [task('c1', 'Silent task')], truncated: false }
@@ -1925,7 +1925,7 @@ describe('ListView — comment badge + has-notes affordance (#1152)', () => {
     expect(notes.className).not.toMatch(/(^|\s)opacity-100(\s|$)/)
   })
 
-  it('edit_note affordance carries a visible has-notes state and named count', async () => {
+  it('edit_note affordance describes its action, not the comment count', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
       if (isOpenSql(sql)) {
         return {
@@ -1937,14 +1937,22 @@ describe('ListView — comment badge + has-notes affordance (#1152)', () => {
     })
     render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
-    const notes = notesButton('c1')
-    expect(notes.getAttribute('aria-label')).toBe(
-      'Edit notes for Discussed task (2 comments)'
+    // The chat_bubble badge is the count's only home in this view.
+    expect(screen.getByTestId('tasks-comment-badge-c1').textContent).toContain(
+      '2'
     )
-    // Active at rest, not only hover-brightened.
-    expect(notes.className).toMatch(/(^|\s)opacity-100(\s|$)/)
-    expect(notes.className).toMatch(/(^|\s)text-accent-primary-start(\s|$)/)
-    expect(notes.className).not.toMatch(/(^|\s)opacity-40(\s|$)/)
+    const notes = notesButton('c1')
+    // The button opens the sub-editor whether or not anything is in it, so its
+    // name never repeats the count.
+    expect(notes.getAttribute('aria-label')).toBe(
+      'Edit notes for Discussed task'
+    )
+    expect(notes.getAttribute('title')).toBe('Open sub-editor (Shift+Enter)')
+    // Same resting treatment at any count — nothing implies a has-notes state.
+    expect(notes.className).toMatch(/(^|\s)opacity-40(\s|$)/)
+    expect(notes.className).toMatch(/(^|\s)text-text-muted(\s|$)/)
+    expect(notes.className).not.toMatch(/(^|\s)opacity-100(\s|$)/)
+    expect(notes.className).not.toMatch(/(^|\s)text-accent-primary-start(\s|$)/)
   })
 
   it('tracks comment mutations through the block:changed reload', async () => {
@@ -1973,8 +1981,10 @@ describe('ListView — comment badge + has-notes affordance (#1152)', () => {
     expect(screen.getByTestId('tasks-comment-badge-c1').textContent).toContain(
       '5'
     )
+    // The affordance name stays count-free even after the count moves — the
+    // reload is what the badge tracks, not the button.
     expect(notesButton('c1').getAttribute('aria-label')).toBe(
-      'Edit notes for Discussed task (5 comments)'
+      'Edit notes for Discussed task'
     )
   })
 })

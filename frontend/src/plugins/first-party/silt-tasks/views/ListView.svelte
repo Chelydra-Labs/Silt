@@ -996,16 +996,12 @@
     <button
       type="button"
       title="Open sub-editor (Shift+Enter)"
-      aria-label={`Edit notes for ${item.clean_content}${
-        item.comments_count ? ` (${item.comments_count} comments)` : ''
-      }`}
+      aria-label={`Edit notes for ${item.clean_content}`}
       onclick={(e) => {
         e.stopPropagation()
         openSubEditor(item)
       }}
-      class="hidden {item.comments_count
-        ? 'opacity-100 text-accent-primary-start'
-        : 'opacity-40 hover:opacity-100 focus-visible:opacity-100 text-text-muted'} hover:text-accent-primary-start transition-all p-1 rounded border-none bg-transparent cursor-pointer flex-shrink-0 sm:block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
+      class="hidden opacity-40 hover:opacity-100 focus-visible:opacity-100 text-text-muted hover:text-accent-primary-start transition-all p-1 rounded border-none bg-transparent cursor-pointer flex-shrink-0 sm:block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
     >
       <span class="material-symbols-outlined text-icon-md">edit_note</span>
     </button>
@@ -1020,9 +1016,9 @@
       >
     {/if}
     {#if item.comments_count > 0}
-      <!-- The derived comment-block count (#1159) drives both the chat_bubble
-           badge and the edit_note presence state, so it stays the only numeric
-           badge — the notes state lives on the edit_note button. -->
+      <!-- The derived comment count is this list's only NOTE-side indicator.
+           The edit_note button above is action-only: prose sub-notes contribute
+           no count, so keying it off this column would claim notes falsely. -->
       <span
         class="inline-flex items-center gap-0.5 text-type-2xs text-text-muted font-label-sm flex-shrink-0"
         role="img"

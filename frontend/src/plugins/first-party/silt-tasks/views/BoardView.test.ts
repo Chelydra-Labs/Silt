@@ -1541,7 +1541,7 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     ).toMatch(/3h estimated/)
   })
 
-  it('keeps the comment badge and adds notes presence (#1152)', async () => {
+  it('keeps the comment badge without claiming notes presence (#1152)', async () => {
     await renderBoard('status', [
       row({
         id: 't1',
@@ -1554,11 +1554,9 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     expect(screen.getByTestId('board-comments-badge-t1').textContent).toContain(
       '2'
     )
-    expect(screen.getByTestId('board-notes-badge-t1')).toHaveAttribute(
-      'aria-label',
-      'Has notes'
-    )
-    // Nothing renders without comment blocks (prose sub-notes add no count).
+    // Nothing renders without comment blocks (prose sub-notes add no count),
+    // and comments alone must not be dressed up as a notes state.
+    expect(screen.queryByTestId('board-notes-badge-t1')).toBeNull()
     expect(screen.queryByTestId('board-comments-badge-t2')).toBeNull()
     expect(screen.queryByTestId('board-notes-badge-t2')).toBeNull()
   })
