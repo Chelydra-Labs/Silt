@@ -744,6 +744,201 @@ describe('TaskSubEditorModal (#304)', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  it('starts a save requested during the queued save and drains to the newest doc', async () => {
+    // Regression: only the first queued request was ever started. A persist
+    // arriving during the second write left the request armed with nothing
+    // running, so drainSave awaited a settled promise (microtask spin, frozen
+    // renderer) and the queued snapshot landed after a newer one.
+    const onClose = vi.fn()
+    const resolvers: Array<() => void> = []
+    const payloads: unknown[] = []
+    mocks.saveSubtreeBlocks.mockImplementation(
+      (_id: string, children: unknown) => {
+        payloads.push(children)
+        // The first two writes hang until the test releases them, so every
+        // later request is guaranteed to arrive while a write is in flight.
+        if (payloads.length <= 2) {
+          return new Promise<void>((r) => resolvers.push(r)).then(
+            () => undefined
+          )
+        }
+        return Promise.resolve()
+      }
+    )
+
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement & {
+      editor: { commands: { insertContent: (s: string) => void } }
+    }
+    // Write #1 starts from the debounce; the later requests queue behind an
+    // in-flight write, which is the queue the pump has to keep draining.
+    pm.editor.commands.insertContent('first')
+    await vi.waitFor(() => expect(payloads.length).toBe(1), { timeout: 3000 })
+
+    pm.editor.commands.insertContent(' second')
+    // Past the 600 ms debounce: the request is queued, not written.
+    await new Promise((r) => setTimeout(r, 700))
+    expect(payloads.length).toBe(1)
+
+    resolvers[0]!()
+    await vi.waitFor(() => expect(payloads.length).toBe(2), { timeout: 3000 })
+    expect(JSON.stringify(payloads[1])).toContain('second')
+
+    pm.editor.commands.insertContent(' third')
+    await new Promise((r) => setTimeout(r, 700))
+    expect(payloads.length).toBe(2)
+
+    resolvers[1]!()
+    // The request queued during write #2 must be written last: disk ends up on
+    // the newest doc rather than one snapshot behind it.
+    await vi.waitFor(() => expect(payloads.length).toBe(3), { timeout: 3000 })
+    expect(JSON.stringify(payloads[1])).not.toContain('third')
+    expect(JSON.stringify(payloads[2])).toContain('third')
+
+    // And the drain terminates: nothing is left to write, so Esc closes.
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1), {
+      timeout: 3000
+    })
+    // ~2 s of real debounce waits plus the pump/drain assertions exceed the 5 s
+    // default under parallel load.
+  }, 15000)
+
+  it('never saves an edit made before the first load resolves', async () => {
+    // The empty doc does not match disk, so the editor is created read-only and
+    // docStale starts true: neither a keystroke nor the programmatic edit path
+    // (which bypasses the read-only flag) may reach disk before a load lands.
+    let resolveFetch!: (value: unknown[]) => void
+    mocks.fetchSubtree.mockImplementation(
+      () => new Promise<unknown[]>((r) => (resolveFetch = r))
+    )
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement & {
+      editor: {
+        isEditable: boolean
+        commands: { insertContent: (s: string) => void }
+      }
+    }
+    expect(pm.editor.isEditable).toBe(false)
+    expect(pm).toHaveAttribute('contenteditable', 'false')
+
+    pm.textContent = 'typed while loading'
+    pm.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    pm.editor.commands.insertContent(' programmatic edit')
+    await new Promise((r) => setTimeout(r, 800))
+    expect(mocks.saveSubtreeBlocks).not.toHaveBeenCalled()
+
+    // The pending load still lands and hands editing back on a doc that
+    // reflects disk.
+    resolveFetch([])
+    await vi.waitFor(() => expect(pm.editor.isEditable).toBe(true))
+    expect(screen.queryByText(/Load failed/)).toBeNull()
+  })
+
+  it('closes when the trailing save after a requested close succeeds', async () => {
+    // Esc during an edit that cannot land yet surfaces a banner and holds the
+    // close. The still-armed autosave then writes the newest doc, so the close
+    // intent must be honoured instead of leaving the modal open with a banner
+    // that has just cleared.
+    const onClose = vi.fn()
+    let resolveFirst!: () => void
+    const payloads: unknown[] = []
+    mocks.saveSubtreeBlocks.mockImplementation(
+      (_id: string, children: unknown) => {
+        payloads.push(children)
+        if (payloads.length === 1) {
+          return new Promise<void>((r) => (resolveFirst = r)).then(
+            () => undefined
+          )
+        }
+        return Promise.resolve()
+      }
+    )
+
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement & {
+      editor: { commands: { insertContent: (s: string) => void } }
+    }
+    pm.textContent = 'edited content'
+    pm.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    await flush()
+
+    // Close before the debounce fires so the close drain owns the first save.
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await vi.waitFor(() => expect(payloads.length).toBe(1))
+
+    // A keystroke during that write cannot be vouched for by it, so the close
+    // is held back with an explanation…
+    pm.editor.commands.insertContent(' trailing edit')
+    resolveFirst()
+    await flush()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(
+      screen.getByText(/the latest edits could not be confirmed/)
+    ).toBeInTheDocument()
+
+    // …until its own autosave lands, at which point the modal closes.
+    await vi.waitFor(() => expect(payloads.length).toBe(2), { timeout: 3000 })
+    expect(JSON.stringify(payloads[1])).toContain('trailing edit')
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1), {
+      timeout: 3000
+    })
+  })
+
+  it('reports the load failure ahead of the dirty flag in the footer', async () => {
+    // Both states can hold at once (a transaction on a stale doc) and the
+    // footer has one status line: the blocking condition must read first.
+    mocks.fetchSubtree.mockRejectedValueOnce(new Error('ipc down'))
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+    await flush()
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement & {
+      editor: { commands: { insertContent: (s: string) => void } }
+    }
+    pm.editor.commands.insertContent(' unsaveable edit')
+    await flush()
+
+    const status = document.querySelector('footer [aria-live]') as HTMLElement
+    expect(status, 'footer status must render').not.toBeNull()
+    expect(status.textContent?.trim()).toBe('Load failed: ipc down')
+    const footerText = (document.querySelector('footer')?.textContent ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    expect(footerText).toContain('Load failed: ipc down')
+    expect(footerText).not.toContain('Unsaved edits')
+  })
+
   it('flushes a pending snapshot when unmounted during an in-flight save (no data loss)', async () => {
     // Regression: unmount-without-close used to drop edits made during an
     // in-flight save because the retry was gated on a live editor, which

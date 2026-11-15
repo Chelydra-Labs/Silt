@@ -92,22 +92,29 @@
   let unsavedChanges = $state(false)
   let saveError = $state('')
   let saving = $state(false)
-  // Set whenever the editor doc does not match disk: the initial load failed
-  // (empty doc, subtree unknown) or a conversion wrote to disk and the reload
-  // that followed failed (doc still holds the converted block as unmarked
-  // prose). Saving either splices it over the file (caller-supplied content
-  // wins) — losing the task's sub-notes, or undoing the conversion. Read-only
-  // plus a persist() veto until a reload succeeds.
-  let docStale = $state(false)
+  // Set whenever the editor doc does not match disk: it starts true because
+  // nothing has loaded yet (empty doc, subtree unknown), and a conversion that
+  // wrote to disk followed by a failed reload leaves a doc still holding the
+  // converted block as unmarked prose. Saving either splices it over the file
+  // (caller-supplied content wins) — losing the task's sub-notes, or undoing
+  // the conversion. Read-only plus a persist() veto until a load succeeds.
+  let docStale = $state(true)
   let saveTimer: ReturnType<typeof setTimeout> | null = null
-  let saveRequested = false
   let pendingSnapshot: ParsedBlock[] | null = null
   let pendingSnapshotVersion = -1
   // Monotonic doc-version, bumped on every user edit. A save only owns the
   // unsaved flag it started with: an edit landing during the IPC flight bumps
   // this, and the completion must then leave the flag set.
   let docVersion = 0
-  let inFlight: Promise<void> = Promise.resolve()
+  // Set when a close was requested but held back by a save in flight; a later
+  // clean settle honours the close instead of leaving the modal open silently.
+  let closePending = false
+  // Single-flight save pump: one write at a time, drained by one loop that
+  // records `flushPromise`. `pumping` is only true while that promise is still
+  // pending, so awaiting it can never spin on a settled promise.
+  let pumping = false
+  let flushPromise: Promise<void> = Promise.resolve()
+  let closed = false
 
   let suppressUpdate = false
 
@@ -164,6 +171,9 @@
     createEditor({
       extensions,
       content: blocksToDoc([]),
+      // Read-only until the first load succeeds: the empty doc does not match
+      // disk, so it must not accept keystrokes (or autosave) before then.
+      editable: false,
       // Same paste semantics as the page editor (shared helper).
       editorProps: siltPasteProps,
       onUpdate: () => {
@@ -173,6 +183,8 @@
         docVersion += 1
         unsavedChanges = true
         saveError = ''
+        // The user went back to editing, so the earlier close intent is stale.
+        closePending = false
         scheduleSave()
       },
       onCreate: ({ editor }) => {
@@ -220,9 +232,11 @@
         suppressUpdate = false
       }
       unsavedChanges = false
-      // The doc matches disk again, so a stale doc (failed initial load or
-      // failed post-conversion reload) is no longer a save hazard.
+      // The doc matches disk again, so the stale doc (nothing loaded yet, a
+      // failed initial load, or a failed post-conversion reload) is no longer a
+      // save hazard.
       docStale = false
+      applyEditable()
       return true
     } catch (e) {
       // A failed load leaves a doc that does not match disk: empty on the
@@ -251,53 +265,50 @@
   function scheduleSave() {
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
-      void persist()
+      persist()
     }, 600)
   }
 
-  async function persist() {
+  function persist(): void {
     // Single veto for every save trigger (debounce, close drain, retry): a doc
     // that disagrees with disk must never reach it.
     if (docStale) return
-    if (!editorInstance || editorInstance.isDestroyed) return
-    if (saving) {
-      saveRequested = true
-      pendingSnapshot = docToBlocks(editorInstance.getJSON())
-      pendingSnapshotVersion = docVersion
-      return
-    }
-    const edited = docToBlocks(editorInstance.getJSON())
-    const version = docVersion
-    saving = true
-    inFlight = (async () => {
-      try {
-        await ctx.saveSubtreeBlocks(blockId, edited)
-        settleSave(version)
-      } catch (e) {
-        saveError = friendlyCaughtError(e)
-      } finally {
-        saving = false
-        if (saveRequested && pendingSnapshot) {
-          const next = pendingSnapshot
-          const nextVersion = pendingSnapshotVersion
-          saveRequested = false
-          pendingSnapshot = null
-          pendingSnapshotVersion = -1
-          saving = true
-          inFlight = (async () => {
-            try {
-              await ctx.saveSubtreeBlocks(blockId, next)
-              settleSave(nextVersion)
-            } catch (e) {
-              saveError = friendlyCaughtError(e)
-            } finally {
-              saving = false
-            }
-          })()
+    const ed = editorInstance
+    if (!ed || ed.isDestroyed) return
+    // Capturing the snapshot here (not in the pump) means a queued request is
+    // written even after the editor is torn down.
+    pendingSnapshot = docToBlocks(ed.getJSON())
+    pendingSnapshotVersion = docVersion
+    // Only the pump starts a write; a request that arrives mid-write just
+    // replaces the queued snapshot and is drained by the running loop.
+    if (pumping) return
+    flushPromise = runSavePump()
+  }
+
+  async function runSavePump(): Promise<void> {
+    pumping = true
+    try {
+      while (pendingSnapshot !== null) {
+        const snapshot = pendingSnapshot
+        const version = pendingSnapshotVersion
+        pendingSnapshot = null
+        pendingSnapshotVersion = -1
+        saving = true
+        try {
+          await ctx.saveSubtreeBlocks(blockId, snapshot)
+          settleSave(version)
+        } catch (e) {
+          // The modal stays open for Retry/Discard, so a pending close must not
+          // fire if a later write happens to succeed.
+          closePending = false
+          saveError = friendlyCaughtError(e)
+        } finally {
+          saving = false
         }
       }
-    })()
-    await inFlight
+    } finally {
+      pumping = false
+    }
   }
 
   // A save only vouches for the doc it snapshotted. If an edit landed while the
@@ -308,6 +319,12 @@
     if (docVersion !== version) return
     unsavedChanges = false
     saveError = ''
+    // The close that this write was holding back: the newest doc is on disk, so
+    // honour it rather than leaving the modal open with no explanation.
+    if (closePending) {
+      closePending = false
+      close()
+    }
   }
 
   async function drainSave(): Promise<void> {
@@ -315,11 +332,21 @@
       clearTimeout(saveTimer)
       saveTimer = null
     }
-    if (unsavedChanges) void persist()
-    await inFlight
-    while (saveRequested || saving) {
-      await inFlight
-    }
+    if (unsavedChanges) persist()
+    // The pump's loop only exits with an empty queue, so awaiting it covers
+    // every request queued so far. The loop here only covers another caller
+    // starting a fresh pump while this one unwinds: each iteration awaits a
+    // pump that is genuinely still running, so it cannot busy-wait.
+    await flushPromise
+    while (pumping) await flushPromise
+  }
+
+  function close(): void {
+    // Closing from a save settle can race the drain that is still unwinding, so
+    // this is the one place onClose is invoked.
+    if (closed) return
+    closed = true
+    onClose()
   }
 
   async function attemptClose() {
@@ -329,7 +356,7 @@
     // letting the flag dead-end the X/Esc.
     if (docStale) {
       await drainSave()
-      onClose()
+      close()
       return
     }
     if (unsavedChanges || saving) {
@@ -342,19 +369,27 @@
         // fires when an edit landed while the final save was in flight: the
         // save settles but cannot vouch for the newer doc (settleSave), so the
         // flag is still set and no error exists yet.
+        //
+        // The close intent outlives the message: if the still-armed autosave
+        // then lands cleanly, settleSave closes instead of leaving the modal
+        // open with a banner that has just cleared.
+        closePending = true
         if (!saveError) {
           saveError = 'the latest edits could not be confirmed on disk'
         }
         return
       }
     }
-    onClose()
+    closePending = false
+    close()
   }
 
   function retrySave(): void {
     if (saving || docStale) return
     saveError = ''
-    void persist()
+    // Explicit retry is a fresh decision about closing: never auto-close on it.
+    closePending = false
+    persist()
   }
 
   function discardChanges(): void {
@@ -363,12 +398,12 @@
       clearTimeout(saveTimer)
       saveTimer = null
     }
-    saveRequested = false
     pendingSnapshot = null
     pendingSnapshotVersion = -1
+    closePending = false
     unsavedChanges = false
     saveError = ''
-    onClose()
+    close()
   }
 
   // --- Explicit comment conversion (#1159) ---
@@ -577,15 +612,17 @@
     }
   })
 
+  // The blocking condition reads first: a stale/unsaveable doc is why nothing
+  // is landing, so "Load failed" must not sit behind "Unsaved edits".
   let statusText = $derived(
     saving
       ? 'Saving…'
       : saveError
         ? `Save failed: ${saveError}`
-        : unsavedChanges
-          ? 'Unsaved edits'
-          : loadError
-            ? `Load failed: ${loadError}`
+        : loadError
+          ? `Load failed: ${loadError}`
+          : unsavedChanges
+            ? 'Unsaved edits'
             : 'Saved'
   )
 </script>
