@@ -70,7 +70,7 @@
     class="pin-icon material-symbols-outlined relative text-icon-sm"
     aria-hidden="true"
     >push_pin{#if pinField.value}<span
-        class="pin-state-mark absolute inset-x-1 bottom-0 h-0.5 rounded-full bg-current"
+        class="pin-state-mark absolute inset-x-px bottom-0 h-0.5 rounded-full bg-current"
         data-testid="pin-state-mark"
       ></span>{/if}</span
   >
