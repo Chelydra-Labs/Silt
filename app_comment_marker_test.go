@@ -185,3 +185,118 @@ func TestSaveFileBlocks_RefusedSaveResolvePreservesCommentMarker(t *testing.T) {
 		t.Errorf("comments_count = %d, want 1 (the rule must not move in this PR)", got)
 	}
 }
+
+// markerOnlyContent is the comment shape a hand-authored (or PR-4) file
+// produces: the marker alone classifies the NOTE, with no attribution to fall
+// back on. Indexer rows cannot carry it, so both save funnels must restore it
+// from disk bytes.
+func markerOnlyContent(taskID, commentID string) string {
+	return "- [ ] parent task <!-- id: " + taskID + " -->\n" +
+		"\t- marked comment [comment::] <!-- id: " + commentID + " -->\n"
+}
+
+// assertMarkerOnlyComment checks every surface the marker-only comment must
+// keep after a save: rendered bytes, on-disk parse, and the sub-tree fetch.
+func assertMarkerOnlyComment(t *testing.T, app *App, taskID, commentID, page, fileDate, saved string) {
+	t.Helper()
+	if got := strings.Count(saved, "[comment::]"); got != 1 {
+		t.Errorf("[comment::] count = %d, want 1:\n%s", got, saved)
+	}
+	// Marker-only must stay marker-only: nothing may invent attribution.
+	for _, token := range []string{"[author::", "[ts::"} {
+		if strings.Contains(saved, token) {
+			t.Errorf("save invented %q on a marker-only comment:\n%s", token, saved)
+		}
+	}
+
+	disk := savedBlock(t, app, page, fileDate, commentID)
+	if disk == nil {
+		t.Fatal("comment missing from disk after the save")
+	}
+	if !disk.IsComment {
+		t.Error("expected IsComment=true on disk after the save")
+	}
+	if disk.Author != "" || disk.Timestamp != "" {
+		t.Errorf("attribution drifted on a marker-only comment: author=%q ts=%q", disk.Author, disk.Timestamp)
+	}
+	if !parser.IsCommentBlock(*disk) {
+		t.Error("expected the on-disk block to classify as a comment")
+	}
+
+	sub, err := app.FetchSubtree(taskID)
+	if err != nil {
+		t.Fatalf("FetchSubtree: %v", err)
+	}
+	comment := findSubtreeBlock(t, sub, commentID)
+	if comment == nil {
+		t.Fatalf("comment missing from the sub-tree after the save: %+v", sub)
+	}
+	if !comment.IsComment {
+		t.Error("expected IsComment=true in FetchSubtree after the save")
+	}
+	if !parser.IsCommentBlock(*comment) {
+		t.Error("expected the sub-tree block to classify as a comment")
+	}
+	if got := taskCommentsCount(t, app, taskID); got != 1 {
+		t.Errorf("comments_count = %d, want 1 (the rule must not move in this PR)", got)
+	}
+}
+
+func TestSaveFileBlocks_PreservesMarkerOnlyCommentOnUnrelatedEdit(t *testing.T) {
+	app := newTestApp(t)
+	const (
+		taskID    = "ac1f0001-4444-1111-1111-111111111111"
+		commentID = "ac1f0002-4444-1111-1111-111111111111"
+		noteID    = "ac1f0003-4444-1111-1111-111111111111"
+		page      = "CommentMarkerOnlyPageSave"
+		fileDate  = "2026-07-01"
+	)
+	indexTestFile(t, app, pageAttrNotebook, pageAttrSection, page, fileDate, markerOnlyContent(taskID, commentID))
+
+	payload := pageEditorPayloadNoCommentMetadata(t, app, page)
+	payload = append(payload, parser.ParsedBlock{
+		ID: noteID, Type: parser.BlockNote, Depth: 0, CleanText: "an unrelated paragraph",
+	})
+	if err := app.SaveFileBlocks(pageAttrNotebook, pageAttrSection, page, payload); err != nil {
+		t.Fatalf("SaveFileBlocks: %v", err)
+	}
+
+	saved := mustReadTaskFile(t, app, pageAttrNotebook, pageAttrSection, page)
+	if !strings.Contains(saved, "an unrelated paragraph") {
+		t.Errorf("the unrelated edit did not land:\n%s", saved)
+	}
+	assertMarkerOnlyComment(t, app, taskID, commentID, page, fileDate, saved)
+}
+
+// TestSaveFileBlocks_RefusedSaveResolvePreservesMarkerOnlyComment is the
+// marker-only twin of the refusal-replay test: the replay skips the save
+// funnel's merge, so the resolver alone carries a comment that has no
+// attribution to fall back on.
+func TestSaveFileBlocks_RefusedSaveResolvePreservesMarkerOnlyComment(t *testing.T) {
+	app := newTestApp(t)
+	const (
+		taskID    = "ac200001-4444-1111-1111-111111111111"
+		commentID = "ac200002-4444-1111-1111-111111111111"
+		extID     = "ac200003-4444-1111-1111-111111111111"
+		page      = "CommentMarkerOnlyResolve"
+		fileDate  = "2026-07-01"
+	)
+	content := markerOnlyContent(taskID, commentID)
+	indexTestFile(t, app, pageAttrNotebook, pageAttrSection, page, fileDate, content)
+
+	payload := pageEditorPayloadNoCommentMetadata(t, app, page)
+
+	external := content + "- external line <!-- id: " + extID + " -->\n"
+	if err := os.WriteFile(conflictPagePath(app, pageAttrNotebook, pageAttrSection, page),
+		[]byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	requireConflict(t, app.SaveFileBlocks(pageAttrNotebook, pageAttrSection, page, payload))
+
+	if _, err := app.ResolveExternalConflict(pageAttrNotebook, pageAttrSection, page, conflictResolutionKeepMine); err != nil {
+		t.Fatalf("ResolveExternalConflict(keep_mine): %v", err)
+	}
+
+	saved := mustReadTaskFile(t, app, pageAttrNotebook, pageAttrSection, page)
+	assertMarkerOnlyComment(t, app, taskID, commentID, page, fileDate, saved)
+}

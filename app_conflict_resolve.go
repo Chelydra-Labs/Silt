@@ -255,7 +255,8 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 		return "", fmt.Errorf("read current page version: %w", err)
 	}
 	// This replay bypasses saveFileBlocksWithGate's merge, so the stashed
-	// pre-merge editor payload would strip [author::]/[ts::] for good (#1160).
+	// pre-merge editor payload would strip the comment's marker and attribution
+	// for good (attribution merge: #1160; marker: #1159).
 	if rw.funnel == funnelEditorBlocks && rw.blocks != nil {
 		rw.blocks = a.preserveStashedCommentAttribution(filePath, theirs, rw)
 	}
