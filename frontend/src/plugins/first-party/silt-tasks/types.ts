@@ -36,6 +36,10 @@ export interface TaskDetail {
   // DONE-confirm guard read it without a second round-trip.
   is_blocked?: number
   comments_count: number
+  // Derived presence cache (#1173): true when the task owns at least one prose
+  // sub-note — a NOTE descendant that is not a comment. Presence only; there is
+  // deliberately no sub-note count.
+  has_subnotes: boolean
   links_count: number
   // Pipe-delimited raw tag paths from a GROUP_CONCAT subquery; absent
   // when the task has no tags.
@@ -127,8 +131,9 @@ export interface TaskViewProps {
  * projections guarantee the non-optional fields exist, but SQL NULL lands as
  * null/undefined for the nullable extras (timestamps, estimate, subtask
  * rollups); this normalizes them to the TaskDetail contract so every view
- * renders the same shape without per-view coercion holes. `pinned` arrives
- * as 0/1 from the SQL projection and is forced to a real boolean here.
+ * renders the same shape without per-view coercion holes. `pinned` and
+ * `has_subnotes` arrive as 0/1 from the SQL projection and are forced to real
+ * booleans here (SQL NULL/absent → false).
  *
  * Lifted byte-for-byte from the three views' inline row mappers (Board,
  * List, Calendar) — they were identical.
@@ -138,6 +143,7 @@ export function coerceTaskRow(raw: unknown): TaskDetail {
   return {
     ...(raw as object),
     pinned: !!r.pinned,
+    has_subnotes: !!r.has_subnotes,
     created_at: (r.created_at as string) ?? '',
     completed_at: (r.completed_at as string) ?? '',
     manual_order: (r.manual_order as number) ?? 0,

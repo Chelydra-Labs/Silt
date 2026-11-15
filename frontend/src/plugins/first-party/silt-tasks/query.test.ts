@@ -199,6 +199,11 @@ describe('buildQuery — combined scope + filters (ported from silt-kanban)', ()
     const { sql } = buildQuery('vault', emptyFilters, ctx)
     expect(sql).toContain('t.shortlist_rank')
   })
+
+  it('includes the sub-notes presence column in the SELECT (#1173)', () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx)
+    expect(sql).toContain('t.has_subnotes')
+  })
 })
 
 // ── New: groupBy lever (ORDER BY changes) ─────────────────────────────
