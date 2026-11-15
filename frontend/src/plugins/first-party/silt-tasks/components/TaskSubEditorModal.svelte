@@ -17,7 +17,8 @@
     SiltHardBreak,
     SiltBlockKeymaps,
     blocksToDoc,
-    docToBlocks
+    docToBlocks,
+    findActiveBlock
   } from '../../../../lib/editor'
   import type { ParsedBlock } from '../../../../lib/editor'
   import { siltPasteProps } from '../../../../lib/editor/schema'
@@ -42,7 +43,9 @@
    * a disclosure so the editor keeps space.
    *
    * Standard modal pattern: focus-trap + Esc-with-unsaved-prompt +
-   * focus-restore.
+   * focus-restore. The status footer carries "Convert note to comment"
+   * (#1159): it flushes the autosave, flips the block server-side, then
+   * reloads so the note leaves this editor's document.
    */
   interface Props {
     blockId: string
@@ -89,10 +92,29 @@
   let unsavedChanges = $state(false)
   let saveError = $state('')
   let saving = $state(false)
+  // Set whenever the editor doc does not match disk: it starts true because
+  // nothing has loaded yet (empty doc, subtree unknown), and a conversion that
+  // wrote to disk followed by a failed reload leaves a doc still holding the
+  // converted block as unmarked prose. Saving either splices it over the file
+  // (caller-supplied content wins) — losing the task's sub-notes, or undoing
+  // the conversion. Read-only plus a persist() veto until a load succeeds.
+  let docStale = $state(true)
   let saveTimer: ReturnType<typeof setTimeout> | null = null
-  let saveRequested = false
   let pendingSnapshot: ParsedBlock[] | null = null
-  let inFlight: Promise<void> = Promise.resolve()
+  let pendingSnapshotVersion = -1
+  // Monotonic doc-version, bumped on every user edit. A save only owns the
+  // unsaved flag it started with: an edit landing during the IPC flight bumps
+  // this, and the completion must then leave the flag set.
+  let docVersion = 0
+  // Set when a close was requested but held back by a save in flight; a later
+  // clean settle honours the close instead of leaving the modal open silently.
+  let closePending = false
+  // Single-flight save pump: one write at a time, drained by one loop that
+  // records `flushPromise`. `pumping` is only true while that promise is still
+  // pending, so awaiting it can never spin on a settled promise.
+  let pumping = false
+  let flushPromise: Promise<void> = Promise.resolve()
+  let closed = false
 
   let suppressUpdate = false
 
@@ -149,14 +171,20 @@
     createEditor({
       extensions,
       content: blocksToDoc([]),
+      // Read-only until the first load succeeds: the empty doc does not match
+      // disk, so it must not accept keystrokes (or autosave) before then.
+      editable: false,
       // Same paste semantics as the page editor (shared helper).
       editorProps: siltPasteProps,
       onUpdate: () => {
         // Fold toggles are content now that `open` is disk state (#1123) —
         // collapsing a section arms the unsaved-changes prompt like any edit.
         if (suppressUpdate) return
+        docVersion += 1
         unsavedChanges = true
         saveError = ''
+        // The user went back to editing, so the earlier close intent is stale.
+        closePending = false
         scheduleSave()
       },
       onCreate: ({ editor }) => {
@@ -168,12 +196,16 @@
     })
   )
 
-  async function loadSubtree() {
+  // Returns whether the editor document now reflects disk. Callers that act on
+  // the reload (the conversion) must not infer success from a resolved promise:
+  // the fetch failure is captured in loadError, and a torn-down editor skips
+  // the update entirely.
+  async function loadSubtree(): Promise<boolean> {
     loading = true
     loadError = ''
     try {
       const subtree = await ctx.fetchSubtree(blockId)
-      if (!editorInstance || editorInstance.isDestroyed) return
+      if (!editorInstance || editorInstance.isDestroyed) return false
       suppressUpdate = true
       try {
         const safeSubtree = (subtree ?? []) as ParsedBlock[]
@@ -200,8 +232,20 @@
         suppressUpdate = false
       }
       unsavedChanges = false
+      // The doc matches disk again, so the stale doc (nothing loaded yet, a
+      // failed initial load, or a failed post-conversion reload) is no longer a
+      // save hazard.
+      docStale = false
+      applyEditable()
+      return true
     } catch (e) {
+      // A failed load leaves a doc that does not match disk: empty on the
+      // initial load, stale after a conversion. It must not be editable or
+      // saveable until a reload succeeds.
+      docStale = true
+      applyEditable()
       loadError = e instanceof Error ? e.message : String(e)
+      return false
     } finally {
       loading = false
     }
@@ -221,48 +265,66 @@
   function scheduleSave() {
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
-      void persist()
+      persist()
     }, 600)
   }
 
-  async function persist() {
-    if (!editorInstance || editorInstance.isDestroyed) return
-    if (saving) {
-      saveRequested = true
-      pendingSnapshot = docToBlocks(editorInstance.getJSON())
-      return
-    }
-    const edited = docToBlocks(editorInstance.getJSON())
-    saving = true
-    inFlight = (async () => {
-      try {
-        await ctx.saveSubtreeBlocks(blockId, edited)
-        unsavedChanges = false
-        saveError = ''
-      } catch (e) {
-        saveError = friendlyCaughtError(e)
-      } finally {
-        saving = false
-        if (saveRequested && pendingSnapshot) {
-          const next = pendingSnapshot
-          saveRequested = false
-          pendingSnapshot = null
-          saving = true
-          inFlight = (async () => {
-            try {
-              await ctx.saveSubtreeBlocks(blockId, next)
-              unsavedChanges = false
-              saveError = ''
-            } catch (e) {
-              saveError = friendlyCaughtError(e)
-            } finally {
-              saving = false
-            }
-          })()
+  function persist(): void {
+    // Single veto for every save trigger (debounce, close drain, retry): a doc
+    // that disagrees with disk must never reach it.
+    if (docStale) return
+    const ed = editorInstance
+    if (!ed || ed.isDestroyed) return
+    // Capturing the snapshot here (not in the pump) means a queued request is
+    // written even after the editor is torn down.
+    pendingSnapshot = docToBlocks(ed.getJSON())
+    pendingSnapshotVersion = docVersion
+    // Only the pump starts a write; a request that arrives mid-write just
+    // replaces the queued snapshot and is drained by the running loop.
+    if (pumping) return
+    flushPromise = runSavePump()
+  }
+
+  async function runSavePump(): Promise<void> {
+    pumping = true
+    try {
+      while (pendingSnapshot !== null) {
+        const snapshot = pendingSnapshot
+        const version = pendingSnapshotVersion
+        pendingSnapshot = null
+        pendingSnapshotVersion = -1
+        saving = true
+        try {
+          await ctx.saveSubtreeBlocks(blockId, snapshot)
+          settleSave(version)
+        } catch (e) {
+          // The modal stays open for Retry/Discard, so a pending close must not
+          // fire if a later write happens to succeed.
+          closePending = false
+          saveError = friendlyCaughtError(e)
+        } finally {
+          saving = false
         }
       }
-    })()
-    await inFlight
+    } finally {
+      pumping = false
+    }
+  }
+
+  // A save only vouches for the doc it snapshotted. If an edit landed while the
+  // write was in flight the doc-version moved on, so the flag stays set and the
+  // close path re-checks (keeping the modal open) instead of discarding the
+  // trailing edit.
+  function settleSave(version: number) {
+    if (docVersion !== version) return
+    unsavedChanges = false
+    saveError = ''
+    // The close that this write was holding back: the newest doc is on disk, so
+    // honour it rather than leaving the modal open with no explanation.
+    if (closePending) {
+      closePending = false
+      close()
+    }
   }
 
   async function drainSave(): Promise<void> {
@@ -270,27 +332,70 @@
       clearTimeout(saveTimer)
       saveTimer = null
     }
-    if (unsavedChanges) void persist()
-    await inFlight
-    while (saveRequested || saving) {
-      await inFlight
-    }
+    if (unsavedChanges) persist()
+    // The pump's loop only exits with an empty queue, so awaiting it covers
+    // every request queued so far. The loop here only covers another caller
+    // starting a fresh pump while this one unwinds: each iteration awaits a
+    // pump that is genuinely still running, so it cannot busy-wait.
+    await flushPromise
+    while (pumping) await flushPromise
+  }
+
+  function close(): void {
+    // Closing from a save settle can race the drain that is still unwinding, so
+    // this is the one place onClose is invoked.
+    if (closed) return
+    closed = true
+    onClose()
   }
 
   async function attemptClose() {
+    // A stale doc is known to disagree with disk, and persist() vetoes every
+    // write from it — so whatever the unsaved flag says, there is nothing
+    // recoverable to keep the modal open for. Close explicitly rather than
+    // letting the flag dead-end the X/Esc.
+    if (docStale) {
+      await drainSave()
+      close()
+      return
+    }
     if (unsavedChanges || saving) {
       await drainSave()
       // A failed final save keeps the modal open so the user can retry or
       // explicitly discard the edits instead of losing them on close.
-      if (unsavedChanges || saveError) return
+      if (unsavedChanges || saveError) {
+        // The Discard/Retry row renders only behind saveError. Without one the
+        // close would be inert with no explanation, so surface the block. This
+        // fires when an edit landed while the final save was in flight: the
+        // save settles but cannot vouch for the newer doc (settleSave), so the
+        // flag is still set and no error exists yet.
+        //
+        // The close intent outlives the message: if the still-armed autosave
+        // then lands cleanly, settleSave closes instead of leaving the modal
+        // open with a banner that has just cleared.
+        closePending = true
+        if (!saveError) {
+          saveError = 'the latest edits could not be confirmed on disk'
+        }
+        return
+      }
     }
-    onClose()
+    closePending = false
+    close()
   }
 
   function retrySave(): void {
-    if (saving) return
+    if (saving || docStale) return
+    // The retry writes the newest doc itself, so a still-armed debounce would
+    // only duplicate that write.
+    if (saveTimer) {
+      clearTimeout(saveTimer)
+      saveTimer = null
+    }
     saveError = ''
-    void persist()
+    // Explicit retry is a fresh decision about closing: never auto-close on it.
+    closePending = false
+    persist()
   }
 
   function discardChanges(): void {
@@ -299,11 +404,139 @@
       clearTimeout(saveTimer)
       saveTimer = null
     }
-    saveRequested = false
     pendingSnapshot = null
+    pendingSnapshotVersion = -1
+    closePending = false
     unsavedChanges = false
     saveError = ''
-    onClose()
+    close()
+  }
+
+  // --- Explicit comment conversion (#1159) ---
+  // The sub-editor is block-scoped, so the affordance targets the note the
+  // caret is in (the doc only holds prose: comments are partitioned out).
+  // selectionVersion is the reactive edge — moving the caret/typing changes
+  // which block is active without any other Svelte state moving.
+  let selectionVersion = $state(0)
+  let converting = $state(false)
+  let convertError = $state('')
+  let convertMessage = $state('')
+
+  $effect(() => {
+    const ed = editorInstance
+    if (!ed) return
+    const bump = ({
+      transaction
+    }: {
+      transaction: { docChanged: boolean }
+    }) => {
+      selectionVersion += 1
+      // A conversion result is transient: the next edit restores the hint.
+      if (transaction.docChanged) convertMessage = ''
+    }
+    ed.on('transaction', bump)
+    return () => ed.off('transaction', bump)
+  })
+
+  function findActiveNoteId(_selectionVersion: number): string | null {
+    const ed = editorInstance
+    if (!ed || ed.isDestroyed) return null
+    const active = findActiveBlock(ed)
+    if (!active || active.node.type.name !== 'noteBlock') return null
+    const blockID = active.node.attrs.id
+    if (typeof blockID !== 'string' || blockID === '') return null
+    // An empty note has not reached disk, so there is no block to convert.
+    if (active.node.textContent.trim() === '') return null
+    return blockID
+  }
+
+  let activeNoteId = $derived(findActiveNoteId(selectionVersion))
+
+  // Why the action is unavailable: used as the tooltip and read out through the
+  // aria-describedby hint, so a disabled control still states its reason. A
+  // stale doc is not the disk state (its converted block still reads as prose,
+  // or it never loaded), so converting from it could target the wrong block.
+  let convertDisabledReason = $derived(
+    docStale
+      ? 'Reload the sub-notes before converting again'
+      : activeNoteId
+        ? 'Move this note to the task comment thread'
+        : 'Put the cursor in a note first'
+  )
+
+  // Single place that flips the editor's read-only state. Every flip is silent
+  // (emitUpdate=false): the doc itself did not change, so it must never mark
+  // it dirty or arm an autosave. TipTap's default emitUpdate=true would fire
+  // onUpdate, and on the conversion path that would save the pre-conversion
+  // doc over the marker the server just wrote.
+  function setEditorEditable(editable: boolean) {
+    const ed = editorInstance
+    if (!ed || ed.isDestroyed) return
+    if (ed.isEditable === editable) return
+    ed.setEditable(editable, false)
+  }
+
+  // Read-only is the visible half of the stale guard: the doc must not accept
+  // keystrokes while it disagrees with disk.
+  function applyEditable() {
+    setEditorEditable(!docStale)
+  }
+
+  // The way out of a failed load/conversion reload: re-read the subtree. On
+  // success loadSubtree clears the stale flag and loadError, and editing
+  // resumes on a doc that matches disk.
+  async function retryLoad() {
+    if (loading) return
+    if (await loadSubtree()) {
+      convertError = ''
+    }
+    applyEditable()
+  }
+
+  async function convertActiveNoteToComment() {
+    const noteId = activeNoteId
+    if (!noteId || converting || docStale) return
+    converting = true
+    convertError = ''
+    convertMessage = ''
+    // Freeze the doc: a keystroke landing between the flush and the reload
+    // below would be overwritten by loadSubtree (the block leaves the doc).
+    // Silent (setEditorEditable), so the freeze does not itself dirty the doc
+    // and trigger a redundant subtree write.
+    setEditorEditable(false)
+    try {
+      // Flush the debounced autosave FIRST: the conversion re-reads the file
+      // on the server, so unsaved editor content must land before it or the
+      // body written back would be pre-edit.
+      await drainSave()
+      if (saveError || unsavedChanges) {
+        convertError =
+          'Your edits could not be saved, so the note was not converted.'
+        return
+      }
+      const changed = await ctx.setBlockCommentClassification(noteId, true)
+      // Reload so the converted block leaves the editor document; it now
+      // belongs to the task's comment thread. A failed or skipped reload
+      // leaves the block in the doc as unmarked prose, so that doc must be
+      // reported as a failure rather than a success.
+      if (!(await loadSubtree())) {
+        // loadSubtree's catch marks the doc stale; set it again for the
+        // torn-down-editor false path, which is likewise not a disk match.
+        docStale = true
+        convertError = changed
+          ? 'Note converted to a comment on disk, but the editor could not refresh. Saving from this view would undo the conversion — reload the sub-notes, or reopen the sub-editor.'
+          : 'The editor could not refresh after the conversion. Saving from this view would undo its comment state — reload the sub-notes, or reopen the sub-editor.'
+        return
+      }
+      convertMessage = changed
+        ? 'Note converted to a comment; it now shows in the comment thread.'
+        : 'This note was already a comment.'
+    } catch (e) {
+      convertError = friendlyCaughtError(e)
+    } finally {
+      converting = false
+      applyEditable()
+    }
   }
 
   // Mirrors whether the sidebar has a popover/dialog open so Esc doesn't close
@@ -369,7 +602,11 @@
     document.body.style.overflow = 'hidden'
     if (!initialTask) void loadTaskDetail()
     return () => {
-      void drainSave()
+      // Drain before clearing the stale flag: persist() vetoes on it, so
+      // clearing first could let a stale doc reach disk on the way out.
+      void drainSave().finally(() => {
+        docStale = false
+      })
       document.body.style.overflow = prevOverflow
       if (previouslyFocused?.isConnected) previouslyFocused.focus?.()
     }
@@ -381,15 +618,17 @@
     }
   })
 
+  // The blocking condition reads first: a stale/unsaveable doc is why nothing
+  // is landing, so "Load failed" must not sit behind "Unsaved edits".
   let statusText = $derived(
     saving
       ? 'Saving…'
       : saveError
         ? `Save failed: ${saveError}`
-        : unsavedChanges
-          ? 'Unsaved edits'
-          : loadError
-            ? `Load failed: ${loadError}`
+        : loadError
+          ? `Load failed: ${loadError}`
+          : unsavedChanges
+            ? 'Unsaved edits'
             : 'Saved'
   )
 </script>
@@ -502,8 +741,16 @@
             <div class="text-text-muted font-body-md">Loading sub-notes…</div>
           </div>
         {:else if loadError}
-          <div class="text-status-danger text-center py-10 font-body-md">
-            Load failed: {loadError}
+          <div class="flex flex-col items-center gap-3 py-10">
+            <div class="text-status-danger text-center font-body-md">
+              Load failed: {loadError}
+            </div>
+            <button
+              type="button"
+              class="text-type-xs font-label-sm text-text-muted hover:text-text-primary transition-colors px-2 py-1 rounded"
+              disabled={loading}
+              onclick={() => void retryLoad()}>Reload sub-notes</button
+            >
           </div>
         {/if}
         {#if $editorStore}
@@ -513,7 +760,7 @@
 
       <!-- Status footer -->
       <footer
-        class="flex items-center justify-between px-5 py-2 border-t border-surface-modal-border flex-shrink-0"
+        class="flex items-center justify-between gap-3 px-5 py-2 border-t border-surface-modal-border flex-shrink-0"
       >
         <span
           class="text-type-xs font-label-sm {saveError
@@ -526,10 +773,48 @@
         >
           {statusText}
         </span>
-        <span class="text-type-2xs text-text-muted font-label-sm">
-          Esc to close
+        <span class="flex items-center gap-2 flex-shrink-0">
+          <!-- Same text-action styling as the header chrome. Disabled (not
+               hidden) when the caret is not in a non-empty note so the action
+               stays in the reading order rather than appearing on caret move. -->
+          <button
+            type="button"
+            class="text-type-2xs font-label-sm text-text-muted hover:text-accent-primary-start transition-colors px-1 rounded whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!activeNoteId || converting || docStale}
+            aria-label="Convert the note at the cursor to a comment"
+            aria-describedby="sub-editor-convert-note-hint"
+            title={convertDisabledReason}
+            onclick={() => void convertActiveNoteToComment()}
+          >
+            Convert note to comment
+          </button>
+          <span id="sub-editor-convert-note-hint" class="sr-only">
+            Converts the note your cursor is in; it moves to the task's comment
+            thread.
+            {#if docStale}
+              Unavailable until the sub-notes are reloaded.
+            {/if}
+          </span>
+          {#if convertMessage}
+            <span
+              class="text-type-2xs font-label-sm text-text-muted"
+              role="status">{convertMessage}</span
+            >
+          {:else}
+            <span class="text-type-2xs text-text-muted font-label-sm">
+              Esc to close
+            </span>
+          {/if}
         </span>
       </footer>
+      {#if convertError}
+        <div class="flex items-center justify-end gap-2 px-5 pb-2">
+          <span
+            class="text-type-xs font-label-sm text-status-danger"
+            role="alert">{convertError}</span
+          >
+        </div>
+      {/if}
       {#if saveError}
         <div class="flex items-center justify-end gap-2 px-5 pb-2">
           <button

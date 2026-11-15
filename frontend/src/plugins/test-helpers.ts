@@ -42,6 +42,7 @@ export const v2CtxStubs: Pick<
   | 'saveSubtreeBlocks'
   | 'deleteBlock'
   | 'moveBlock'
+  | 'setBlockCommentClassification'
   | 'applyBlocks'
   | 'createPage'
   | 'createSection'
@@ -139,6 +140,7 @@ export const v2CtxStubs: Pick<
   saveSubtreeBlocks: () => Promise.resolve(true),
   deleteBlock: () => Promise.resolve(true),
   moveBlock: () => Promise.resolve(true),
+  setBlockCommentClassification: () => Promise.resolve(false),
   applyBlocks: () => Promise.resolve(true),
   createPage: () => Promise.resolve(''),
   createSection: () => Promise.resolve(true),

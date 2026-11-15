@@ -729,6 +729,10 @@
         "signature": "PluginScratchDir(pluginID, sessionToken, notebook string) (string, error)"
       },
       {
+        "name": "PluginSetBlockCommentClassification",
+        "signature": "PluginSetBlockCommentClassification(pluginID, sessionToken, blockID string, asComment bool) (bool, error)"
+      },
+      {
         "name": "PluginSetTaskBlockedBy",
         "signature": "PluginSetTaskBlockedBy(pluginID, sessionToken, blockID string, depIDs []string) (bool, error)"
       },
@@ -1249,6 +1253,7 @@
       "frontend/src/components/SearchModal.svelte",
       "frontend/src/components/SearchModal.test.ts",
       "frontend/src/components/Sidebar.test.ts",
+      "frontend/src/components/SidebarQuickAccess.test.ts",
       "frontend/src/components/TabStrip.test.ts",
       "frontend/src/components/TagSidebarPanel.svelte",
       "frontend/src/components/TagsExplorer.svelte",
@@ -1286,6 +1291,7 @@
       "frontend/src/components/settings/AboutTab.test.ts",
       "frontend/src/components/settings/DevTab.svelte",
       "frontend/src/components/settings/EditorTab.spellcheck.test.ts",
+      "frontend/src/components/settings/GeneralTab.external-config.test.ts",
       "frontend/src/components/settings/GeneralTab.svelte",
       "frontend/src/components/settings/GeneralTab.test.ts",
       "frontend/src/components/settings/HotkeysTab.notice.test.ts",
@@ -1312,6 +1318,7 @@
       "frontend/src/dashboards/TypeDashboard.savedViews.test.ts",
       "frontend/src/dashboards/TypeDashboard.svelte",
       "frontend/src/dashboards/TypeDashboard.test.ts",
+      "frontend/src/dashboards/TypeDashboardTable.test.ts",
       "frontend/src/dashboards/dashboardSettings.test.ts",
       "frontend/src/dashboards/dashboardSettings.ts",
       "frontend/src/dashboards/reprojectionStatus.svelte.ts",
@@ -1336,6 +1343,9 @@
       "frontend/src/lib/noteZoom.svelte.ts",
       "frontend/src/lib/pageActions.test.ts",
       "frontend/src/lib/pageActions.ts",
+      "frontend/src/lib/pageLocatorMenu.svelte.test.ts",
+      "frontend/src/lib/sidebar/favorites.test.ts",
+      "frontend/src/lib/sidebar/favorites.ts",
       "frontend/src/lib/sidebar/navOrder.test.ts",
       "frontend/src/lib/sidebar/navOrder.ts",
       "frontend/src/lib/sidebar/useDragDrop.test.ts",
@@ -1430,6 +1440,7 @@
       "frontend/src/components/settings/AppearanceTab.svelte",
       "frontend/src/components/settings/AppearanceTab.test.ts",
       "frontend/src/components/settings/EditorTab.spellcheck.test.ts",
+      "frontend/src/components/settings/GeneralTab.external-config.test.ts",
       "frontend/src/components/settings/GeneralTab.test.ts",
       "frontend/src/components/settings/PluginsTab.svelte",
       "frontend/src/components/settings/PluginsTab.test.ts",
@@ -1531,6 +1542,6 @@
       "vault:moved",
       "vault:watch-coverage"
     ],
-    "plugin_method_count": 64
+    "plugin_method_count": 65
   }
 }

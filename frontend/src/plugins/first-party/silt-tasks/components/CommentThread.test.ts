@@ -1,5 +1,11 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  within
+} from '@testing-library/svelte'
 
 // CommentThread attributes comments from the configured local_author pref
 // (#1125): a fresh ctx.getPluginSettings() read at mount (Settings writes
@@ -1504,6 +1510,155 @@ describe('comment predicates (display/edit asymmetry)', () => {
       expect(isNoteOwnedByTask(tooDeep.blocks, tooDeep.leaf, 'task-1')).toBe(
         false
       )
+    })
+  })
+
+  describe('convert to sub-note (#1159)', () => {
+    const CONVERT_LABEL = 'Convert to sub-note (discards author and date)'
+
+    const threaded = () => [
+      makeBlock({
+        id: 'c1',
+        clean_text: 'Top comment',
+        author: 'alice',
+        timestamp: '2026-07-01T09:00:00'
+      }),
+      makeBlock({
+        id: 'r1',
+        parent_id: 'c1',
+        depth: 2,
+        clean_text: 'A reply',
+        author: 'bob',
+        timestamp: '2026-07-01T10:00:00'
+      }),
+      makeBlock({
+        id: 'r2',
+        parent_id: 'r1',
+        depth: 3,
+        clean_text: 'A flattened deeper reply',
+        author: 'carol',
+        timestamp: '2026-07-01T11:00:00'
+      })
+    ]
+
+    it('offers the action on a top-level comment and not on a reply', async () => {
+      mount({
+        ctx: makeCtx({ fetchSubtree: vi.fn().mockResolvedValue(threaded()) })
+      })
+      await flush()
+      const articles = document.querySelectorAll('[role="comment"]')
+      expect(articles).toHaveLength(3)
+      // Top-level: the label itself states the discard, so it is audible
+      // before use.
+      expect(
+        within(articles[0] as HTMLElement).getByLabelText(CONVERT_LABEL)
+      ).toBeInTheDocument()
+      // A reply (direct or flattened-deeper) must not offer it: the mutation
+      // changes classification only, so the result would be a prose note
+      // parented under a comment, which no surface presents.
+      expect(
+        within(articles[1] as HTMLElement).queryByLabelText(CONVERT_LABEL)
+      ).toBeNull()
+      expect(
+        within(articles[2] as HTMLElement).queryByLabelText(CONVERT_LABEL)
+      ).toBeNull()
+      expect(screen.getAllByLabelText(CONVERT_LABEL)).toHaveLength(1)
+    })
+
+    it('cancelling the confirmation converts nothing', async () => {
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+      const setBlockCommentClassification = vi.fn().mockResolvedValue(true)
+      mount({
+        ctx: makeCtx({
+          fetchSubtree: vi.fn().mockResolvedValue(threaded()),
+          setBlockCommentClassification
+        })
+      })
+      await flush()
+
+      await fireEvent.click(screen.getAllByLabelText(CONVERT_LABEL)[0]!)
+      await flush()
+
+      expect(confirmSpy).toHaveBeenCalledTimes(1)
+      expect(setBlockCommentClassification).not.toHaveBeenCalled()
+      confirmSpy.mockRestore()
+    })
+
+    it('states the author/date discard and reloads after the conversion', async () => {
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+      const setBlockCommentClassification = vi.fn().mockResolvedValue(true)
+      const onCommentsChanged = vi.fn()
+      const fetchSubtree = vi.fn().mockResolvedValue(threaded())
+      mount({
+        ctx: makeCtx({ fetchSubtree, setBlockCommentClassification }),
+        onCommentsChanged
+      })
+      await flush()
+
+      await fireEvent.click(screen.getAllByLabelText(CONVERT_LABEL)[0]!)
+      await flush()
+
+      expect(confirmSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/author and date will be discarded/)
+      )
+      expect(setBlockCommentClassification).toHaveBeenCalledWith('c1', false)
+      // Reload (mount load + post-conversion load) and notify the host.
+      expect(fetchSubtree).toHaveBeenCalledTimes(2)
+      expect(onCommentsChanged).toHaveBeenCalled()
+      expect(
+        screen.getByText('Comment converted to a sub-note')
+      ).toBeInTheDocument()
+      confirmSpy.mockRestore()
+    })
+
+    it('shows an error and keeps the comment when the conversion fails', async () => {
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+      const setBlockCommentClassification = vi
+        .fn()
+        .mockRejectedValue(new Error('disk locked'))
+      mount({
+        ctx: makeCtx({
+          fetchSubtree: vi.fn().mockResolvedValue(threaded()),
+          setBlockCommentClassification
+        })
+      })
+      await flush()
+
+      await fireEvent.click(screen.getAllByLabelText(CONVERT_LABEL)[0]!)
+      await flush()
+
+      expect(screen.getByTestId('comment-thread-error')).toBeInTheDocument()
+      expect(screen.getByText('Top comment')).toBeInTheDocument()
+      expect(screen.getByText('Comment failed to convert')).toBeInTheDocument()
+      confirmSpy.mockRestore()
+    })
+
+    it('does not announce success when the post-conversion refresh fails', async () => {
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+      const setBlockCommentClassification = vi.fn().mockResolvedValue(true)
+      const fetchSubtree = vi
+        .fn()
+        .mockResolvedValueOnce(threaded())
+        .mockRejectedValueOnce(new Error('ipc down'))
+      mount({
+        ctx: makeCtx({ fetchSubtree, setBlockCommentClassification })
+      })
+      await flush()
+
+      await fireEvent.click(screen.getAllByLabelText(CONVERT_LABEL)[0]!)
+      await flush()
+
+      // The write landed, but the list still shows the attribution the user
+      // was just told would be discarded — claiming success over it would
+      // contradict the error banner and the stale rows.
+      expect(setBlockCommentClassification).toHaveBeenCalledWith('c1', false)
+      expect(
+        screen.getByText('Comment converted, but the thread could not refresh')
+      ).toBeInTheDocument()
+      expect(screen.queryByText('Comment converted to a sub-note')).toBeNull()
+      expect(screen.getByTestId('comment-thread-error')).toBeInTheDocument()
+      expect(screen.getByText('ipc down')).toBeInTheDocument()
+      confirmSpy.mockRestore()
     })
   })
 })

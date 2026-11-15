@@ -18,7 +18,11 @@
    * via ctx.deleteBlock. Nested replies (#438) use parentCommentId; the UI
    * shows two levels (top-level + first-level replies), flattening deeper
    * nesting under the top-level ancestor. The host re-queries comments_count
-   * through onCommentsChanged after each mutation.
+   * through onCommentsChanged after each mutation. Convert-to-sub-note
+   * (#1159) clears the marker and attribution via
+   * ctx.setBlockCommentClassification; the author and date are discarded by
+   * design (D7), which the control and its confirmation state. Offered on
+   * top-level comments only — see isTopLevelComment.
    */
   interface Props {
     taskId: string
@@ -96,6 +100,9 @@
   let replyPending = $state(false)
   let replyTextareaEl = $state<HTMLTextAreaElement | null>(null)
   let replyReturnEl: HTMLButtonElement | null = null
+  // Comment id whose convert-to-sub-note call is in flight (disables just that
+  // row's action so a double click cannot fire the mutation twice).
+  let convertingId = $state<string | null>(null)
 
   // YYYY-MM-DD HH:MM (local) for display; "Undated" fallback for legacy
   // NOTEs without a [ts::] token. Mirrors the TaskEditDrawer inline formatter
@@ -210,20 +217,35 @@
     return sortedTops
   }
 
+  /**
+   * Top level == direct child of the task, the same test buildThread uses.
+   * Only these offer convert-to-sub-note: the server mutation changes
+   * classification alone, so converting a reply would leave a prose note
+   * parented under a comment that no surface presents.
+   */
+  function isTopLevelComment(c: Comment): boolean {
+    return c.parentId === taskId
+  }
+
   /** Flat count for the badge (top-level + all replies). */
   function countComments(list: Comment[]): number {
     return list.reduce((n, c) => n + 1 + c.replies.length, 0)
   }
 
-  async function load() {
+  // Returns whether the thread now reflects disk: callers that announce a
+  // mutation's success must not infer it from a resolved promise, because a
+  // fetch failure is captured in errorMsg and leaves the rendered rows stale.
+  async function load(): Promise<boolean> {
     loading = true
     errorMsg = ''
     try {
       const subtree = await ctx.fetchSubtree(taskId)
       comments = buildThread(subtree ?? [], taskId)
+      return true
     } catch (e) {
       errorMsg = friendlyCaughtError(e)
       errorRetryable = false
+      return false
     } finally {
       loading = false
     }
@@ -479,6 +501,42 @@
     }
   }
 
+  // Convert a comment back into an editable prose sub-note (#1159). The
+  // server clears [comment::] AND [author::]/[ts::] — attribution alone keeps
+  // a NOTE classified as a comment (D4), so the author/date discard is the
+  // only way to actually reclaim prose (D7). Confirm states that discard.
+  async function onConvertToSubNote(comment: Comment) {
+    if (convertingId) return
+    if (
+      !window.confirm(
+        'Convert this comment to a sub-note? Its author and date will be discarded.'
+      )
+    ) {
+      return
+    }
+    convertingId = comment.id
+    errorMsg = ''
+    errorRetryable = false
+    try {
+      await ctx.setBlockCommentClassification(comment.id, false)
+      // The write is on disk either way, so the host still re-queries its
+      // count; the success announcement needs the thread to reflect it first,
+      // or the row keeps showing the attribution just declared discarded.
+      onCommentsChanged?.()
+      if (!(await load())) {
+        liveMessage = 'Comment converted, but the thread could not refresh'
+        return
+      }
+      liveMessage = 'Comment converted to a sub-note'
+    } catch (e) {
+      errorMsg = friendlyCaughtError(e)
+      errorRetryable = false
+      liveMessage = 'Comment failed to convert'
+    } finally {
+      convertingId = null
+    }
+  }
+
   // Split a comment body into bold / non-bold runs so **bold** renders as
   // <strong> while still letting RichText handle ((uuid)) refs, {{embed:}}
   // and #tags inside each run. RichText only scans for refs/embeds/tags, so
@@ -555,6 +613,18 @@
         >
           Reply
         </button>
+        {#if isTopLevelComment(c)}
+          <button
+            type="button"
+            class="material-symbols-outlined text-icon-sm text-text-muted hover:text-accent-primary-start transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label="Convert to sub-note (discards author and date)"
+            title="Convert to sub-note (discards author and date)"
+            disabled={c.pending || convertingId === c.id}
+            onclick={() => void onConvertToSubNote(c)}
+          >
+            notes
+          </button>
+        {/if}
         <button
           type="button"
           class="material-symbols-outlined text-icon-sm text-text-muted hover:text-error transition-colors"

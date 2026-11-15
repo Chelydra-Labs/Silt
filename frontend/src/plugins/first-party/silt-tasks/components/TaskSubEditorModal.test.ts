@@ -133,7 +133,8 @@ import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
 const mocks = vi.hoisted(() => ({
   fetchSubtree: vi.fn(),
   saveSubtreeBlocks: vi.fn(),
-  sqliteQuery: vi.fn()
+  sqliteQuery: vi.fn(),
+  setBlockCommentClassification: vi.fn()
 }))
 
 function makeTaskRow(
@@ -183,6 +184,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     fetchSubtree: mocks.fetchSubtree,
     saveSubtreeBlocks: mocks.saveSubtreeBlocks,
     sqliteQuery: mocks.sqliteQuery,
+    setBlockCommentClassification: mocks.setBlockCommentClassification,
     // CommentThread (mounted via TaskMetadataSidebar) subscribes to block:changed.
     on: () => () => {},
     ...overrides
@@ -206,6 +208,7 @@ describe('TaskSubEditorModal (#304)', () => {
   beforeEach(() => {
     mocks.fetchSubtree.mockReset().mockResolvedValue([])
     mocks.saveSubtreeBlocks.mockReset().mockResolvedValue(true)
+    mocks.setBlockCommentClassification.mockReset().mockResolvedValue(true)
     mocks.sqliteQuery
       .mockReset()
       .mockResolvedValue({ rows: [], truncated: false })
@@ -605,6 +608,435 @@ describe('TaskSubEditorModal (#304)', () => {
     expect(mocks.saveSubtreeBlocks).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps the editor read-only and unsaveable when the initial load fails', async () => {
+    // The empty doc does not match disk, so an autosave from it would splice a
+    // near-empty subtree over the task's real on-disk sub-notes.
+    mocks.fetchSubtree.mockRejectedValueOnce(new Error('ipc down'))
+    const onClose = vi.fn()
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+    await flush()
+
+    expect(screen.getAllByText(/Load failed: ipc down/).length).toBeGreaterThan(
+      0
+    )
+    const pm = document.querySelector('.ProseMirror') as HTMLElement & {
+      editor: {
+        isEditable: boolean
+        commands: { insertContent: (s: string) => void }
+      }
+    }
+    expect(pm.editor.isEditable).toBe(false)
+
+    // Even the programmatic edit path (the one commands/tests can still take)
+    // must never reach disk over the real sub-notes.
+    pm.editor.commands.insertContent('replacement note')
+    await new Promise((r) => setTimeout(r, 800))
+    expect(mocks.saveSubtreeBlocks).not.toHaveBeenCalled()
+
+    // Nothing in a doc that never loaded is saveable, so close must not stall.
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await flush()
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(mocks.saveSubtreeBlocks).not.toHaveBeenCalled()
+  })
+
+  it('restores editability and saving after a successful reload from a failed load', async () => {
+    mocks.fetchSubtree
+      .mockRejectedValueOnce(new Error('ipc down'))
+      .mockResolvedValueOnce([])
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+    await flush()
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement & {
+      editor: { isEditable: boolean }
+    }
+    expect(pm.editor.isEditable).toBe(false)
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Reload sub-notes' })
+    )
+    await vi.waitFor(() => expect(pm.editor.isEditable).toBe(true))
+    expect(screen.queryByText(/Load failed/)).toBeNull()
+
+    pm.textContent = 'fresh note'
+    pm.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    await vi.waitFor(() =>
+      expect(mocks.saveSubtreeBlocks).toHaveBeenCalledTimes(1)
+    )
+    const saved = mocks.saveSubtreeBlocks.mock.calls[0]?.[1]
+    expect(JSON.stringify(saved)).toContain('fresh note')
+  })
+
+  it('keeps the modal open when a keystroke lands during the in-flight close save', async () => {
+    // Regression: the save's success handler used to clear the unsaved flag
+    // unconditionally, so an edit typed while the close drain was in flight was
+    // dropped — the modal closed as if everything had landed.
+    const onClose = vi.fn()
+    let resolveSave!: () => void
+    const payloads: unknown[] = []
+    mocks.saveSubtreeBlocks.mockImplementation(
+      (_id: string, children: unknown) => {
+        payloads.push(children)
+        if (payloads.length === 1) {
+          return new Promise<void>((r) => (resolveSave = r)).then(
+            () => undefined
+          )
+        }
+        return Promise.resolve()
+      }
+    )
+
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement & {
+      editor: { commands: { insertContent: (s: string) => void } }
+    }
+    pm.textContent = 'edited content'
+    pm.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    // ProseMirror lands the DOM mutation on the next macrotask.
+    await flush()
+
+    // Close before the debounce fires so the close drain owns the first save.
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await vi.waitFor(() => expect(payloads.length).toBe(1))
+
+    // A keystroke lands while that save is in flight. Its payload predates the
+    // edit, so completing it must not vouch for the newer doc.
+    pm.editor.commands.insertContent(' trailing edit')
+    resolveSave()
+    await flush()
+
+    expect(onClose).not.toHaveBeenCalled()
+    expect(
+      screen.getByText(/the latest edits could not be confirmed/)
+    ).toBeInTheDocument()
+
+    // Retry re-issues the save with the trailing edit; only then may it close.
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry save' }))
+    await vi.waitFor(() => expect(payloads.length).toBe(2))
+    expect(JSON.stringify(payloads[1])).toContain('trailing edit')
+    await flush()
+    expect(onClose).not.toHaveBeenCalled()
+
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await flush()
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('saves the retried doc exactly once while a debounce is still armed', async () => {
+    // The held close leaves the trailing edit's autosave armed. An explicit
+    // retry inside that window writes the newest doc immediately, so the
+    // superseded timer must not fire a second, identical write behind it.
+    //
+    // Virtualise the 600 ms autosave so the test owns when (and whether) the
+    // armed timer runs: a loaded worker can outrun the real window and let the
+    // timer fire before the click. All other timers stay real.
+    const onClose = vi.fn()
+    let resolveFirst!: () => void
+    const payloads: unknown[] = []
+    mocks.saveSubtreeBlocks.mockImplementation(
+      (_id: string, children: unknown) => {
+        payloads.push(children)
+        if (payloads.length === 1) {
+          return new Promise<void>((r) => (resolveFirst = r)).then(
+            () => undefined
+          )
+        }
+        return Promise.resolve()
+      }
+    )
+
+    const armedDebounces = new Map<object, () => void>()
+    const realSetTimeout = globalThis.setTimeout
+    const realClearTimeout = globalThis.clearTimeout
+    const setTimeoutSpy = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation(((
+        fn: () => void,
+        ms?: number,
+        ...rest: unknown[]
+      ) => {
+        if (ms !== 600) return realSetTimeout(fn, ms, ...rest)
+        const handle = {}
+        armedDebounces.set(handle, () => fn())
+        return handle as unknown as ReturnType<typeof setTimeout>
+      }) as unknown as typeof setTimeout)
+    const clearTimeoutSpy = vi
+      .spyOn(globalThis, 'clearTimeout')
+      .mockImplementation(((handle: unknown) => {
+        if (armedDebounces.delete(handle as object)) return
+        realClearTimeout(handle as Parameters<typeof clearTimeout>[0])
+      }) as unknown as typeof clearTimeout)
+
+    try {
+      render(TaskSubEditorModal, {
+        ...BASE_PROPS,
+        ctx: makeCtx(),
+        onClose
+      })
+      await vi.waitFor(() =>
+        expect(document.querySelector('.ProseMirror')).not.toBeNull()
+      )
+
+      const pm = document.querySelector('.ProseMirror') as HTMLElement & {
+        editor: { commands: { insertContent: (s: string) => void } }
+      }
+      pm.textContent = 'edited content'
+      pm.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      await flush()
+
+      // Close before the debounce fires so the close drain owns the first save.
+      await fireEvent.keyDown(window, { key: 'Escape' })
+      await vi.waitFor(() => expect(payloads.length).toBe(1))
+
+      // The trailing edit lands during the write, re-arming the debounce; the
+      // write cannot vouch for it, so the close is held with the Retry row.
+      pm.editor.commands.insertContent(' trailing edit')
+      resolveFirst()
+      await flush()
+      expect(onClose).not.toHaveBeenCalled()
+      expect(
+        screen.getByText(/the latest edits could not be confirmed/)
+      ).toBeInTheDocument()
+
+      // Precondition: exactly the trailing edit's autosave is armed, so the
+      // retry below genuinely has a timer to supersede.
+      const armed = [...armedDebounces.keys()]
+      expect(armed).toHaveLength(1)
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Retry save' }))
+      await vi.waitFor(() => expect(payloads.length).toBe(2))
+      expect(JSON.stringify(payloads[1])).toContain('trailing edit')
+
+      // Fire whatever the retry left armed. The superseded debounce was
+      // cleared, so advancing it writes nothing a third time.
+      for (const run of [...armedDebounces.values()]) run()
+      await flush()
+      expect(payloads.length).toBe(2)
+      expect(clearTimeoutSpy).toHaveBeenCalledWith(armed[0])
+      expect(onClose).not.toHaveBeenCalled()
+    } finally {
+      setTimeoutSpy.mockRestore()
+      clearTimeoutSpy.mockRestore()
+    }
+  })
+
+  it('starts a save requested during the queued save and drains to the newest doc', async () => {
+    // Regression: only the first queued request was ever started. A persist
+    // arriving during the second write left the request armed with nothing
+    // running, so drainSave awaited a settled promise (microtask spin, frozen
+    // renderer) and the queued snapshot landed after a newer one.
+    const onClose = vi.fn()
+    const resolvers: Array<() => void> = []
+    const payloads: unknown[] = []
+    mocks.saveSubtreeBlocks.mockImplementation(
+      (_id: string, children: unknown) => {
+        payloads.push(children)
+        // The first two writes hang until the test releases them, so every
+        // later request is guaranteed to arrive while a write is in flight.
+        if (payloads.length <= 2) {
+          return new Promise<void>((r) => resolvers.push(r)).then(
+            () => undefined
+          )
+        }
+        return Promise.resolve()
+      }
+    )
+
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement & {
+      editor: { commands: { insertContent: (s: string) => void } }
+    }
+    // Write #1 starts from the debounce; the later requests queue behind an
+    // in-flight write, which is the queue the pump has to keep draining.
+    pm.editor.commands.insertContent('first')
+    await vi.waitFor(() => expect(payloads.length).toBe(1), { timeout: 3000 })
+
+    pm.editor.commands.insertContent(' second')
+    // Past the 600 ms debounce: the request is queued, not written.
+    await new Promise((r) => setTimeout(r, 700))
+    expect(payloads.length).toBe(1)
+
+    resolvers[0]!()
+    await vi.waitFor(() => expect(payloads.length).toBe(2), { timeout: 3000 })
+    expect(JSON.stringify(payloads[1])).toContain('second')
+
+    pm.editor.commands.insertContent(' third')
+    await new Promise((r) => setTimeout(r, 700))
+    expect(payloads.length).toBe(2)
+
+    resolvers[1]!()
+    // The request queued during write #2 must be written last: disk ends up on
+    // the newest doc rather than one snapshot behind it.
+    await vi.waitFor(() => expect(payloads.length).toBe(3), { timeout: 3000 })
+    expect(JSON.stringify(payloads[1])).not.toContain('third')
+    expect(JSON.stringify(payloads[2])).toContain('third')
+
+    // And the drain terminates: nothing is left to write, so Esc closes.
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1), {
+      timeout: 3000
+    })
+    // ~2 s of real debounce waits plus the pump/drain assertions exceed the 5 s
+    // default under parallel load.
+  }, 15000)
+
+  it('never saves an edit made before the first load resolves', async () => {
+    // The empty doc does not match disk, so the editor is created read-only and
+    // docStale starts true: neither a keystroke nor the programmatic edit path
+    // (which bypasses the read-only flag) may reach disk before a load lands.
+    let resolveFetch!: (value: unknown[]) => void
+    mocks.fetchSubtree.mockImplementation(
+      () => new Promise<unknown[]>((r) => (resolveFetch = r))
+    )
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement & {
+      editor: {
+        isEditable: boolean
+        commands: { insertContent: (s: string) => void }
+      }
+    }
+    expect(pm.editor.isEditable).toBe(false)
+    expect(pm).toHaveAttribute('contenteditable', 'false')
+
+    pm.textContent = 'typed while loading'
+    pm.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    pm.editor.commands.insertContent(' programmatic edit')
+    await new Promise((r) => setTimeout(r, 800))
+    expect(mocks.saveSubtreeBlocks).not.toHaveBeenCalled()
+
+    // The pending load still lands and hands editing back on a doc that
+    // reflects disk.
+    resolveFetch([])
+    await vi.waitFor(() => expect(pm.editor.isEditable).toBe(true))
+    expect(screen.queryByText(/Load failed/)).toBeNull()
+  })
+
+  it('closes when the trailing save after a requested close succeeds', async () => {
+    // Esc during an edit that cannot land yet surfaces a banner and holds the
+    // close. The still-armed autosave then writes the newest doc, so the close
+    // intent must be honoured instead of leaving the modal open with a banner
+    // that has just cleared.
+    const onClose = vi.fn()
+    let resolveFirst!: () => void
+    const payloads: unknown[] = []
+    mocks.saveSubtreeBlocks.mockImplementation(
+      (_id: string, children: unknown) => {
+        payloads.push(children)
+        if (payloads.length === 1) {
+          return new Promise<void>((r) => (resolveFirst = r)).then(
+            () => undefined
+          )
+        }
+        return Promise.resolve()
+      }
+    )
+
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement & {
+      editor: { commands: { insertContent: (s: string) => void } }
+    }
+    pm.textContent = 'edited content'
+    pm.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    await flush()
+
+    // Close before the debounce fires so the close drain owns the first save.
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await vi.waitFor(() => expect(payloads.length).toBe(1))
+
+    // A keystroke during that write cannot be vouched for by it, so the close
+    // is held back with an explanation…
+    pm.editor.commands.insertContent(' trailing edit')
+    resolveFirst()
+    await flush()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(
+      screen.getByText(/the latest edits could not be confirmed/)
+    ).toBeInTheDocument()
+
+    // …until its own autosave lands, at which point the modal closes.
+    await vi.waitFor(() => expect(payloads.length).toBe(2), { timeout: 3000 })
+    expect(JSON.stringify(payloads[1])).toContain('trailing edit')
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1), {
+      timeout: 3000
+    })
+  })
+
+  it('reports the load failure ahead of the dirty flag in the footer', async () => {
+    // Both states can hold at once (a transaction on a stale doc) and the
+    // footer has one status line: the blocking condition must read first.
+    mocks.fetchSubtree.mockRejectedValueOnce(new Error('ipc down'))
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+    await flush()
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement & {
+      editor: { commands: { insertContent: (s: string) => void } }
+    }
+    pm.editor.commands.insertContent(' unsaveable edit')
+    await flush()
+
+    const status = document.querySelector('footer [aria-live]') as HTMLElement
+    expect(status, 'footer status must render').not.toBeNull()
+    expect(status.textContent?.trim()).toBe('Load failed: ipc down')
+    const footerText = (document.querySelector('footer')?.textContent ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    expect(footerText).toContain('Load failed: ipc down')
+    expect(footerText).not.toContain('Unsaved edits')
+  })
+
   it('flushes a pending snapshot when unmounted during an in-flight save (no data loss)', async () => {
     // Regression: unmount-without-close used to drop edits made during an
     // in-flight save because the retry was gated on a live editor, which
@@ -979,6 +1411,425 @@ describe('TaskSubEditorModal — pop-up single title (#1096)', () => {
     expect(
       screen.getByRole('dialog', { name: 'Ship the feature' })
     ).toBeInTheDocument()
+  })
+})
+
+describe('convert note to comment (#1159)', () => {
+  beforeEach(() => {
+    // Own setup: this describe runs without the sidebar mounted, so the
+    // mocked fetchSubtree calls belong to the modal alone.
+    mocks.fetchSubtree.mockReset().mockResolvedValue([])
+    mocks.saveSubtreeBlocks.mockReset().mockResolvedValue(true)
+    mocks.setBlockCommentClassification.mockReset().mockResolvedValue(true)
+    mocks.sqliteQuery
+      .mockReset()
+      .mockResolvedValue({ rows: [], truncated: false })
+    mql.matches = false
+  })
+
+  afterEach(() => cleanup())
+
+  const PROSE_NOTE = {
+    id: 'prose-1',
+    parent_id: 'task-1',
+    type: 'NOTE',
+    depth: 1,
+    raw_text: '- Prose paragraph',
+    clean_text: 'Prose paragraph',
+    line_number: 3,
+    file_date: '2026-07-01'
+  }
+
+  type SubEditorHandle = {
+    editor: {
+      isEditable: boolean
+      commands: {
+        focus: () => void
+        setTextSelection: (pos: number) => void
+        insertContent: (s: string) => void
+      }
+      getJSON: () => unknown
+    }
+  }
+
+  async function mountWithNote(note: Record<string, unknown> = PROSE_NOTE) {
+    mocks.fetchSubtree.mockResolvedValue([note])
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => {
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    })
+    await flush()
+    return document.querySelector('.ProseMirror') as HTMLElement &
+      SubEditorHandle
+  }
+
+  it('converts the note at the cursor, flushing unsaved edits first', async () => {
+    // First fetch renders the note; after conversion the reload returns an
+    // empty doc so the block leaves the editor.
+    mocks.fetchSubtree
+      .mockResolvedValueOnce([PROSE_NOTE])
+      .mockResolvedValueOnce([])
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => {
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    })
+    await flush()
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement &
+      SubEditorHandle
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+    // Arm the debounced autosave with a real edit.
+    pm.editor.commands.insertContent(' tail edit')
+
+    const convert = screen.getByRole('button', {
+      name: 'Convert the note at the cursor to a comment'
+    })
+    await vi.waitFor(() => expect(convert).not.toBeDisabled())
+    await fireEvent.click(convert)
+
+    await vi.waitFor(() =>
+      expect(mocks.setBlockCommentClassification).toHaveBeenCalledWith(
+        'prose-1',
+        true
+      )
+    )
+    // The flush must land before the server-side conversion reads the file.
+    expect(mocks.saveSubtreeBlocks).toHaveBeenCalled()
+    expect(mocks.saveSubtreeBlocks.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.setBlockCommentClassification.mock.invocationCallOrder[0]!
+    )
+    const saved = mocks.saveSubtreeBlocks.mock.calls[0]?.[1] as Array<{
+      id?: string
+      clean_text?: string
+    }>
+    // The editor text that was still unsaved when Convert was clicked is in
+    // the flush payload — nothing was dropped between the click and the write.
+    expect(
+      saved.some(
+        (b) => b.id === 'prose-1' && b.clean_text?.includes('tail edit')
+      )
+    ).toBe(true)
+    // Reload after conversion so the block leaves the editor document.
+    expect(mocks.fetchSubtree).toHaveBeenCalledTimes(2)
+    await vi.waitFor(() => {
+      expect(JSON.stringify(pm.editor.getJSON())).not.toContain(
+        'Prose paragraph'
+      )
+    })
+    // The result is announced next to the action.
+    expect(
+      await screen.findByText(/Note converted to a comment/)
+    ).toBeInTheDocument()
+  })
+
+  it('does not write the subtree when converting a note with no pending edits', async () => {
+    // Regression: the pre-conversion freeze must stay silent. TipTap's default
+    // setEditable() emits `update`, which dirties the doc and makes the flush
+    // write the whole subtree — and when the reload is slower than the
+    // debounce, that pre-conversion copy can land after the marker the server
+    // wrote and silently revert it.
+    mocks.fetchSubtree
+      .mockResolvedValueOnce([PROSE_NOTE])
+      .mockResolvedValueOnce([])
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => {
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    })
+    await flush()
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement &
+      SubEditorHandle
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+
+    const convert = screen.getByRole('button', {
+      name: 'Convert the note at the cursor to a comment'
+    })
+    await vi.waitFor(() => expect(convert).not.toBeDisabled())
+    await fireEvent.click(convert)
+
+    await vi.waitFor(() =>
+      expect(mocks.setBlockCommentClassification).toHaveBeenCalledWith(
+        'prose-1',
+        true
+      )
+    )
+    expect(
+      await screen.findByText(/Note converted to a comment/)
+    ).toBeInTheDocument()
+    // Wait past the autosave debounce: a freeze-armed save would have fired.
+    await new Promise((r) => setTimeout(r, 800))
+    expect(mocks.saveSubtreeBlocks).not.toHaveBeenCalled()
+  })
+
+  it('closes after a failed post-conversion reload without writing the stale doc', async () => {
+    mocks.fetchSubtree
+      .mockResolvedValueOnce([PROSE_NOTE])
+      .mockRejectedValueOnce(new Error('ipc down'))
+    const onClose = vi.fn()
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose
+    })
+    await vi.waitFor(() => {
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    })
+    await flush()
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement &
+      SubEditorHandle
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+    const convert = screen.getByRole('button', {
+      name: 'Convert the note at the cursor to a comment'
+    })
+    await vi.waitFor(() => expect(convert).not.toBeDisabled())
+    await fireEvent.click(convert)
+    await vi.waitFor(() =>
+      expect(mocks.setBlockCommentClassification).toHaveBeenCalledWith(
+        'prose-1',
+        true
+      )
+    )
+    expect(await screen.findByText(/could not refresh/)).toBeInTheDocument()
+
+    // Reproduce the wedge: commands still dispatch on a frozen doc, so a stray
+    // transaction leaves unsavedChanges set with no saveError (the Discard /
+    // Retry row is gated on saveError, so it never renders). Closing must not
+    // dead-end on that flag — nothing in a stale doc is saveable.
+    pm.editor.commands.insertContent(' stale keystroke')
+    await new Promise((r) => setTimeout(r, 800))
+    expect(mocks.saveSubtreeBlocks).not.toHaveBeenCalled()
+
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await flush()
+    expect(onClose).toHaveBeenCalledTimes(1)
+    // Closing still never writes the stale doc (the drain is vetoed).
+    expect(mocks.saveSubtreeBlocks).not.toHaveBeenCalled()
+  })
+
+  it('disables the convert action while stale and restores it after a successful reload', async () => {
+    mocks.fetchSubtree
+      .mockResolvedValueOnce([PROSE_NOTE])
+      .mockRejectedValueOnce(new Error('ipc down'))
+      // The retry sees the original block as a comment (partitioned out) and
+      // one untouched prose note, so there is something convertible again.
+      .mockResolvedValueOnce([
+        { ...PROSE_NOTE, is_comment: true },
+        {
+          ...PROSE_NOTE,
+          id: 'prose-2',
+          raw_text: '- Untouched',
+          clean_text: 'Untouched'
+        }
+      ])
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => {
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    })
+    await flush()
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement &
+      SubEditorHandle
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+    const convert = screen.getByRole('button', {
+      name: 'Convert the note at the cursor to a comment'
+    })
+    await vi.waitFor(() => expect(convert).not.toBeDisabled())
+    await fireEvent.click(convert)
+    await vi.waitFor(() => {
+      expect(screen.getByText(/could not refresh/)).toBeInTheDocument()
+    })
+
+    // Put the caret in the stale note: it still resolves as "active", so the
+    // disable must come from the stale state itself, not from an empty caret.
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+    await flush()
+    expect(convert).toBeDisabled()
+    expect(convert).toHaveAttribute(
+      'title',
+      'Reload the sub-notes before converting again'
+    )
+    // The reason is also in the accessible description, not only the tooltip.
+    expect(
+      screen.getByText(/Unavailable until the sub-notes are reloaded/)
+    ).toBeInTheDocument()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Reload sub-notes' })
+    )
+    await vi.waitFor(() => expect(pm.editor.isEditable).toBe(true))
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+    await flush()
+    expect(convert).not.toBeDisabled()
+  })
+
+  it('is disabled while the cursor is outside a note', async () => {
+    const pm = await mountWithNote({
+      id: 'subtask-1',
+      parent_id: 'task-1',
+      type: 'TASK',
+      depth: 1,
+      raw_text: '- [ ] Sub-task title',
+      clean_text: 'Sub-task title',
+      status: 'TODO',
+      line_number: 4,
+      file_date: '2026-07-01'
+    })
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+
+    expect(
+      screen.getByRole('button', {
+        name: 'Convert the note at the cursor to a comment'
+      })
+    ).toBeDisabled()
+  })
+
+  it('does not convert when the flush fails, keeping the editor content', async () => {
+    mocks.saveSubtreeBlocks.mockRejectedValue(new Error('disk locked'))
+    const pm = await mountWithNote()
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+    pm.editor.commands.insertContent(' unsaved edit')
+
+    const convert = screen.getByRole('button', {
+      name: 'Convert the note at the cursor to a comment'
+    })
+    await vi.waitFor(() => expect(convert).not.toBeDisabled())
+    await fireEvent.click(convert)
+
+    expect(
+      await screen.findByText(/Your edits could not be saved/)
+    ).toBeInTheDocument()
+    expect(mocks.setBlockCommentClassification).not.toHaveBeenCalled()
+    // The unsaved text is still in the editor, not silently dropped.
+    expect(JSON.stringify(pm.editor.getJSON())).toContain('unsaved edit')
+  })
+
+  it('reports failure and freezes the doc when the post-conversion reload fails', async () => {
+    // The classification write succeeds but the reload that would drop the
+    // block from the editor fails: the doc still holds it as unmarked prose,
+    // so claiming success (and saving that doc) would revert the conversion.
+    mocks.fetchSubtree
+      .mockResolvedValueOnce([PROSE_NOTE])
+      .mockRejectedValueOnce(new Error('ipc down'))
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => {
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    })
+    await flush()
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement &
+      SubEditorHandle
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+    pm.editor.commands.insertContent(' tail edit')
+
+    const convert = screen.getByRole('button', {
+      name: 'Convert the note at the cursor to a comment'
+    })
+    await vi.waitFor(() => expect(convert).not.toBeDisabled())
+    await fireEvent.click(convert)
+
+    await vi.waitFor(() =>
+      expect(mocks.setBlockCommentClassification).toHaveBeenCalledWith(
+        'prose-1',
+        true
+      )
+    )
+    // No success is claimed; the reload failure is surfaced as the stale doc.
+    expect(await screen.findByText(/could not refresh/)).toBeInTheDocument()
+    expect(screen.queryByText(/Note converted to a comment;/)).toBeNull()
+    // The footer status and the editor body both carry the load failure.
+    expect(screen.getAllByText(/Load failed: ipc down/)).not.toHaveLength(0)
+    // The block is still in the doc (the reload never landed)…
+    expect(JSON.stringify(pm.editor.getJSON())).toContain('Prose paragraph')
+    // …so the editor stays read-only instead of re-enabling on a stale doc.
+    expect(pm.editor.isEditable).toBe(false)
+    expect(pm).toHaveAttribute('contenteditable', 'false')
+
+    // Arming the autosave on the stale doc must not reach disk. (Commands
+    // still dispatch while frozen, so this drives the real save path.)
+    const savesBefore = mocks.saveSubtreeBlocks.mock.calls.length
+    pm.editor.commands.insertContent(' stale keystroke')
+    await new Promise((r) => setTimeout(r, 800))
+    expect(mocks.saveSubtreeBlocks).toHaveBeenCalledTimes(savesBefore)
+    expect(JSON.stringify(pm.editor.getJSON())).toContain('Prose paragraph')
+  })
+
+  it('recovers from a failed post-conversion reload once the reload succeeds', async () => {
+    mocks.fetchSubtree
+      .mockResolvedValueOnce([PROSE_NOTE])
+      .mockRejectedValueOnce(new Error('ipc down'))
+      // The retry sees the block as a comment, so it is partitioned out.
+      .mockResolvedValueOnce([{ ...PROSE_NOTE, is_comment: true }])
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => {
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    })
+    await flush()
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement &
+      SubEditorHandle
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+    const convert = screen.getByRole('button', {
+      name: 'Convert the note at the cursor to a comment'
+    })
+    await vi.waitFor(() => expect(convert).not.toBeDisabled())
+    await fireEvent.click(convert)
+    await vi.waitFor(() => {
+      expect(screen.getByText(/could not refresh/)).toBeInTheDocument()
+    })
+    expect(pm.editor.isEditable).toBe(false)
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Reload sub-notes' })
+    )
+
+    await vi.waitFor(() => expect(mocks.fetchSubtree).toHaveBeenCalledTimes(3))
+    await vi.waitFor(() =>
+      expect(screen.queryByText(/could not refresh/)).toBeNull()
+    )
+    // The retry clears the load failure and resumes editing…
+    expect(screen.queryByText(/Load failed:/)).toBeNull()
+    expect(pm.editor.isEditable).toBe(true)
+    // …on a doc that reflects disk: the converted block is a comment now.
+    await vi.waitFor(() =>
+      expect(JSON.stringify(pm.editor.getJSON())).not.toContain(
+        'Prose paragraph'
+      )
+    )
   })
 })
 
