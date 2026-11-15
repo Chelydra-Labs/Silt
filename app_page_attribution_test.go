@@ -10,6 +10,7 @@ package main
 // with the same id is the only proof that a payload block IS that comment.
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -538,6 +539,243 @@ func TestSaveFileBlocks_RefusedSaveResolveKeepTheirsCopiesMine(t *testing.T) {
 	}
 	if task := savedBlock(t, app, copyPage, fileDate, taskID); task == nil {
 		t.Error("conflict copy lost the parent task block")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Global Replace (#1167): the modal fetches through the programmatic funnel,
+// mutates the fetched rows in place and writes the same rows back, so the
+// fetch itself must carry the comment metadata the shared SELECT never
+// hydrates — and its undo snapshot replays those same rows.
+// ---------------------------------------------------------------------------
+
+// programmaticPayload mirrors what Global Replace persists: the programmatic
+// fetch, unmodified. Kept as a helper so apply and undo share one shape.
+func programmaticPayload(t *testing.T, app *App, page string) []parser.ParsedBlock {
+	t.Helper()
+	blocks, err := app.FetchPageBlocksProgrammatic(pageAttrNotebook, pageAttrSection, page)
+	if err != nil {
+		t.Fatalf("FetchPageBlocksProgrammatic %s: %v", page, err)
+	}
+	return blocks
+}
+
+// TestFetchPageBlocksProgrammatic_HydratesCommentMetadata pins the hydration
+// unit assertion: the programmatic payload carries marker + attribution while
+// the tokens stay out of the displayed body.
+func TestFetchPageBlocksProgrammatic_HydratesCommentMetadata(t *testing.T) {
+	app := newTestApp(t)
+	const (
+		taskID    = "ae190001-6666-1111-1111-111111111111"
+		commentID = "ae190002-6666-1111-1111-111111111111"
+		page      = "PageAttributionGlobalReplace"
+		fileDate  = "2026-07-01"
+	)
+	content := "- [ ] parent task <!-- id: " + taskID + " -->\n" +
+		"\t- looks good [comment::] [author:: Dana] [ts:: 2026-07-07T10:00:00] <!-- id: " + commentID + " -->\n"
+	indexTestFile(t, app, pageAttrNotebook, pageAttrSection, page, fileDate, content)
+
+	blocks := programmaticPayload(t, app, page)
+	var comment *parser.ParsedBlock
+	for i := range blocks {
+		if blocks[i].ID == commentID {
+			comment = &blocks[i]
+		}
+	}
+	if comment == nil {
+		t.Fatalf("comment missing from the programmatic payload: %+v", blocks)
+	}
+	if !comment.IsComment || comment.Author != "Dana" || comment.Timestamp != "2026-07-07T10:00:00" {
+		t.Errorf("programmatic fetch dropped comment metadata: is_comment=%v author=%q ts=%q",
+			comment.IsComment, comment.Author, comment.Timestamp)
+	}
+	if comment.CleanText != "looks good" {
+		t.Errorf("tokens leaked into the displayed body: %q", comment.CleanText)
+	}
+}
+
+// TestSaveFileBlocksProgrammatic_ApplyPreservesCommentAttribution drives the
+// Global Replace apply shape end to end: mutate only the fetched comment's
+// body, write it back, and the marker + attribution must survive on disk, in
+// the sub-tree and in comments_count.
+func TestSaveFileBlocksProgrammatic_ApplyPreservesCommentAttribution(t *testing.T) {
+	app := newTestApp(t)
+	const (
+		taskID    = "ae200001-6666-1111-1111-111111111111"
+		commentID = "ae200002-6666-1111-1111-111111111111"
+		page      = "PageAttributionReplaceApply"
+		fileDate  = "2026-07-01"
+	)
+	content := "- [ ] parent task <!-- id: " + taskID + " -->\n" +
+		"\t- looks good [comment::] [author:: Dana] [ts:: 2026-07-07T10:00:00] <!-- id: " + commentID + " -->\n"
+	indexTestFile(t, app, pageAttrNotebook, pageAttrSection, page, fileDate, content)
+
+	payload := programmaticPayload(t, app, page)
+	edited := false
+	for i := range payload {
+		if payload[i].ID == commentID {
+			payload[i].CleanText = "looks great" // the modal's only mutation
+			edited = true
+		}
+	}
+	if !edited {
+		t.Fatal("comment block missing from the programmatic payload fixture")
+	}
+	if err := app.SaveFileBlocksProgrammatic(pageAttrNotebook, pageAttrSection, page, payload); err != nil {
+		t.Fatalf("SaveFileBlocksProgrammatic: %v", err)
+	}
+
+	saved := mustReadTaskFile(t, app, pageAttrNotebook, pageAttrSection, page)
+	if !strings.Contains(saved, "looks great") {
+		t.Errorf("the replacement did not land:\n%s", saved)
+	}
+	for _, token := range []string{"[comment::]", "[author:: Dana]", "[ts:: 2026-07-07T10:00:00]"} {
+		if n := strings.Count(saved, token); n != 1 {
+			t.Errorf("%q appears %d times on disk, want 1:\n%s", token, n, saved)
+		}
+	}
+
+	sub, err := app.FetchSubtree(taskID)
+	if err != nil {
+		t.Fatalf("FetchSubtree: %v", err)
+	}
+	comment := findSubtreeBlock(t, sub, commentID)
+	if comment == nil {
+		t.Fatalf("comment missing from the sub-tree after the replace: %+v", sub)
+	}
+	if comment.CleanText != "looks great" || !comment.IsComment ||
+		comment.Author != "Dana" || comment.Timestamp != "2026-07-07T10:00:00" {
+		t.Errorf("sub-tree view drifted: text=%q is_comment=%v author=%q ts=%q",
+			comment.CleanText, comment.IsComment, comment.Author, comment.Timestamp)
+	}
+	if got := taskCommentsCount(t, app, taskID); got != 1 {
+		t.Errorf("comments_count = %d, want 1", got)
+	}
+}
+
+// TestSaveFileBlocksProgrammatic_UndoKeepsCommentAttribution replays the
+// pre-mutation snapshot through the same funnel, which is exactly what the
+// modal's Undo does — the metadata must survive the round trip.
+func TestSaveFileBlocksProgrammatic_UndoKeepsCommentAttribution(t *testing.T) {
+	app := newTestApp(t)
+	const (
+		taskID    = "ae210001-6666-1111-1111-111111111111"
+		commentID = "ae210002-6666-1111-1111-111111111111"
+		page      = "PageAttributionReplaceUndo"
+		fileDate  = "2026-07-01"
+	)
+	content := "- [ ] parent task <!-- id: " + taskID + " -->\n" +
+		"\t- original text [comment::] [author:: Dana] [ts:: 2026-07-07T10:00:00] <!-- id: " + commentID + " -->\n"
+	indexTestFile(t, app, pageAttrNotebook, pageAttrSection, page, fileDate, content)
+
+	payload := programmaticPayload(t, app, page)
+	// The modal snapshots the original rows once before mutating them.
+	snapshot := make([]parser.ParsedBlock, len(payload))
+	copy(snapshot, payload)
+	for i := range payload {
+		if payload[i].ID == commentID {
+			payload[i].CleanText = "replaced text"
+		}
+	}
+	if err := app.SaveFileBlocksProgrammatic(pageAttrNotebook, pageAttrSection, page, payload); err != nil {
+		t.Fatalf("apply save: %v", err)
+	}
+	if err := app.SaveFileBlocksProgrammatic(pageAttrNotebook, pageAttrSection, page, snapshot); err != nil {
+		t.Fatalf("undo save: %v", err)
+	}
+
+	saved := mustReadTaskFile(t, app, pageAttrNotebook, pageAttrSection, page)
+	if !strings.Contains(saved, "original text") || strings.Contains(saved, "replaced text") {
+		t.Errorf("undo did not restore the original body:\n%s", saved)
+	}
+	for _, token := range []string{"[comment::]", "[author:: Dana]", "[ts:: 2026-07-07T10:00:00]"} {
+		if n := strings.Count(saved, token); n != 1 {
+			t.Errorf("%q appears %d times after undo, want 1:\n%s", token, n, saved)
+		}
+	}
+
+	sub, err := app.FetchSubtree(taskID)
+	if err != nil {
+		t.Fatalf("FetchSubtree: %v", err)
+	}
+	comment := findSubtreeBlock(t, sub, commentID)
+	if comment == nil {
+		t.Fatalf("comment missing from the sub-tree after undo: %+v", sub)
+	}
+	if !comment.IsComment || comment.Author != "Dana" || comment.Timestamp != "2026-07-07T10:00:00" {
+		t.Errorf("undo dropped comment metadata: is_comment=%v author=%q ts=%q",
+			comment.IsComment, comment.Author, comment.Timestamp)
+	}
+	if got := taskCommentsCount(t, app, taskID); got != 1 {
+		t.Errorf("comments_count = %d after undo, want 1", got)
+	}
+}
+
+// TestSaveFileBlocksProgrammatic_NewNoteStaysUnattributed guards the other side
+// of the hydration: Global Replace never creates blocks, so an id with no
+// on-disk match must not borrow metadata from the payload around it.
+func TestSaveFileBlocksProgrammatic_NewNoteStaysUnattributed(t *testing.T) {
+	app := newTestApp(t)
+	const (
+		taskID    = "ae220001-6666-1111-1111-111111111111"
+		commentID = "ae220002-6666-1111-1111-111111111111"
+		newNoteID = "ae220003-6666-1111-1111-111111111111"
+		page      = "PageAttributionReplaceNewNote"
+		fileDate  = "2026-07-01"
+	)
+	content := "- [ ] parent task <!-- id: " + taskID + " -->\n" +
+		"\t- existing comment [comment::] [author:: Dana] [ts:: 2026-07-07T10:00:00] <!-- id: " + commentID + " -->\n"
+	indexTestFile(t, app, pageAttrNotebook, pageAttrSection, page, fileDate, content)
+
+	payload := programmaticPayload(t, app, page)
+	payload = append(payload, parser.ParsedBlock{
+		ID: newNoteID, Type: parser.BlockNote, Depth: 1, CleanText: "no on-disk match",
+	})
+	if err := app.SaveFileBlocksProgrammatic(pageAttrNotebook, pageAttrSection, page, payload); err != nil {
+		t.Fatalf("SaveFileBlocksProgrammatic: %v", err)
+	}
+
+	fresh := savedBlock(t, app, page, fileDate, newNoteID)
+	if fresh == nil {
+		t.Fatal("new note missing from disk")
+	}
+	if fresh.IsComment || fresh.Author != "" || fresh.Timestamp != "" {
+		t.Errorf("funnel invented metadata for a new block: is_comment=%v author=%q ts=%q",
+			fresh.IsComment, fresh.Author, fresh.Timestamp)
+	}
+	if old := savedBlock(t, app, page, fileDate, commentID); old == nil ||
+		!old.IsComment || old.Author != "Dana" || old.Timestamp != "2026-07-07T10:00:00" {
+		t.Errorf("existing comment metadata drifted: %+v", old)
+	}
+}
+
+// TestMCPFetchPageBlocks_KeepsCommentMetadataBare is the contract guard: the
+// MCP read path fetches the same rows through the unhydrated funnel, so its
+// JSON contract must not grow marker/attribution fields (#1167 / D1).
+func TestMCPFetchPageBlocks_KeepsCommentMetadataBare(t *testing.T) {
+	app := newTestApp(t)
+	const (
+		taskID    = "ae230001-6666-1111-1111-111111111111"
+		commentID = "ae230002-6666-1111-1111-111111111111"
+		page      = "PageAttributionMCPGuard"
+		fileDate  = "2026-07-01"
+	)
+	content := "- [ ] parent task <!-- id: " + taskID + " -->\n" +
+		"\t- looks good [comment::] [author:: Dana] [ts:: 2026-07-07T10:00:00] <!-- id: " + commentID + " -->\n"
+	indexTestFile(t, app, pageAttrNotebook, pageAttrSection, page, fileDate, content)
+
+	bridge := mcpBridge{app: app, vaultPath: app.vaultPath}
+	rows, _, err := bridge.FetchPageBlocks(context.Background(), pageAttrNotebook, pageAttrSection, page)
+	if err != nil {
+		t.Fatalf("MCP FetchPageBlocks: %v", err)
+	}
+	comment := findSubtreeBlock(t, rows, commentID)
+	if comment == nil {
+		t.Fatalf("MCP read dropped the comment row: %+v", rows)
+	}
+	if comment.IsComment || comment.Author != "" || comment.Timestamp != "" {
+		t.Errorf("hydration leaked into the MCP contract: is_comment=%v author=%q ts=%q",
+			comment.IsComment, comment.Author, comment.Timestamp)
 	}
 }
 
