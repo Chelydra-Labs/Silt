@@ -748,6 +748,10 @@ describe('TaskSubEditorModal (#304)', () => {
     // The held close leaves the trailing edit's autosave armed. An explicit
     // retry inside that window writes the newest doc immediately, so the
     // superseded timer must not fire a second, identical write behind it.
+    //
+    // Virtualise the 600 ms autosave so the test owns when (and whether) the
+    // armed timer runs: a loaded worker can outrun the real window and let the
+    // timer fire before the click. All other timers stay real.
     const onClose = vi.fn()
     let resolveFirst!: () => void
     const payloads: unknown[] = []
@@ -763,46 +767,80 @@ describe('TaskSubEditorModal (#304)', () => {
       }
     )
 
-    render(TaskSubEditorModal, {
-      ...BASE_PROPS,
-      ctx: makeCtx(),
-      onClose
-    })
-    await vi.waitFor(() =>
-      expect(document.querySelector('.ProseMirror')).not.toBeNull()
-    )
+    const armedDebounces = new Map<object, () => void>()
+    const realSetTimeout = globalThis.setTimeout
+    const realClearTimeout = globalThis.clearTimeout
+    const setTimeoutSpy = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation(((
+        fn: () => void,
+        ms?: number,
+        ...rest: unknown[]
+      ) => {
+        if (ms !== 600) return realSetTimeout(fn, ms, ...rest)
+        const handle = {}
+        armedDebounces.set(handle, () => fn())
+        return handle as unknown as ReturnType<typeof setTimeout>
+      }) as unknown as typeof setTimeout)
+    const clearTimeoutSpy = vi
+      .spyOn(globalThis, 'clearTimeout')
+      .mockImplementation(((handle: unknown) => {
+        if (armedDebounces.delete(handle as object)) return
+        realClearTimeout(handle as Parameters<typeof clearTimeout>[0])
+      }) as unknown as typeof clearTimeout)
 
-    const pm = document.querySelector('.ProseMirror') as HTMLElement & {
-      editor: { commands: { insertContent: (s: string) => void } }
+    try {
+      render(TaskSubEditorModal, {
+        ...BASE_PROPS,
+        ctx: makeCtx(),
+        onClose
+      })
+      await vi.waitFor(() =>
+        expect(document.querySelector('.ProseMirror')).not.toBeNull()
+      )
+
+      const pm = document.querySelector('.ProseMirror') as HTMLElement & {
+        editor: { commands: { insertContent: (s: string) => void } }
+      }
+      pm.textContent = 'edited content'
+      pm.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      await flush()
+
+      // Close before the debounce fires so the close drain owns the first save.
+      await fireEvent.keyDown(window, { key: 'Escape' })
+      await vi.waitFor(() => expect(payloads.length).toBe(1))
+
+      // The trailing edit lands during the write, re-arming the debounce; the
+      // write cannot vouch for it, so the close is held with the Retry row.
+      pm.editor.commands.insertContent(' trailing edit')
+      resolveFirst()
+      await flush()
+      expect(onClose).not.toHaveBeenCalled()
+      expect(
+        screen.getByText(/the latest edits could not be confirmed/)
+      ).toBeInTheDocument()
+
+      // Precondition: exactly the trailing edit's autosave is armed, so the
+      // retry below genuinely has a timer to supersede.
+      const armed = [...armedDebounces.keys()]
+      expect(armed).toHaveLength(1)
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Retry save' }))
+      await vi.waitFor(() => expect(payloads.length).toBe(2))
+      expect(JSON.stringify(payloads[1])).toContain('trailing edit')
+
+      // Fire whatever the retry left armed. The superseded debounce was
+      // cleared, so advancing it writes nothing a third time.
+      for (const run of [...armedDebounces.values()]) run()
+      await flush()
+      expect(payloads.length).toBe(2)
+      expect(clearTimeoutSpy).toHaveBeenCalledWith(armed[0])
+      expect(onClose).not.toHaveBeenCalled()
+    } finally {
+      setTimeoutSpy.mockRestore()
+      clearTimeoutSpy.mockRestore()
     }
-    pm.textContent = 'edited content'
-    pm.dispatchEvent(new InputEvent('input', { bubbles: true }))
-    await flush()
-
-    // Close before the debounce fires so the close drain owns the first save.
-    await fireEvent.keyDown(window, { key: 'Escape' })
-    await vi.waitFor(() => expect(payloads.length).toBe(1))
-
-    // The trailing edit lands during the write, re-arming the debounce; the
-    // write cannot vouch for it, so the close is held with the Retry row.
-    pm.editor.commands.insertContent(' trailing edit')
-    resolveFirst()
-    await flush()
-    expect(onClose).not.toHaveBeenCalled()
-    expect(
-      screen.getByText(/the latest edits could not be confirmed/)
-    ).toBeInTheDocument()
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry save' }))
-    await vi.waitFor(() => expect(payloads.length).toBe(2))
-    expect(JSON.stringify(payloads[1])).toContain('trailing edit')
-
-    // Past the debounce window: the retry superseded that timer, so the doc is
-    // written once, not twice.
-    await new Promise((r) => setTimeout(r, 800))
-    expect(payloads.length).toBe(2)
-    expect(onClose).not.toHaveBeenCalled()
-  }, 10000)
+  })
 
   it('starts a save requested during the queued save and drains to the newest doc', async () => {
     // Regression: only the first queued request was ever started. A persist
