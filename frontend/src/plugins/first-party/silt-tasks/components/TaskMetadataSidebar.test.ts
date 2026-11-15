@@ -95,6 +95,7 @@ import type { PluginContext } from '../../../sdk'
 import type { TaskDetail } from '../types'
 import { v2CtxStubs } from '../../../test-helpers'
 
+// comments_count is the derived comment-block count (#1159), not a NOTE count.
 function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {
     id: 'task-1',

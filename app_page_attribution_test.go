@@ -198,8 +198,10 @@ func TestSaveFileBlocks_NewNoteStaysUnattributed(t *testing.T) {
 		old.Author != "Dana" || old.Timestamp != "2026-07-07T10:00:00" {
 		t.Errorf("existing comment attribution drifted: %+v", old)
 	}
-	if got := taskCommentsCount(t, app, taskID); got != 2 {
-		t.Errorf("comments_count = %d, want 2 (existing comment + new legacy NOTE)", got)
+	// The typed paragraph is a prose sub-note, so the count stays at the one
+	// attributed comment (#1159).
+	if got := taskCommentsCount(t, app, taskID); got != 1 {
+		t.Errorf("comments_count = %d, want 1 (the existing comment; the new prose note is a sub-note)", got)
 	}
 }
 
@@ -244,8 +246,9 @@ func TestSaveFileBlocks_OmittingCommentDeletesIt(t *testing.T) {
 	if findSubtreeBlock(t, sub, commentID) != nil {
 		t.Errorf("deleted comment still in the sub-tree: %+v", sub)
 	}
-	if got := taskCommentsCount(t, app, taskID); got != 1 {
-		t.Errorf("comments_count = %d, want 1 (the remaining prose NOTE)", got)
+	// The prose note remains on disk but is not a comment, so the count is 0.
+	if got := taskCommentsCount(t, app, taskID); got != 0 {
+		t.Errorf("comments_count = %d, want 0 (the remaining note is prose, not a comment)", got)
 	}
 
 	// Contrast — the sub-notes editor sends only its non-comment blocks, so

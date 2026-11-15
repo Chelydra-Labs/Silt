@@ -225,13 +225,15 @@ describe('CommentThread', () => {
     expect(screen.getByText('bob')).toBeInTheDocument()
   })
 
-  it('renders "Unknown" + "Undated" for legacy NOTEs without author/timestamp', async () => {
+  it('renders "Unknown" + "Undated" for a marked comment without attribution', async () => {
     const ctx = makeCtx({
-      fetchSubtree: vi
-        .fn()
-        .mockResolvedValue([
-          makeBlock({ id: 'legacy', clean_text: 'old note, no tokens' })
-        ])
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'marked',
+          is_comment: true,
+          clean_text: 'marked without attribution'
+        })
+      ])
     })
     mount({ ctx })
     await flush()
@@ -1406,10 +1408,11 @@ describe('comment predicates (display/edit asymmetry)', () => {
     expect(part.comments.map((b) => b.clean_text)).toEqual(['marked comment'])
   })
 
-  it('the thread renders legacy token-less NOTEs it owns (display side stays type-only)', async () => {
-    // Regression guard: the editor drops only attributed comments, so an owned
-    // NOTE with no tokens still shows as Unknown/Undated in the thread — while
-    // a sub-task's token-less prose stays out. Ownership, not type, is the gate.
+  it('renders only comment blocks it owns (predicate + ownership)', async () => {
+    // The thread applies the shared predicate as well as ownership: an owned
+    // overdue NOTE is a prose sub-note and stays out, while an attribution-only
+    // legacy comment and a marker-only comment both render. The header count
+    // therefore equals comments_count for the same sub-tree by construction.
     const ctx = makeCtx({
       fetchSubtree: vi.fn().mockResolvedValue([
         makeBlock({
@@ -1420,8 +1423,14 @@ describe('comment predicates (display/edit asymmetry)', () => {
           parent_id: 'task-1'
         }),
         makeBlock({
-          id: 'legacy',
-          clean_text: 'legacy prose note',
+          id: 'marked',
+          is_comment: true,
+          clean_text: 'marked comment',
+          parent_id: 'task-1'
+        }),
+        makeBlock({
+          id: 'prose',
+          clean_text: 'owned prose note',
           parent_id: 'task-1'
         }),
         makeBlock({
@@ -1443,7 +1452,8 @@ describe('comment predicates (display/edit asymmetry)', () => {
     await flush()
     expect(document.querySelectorAll('[role="comment"]').length).toBe(2)
     expect(screen.getByText('attributed comment')).toBeInTheDocument()
-    expect(screen.getByText('legacy prose note')).toBeInTheDocument()
+    expect(screen.getByText('marked comment')).toBeInTheDocument()
+    expect(screen.queryByText('owned prose note')).toBeNull()
     expect(screen.getByText('Unknown')).toBeInTheDocument()
     expect(screen.getByText('Undated')).toBeInTheDocument()
     expect(screen.queryByText('sub-task prose')).toBeNull()

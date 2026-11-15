@@ -1020,9 +1020,9 @@
       >
     {/if}
     {#if item.comments_count > 0}
-      <!-- Same NOTE-descendant count as the board's chat_bubble badge (#1152):
-           comments_count doubles as the has-notes signal, so it stays the only
-           numeric badge — the notes state lives on the edit_note button. -->
+      <!-- The derived comment-block count (#1159) drives both the chat_bubble
+           badge and the edit_note presence state, so it stays the only numeric
+           badge — the notes state lives on the edit_note button. -->
       <span
         class="inline-flex items-center gap-0.5 text-type-2xs text-text-muted font-label-sm flex-shrink-0"
         role="img"

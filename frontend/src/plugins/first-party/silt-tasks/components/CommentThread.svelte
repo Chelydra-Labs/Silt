@@ -6,23 +6,27 @@
   import { motionDuration } from '../motion'
   import ErrorBanner from './ErrorBanner.svelte'
   import { friendlyCaughtError } from '../errors'
-  import { isNoteBlock, isNoteOwnedByTask } from '../commentBlocks'
+  import {
+    isCommentBlock,
+    isNoteBlock,
+    isNoteOwnedByTask
+  } from '../commentBlocks'
   import { stripHtmlTags } from '../../../../lib/stripHtmlTags'
 
   /**
    * Comment thread for TaskEditDrawer (#430). Each comment is a child NOTE
-   * block beneath the task carrying [author:: NAME] and [ts:: ISO] tokens;
-   * FetchSubtree re-hydrates author/timestamp on each load via the block_meta
-   * projection from #418/#37. Reads via ctx.fetchSubtree, writes via
-   * ctx.addTaskComment (composes a NOTE + splices into the sub-tree), deletes
-   * via ctx.deleteBlock. Nested replies (#438) use parentCommentId; the UI
-   * shows two levels (top-level + first-level replies), flattening deeper
-   * nesting under the top-level ancestor. The host re-queries comments_count
-   * through onCommentsChanged after each mutation. Convert-to-sub-note
-   * (#1159) clears the marker and attribution via
-   * ctx.setBlockCommentClassification; the author and date are discarded by
-   * design (D7), which the control and its confirmation state. Offered on
-   * top-level comments only — see isTopLevelComment.
+   * block beneath the task, classified by parser.IsCommentBlock's mirror in
+   * commentBlocks.ts — the explicit [comment::] marker or [author::]/[ts::]
+   * attribution. FetchSubtree hydrates author/timestamp on each load. Reads
+   * via ctx.fetchSubtree, writes via ctx.addTaskComment (composes a NOTE +
+   * splices into the sub-tree), deletes via ctx.deleteBlock. Nested replies
+   * (#438) use parentCommentId; the UI shows two levels (top-level +
+   * first-level replies), flattening deeper nesting under the top-level
+   * ancestor. The host re-queries comments_count through onCommentsChanged
+   * after each mutation. Convert-to-sub-note (#1159) clears the marker and
+   * attribution via ctx.setBlockCommentClassification; the author and date
+   * are discarded by design (D7), which the control and its confirmation
+   * state. Offered on top-level comments only — see isTopLevelComment.
    */
   interface Props {
     taskId: string
@@ -154,16 +158,18 @@
   }
 
   /**
-   * Build a two-level thread from the NOTE blocks this task owns (#438).
+   * Build a two-level thread from the comment blocks this task owns (#438).
    * Top-level = parent_id === taskId; replies attach under their top-level
    * ancestor, deeper nesting is flattened so the UI stays two levels deep.
+   *
+   * Both filters are shared with comments_count: ownership (nearest TASK
+   * ancestor) and the comment predicate. The header count therefore equals
+   * the task's comments_count for the same sub-tree, by construction.
    */
   function buildThread(blocks: SubtreeBlock[], taskId: string): Comment[] {
     const all = blocks ?? []
-    // Ownership is shared with comments_count, so the header count cannot
-    // disagree with the task's badge (a sub-task owns its own comments).
     const notes = all.filter(
-      (b) => isNoteBlock(b) && isNoteOwnedByTask(all, b, taskId)
+      (b) => isCommentBlock(b) && isNoteOwnedByTask(all, b, taskId)
     )
     const byId = new Map(all.map((b) => [b.id, b]))
 

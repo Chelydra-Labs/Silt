@@ -1,9 +1,13 @@
 /**
- * The comment thread still displays every NOTE descendant owned by the task
- * (type-only), while the sub-notes editor excludes comment blocks — a NOTE
- * carrying the explicit [comment::] marker or comment attribution. Unattributed,
- * unmarked prose stays editable. The count/thread rule change to this predicate
- * lands in a later PR; keep the asymmetry deliberate until then.
+ * One rule for what counts as a comment (#1159): a NOTE is a comment iff it
+ * carries the explicit [comment::] marker or comment attribution
+ * ([author::]/[ts::], the permanent legacy fallback). The comment thread and
+ * the task's comments_count both derive from this predicate; the sub-notes
+ * editor is its complement, so no block is ever both an editable sub-note and
+ * a thread item. An unmarked, unattributed NOTE is prose — the editor
+ * serializes every paragraph that way — and classification changes only
+ * through the explicit, reversible conversion affordance (which discards
+ * attribution when converting back to a sub-note).
  */
 export interface NoteLike {
   type?: string
@@ -25,10 +29,10 @@ export function isNoteBlock(b: NoteLike): boolean {
 }
 
 /**
- * Edit-side predicate: a NOTE carrying the explicit [comment::] marker or
- * comment attribution. Type alone is not enough — the editor serializes every
- * prose paragraph as an unmarked, unattributed NOTE. Mirrors the Go
- * parser.IsCommentBlock predicate.
+ * The single comment predicate: a NOTE carrying the explicit [comment::]
+ * marker or comment attribution. Type alone is not enough — the editor
+ * serializes every prose paragraph as an unmarked, unattributed NOTE. Mirrors
+ * the Go parser.IsCommentBlock predicate, which derives comments_count.
  */
 export function isCommentBlock(b: NoteLike): boolean {
   return (

@@ -180,6 +180,7 @@ interface TaskRow {
   comments_count: number
 }
 
+// comments_count is the derived comment-block count (#1159), not a NOTE count.
 function task(
   id: string,
   content: string,

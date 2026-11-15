@@ -15,10 +15,10 @@ const (
 	hierarchyReplyID = "5f0c0a11-0000-4000-8000-000000000002"
 
 	indentedReplyDoc = "- [ ] root task <!-- id: 5f0c0a11-0000-4000-8000-000000000001 -->\n" +
-		"    - reply note <!-- id: 5f0c0a11-0000-4000-8000-000000000002 -->\n"
+		"    - reply note [comment::] <!-- id: 5f0c0a11-0000-4000-8000-000000000002 -->\n"
 
 	depthJumpDoc = "- [ ] root task <!-- id: 5f0c0a11-0000-4000-8000-000000000001 -->\n" +
-		"                - orphan reply <!-- id: 5f0c0a11-0000-4000-8000-000000000002 -->\n"
+		"                - orphan reply [comment::] <!-- id: 5f0c0a11-0000-4000-8000-000000000002 -->\n"
 )
 
 // TestTaskDerivedCounts_IndentedNoteReply asserts the derived comment count
@@ -34,7 +34,7 @@ func TestTaskDerivedCounts_IndentedNoteReply(t *testing.T) {
 		}
 		comments, _, _ := taskDerivedCounts(blocks)
 		if got := comments[hierarchyTaskID]; got != 1 {
-			t.Errorf("comments[%s] = %d, want 1 (the indented NOTE reply)", hierarchyTaskID, got)
+			t.Errorf("comments[%s] = %d, want 1 (the indented comment reply)", hierarchyTaskID, got)
 		}
 	})
 	t.Run("depth-jump reply repaired under the task", func(t *testing.T) {
@@ -51,9 +51,12 @@ func TestTaskDerivedCounts_IndentedNoteReply(t *testing.T) {
 }
 
 // TestTaskDerivedCounts_SubtaskOwnsItsComments pins the ownership rule the
-// comment thread now mirrors (D3 of the #1163 series): each NOTE counts toward
-// its nearest TASK ancestor, so a commented sub-task never inflates the
-// parent's count and the thread cannot show more comments than the badge.
+// comment thread mirrors (D3 of the #1163 series): each comment block counts
+// toward its nearest TASK ancestor, so a commented sub-task never inflates the
+// parent's count and the thread cannot show more comments than the badge. The
+// fixture also mixes all three classification shapes — attribution-only,
+// marker-only and prose — so the count follows parser.IsCommentBlock, not the
+// NOTE type (#1159).
 func TestTaskDerivedCounts_SubtaskOwnsItsComments(t *testing.T) {
 	const (
 		parentTaskID  = "5f0c0a11-0000-4000-8000-000000000010"
@@ -61,30 +64,58 @@ func TestTaskDerivedCounts_SubtaskOwnsItsComments(t *testing.T) {
 		parentNoteID  = "5f0c0a11-0000-4000-8000-000000000012"
 		parentReplyID = "5f0c0a11-0000-4000-8000-000000000013"
 		subNoteID     = "5f0c0a11-0000-4000-8000-000000000014"
+		proseNoteID   = "5f0c0a11-0000-4000-8000-000000000015"
 	)
 	doc := "- [ ] parent task <!-- id: " + parentTaskID + " -->\n" +
-		"    - parent comment <!-- id: " + parentNoteID + " -->\n" +
-		"        - parent reply <!-- id: " + parentReplyID + " -->\n" +
+		"    - parent comment [author:: Dana] <!-- id: " + parentNoteID + " -->\n" +
+		"        - parent reply [comment::] <!-- id: " + parentReplyID + " -->\n" +
+		"    - parent prose <!-- id: " + proseNoteID + " -->\n" +
 		"    - [ ] sub task <!-- id: " + subTaskID + " -->\n" +
-		"        - sub comment <!-- id: " + subNoteID + " -->\n"
+		"        - sub comment [comment::] <!-- id: " + subNoteID + " -->\n"
 	blocks, _, _, _, err := parser.ParseFileContent(doc, "nb", "sec", "pg", "2026-01-01", 4)
 	if err != nil {
 		t.Fatalf("ParseFileContent failed: %v", err)
 	}
 	comments, _, _ := taskDerivedCounts(blocks)
 	if got := comments[parentTaskID]; got != 2 {
-		t.Errorf("comments[%s] = %d, want 2 (its own comment + reply, not the sub-task's)", parentTaskID, got)
+		t.Errorf("comments[%s] = %d, want 2 (its own attributed comment + marked reply, not the sub-task's, not the prose note)", parentTaskID, got)
 	}
 	if got := comments[subTaskID]; got != 1 {
 		t.Errorf("comments[%s] = %d, want 1 (the sub-task owns its own comment)", subTaskID, got)
 	}
-	// Every NOTE has exactly one owner: no double count, none dropped.
+	// Every comment block has exactly one owner: no double count, none dropped.
 	total := 0
 	for _, n := range comments {
 		total += n
 	}
 	if total != 3 {
-		t.Errorf("total comments across tasks = %d, want 3", total)
+		t.Errorf("total comments across tasks = %d, want 3 (the prose note is not a comment)", total)
+	}
+}
+
+// TestTaskDerivedCounts_ClassifiesByPredicate pins the shared rule directly:
+// an unmarked NOTE is a sub-note and never moves the count, while both the
+// [comment::] marker and the legacy [author::]/[ts::] fallback classify.
+func TestTaskDerivedCounts_ClassifiesByPredicate(t *testing.T) {
+	const (
+		taskID        = "5f0c0a11-0000-4000-8000-000000000020"
+		markedID      = "5f0c0a11-0000-4000-8000-000000000021"
+		authoredID    = "5f0c0a11-0000-4000-8000-000000000022"
+		timestampedID = "5f0c0a11-0000-4000-8000-000000000023"
+		proseID       = "5f0c0a11-0000-4000-8000-000000000024"
+	)
+	doc := "- [ ] task <!-- id: " + taskID + " -->\n" +
+		"    - marked [comment::] <!-- id: " + markedID + " -->\n" +
+		"    - authored [author:: Dana] <!-- id: " + authoredID + " -->\n" +
+		"    - timestamped [ts:: 2026-07-07T10:00:00] <!-- id: " + timestampedID + " -->\n" +
+		"    - prose <!-- id: " + proseID + " -->\n"
+	blocks, _, _, _, err := parser.ParseFileContent(doc, "nb", "sec", "pg", "2026-01-01", 4)
+	if err != nil {
+		t.Fatalf("ParseFileContent failed: %v", err)
+	}
+	comments, _, _ := taskDerivedCounts(blocks)
+	if got := comments[taskID]; got != 3 {
+		t.Errorf("comments[%s] = %d, want 3 (marker + both attribution fallbacks; the prose note is a sub-note)", taskID, got)
 	}
 }
 
@@ -107,7 +138,7 @@ func TestTaskDerivedCounts_RegionUnderTaskUnaffected(t *testing.T) {
 	doc := "- [ ] root task <!-- id: " + hierarchyTaskID + " -->\n" +
 		"    ```go\n    fmt.Println(1)\n    ```\n" +
 		"    <!-- id: " + regionID + " -->\n" +
-		"    - reply note <!-- id: " + hierarchyReplyID + " -->\n"
+		"    - reply note [comment::] <!-- id: " + hierarchyReplyID + " -->\n"
 	blocks, _, _, _, err := parser.ParseFileContent(doc, "nb", "sec", "pg", "2026-01-01", 4)
 	if err != nil {
 		t.Fatalf("ParseFileContent failed: %v", err)

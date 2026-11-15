@@ -179,10 +179,10 @@ func TestQueryBlocksByTag_HydratesDerivedCounts(t *testing.T) {
 	task := sampleTaskBlock(taskID, 1)
 	task.RawText = "- [ ] sample task #work/derived ((aaaaaaaa-1111-1111-1111-111111111111)) <!-- id: " + taskID + " -->"
 
-	c1 := sampleNoteBlock(commentOne, 2)
+	c1 := sampleCommentBlock(commentOne, 2)
 	c1.ParentID = taskID
 	c1.Depth = 1
-	c2 := sampleNoteBlock(commentTwo, 3)
+	c2 := sampleCommentBlock(commentTwo, 3)
 	c2.ParentID = taskID
 	c2.Depth = 1
 

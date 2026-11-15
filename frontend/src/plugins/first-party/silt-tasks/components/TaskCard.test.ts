@@ -9,6 +9,8 @@ import userEvent from '@testing-library/user-event'
 import TaskCard from './TaskCard.svelte'
 import type { TaskDetail } from '../types'
 
+// comments_count is the derived count of comment blocks (marker or
+// attribution; #1159), not every NOTE descendant.
 function makeCard(overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {
     id: 'c1',

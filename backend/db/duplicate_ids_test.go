@@ -84,7 +84,7 @@ func TestIndexFileBlocks_DuplicateSubtreeDoesNotInflateTaskRollups(t *testing.T)
 	sub := sampleTaskBlock(subID, 2)
 	sub.ParentID = taskID
 	sub.Status = "DONE"
-	comment := sampleNoteBlock(noteID, 3)
+	comment := sampleCommentBlock(noteID, 3)
 	comment.ParentID = taskID
 	blocks := []parser.ParsedBlock{task, sub, comment, task, sub, comment}
 

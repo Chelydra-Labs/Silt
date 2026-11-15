@@ -28,12 +28,14 @@ func TestIndexFileBlocks_BlockMetaProjection(t *testing.T) {
 		noteBoth   = "aaaaaaaa-1111-1111-1111-111111111111"
 		noteAuthor = "aaaaaaaa-2222-2222-2222-222222222222"
 		noneNote   = "aaaaaaaa-3333-3333-3333-333333333333"
+		markedNote = "aaaaaaaa-5555-5555-5555-555555555555"
 		taskID     = "aaaaaaaa-4444-4444-4444-444444444444"
 	)
 	blocks := []parser.ParsedBlock{
 		sampleNoteBlockWithAttribution(noteBoth, 1, "Alice", "2026-07-06T15:30:00"),
 		sampleNoteBlockWithAttribution(noteAuthor, 2, "Bob", ""),
 		sampleNoteBlock(noneNote, 3),
+		sampleCommentBlock(markedNote, 5),
 		func() parser.ParsedBlock {
 			// A TASK block that (hypothetically) had Author/Timestamp set
 			// on the struct — the indexer must NOT project it into
@@ -59,6 +61,7 @@ func TestIndexFileBlocks_BlockMetaProjection(t *testing.T) {
 		{noteBoth, true, true, "Alice", true, "2026-07-06T15:30:00"},
 		{noteAuthor, true, true, "Bob", false, ""}, // empty ts → NULL
 		{noneNote, false, false, "", false, ""},    // no tokens → no row
+		{markedNote, false, false, "", false, ""},  // marker only → classified, still no row
 		{taskID, false, false, "", false, ""},      // NOTE-only — task never projected
 	}
 	for _, c := range cases {
@@ -89,7 +92,8 @@ func TestIndexFileBlocks_BlockMetaProjection(t *testing.T) {
 	}
 
 	// Total row count: only noteBoth + noteAuthor (noneNote has no row,
-	// taskID is NOTE-only-projection so never gets one).
+	// markedNote has only the classification marker, taskID is
+	// NOTE-only-projection so never gets one).
 	var rowCount int
 	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM block_meta").Scan(&rowCount); err != nil {
 		t.Fatalf("count block_meta: %v", err)
@@ -202,5 +206,44 @@ func TestIndexScanResults_BlockMetaProjection(t *testing.T) {
 	err := dm.SQLDB().QueryRow("SELECT author FROM block_meta WHERE block_id = ?", noteWithout).Scan(&dummy)
 	if err == nil {
 		t.Errorf("expected NO block_meta row for token-less NOTE, got author=%q", dummy)
+	}
+}
+
+// TestIndexFileBlocks_MarkerOnlyNoteCountsWithoutBlockMetaRow pins the two
+// projections apart (#1159): the [comment::] marker classifies a NOTE as a
+// comment for comments_count, while block_meta stays attribution-only, so a
+// marked comment carries no author/timestamp row.
+func TestIndexFileBlocks_MarkerOnlyNoteCountsWithoutBlockMetaRow(t *testing.T) {
+	dm := newTestDB(t)
+
+	const (
+		taskID = "aaaaaaaa-6666-6666-6666-666666666666"
+		noteID = "aaaaaaaa-7777-7777-7777-777777777777"
+	)
+	task := sampleTaskBlock(taskID, 1)
+	comment := sampleCommentBlock(noteID, 2)
+	comment.ParentID = taskID
+	comment.Depth = 1
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily",
+		[]parser.ParsedBlock{task, comment}, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+
+	var comments int
+	if err := dm.SQLDB().QueryRow(
+		"SELECT comments_count FROM tasks WHERE block_id = ?", taskID,
+	).Scan(&comments); err != nil {
+		t.Fatalf("select task: %v", err)
+	}
+	if comments != 1 {
+		t.Errorf("comments_count = %d, want 1 (the marker makes it a comment)", comments)
+	}
+
+	var dummy string
+	err := dm.SQLDB().QueryRow(
+		"SELECT author FROM block_meta WHERE block_id = ?", noteID,
+	).Scan(&dummy)
+	if err == nil {
+		t.Errorf("expected NO block_meta row for a marker-only comment, got author=%q", dummy)
 	}
 }

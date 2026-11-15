@@ -407,9 +407,11 @@ func TestSaveSubtreeBlocks_PreservesTaskComments(t *testing.T) {
 		"\t- [ ] sub-task <!-- id: " + subTaskID + " -->\n"
 	indexTestFile(t, app, "W", "S", "SubtreeKeepsComments", "2026-07-01", content)
 
+	// Only the two attributed comments count; the prose NOTE is a sub-note
+	// under the shared predicate (#1159) and stays editor content.
 	before := taskCommentsCount(t, app, taskID)
-	if before != 3 {
-		t.Fatalf("pre-save comments_count = %d, want 3 (comment + reply + prose NOTE descendant)", before)
+	if before != 2 {
+		t.Fatalf("pre-save comments_count = %d, want 2 (comment + reply; the prose note is a sub-note)", before)
 	}
 
 	// What the sub-editor sends: only non-comment blocks, depths rebased to 0.
@@ -496,9 +498,9 @@ func TestSaveSubtreeBlocks_RootAnchoredCommentStaysWithTask(t *testing.T) {
 		"\t- [ ] sub-task <!-- id: " + subTaskID + " -->\n"
 	indexTestFile(t, app, "W", "S", "SubtreeRootAnchorReply", "2026-07-01", content)
 
-	// prose (unattributed) + attributed reply both count under the task.
-	if before := taskCommentsCount(t, app, taskID); before != 2 {
-		t.Fatalf("pre-save comments_count = %d, want 2 (prose note + reply)", before)
+	// Only the attributed reply counts: its unattributed NOTE parent is prose.
+	if before := taskCommentsCount(t, app, taskID); before != 1 {
+		t.Fatalf("pre-save comments_count = %d, want 1 (the attributed reply; the prose note is a sub-note)", before)
 	}
 
 	// The user deleted the prose line: the payload is the sibling sub-task alone.
@@ -1024,16 +1026,18 @@ func TestSaveSubtreeBlocks_CallerSuppliedCommentIsNotDuplicated(t *testing.T) {
 			t.Errorf("on-disk comment lost %q:\n%s", token, s)
 		}
 	}
-	// Derived count = every NOTE whose nearest TASK ancestor is this task:
-	// the prose note, the caller-supplied comment, and the preserved reply.
-	if got := taskCommentsCount(t, app, taskID); got != 3 {
-		t.Errorf("comments_count = %d, want 3 (prose note + comment + reply)", got)
+	// Derived count = every comment block whose nearest TASK ancestor is this
+	// task: the caller-supplied comment and the preserved reply. The prose note
+	// is a sub-note, not a comment.
+	if got := taskCommentsCount(t, app, taskID); got != 2 {
+		t.Errorf("comments_count = %d, want 2 (comment + reply; the prose note is a sub-note)", got)
 	}
 }
 
-// TestSaveSubtreeBlocks_ProseNotesStayEditable pins that the preserve rule is
-// attribution-based: unattributed NOTE prose is still saved, edited and deleted
-// normally, while a comment beside it survives.
+// TestSaveSubtreeBlocks_ProseNotesStayEditable pins the prose half of the
+// classification rule: an unmarked, unattributed NOTE is a sub-note, so the
+// editor still saves, edits and deletes it normally while a comment beside it
+// survives and remains the only counted comment.
 func TestSaveSubtreeBlocks_ProseNotesStayEditable(t *testing.T) {
 	app := newTestApp(t)
 	const (
@@ -1063,6 +1067,14 @@ func TestSaveSubtreeBlocks_ProseNotesStayEditable(t *testing.T) {
 	if findSubtreeBlock(t, sub, commentID) == nil {
 		t.Fatal("comment dropped while editing prose")
 	}
+	proseBlock := findSubtreeBlock(t, sub, proseID)
+	if proseBlock == nil || parser.IsCommentBlock(*proseBlock) {
+		t.Fatalf("prose note classified as a comment: %+v", proseBlock)
+	}
+	// The prose note is editor content: only the attributed comment counts.
+	if got := taskCommentsCount(t, app, taskID); got != 1 {
+		t.Errorf("comments_count = %d, want 1 (the comment only; prose is a sub-note)", got)
+	}
 
 	// Deleting the prose block must not delete the comment.
 	if _, err := app.SaveSubtreeBlocks(taskID, nil); err != nil {
@@ -1074,6 +1086,9 @@ func TestSaveSubtreeBlocks_ProseNotesStayEditable(t *testing.T) {
 	}
 	if len(sub) != 1 || sub[0].ID != commentID {
 		t.Fatalf("subtree after deleting prose = %+v, want only the comment", sub)
+	}
+	if got := taskCommentsCount(t, app, taskID); got != 1 {
+		t.Errorf("comments_count after deleting prose = %d, want 1 (the surviving comment)", got)
 	}
 }
 
