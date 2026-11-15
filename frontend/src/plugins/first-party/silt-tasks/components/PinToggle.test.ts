@@ -31,9 +31,30 @@ describe('PinToggle', () => {
     expect(unpinnedBtn.className).toContain('text-text-muted')
   })
 
+  it('carries a non-hue state mark only while pinned', () => {
+    const onToggle = vi.fn().mockResolvedValue(true)
+
+    render(PinToggle, { pinned: false, onToggle, testId: 'pin-test' })
+    expect(screen.getByTestId('pin-test')).toHaveAttribute(
+      'data-pinned',
+      'false'
+    )
+    expect(screen.queryByTestId('pin-state-mark')).not.toBeInTheDocument()
+
+    cleanup()
+
+    render(PinToggle, { pinned: true, onToggle, testId: 'pin-test' })
+    expect(screen.getByTestId('pin-test')).toHaveAttribute(
+      'data-pinned',
+      'true'
+    )
+    expect(screen.getByTestId('pin-state-mark')).toBeInTheDocument()
+  })
+
   it('clicking commits the opposite state and flips the icon optimistically', async () => {
     const onToggle = vi.fn().mockResolvedValue(true)
     render(PinToggle, { pinned: false, onToggle, testId: 'pin-test' })
+    expect(screen.queryByTestId('pin-state-mark')).not.toBeInTheDocument()
 
     await fireEvent.click(screen.getByTestId('pin-test'))
 
@@ -42,6 +63,11 @@ describe('PinToggle', () => {
       'aria-pressed',
       'true'
     )
+    expect(screen.getByTestId('pin-test')).toHaveAttribute(
+      'data-pinned',
+      'true'
+    )
+    expect(screen.getByTestId('pin-state-mark')).toBeInTheDocument()
     expect(screen.getByTestId('pin-test')).toHaveAccessibleName('Unpin task')
   })
 

@@ -59,31 +59,19 @@
   aria-label={pinField.value ? 'Unpin task' : 'Pin task'}
   title={pinField.value ? 'Unpin task' : 'Pin task'}
   data-testid={testId}
+  data-pinned={pinField.value}
   class="pin-button shrink-0 rounded p-1 transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start disabled:cursor-not-allowed disabled:opacity-50 {pinField.value
     ? 'text-accent-primary-start'
     : 'text-text-muted'} {className}"
 >
+  <!-- Static icon font (no FILL axis): the pinned cue is a base bar the eye
+       can read without hue. -->
   <span
-    class="pin-icon material-symbols-outlined text-icon-sm"
-    aria-hidden="true">push_pin</span
+    class="pin-icon material-symbols-outlined relative text-icon-sm"
+    aria-hidden="true"
+    >push_pin{#if pinField.value}<span
+        class="pin-state-mark absolute inset-x-px bottom-0 h-0.5 rounded-full bg-current"
+        data-testid="pin-state-mark"
+      ></span>{/if}</span
   >
 </button>
-
-<style>
-  /* Filled-vs-outlined push_pin: the glyph fill tracks aria-pressed so the
-     "pinned" cue is shape, not color alone. */
-  .pin-icon {
-    font-variation-settings:
-      'FILL' 0,
-      'wght' 400,
-      'GRAD' 0,
-      'opsz' 20;
-  }
-  .pin-button[aria-pressed='true'] .pin-icon {
-    font-variation-settings:
-      'FILL' 1,
-      'wght' 400,
-      'GRAD' 0,
-      'opsz' 20;
-  }
-</style>
