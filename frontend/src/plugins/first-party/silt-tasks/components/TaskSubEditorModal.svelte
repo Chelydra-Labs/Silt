@@ -17,7 +17,8 @@
     SiltHardBreak,
     SiltBlockKeymaps,
     blocksToDoc,
-    docToBlocks
+    docToBlocks,
+    findActiveBlock
   } from '../../../../lib/editor'
   import type { ParsedBlock } from '../../../../lib/editor'
   import { siltPasteProps } from '../../../../lib/editor/schema'
@@ -42,7 +43,9 @@
    * a disclosure so the editor keeps space.
    *
    * Standard modal pattern: focus-trap + Esc-with-unsaved-prompt +
-   * focus-restore.
+   * focus-restore. The status footer carries "Convert note to comment"
+   * (#1159): it flushes the autosave, flips the block server-side, then
+   * reloads so the note leaves this editor's document.
    */
   interface Props {
     blockId: string
@@ -306,6 +309,81 @@
     onClose()
   }
 
+  // --- Explicit comment conversion (#1159) ---
+  // The sub-editor is block-scoped, so the affordance targets the note the
+  // caret is in (the doc only holds prose: comments are partitioned out).
+  // selectionVersion is the reactive edge — moving the caret/typing changes
+  // which block is active without any other Svelte state moving.
+  let selectionVersion = $state(0)
+  let converting = $state(false)
+  let convertError = $state('')
+  let convertMessage = $state('')
+
+  $effect(() => {
+    const ed = editorInstance
+    if (!ed) return
+    const bump = ({
+      transaction
+    }: {
+      transaction: { docChanged: boolean }
+    }) => {
+      selectionVersion += 1
+      // A conversion result is transient: the next edit restores the hint.
+      if (transaction.docChanged) convertMessage = ''
+    }
+    ed.on('transaction', bump)
+    return () => ed.off('transaction', bump)
+  })
+
+  function findActiveNoteId(_selectionVersion: number): string | null {
+    const ed = editorInstance
+    if (!ed || ed.isDestroyed) return null
+    const active = findActiveBlock(ed)
+    if (!active || active.node.type.name !== 'noteBlock') return null
+    const blockID = active.node.attrs.id
+    if (typeof blockID !== 'string' || blockID === '') return null
+    // An empty note has not reached disk, so there is no block to convert.
+    if (active.node.textContent.trim() === '') return null
+    return blockID
+  }
+
+  let activeNoteId = $derived(findActiveNoteId(selectionVersion))
+
+  async function convertActiveNoteToComment() {
+    const noteId = activeNoteId
+    if (!noteId || converting) return
+    const ed = editorInstance
+    converting = true
+    convertError = ''
+    convertMessage = ''
+    // Freeze the doc: a keystroke landing between the flush and the reload
+    // below would be overwritten by loadSubtree (the block leaves the doc).
+    ed?.setEditable(false)
+    try {
+      // Flush the debounced autosave FIRST: the conversion re-reads the file
+      // on the server, so unsaved editor content must land before it or the
+      // body written back would be pre-edit.
+      await drainSave()
+      if (saveError || unsavedChanges) {
+        convertError =
+          'Your edits could not be saved, so the note was not converted.'
+        return
+      }
+      const changed = await ctx.setBlockCommentClassification(noteId, true)
+      // Reload so the converted block leaves the editor document; it now
+      // belongs to the task's comment thread.
+      await loadSubtree()
+      convertMessage = changed
+        ? 'Note converted to a comment; it now shows in the comment thread.'
+        : 'This note was already a comment.'
+    } catch (e) {
+      convertError = friendlyCaughtError(e)
+    } finally {
+      converting = false
+      if (ed && !ed.isDestroyed) ed.setEditable(true)
+    }
+  }
+
   // Mirrors whether the sidebar has a popover/dialog open so Esc doesn't close
   // the modal mid-interaction.
   let sidebarBusy = $state(false)
@@ -513,7 +591,7 @@
 
       <!-- Status footer -->
       <footer
-        class="flex items-center justify-between px-5 py-2 border-t border-surface-modal-border flex-shrink-0"
+        class="flex items-center justify-between gap-3 px-5 py-2 border-t border-surface-modal-border flex-shrink-0"
       >
         <span
           class="text-type-xs font-label-sm {saveError
@@ -526,10 +604,47 @@
         >
           {statusText}
         </span>
-        <span class="text-type-2xs text-text-muted font-label-sm">
-          Esc to close
+        <span class="flex items-center gap-2 flex-shrink-0">
+          <!-- Same text-action styling as the header chrome. Disabled (not
+               hidden) when the caret is not in a non-empty note so the action
+               stays in the reading order rather than appearing on caret move. -->
+          <button
+            type="button"
+            class="text-type-2xs font-label-sm text-text-muted hover:text-accent-primary-start transition-colors px-1 rounded whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!activeNoteId || converting}
+            aria-label="Convert the note at the cursor to a comment"
+            aria-describedby="sub-editor-convert-note-hint"
+            title={activeNoteId
+              ? 'Move this note to the task comment thread'
+              : 'Put the cursor in a note first'}
+            onclick={() => void convertActiveNoteToComment()}
+          >
+            Convert note to comment
+          </button>
+          <span id="sub-editor-convert-note-hint" class="sr-only">
+            Converts the note your cursor is in; it moves to the task's comment
+            thread.
+          </span>
+          {#if convertMessage}
+            <span
+              class="text-type-2xs font-label-sm text-text-muted"
+              role="status">{convertMessage}</span
+            >
+          {:else}
+            <span class="text-type-2xs text-text-muted font-label-sm">
+              Esc to close
+            </span>
+          {/if}
         </span>
       </footer>
+      {#if convertError}
+        <div class="flex items-center justify-end gap-2 px-5 pb-2">
+          <span
+            class="text-type-xs font-label-sm text-status-danger"
+            role="alert">{convertError}</span
+          >
+        </div>
+      {/if}
       {#if saveError}
         <div class="flex items-center justify-end gap-2 px-5 pb-2">
           <button

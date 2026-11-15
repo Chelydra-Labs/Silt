@@ -133,7 +133,8 @@ import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
 const mocks = vi.hoisted(() => ({
   fetchSubtree: vi.fn(),
   saveSubtreeBlocks: vi.fn(),
-  sqliteQuery: vi.fn()
+  sqliteQuery: vi.fn(),
+  setBlockCommentClassification: vi.fn()
 }))
 
 function makeTaskRow(
@@ -183,6 +184,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     fetchSubtree: mocks.fetchSubtree,
     saveSubtreeBlocks: mocks.saveSubtreeBlocks,
     sqliteQuery: mocks.sqliteQuery,
+    setBlockCommentClassification: mocks.setBlockCommentClassification,
     // CommentThread (mounted via TaskMetadataSidebar) subscribes to block:changed.
     on: () => () => {},
     ...overrides
@@ -206,6 +208,7 @@ describe('TaskSubEditorModal (#304)', () => {
   beforeEach(() => {
     mocks.fetchSubtree.mockReset().mockResolvedValue([])
     mocks.saveSubtreeBlocks.mockReset().mockResolvedValue(true)
+    mocks.setBlockCommentClassification.mockReset().mockResolvedValue(true)
     mocks.sqliteQuery
       .mockReset()
       .mockResolvedValue({ rows: [], truncated: false })
@@ -979,6 +982,166 @@ describe('TaskSubEditorModal — pop-up single title (#1096)', () => {
     expect(
       screen.getByRole('dialog', { name: 'Ship the feature' })
     ).toBeInTheDocument()
+  })
+})
+
+describe('convert note to comment (#1159)', () => {
+  beforeEach(() => {
+    // Own setup: this describe runs without the sidebar mounted, so the
+    // mocked fetchSubtree calls belong to the modal alone.
+    mocks.fetchSubtree.mockReset().mockResolvedValue([])
+    mocks.saveSubtreeBlocks.mockReset().mockResolvedValue(true)
+    mocks.setBlockCommentClassification.mockReset().mockResolvedValue(true)
+    mocks.sqliteQuery
+      .mockReset()
+      .mockResolvedValue({ rows: [], truncated: false })
+    mql.matches = false
+  })
+
+  afterEach(() => cleanup())
+
+  const PROSE_NOTE = {
+    id: 'prose-1',
+    parent_id: 'task-1',
+    type: 'NOTE',
+    depth: 1,
+    raw_text: '- Prose paragraph',
+    clean_text: 'Prose paragraph',
+    line_number: 3,
+    file_date: '2026-07-01'
+  }
+
+  type SubEditorHandle = {
+    editor: {
+      commands: {
+        focus: () => void
+        setTextSelection: (pos: number) => void
+        insertContent: (s: string) => void
+      }
+      getJSON: () => unknown
+    }
+  }
+
+  async function mountWithNote(note: Record<string, unknown> = PROSE_NOTE) {
+    mocks.fetchSubtree.mockResolvedValue([note])
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => {
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    })
+    await flush()
+    return document.querySelector('.ProseMirror') as HTMLElement &
+      SubEditorHandle
+  }
+
+  it('converts the note at the cursor, flushing unsaved edits first', async () => {
+    // First fetch renders the note; after conversion the reload returns an
+    // empty doc so the block leaves the editor.
+    mocks.fetchSubtree
+      .mockResolvedValueOnce([PROSE_NOTE])
+      .mockResolvedValueOnce([])
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => {
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    })
+    await flush()
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement &
+      SubEditorHandle
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+    // Arm the debounced autosave with a real edit.
+    pm.editor.commands.insertContent(' tail edit')
+
+    const convert = screen.getByRole('button', {
+      name: 'Convert the note at the cursor to a comment'
+    })
+    await vi.waitFor(() => expect(convert).not.toBeDisabled())
+    await fireEvent.click(convert)
+
+    await vi.waitFor(() =>
+      expect(mocks.setBlockCommentClassification).toHaveBeenCalledWith(
+        'prose-1',
+        true
+      )
+    )
+    // The flush must land before the server-side conversion reads the file.
+    expect(mocks.saveSubtreeBlocks).toHaveBeenCalled()
+    expect(mocks.saveSubtreeBlocks.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.setBlockCommentClassification.mock.invocationCallOrder[0]!
+    )
+    const saved = mocks.saveSubtreeBlocks.mock.calls[0]?.[1] as Array<{
+      id?: string
+      clean_text?: string
+    }>
+    // The editor text that was still unsaved when Convert was clicked is in
+    // the flush payload — nothing was dropped between the click and the write.
+    expect(
+      saved.some(
+        (b) => b.id === 'prose-1' && b.clean_text?.includes('tail edit')
+      )
+    ).toBe(true)
+    // Reload after conversion so the block leaves the editor document.
+    expect(mocks.fetchSubtree).toHaveBeenCalledTimes(2)
+    await vi.waitFor(() => {
+      expect(JSON.stringify(pm.editor.getJSON())).not.toContain(
+        'Prose paragraph'
+      )
+    })
+    // The result is announced next to the action.
+    expect(
+      await screen.findByText(/Note converted to a comment/)
+    ).toBeInTheDocument()
+  })
+
+  it('is disabled while the cursor is outside a note', async () => {
+    const pm = await mountWithNote({
+      id: 'subtask-1',
+      parent_id: 'task-1',
+      type: 'TASK',
+      depth: 1,
+      raw_text: '- [ ] Sub-task title',
+      clean_text: 'Sub-task title',
+      status: 'TODO',
+      line_number: 4,
+      file_date: '2026-07-01'
+    })
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+
+    expect(
+      screen.getByRole('button', {
+        name: 'Convert the note at the cursor to a comment'
+      })
+    ).toBeDisabled()
+  })
+
+  it('does not convert when the flush fails, keeping the editor content', async () => {
+    mocks.saveSubtreeBlocks.mockRejectedValue(new Error('disk locked'))
+    const pm = await mountWithNote()
+    pm.editor.commands.focus()
+    pm.editor.commands.setTextSelection(1)
+    pm.editor.commands.insertContent(' unsaved edit')
+
+    const convert = screen.getByRole('button', {
+      name: 'Convert the note at the cursor to a comment'
+    })
+    await vi.waitFor(() => expect(convert).not.toBeDisabled())
+    await fireEvent.click(convert)
+
+    expect(
+      await screen.findByText(/Your edits could not be saved/)
+    ).toBeInTheDocument()
+    expect(mocks.setBlockCommentClassification).not.toHaveBeenCalled()
+    // The unsaved text is still in the editor, not silently dropped.
+    expect(JSON.stringify(pm.editor.getJSON())).toContain('unsaved edit')
   })
 })
 

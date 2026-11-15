@@ -18,7 +18,10 @@
    * via ctx.deleteBlock. Nested replies (#438) use parentCommentId; the UI
    * shows two levels (top-level + first-level replies), flattening deeper
    * nesting under the top-level ancestor. The host re-queries comments_count
-   * through onCommentsChanged after each mutation.
+   * through onCommentsChanged after each mutation. Convert-to-sub-note
+   * (#1159) clears the marker and attribution via
+   * ctx.setBlockCommentClassification; the author and date are discarded by
+   * design (D7), which the control and its confirmation state.
    */
   interface Props {
     taskId: string
@@ -96,6 +99,9 @@
   let replyPending = $state(false)
   let replyTextareaEl = $state<HTMLTextAreaElement | null>(null)
   let replyReturnEl: HTMLButtonElement | null = null
+  // Comment id whose convert-to-sub-note call is in flight (disables just that
+  // row's action so a double click cannot fire the mutation twice).
+  let convertingId = $state<string | null>(null)
 
   // YYYY-MM-DD HH:MM (local) for display; "Undated" fallback for legacy
   // NOTEs without a [ts::] token. Mirrors the TaskEditDrawer inline formatter
@@ -479,6 +485,36 @@
     }
   }
 
+  // Convert a comment back into an editable prose sub-note (#1159). The
+  // server clears [comment::] AND [author::]/[ts::] — attribution alone keeps
+  // a NOTE classified as a comment (D4), so the author/date discard is the
+  // only way to actually reclaim prose (D7). Confirm states that discard.
+  async function onConvertToSubNote(comment: Comment) {
+    if (convertingId) return
+    if (
+      !window.confirm(
+        'Convert this comment to a sub-note? Its author and date will be discarded.'
+      )
+    ) {
+      return
+    }
+    convertingId = comment.id
+    errorMsg = ''
+    errorRetryable = false
+    try {
+      await ctx.setBlockCommentClassification(comment.id, false)
+      await load()
+      onCommentsChanged?.()
+      liveMessage = 'Comment converted to a sub-note'
+    } catch (e) {
+      errorMsg = friendlyCaughtError(e)
+      errorRetryable = false
+      liveMessage = 'Comment failed to convert'
+    } finally {
+      convertingId = null
+    }
+  }
+
   // Split a comment body into bold / non-bold runs so **bold** renders as
   // <strong> while still letting RichText handle ((uuid)) refs, {{embed:}}
   // and #tags inside each run. RichText only scans for refs/embeds/tags, so
@@ -554,6 +590,16 @@
           onclick={(e) => startReply(c, e.currentTarget)}
         >
           Reply
+        </button>
+        <button
+          type="button"
+          class="material-symbols-outlined text-icon-sm text-text-muted hover:text-accent-primary-start transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          aria-label="Convert to sub-note (discards author and date)"
+          title="Convert to sub-note (discards author and date)"
+          disabled={c.pending || convertingId === c.id}
+          onclick={() => void onConvertToSubNote(c)}
+        >
+          notes
         </button>
         <button
           type="button"

@@ -1506,4 +1506,102 @@ describe('comment predicates (display/edit asymmetry)', () => {
       )
     })
   })
+
+  describe('convert to sub-note (#1159)', () => {
+    const CONVERT_LABEL = 'Convert to sub-note (discards author and date)'
+
+    const threaded = () => [
+      makeBlock({
+        id: 'c1',
+        clean_text: 'Top comment',
+        author: 'alice',
+        timestamp: '2026-07-01T09:00:00'
+      }),
+      makeBlock({
+        id: 'r1',
+        parent_id: 'c1',
+        depth: 2,
+        clean_text: 'A reply',
+        author: 'bob',
+        timestamp: '2026-07-01T10:00:00'
+      })
+    ]
+
+    it('offers the action on top-level comments and replies', async () => {
+      mount({
+        ctx: makeCtx({ fetchSubtree: vi.fn().mockResolvedValue(threaded()) })
+      })
+      await flush()
+      // The label itself states the discard, so it is audible before use.
+      expect(screen.getAllByLabelText(CONVERT_LABEL)).toHaveLength(2)
+    })
+
+    it('cancelling the confirmation converts nothing', async () => {
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+      const setBlockCommentClassification = vi.fn().mockResolvedValue(true)
+      mount({
+        ctx: makeCtx({
+          fetchSubtree: vi.fn().mockResolvedValue(threaded()),
+          setBlockCommentClassification
+        })
+      })
+      await flush()
+
+      await fireEvent.click(screen.getAllByLabelText(CONVERT_LABEL)[0]!)
+      await flush()
+
+      expect(confirmSpy).toHaveBeenCalledTimes(1)
+      expect(setBlockCommentClassification).not.toHaveBeenCalled()
+      confirmSpy.mockRestore()
+    })
+
+    it('states the author/date discard and reloads after the conversion', async () => {
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+      const setBlockCommentClassification = vi.fn().mockResolvedValue(true)
+      const onCommentsChanged = vi.fn()
+      const fetchSubtree = vi.fn().mockResolvedValue(threaded())
+      mount({
+        ctx: makeCtx({ fetchSubtree, setBlockCommentClassification }),
+        onCommentsChanged
+      })
+      await flush()
+
+      await fireEvent.click(screen.getAllByLabelText(CONVERT_LABEL)[0]!)
+      await flush()
+
+      expect(confirmSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/author and date will be discarded/)
+      )
+      expect(setBlockCommentClassification).toHaveBeenCalledWith('c1', false)
+      // Reload (mount load + post-conversion load) and notify the host.
+      expect(fetchSubtree).toHaveBeenCalledTimes(2)
+      expect(onCommentsChanged).toHaveBeenCalled()
+      expect(
+        screen.getByText('Comment converted to a sub-note')
+      ).toBeInTheDocument()
+      confirmSpy.mockRestore()
+    })
+
+    it('shows an error and keeps the comment when the conversion fails', async () => {
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+      const setBlockCommentClassification = vi
+        .fn()
+        .mockRejectedValue(new Error('disk locked'))
+      mount({
+        ctx: makeCtx({
+          fetchSubtree: vi.fn().mockResolvedValue(threaded()),
+          setBlockCommentClassification
+        })
+      })
+      await flush()
+
+      await fireEvent.click(screen.getAllByLabelText(CONVERT_LABEL)[0]!)
+      await flush()
+
+      expect(screen.getByTestId('comment-thread-error')).toBeInTheDocument()
+      expect(screen.getByText('Top comment')).toBeInTheDocument()
+      expect(screen.getByText('Comment failed to convert')).toBeInTheDocument()
+      confirmSpy.mockRestore()
+    })
+  })
 })
