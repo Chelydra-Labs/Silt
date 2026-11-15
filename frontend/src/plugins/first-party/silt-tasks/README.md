@@ -26,7 +26,7 @@ state/query module per mode.
 | `Sidebar.svelte` | The unified sidebar — smart lists, saved views, mini-calendar, and filter controls. Reads + writes the same hub state as the shell. |
 | `components/FilterBar.svelte` | Subordinate toolbar control row grouped into two flex-wrapping clusters: Organize (`Scope: <Crumb>` + `Follow`, `Group`, `Sort`) and Facets (`Owner`, `Priority`, `Due date`, `Shortlist`, `Stale (30d)`, `Tags`, `Clear all`). |
 | `components/TaskEditDrawer.svelte` | Shared non-blocking inspector drawer (pin, status, due date, start day, priority, shortlist, owner, tags, dependencies, progress, recurrence, estimate). |
-| `components/CommentThread.svelte` | Comment thread over a task's NOTE-block children (`FetchSubtree` + `block_meta` attribution); one-level replies. |
+| `components/CommentThread.svelte` | Comment thread over a task's comment blocks (NOTE carrying `[comment::]` or `[author::]`/`[ts::]` attribution; author and date parsed from the block's own tokens); one-level replies. |
 | `components/TasksCommandPalette.svelte` | Hub-scoped Ctrl+K command palette (mode / group / sort / views / find / add). |
 | `columns.ts` | `BoardColumn` model + `normalizeColumns` (legacy `string[]` + WIP limits). |
 | `components/QuickAddTask.svelte` | Shared quick-add input (used by every mode's quick-add surface). |

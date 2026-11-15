@@ -251,15 +251,27 @@
     }
   }
 
-  // Hydrate the full TaskDetail so the metadata sidebar has every field.
-  // A fetch failure (missing binding in test, deleted block) is non-fatal —
-  // the sidebar simply doesn't render and the editor works standalone.
+  // Hydrate the full TaskDetail so the metadata sidebar has every field. Also
+  // the refresh path after a write: a failed or empty re-read keeps the
+  // last-known snapshot rather than blanking a sidebar that already rendered
+  // (at mount there is none, so the sidebar simply stays hidden).
   async function loadTaskDetail() {
     try {
-      task = await fetchTaskDetail(ctx, blockId)
+      const fresh = await fetchTaskDetail(ctx, blockId)
+      if (fresh) task = fresh
     } catch {
-      task = null
+      // Non-fatal: the previous snapshot stands.
     }
+  }
+
+  // The sidebar reports metadata writes and comment-thread mutations through
+  // one callback, so every forward also re-reads this task: the Activity
+  // summary renders `task.comments_count`, and a comment added, deleted or
+  // converted in the sidebar's own thread would otherwise leave it at its
+  // mount-time value. The host's callback still runs for its own re-query.
+  function handleMetaChanged() {
+    onMetaChanged?.()
+    void loadTaskDetail()
   }
 
   function scheduleSave() {
@@ -531,12 +543,11 @@
       convertMessage = changed
         ? 'Note converted to a comment; it now shows in the comment thread.'
         : 'This note was already a comment.'
-      if (changed && task) {
-        // comments_count counts only comment blocks now (#1159), so the
-        // conversion moves it. The host's card badge refreshes from the
-        // block:changed the server emitted.
-        task = { ...task, comments_count: task.comments_count + 1 }
-      }
+      // comments_count counts only comment blocks now (#1159), so the
+      // conversion moves it. Re-read rather than hand-increment: the derived
+      // count is the server's, and the host's card badge refreshes from the
+      // block:changed the server emitted.
+      if (changed) await loadTaskDetail()
     } catch (e) {
       convertError = friendlyCaughtError(e)
     } finally {
@@ -848,7 +859,7 @@
         <TaskMetadataSidebar
           {task}
           {ctx}
-          {onMetaChanged}
+          onMetaChanged={handleMetaChanged}
           stickyPrimary
           idPrefix="sub-editor-"
           bind:busy={sidebarBusy}
@@ -862,7 +873,7 @@
         <TaskMetadataSidebar
           {task}
           {ctx}
-          {onMetaChanged}
+          onMetaChanged={handleMetaChanged}
           idPrefix="sub-editor-"
           bind:busy={sidebarBusy}
         />

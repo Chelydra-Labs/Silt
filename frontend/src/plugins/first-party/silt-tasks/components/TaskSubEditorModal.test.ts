@@ -134,7 +134,9 @@ const mocks = vi.hoisted(() => ({
   fetchSubtree: vi.fn(),
   saveSubtreeBlocks: vi.fn(),
   sqliteQuery: vi.fn(),
-  setBlockCommentClassification: vi.fn()
+  setBlockCommentClassification: vi.fn(),
+  addTaskComment: vi.fn(),
+  deleteBlock: vi.fn()
 }))
 
 function makeTaskRow(
@@ -185,6 +187,8 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     saveSubtreeBlocks: mocks.saveSubtreeBlocks,
     sqliteQuery: mocks.sqliteQuery,
     setBlockCommentClassification: mocks.setBlockCommentClassification,
+    addTaskComment: mocks.addTaskComment,
+    deleteBlock: mocks.deleteBlock,
     // CommentThread (mounted via TaskMetadataSidebar) subscribes to block:changed.
     on: () => () => {},
     ...overrides
@@ -221,6 +225,8 @@ describe('TaskSubEditorModal (#304)', () => {
     mocks.fetchSubtree.mockReset().mockResolvedValue([])
     mocks.saveSubtreeBlocks.mockReset().mockResolvedValue(true)
     mocks.setBlockCommentClassification.mockReset().mockResolvedValue(true)
+    mocks.addTaskComment.mockReset().mockResolvedValue('new-comment-1')
+    mocks.deleteBlock.mockReset().mockResolvedValue(true)
     mocks.sqliteQuery
       .mockReset()
       .mockResolvedValue({ rows: [], truncated: false })
@@ -1147,10 +1153,12 @@ describe('TaskSubEditorModal — metadata sidebar (#780 / #826)', () => {
     expect(widePrimaryHeader).toHaveClass('sticky')
   })
 
-  it('refreshes the Activity comment count after a conversion', async () => {
+  it('re-reads the Activity comment count after a conversion', async () => {
     // comments_count counts only comment blocks (#1159), so converting prose
     // moves it; the sidebar summary must agree with the thread that just
-    // reloaded. The host's card badge refreshes from the emitted block:changed.
+    // reloaded. The modal re-reads the task rather than hand-bumping a local
+    // copy, so the mock's count follows the server-side write. The host's card
+    // badge refreshes from the emitted block:changed.
     mocks.fetchSubtree.mockResolvedValue([
       {
         id: 'prose-1',
@@ -1163,11 +1171,15 @@ describe('TaskSubEditorModal — metadata sidebar (#780 / #826)', () => {
         file_date: '2026-07-01'
       }
     ])
-    mocks.setBlockCommentClassification.mockResolvedValue(true)
-    mocks.sqliteQuery.mockReset().mockResolvedValue({
-      rows: [makeTaskRow({ comments_count: 4 })],
-      truncated: false
+    let commentsCount = 4
+    mocks.setBlockCommentClassification.mockImplementation(async () => {
+      commentsCount += 1
+      return true
     })
+    mocks.sqliteQuery.mockReset().mockImplementation(async () => ({
+      rows: [makeTaskRow({ comments_count: commentsCount })],
+      truncated: false
+    }))
 
     render(TaskSubEditorModal, {
       ...BASE_PROPS,
@@ -1191,13 +1203,117 @@ describe('TaskSubEditorModal — metadata sidebar (#780 / #826)', () => {
       name: 'Convert the note at the cursor to a comment'
     })
     await vi.waitFor(() => expect(convert).not.toBeDisabled())
+    // Another surface posts a comment while this modal stays open: the server
+    // count is now 5 while the modal's snapshot still says 4. Conversion takes
+    // it to 6, which only a re-read can show — arithmetic on the stale
+    // snapshot would land on 5.
+    commentsCount = 5
     await fireEvent.click(convert)
 
+    await vi.waitFor(() =>
+      expect(
+        screen.getByText('6 comments · 0 links · timestamps')
+      ).toBeInTheDocument()
+    )
+  })
+
+  it('re-reads the Activity comment count when the sidebar thread adds a comment', async () => {
+    // The sidebar's Activity summary renders task.comments_count, which is a
+    // snapshot of the task prop. A comment posted in the modal's own thread
+    // must move it, so the modal re-reads the task after the sidebar reports
+    // the change.
+    let commentsCount = 4
+    mocks.sqliteQuery.mockReset().mockImplementation(async () => ({
+      rows: [makeTaskRow({ comments_count: commentsCount })],
+      truncated: false
+    }))
+    mocks.addTaskComment.mockImplementation(async () => {
+      commentsCount += 1
+      return 'new-comment-1'
+    })
+
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => {
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    })
+    await vi.waitFor(() =>
+      expect(
+        screen.getByText('4 comments · 0 links · timestamps')
+      ).toBeInTheDocument()
+    )
+
+    await fireEvent.input(screen.getByLabelText('Comment text'), {
+      target: { value: 'Looks good to me' }
+    })
+    await fireEvent.click(screen.getByRole('button', { name: 'Post' }))
+
+    expect(mocks.addTaskComment).toHaveBeenCalledWith(
+      'task-1',
+      'Looks good to me',
+      undefined
+    )
     await vi.waitFor(() =>
       expect(
         screen.getByText('5 comments · 0 links · timestamps')
       ).toBeInTheDocument()
     )
+  })
+
+  it('re-reads the Activity comment count when the sidebar thread deletes a comment', async () => {
+    mocks.fetchSubtree.mockResolvedValue([
+      {
+        id: 'comment-1',
+        parent_id: 'task-1',
+        type: 'NOTE',
+        depth: 1,
+        raw_text: '- Comment from Dana [author:: Dana]',
+        clean_text: 'Comment from Dana',
+        author: 'Dana',
+        timestamp: '2026-07-07T14:22:00',
+        line_number: 2,
+        file_date: '2026-07-01'
+      }
+    ])
+    let commentsCount = 5
+    mocks.sqliteQuery.mockReset().mockImplementation(async () => ({
+      rows: [makeTaskRow({ comments_count: commentsCount })],
+      truncated: false
+    }))
+    mocks.deleteBlock.mockImplementation(async () => {
+      commentsCount -= 1
+      return true
+    })
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    try {
+      render(TaskSubEditorModal, {
+        ...BASE_PROPS,
+        ctx: makeCtx(),
+        onClose: () => {}
+      })
+      await vi.waitFor(() => {
+        expect(document.querySelector('.ProseMirror')).not.toBeNull()
+      })
+      await vi.waitFor(() =>
+        expect(
+          screen.getByText('5 comments · 0 links · timestamps')
+        ).toBeInTheDocument()
+      )
+
+      await fireEvent.click(screen.getByLabelText('Delete comment'))
+
+      expect(mocks.deleteBlock).toHaveBeenCalledWith('comment-1')
+      await vi.waitFor(() =>
+        expect(
+          screen.getByText('4 comments · 0 links · timestamps')
+        ).toBeInTheDocument()
+      )
+    } finally {
+      confirmSpy.mockRestore()
+    }
   })
 
   it('keeps the modal open when Escape dismisses a nested metadata popover', async () => {
@@ -1486,6 +1602,8 @@ describe('convert note to comment (#1159)', () => {
     mocks.fetchSubtree.mockReset().mockResolvedValue([])
     mocks.saveSubtreeBlocks.mockReset().mockResolvedValue(true)
     mocks.setBlockCommentClassification.mockReset().mockResolvedValue(true)
+    mocks.addTaskComment.mockReset().mockResolvedValue('new-comment-1')
+    mocks.deleteBlock.mockReset().mockResolvedValue(true)
     mocks.sqliteQuery
       .mockReset()
       .mockResolvedValue({ rows: [], truncated: false })

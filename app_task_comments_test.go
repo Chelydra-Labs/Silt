@@ -362,10 +362,12 @@ func mustReadTaskFile(t *testing.T, app *App, notebook, section, page string) st
 // ---------------------------------------------------------------------------
 // Comment preservation across a sub-notes save (#1151)
 //
-// Comments are child NOTE blocks with attribution; the sub-editor hydrates and
-// saves only the non-comment blocks. saveSubtreeBlocks re-reads the task's own
-// comments under the write lock and re-inserts them at their owner's position,
-// so a notes save can neither rewrite their attribution nor drop them.
+// Comments are child NOTE blocks classified by the shared rule — the
+// [comment::] marker or [author::]/[ts::] attribution; the sub-editor
+// hydrates and saves only the non-comment blocks. saveSubtreeBlocks re-reads
+// the task's own comments under the write lock and re-inserts them at their
+// owner's position, so a notes save can neither rewrite their attribution nor
+// drop them.
 // ---------------------------------------------------------------------------
 
 // taskCommentsCount reads the derived comments_count cache for a task row.
