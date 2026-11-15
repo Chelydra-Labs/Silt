@@ -21,7 +21,8 @@
    * through onCommentsChanged after each mutation. Convert-to-sub-note
    * (#1159) clears the marker and attribution via
    * ctx.setBlockCommentClassification; the author and date are discarded by
-   * design (D7), which the control and its confirmation state.
+   * design (D7), which the control and its confirmation state. Offered on
+   * top-level comments only — see isTopLevelComment.
    */
   interface Props {
     taskId: string
@@ -214,6 +215,16 @@
       top.replies = sortComments(repliesByTop.get(top.id) ?? [])
     }
     return sortedTops
+  }
+
+  /**
+   * Top level == direct child of the task, the same test buildThread uses.
+   * Only these offer convert-to-sub-note: the server mutation changes
+   * classification alone, so converting a reply would leave a prose note
+   * parented under a comment that no surface presents.
+   */
+  function isTopLevelComment(c: Comment): boolean {
+    return c.parentId === taskId
   }
 
   /** Flat count for the badge (top-level + all replies). */
@@ -591,16 +602,18 @@
         >
           Reply
         </button>
-        <button
-          type="button"
-          class="material-symbols-outlined text-icon-sm text-text-muted hover:text-accent-primary-start transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          aria-label="Convert to sub-note (discards author and date)"
-          title="Convert to sub-note (discards author and date)"
-          disabled={c.pending || convertingId === c.id}
-          onclick={() => void onConvertToSubNote(c)}
-        >
-          notes
-        </button>
+        {#if isTopLevelComment(c)}
+          <button
+            type="button"
+            class="material-symbols-outlined text-icon-sm text-text-muted hover:text-accent-primary-start transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label="Convert to sub-note (discards author and date)"
+            title="Convert to sub-note (discards author and date)"
+            disabled={c.pending || convertingId === c.id}
+            onclick={() => void onConvertToSubNote(c)}
+          >
+            notes
+          </button>
+        {/if}
         <button
           type="button"
           class="material-symbols-outlined text-icon-sm text-text-muted hover:text-error transition-colors"

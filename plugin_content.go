@@ -135,6 +135,11 @@ func (a *App) PluginMoveBlock(pluginID, sessionToken, blockID, afterID, notebook
 // date are deliberately discarded). Returns false without writing when the
 // block already has the requested classification, so a repeat is a no-op.
 // Gated by content-mutate (#156). Session-token verified (#151).
+//
+// The operation is generic: it changes classification only and never the
+// hierarchy, so converting a NOTE nested under another comment yields a prose
+// note under that comment. The app's UI offers the conversion only for direct
+// children of the task.
 func (a *App) PluginSetBlockCommentClassification(pluginID, sessionToken, blockID string, asComment bool) (bool, error) {
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
 		return false, err

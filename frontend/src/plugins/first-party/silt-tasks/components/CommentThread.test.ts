@@ -1,5 +1,11 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  within
+} from '@testing-library/svelte'
 
 // CommentThread attributes comments from the configured local_author pref
 // (#1125): a fresh ctx.getPluginSettings() read at mount (Settings writes
@@ -1524,16 +1530,39 @@ describe('comment predicates (display/edit asymmetry)', () => {
         clean_text: 'A reply',
         author: 'bob',
         timestamp: '2026-07-01T10:00:00'
+      }),
+      makeBlock({
+        id: 'r2',
+        parent_id: 'r1',
+        depth: 3,
+        clean_text: 'A flattened deeper reply',
+        author: 'carol',
+        timestamp: '2026-07-01T11:00:00'
       })
     ]
 
-    it('offers the action on top-level comments and replies', async () => {
+    it('offers the action on a top-level comment and not on a reply', async () => {
       mount({
         ctx: makeCtx({ fetchSubtree: vi.fn().mockResolvedValue(threaded()) })
       })
       await flush()
-      // The label itself states the discard, so it is audible before use.
-      expect(screen.getAllByLabelText(CONVERT_LABEL)).toHaveLength(2)
+      const articles = document.querySelectorAll('[role="comment"]')
+      expect(articles).toHaveLength(3)
+      // Top-level: the label itself states the discard, so it is audible
+      // before use.
+      expect(
+        within(articles[0] as HTMLElement).getByLabelText(CONVERT_LABEL)
+      ).toBeInTheDocument()
+      // A reply (direct or flattened-deeper) must not offer it: the mutation
+      // changes classification only, so the result would be a prose note
+      // parented under a comment, which no surface presents.
+      expect(
+        within(articles[1] as HTMLElement).queryByLabelText(CONVERT_LABEL)
+      ).toBeNull()
+      expect(
+        within(articles[2] as HTMLElement).queryByLabelText(CONVERT_LABEL)
+      ).toBeNull()
+      expect(screen.getAllByLabelText(CONVERT_LABEL)).toHaveLength(1)
     })
 
     it('cancelling the confirmation converts nothing', async () => {
